@@ -62,6 +62,8 @@ public class ContainerVectors {
         boolean align20;
         /** The items are made by the entity phase (Kiln has them a tick later). */
         boolean dropsLag;
+        /** The bees appearing each tick (where) and their number are recorded. */
+        boolean watchBees;
 
         Scenario(String name, int ticks) {
             this.name = name;
@@ -119,6 +121,11 @@ public class ContainerVectors {
             return this;
         }
 
+        Scenario bees() {
+            watchBees = true;
+            return this;
+        }
+
         Scenario at(int tick, String command) {
             actions.computeIfAbsent(tick, k -> new ArrayList<>()).add(command);
             return this;
@@ -141,6 +148,7 @@ public class ContainerVectors {
             m.put("drops", watchDrops);
             m.put("align20", align20);
             m.put("drops_lag", dropsLag);
+            m.put("bees", watchBees);
             return m;
         }
 
@@ -276,7 +284,32 @@ public class ContainerVectors {
         daylightScenarios(out);
         targetScenarios(out);
         projectileBlockScenarios(out);
+        hiveScenarios(out);
         return out;
+    }
+
+    /** wp49: beehives and bee nests: bees leave after their time, leave honey, stay in at night, wait for a free front. */
+    static void hiveScenarios(List<Scenario> out) {
+        java.util.function.BiFunction<Boolean, Integer, String> bee = (nectar, min) ->
+                "{entity_data:{id:\"minecraft:bee\"" + (nectar ? ",HasNectar:1b" : "") + "},min_ticks_in_hive:" + min + ",ticks_in_hive:0}";
+        String nest = "minecraft:bee_nest[facing=west,honey_level=0]";
+        out.add(new Scenario("hive_releases_bees_after_their_time", 30).bees()
+                .container(0, 0, 0, nest + "{bees:[" + bee.apply(true, 5) + "," + bee.apply(false, 8) + "]}").state(0, 0, 0));
+        out.add(new Scenario("hive_three_nectar_bees_fill_it", 40).bees()
+                .container(0, 0, 0, "minecraft:beehive[facing=north,honey_level=3]{bees:[" + bee.apply(true, 2) + "," + bee.apply(true, 4) + "," + bee.apply(true, 6) + "]}").state(0, 0, 0));
+        out.add(new Scenario("hive_night_keeps_bees_in", 60).bees()
+                .container(0, 0, 0, nest + "{bees:[" + bee.apply(true, 3) + "]}").state(0, 0, 0)
+                .at(1, "time set 14000").at(30, "time set 1000"));
+        out.add(new Scenario("hive_blocked_front_waits", 40).bees()
+                .block(-1, 0, 0, "minecraft:stone")
+                .container(0, 0, 0, nest + "{bees:[" + bee.apply(true, 3) + "]}").state(0, 0, 0)
+                .at(20, "setblock ~-1 ~0 ~0 minecraft:air"));
+        out.add(new Scenario("hive_fire_beside_sends_bees_out", 20).bees()
+                .container(0, 0, 0, nest + "{bees:[" + bee.apply(true, 500) + "," + bee.apply(false, 500) + "]}").state(0, 0, 0)
+                .at(5, "setblock ~1 ~0 ~0 minecraft:fire"));
+        out.add(new Scenario("hive_broken_in_creative_keeps_nothing", 10).bees()
+                .container(0, 0, 0, nest + "{bees:[" + bee.apply(true, 500) + "]}").state(0, 0, 0)
+                .at(3, "setblock ~0 ~0 ~0 minecraft:air"));
     }
 
     /** wp36: jukeboxes: songs ending by their length, comparators, redstone power, hoppers and dispensers. */
@@ -691,6 +724,19 @@ public class ContainerVectors {
             m.put("campfire", List.of(times[0], times[1], times[2], times[3], totals[0], totals[1], totals[2], totals[3]));
             return m;
         }
+        // wp49: a beehive's bees: [ticks in the hive, least ticks, nectar] each.
+        if (be instanceof net.minecraft.world.level.block.entity.BeehiveBlockEntity) {
+            var tag = be.saveCustomOnly(be.getLevel().registryAccess());
+            var bees = tag.getListOrEmpty("bees");
+            List<Object> list = new ArrayList<>();
+            for (int i = 0; i < bees.size(); i++) {
+                var b = bees.getCompoundOrEmpty(i);
+                list.add(List.of(b.getIntOr("ticks_in_hive", 0), b.getIntOr("min_ticks_in_hive", 0), b.getCompoundOrEmpty("entity_data").getBooleanOr("HasNectar", false) ? 1 : 0));
+            }
+            m.put("items", new ArrayList<>());
+            m.put("hive", list);
+            return m;
+        }
         if (!(be instanceof Container c)) return m;
         List<Object> items = new ArrayList<>();
         for (int i = 0; i < c.getContainerSize(); i++) {
@@ -762,6 +808,7 @@ public class ContainerVectors {
                     BASE[2] + (int) b[2], b[3]));
         }
         List<Object> ticks = new ArrayList<>();
+        java.util.Set<java.util.UUID> seenBees = new java.util.HashSet<>();
         // Whole level ticks while the server's own ticking stays frozen: `runsNormally` is what
         // `ServerLevel.tick` checks (the manager only updates it in its own tick).
         setRunsNormally(level, true);
@@ -780,6 +827,16 @@ public class ContainerVectors {
                 List<Object> carts = new ArrayList<>();
                 for (int[] p : s.carts) carts.add(cartState(level, p));
                 tick.put("carts", carts);
+                if (s.watchBees) {
+                    // The bees that appeared this tick (where they were put) and how many there are.
+                    var box = new net.minecraft.world.phys.AABB(BASE[0] - 8, BASE[1] - 8, BASE[2] - 8, BASE[0] + 12, BASE[1] + 12, BASE[2] + 12);
+                    var all = level.getEntitiesOfClass(net.minecraft.world.entity.animal.bee.Bee.class, box);
+                    List<List<Double>> fresh = new ArrayList<>();
+                    for (var bee : all) if (seenBees.add(bee.getUUID())) fresh.add(List.of(bee.getX(), bee.getY(), bee.getZ()));
+                    fresh.sort(Comparator.<List<Double>>comparingDouble(l -> l.get(0)).thenComparingDouble(l -> l.get(1)).thenComparingDouble(l -> l.get(2)));
+                    tick.put("bees_new", new ArrayList<Object>(fresh));
+                    tick.put("bee_count", all.size());
+                }
                 if (s.watchDrops) {
                     tick.put("drops", dropsState(level));
                     // What lies about burns, merges or is picked up in its own ways: only what each tick makes is compared.
@@ -802,6 +859,7 @@ public class ContainerVectors {
         command(server, "kill @e[type=chest_minecart]");
         command(server, "kill @e[type=hopper_minecart]");
         command(server, "kill @e[type=item]");
+        command(server, "kill @e[type=bee]");
         command(server, "kill @e[type=tnt]");
         command(server, "kill @e[type=arrow]");
         command(server, "kill @e[type=spectral_arrow]");

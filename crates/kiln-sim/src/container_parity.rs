@@ -42,6 +42,15 @@ fn container_json(sim: &Sim, pos: BlockPos) -> Value {
             v.extend(c.cooking_total);
             m.insert("campfire".into(), json!(v));
         }
+        // A hive: [ticks in the hive, least ticks, nectar] of each bee.
+        crate::container::BeKind::Beehive => {
+            let bees: Vec<Value> = c
+                .hive
+                .as_ref()
+                .map(|h| h.occupants.iter().map(|o| json!([o.ticks, o.min_ticks, i32::from(o.data.get("HasNectar").and_then(Tag::as_i64).unwrap_or(0) != 0)])).collect())
+                .unwrap_or_default();
+            m.insert("hive".into(), Value::Array(bees));
+        }
         // The song player: playing, ticks since the song started.
         crate::container::BeKind::Jukebox => {
             m.insert("jukebox".into(), json!([i32::from(c.song.is_some()), c.song.map_or(0, |s| s.1)]));
@@ -167,6 +176,7 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
     let (mut compared, mut errors) = (0, Vec::new());
     let mut kill_items = false;
     let mut previous_drops = serde_json::json!([]);
+    let mut seen_bees: std::collections::HashSet<i32> = Default::default();
     for (t, want) in line["result"].as_array().unwrap().iter().enumerate() {
         let tick = t + 1;
         let mut inbox = Vec::new();
@@ -204,6 +214,28 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             compared += 1;
             if got != want["carts"][i] {
                 errors.push(format!("tick {tick} cart {i} {p:?}: kiln {got}, vanilla {}", want["carts"][i]));
+            }
+        }
+        if line["bees"].as_bool() == Some(true) {
+            // The bees that appeared this tick (where they were put), sorted, and how many there are.
+            let mut fresh: Vec<[f64; 3]> = Vec::new();
+            let mut count = 0;
+            for region in sim.dims[OVERWORLD_ID].regions.iter() {
+                for e in region.part().0.list.iter().filter(|e| !e.removed && e.kind.name == "minecraft:bee") {
+                    count += 1;
+                    if seen_bees.insert(e.id) {
+                        fresh.push(e.pos);
+                    }
+                }
+            }
+            fresh.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let got = json!(fresh);
+            compared += 2;
+            if got != want["bees_new"] {
+                errors.push(format!("tick {tick} new bees: kiln {got}, vanilla {}", want["bees_new"]));
+            }
+            if Some(count) != want["bee_count"].as_i64() {
+                errors.push(format!("tick {tick} bee count: kiln {count}, vanilla {}", want["bee_count"]));
             }
         }
         if line["drops"].as_bool() == Some(true) {
