@@ -356,6 +356,10 @@ const CHUNK_LOADS_PER_TICK: usize = 256;
 /// Tick time spent installing generated chunks per level at most (the chunks players stand in
 /// do not wait); the rest are installed in the next ticks.
 const INSTALL_BUDGET: Duration = Duration::from_micros(1500);
+/// Generated chunks installed per level per tick at most (players' own chunks aside): each
+/// costs its region the light of a new chunk and, once its neighbours are in, its generation
+/// leftovers (160 a second, more than the generation threads make).
+const GENERATED_PER_TICK: usize = 8;
 
 struct Player {
     conn: ConnId,
@@ -1142,9 +1146,20 @@ impl Dim {
         ready.sort_unstable();
         let started = Instant::now();
         let (now, later): (Vec<ChunkPos>, Vec<ChunkPos>) = ready.into_iter().partition(|p| first.binary_search(p).is_ok());
+        let mut generated = 0;
         for pos in now.into_iter().chain(later) {
-            if first.binary_search(&pos).is_err() && self.install_spent + started.elapsed() >= INSTALL_BUDGET {
+            let own = first.binary_search(&pos).is_ok();
+            if !own && self.install_spent + started.elapsed() >= INSTALL_BUDGET {
                 break;
+            }
+            // Generated chunks are lit by their region's next run: a few a tick, so that a burst
+            // (players arriving somewhere new) spreads over ticks instead of one region's tick.
+            let from_disk = self.loaded.contains_key(&pos);
+            if !own && !from_disk && generated >= GENERATED_PER_TICK {
+                continue;
+            }
+            if !from_disk {
+                generated += 1;
             }
             let chunk = match self.loaded.remove(&pos) {
                 Some(c) => Some(c),
