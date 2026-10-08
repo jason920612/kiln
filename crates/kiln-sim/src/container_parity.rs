@@ -252,7 +252,15 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                         let r = |v: f64| (v * 10000.0).round() / 10000.0;
                         // (A primed TNT hops a random way at its making: only where it is to a tenth is compared.)
                         let t = |v: f64| if e.kind.name == "minecraft:tnt" { (v * 10.0).round() / 10.0 } else { r(v) };
-                        reported.push((e.kind.name.to_owned(), t(e.pos[0]), r(e.pos[1]), t(e.pos[2])));
+                        let shot = matches!(
+                            e.kind.name,
+                            "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:egg" | "minecraft:snowball" | "minecraft:splash_potion" | "minecraft:lingering_potion" | "minecraft:experience_bottle"
+                        );
+                        if shot {
+                            reported.push((e.kind.name.to_owned(), 0.0, 0.0, 0.0));
+                        } else {
+                            reported.push((e.kind.name.to_owned(), t(e.pos[0]), r(e.pos[1]), t(e.pos[2])));
+                        }
                     }
                     if seen_entities.insert(e.id) {
                         now_new.push(e.id);

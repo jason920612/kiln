@@ -123,17 +123,29 @@ pub(crate) fn dispense_from(level: &mut RegionLevel, pos: BlockPos, s: u16) {
 fn dispense_projectile(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> ItemStack {
     use kiln_entity::math::Vec3;
     let at = dispense_position(pos, facing);
+    let (mut uncertainty, mut power) = (6.0f64, 1.1f64);
     let (kind, entity) = {
         let seed = rng.next_long();
         let origin = Vec3::new(at[0], at[1], at[2]);
         match stack.item_name() {
-            "minecraft:snowball" | "minecraft:egg" => {
-                let (t, k) = if stack.item_name() == "minecraft:snowball" {
-                    (kiln_entity::projectile::Throwable::Snowball, &kiln_data::entities::types::SNOWBALL)
-                } else {
-                    (kiln_entity::projectile::Throwable::Egg, &kiln_data::entities::types::EGG)
+            "minecraft:snowball" | "minecraft:egg" | "minecraft:blue_egg" | "minecraft:brown_egg" | "minecraft:splash_potion" | "minecraft:lingering_potion" | "minecraft:experience_bottle" => {
+                use kiln_entity::projectile::Throwable as T;
+                let (t, k) = match stack.item_name() {
+                    "minecraft:snowball" => (T::Snowball, &kiln_data::entities::types::SNOWBALL),
+                    "minecraft:splash_potion" => (T::SplashPotion, &kiln_data::entities::types::SPLASH_POTION),
+                    "minecraft:lingering_potion" => (T::LingeringPotion, &kiln_data::entities::types::LINGERING_POTION),
+                    "minecraft:experience_bottle" => (T::ExperienceBottle, &kiln_data::entities::types::EXPERIENCE_BOTTLE),
+                    _ => (T::Egg, &kiln_data::entities::types::EGG),
                 };
-                (k, kiln_entity::projectile::new(0, 0, t, origin, Vec3::new(0.0, 0.0, 0.0), None, seed))
+                // (`ThrowablePotionItem`'s config: half the uncertainty, a quarter more power.)
+                if matches!(t, T::SplashPotion | T::LingeringPotion | T::ExperienceBottle) {
+                    (uncertainty, power) = (3.0, 1.375);
+                }
+                let mut e = kiln_entity::projectile::new(0, 0, t, origin, Vec3::new(0.0, 0.0, 0.0), None, seed);
+                if let kiln_entity::EntityKind::Throwable(d) = &mut e.kind {
+                    d.item = Some(stack.with_count(1));
+                }
+                (k, e)
             }
             name => {
                 let (type_name, k) = if name == "minecraft:spectral_arrow" {
@@ -149,12 +161,12 @@ fn dispense_projectile(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Blo
     // `Projectile.getMovementToShoot` and `shoot`: the facing, spread by the entity's random.
     let st = facing.step();
     let len = ((st[0] * st[0] + st[1] * st[1] + st[2] * st[2]) as f64).sqrt();
-    let spread = 0.0172275 * 6.0;
+    let spread = 0.0172275 * uncertainty;
     let mut v = [st[0] as f64 / len, st[1] as f64 / len, st[2] as f64 / len];
     for c in &mut v {
         *c += triangle(&mut entity.random, 0.0, spread);
     }
-    let v = v.map(|c| c * 1.1);
+    let v = v.map(|c| c * power);
     entity.delta = Vec3::new(v[0], v[1], v[2]);
     let horizontal = (v[0] * v[0] + v[2] * v[2]).sqrt();
     entity.y_rot = (kiln_javamath::mth::atan2(v[0], v[2]) * 57.2957763671875) as f32;
@@ -218,7 +230,7 @@ fn dispense_behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Bloc
     let target = pos.relative(facing);
     match stack.item_name() {
         name if kiln_entity::ext_entity::minecart::is_minecart(name) => dispense_minecart(level, rng, pos, facing, stack),
-        "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:snowball" | "minecraft:egg" => dispense_projectile(level, rng, pos, facing, stack),
+        "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:snowball" | "minecraft:egg" | "minecraft:blue_egg" | "minecraft:brown_egg" | "minecraft:splash_potion" | "minecraft:lingering_potion" | "minecraft:experience_bottle" => dispense_projectile(level, rng, pos, facing, stack),
         "minecraft:water_bucket" | "minecraft:lava_bucket" => {
             // `DispenseItemBehavior` for filled buckets: `BucketItem.emptyContents`, then an
             // empty bucket.

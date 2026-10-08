@@ -366,6 +366,18 @@ public class ContainerVectors {
         out.add(dispense("boat_on_land", "oak_boat", 2).block(1, -1, 0, "minecraft:stone"));
         // Armor stands.
         out.add(dispense("armor_stand", "armor_stand", 2).block(1, -1, 0, "minecraft:stone"));
+        // Things that are shot out.
+        for (String shot : new String[] {"arrow", "spectral_arrow", "snowball", "egg", "blue_egg", "brown_egg", "experience_bottle"}) {
+            out.add(dispense("shoots_" + shot, shot, 2));
+        }
+        out.add(new Scenario("dispenser_shoots_splash_potion", 14).container(0, 0, 0, "minecraft:dispenser[facing=east]"
+                + items("{Slot:0b,id:\"minecraft:splash_potion\",count:2,components:{\"minecraft:potion_contents\":{potion:\"minecraft:swiftness\"}}}"))
+                .state(1, 0, 0).drops().entities().at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
+        // Facing up and down, and a stack that runs out.
+        out.add(new Scenario("dispenser_up_bone_meal_hits_nothing", 14).container(0, 0, 0, "minecraft:dispenser[facing=up]" + items(slot(0, "bone_meal", 1)))
+                .block(0, 1, 0, "minecraft:torchflower_crop[age=0]").state(0, 1, 0).drops().entities().at(2, "setblock ~1 ~0 ~0 minecraft:redstone_block"));
+        out.add(new Scenario("dispenser_last_flint_and_steel", 14).container(0, 0, 0, "minecraft:dispenser[facing=east]" + items(slot(0, "flint_and_steel", 1)))
+                .block(1, -1, 0, "minecraft:stone").state(1, 0, 0).drops().entities().at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
     }
 
     /** wp49: a comparator reads how far into the book a lectern is open. */
@@ -989,6 +1001,11 @@ public class ContainerVectors {
                         if (seenEntities.add(e.getUUID())) {
                             // (A primed TNT hops a random way at its making: only where it is to a tenth is compared.)
                             double q = e instanceof net.minecraft.world.entity.item.PrimedTnt ? 10.0 : 10000.0;
+                            // (A shot thing is spread by its own unseeded random: only that it is there is compared.)
+                            if (e instanceof net.minecraft.world.entity.projectile.Projectile) {
+                                fresh.add(List.of(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(), 0.0, 0.0, 0.0));
+                                continue;
+                            }
                             fresh.add(List.of(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(), Math.round(e.getX() * q) / q,
                                     Math.round(e.getY() * 10000) / 10000.0, Math.round(e.getZ() * q) / q));
                         }
