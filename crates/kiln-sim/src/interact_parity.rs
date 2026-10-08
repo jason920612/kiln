@@ -345,8 +345,9 @@ fn run_case(line: &Value) -> Vec<String> {
         // block work (the client cannot tell).
         let mut got_packets: Vec<String> = take_packets(&stats).iter().map(|v| v.to_string()).collect();
         let mut want_packets: Vec<String> = want["packets"].as_array().unwrap().iter().map(|v| normalize_want(v).to_string()).collect();
-        // (The recording tool's own commands do not reach the harness player's chunk view.)
-        if step["op"] == "command" {
+        // Vanilla sends two or more changes of one section as a Section Blocks Update, which the
+        // vectors do not record (Kiln sends each change on its own).
+        if step["op"] == "command" && got_packets.iter().filter(|p| p.contains("\"t\":\"block_update\"")).count() >= 2 {
             got_packets.retain(|p| !p.contains("\"t\":\"block_update\""));
         }
         got_packets.sort();
