@@ -534,13 +534,17 @@ public class InteractVectors {
     }
 
     /** wp49: beehives and bee nests: a bottle or shears on a full hive, its bees coming out (angry, or calmed by smoke). */
-    static ItemStack parseStack(String snbt) throws Exception {
-        var tag = net.minecraft.nbt.TagParser.parseCompoundFully(snbt);
-        return ItemStack.CODEC.parse(server.registryAccess().createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), tag).getOrThrow();
+    static ItemStack parseStack(String snbt) {
+        try {
+            var tag = net.minecraft.nbt.TagParser.parseCompoundFully(snbt);
+            return ItemStack.CODEC.parse(server.registryAccess().createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), tag).getOrThrow();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /** wp49: decorated pots: items in, the head shake, breaking (cracked, sherds), placing with sherds. */
-    static void pots49(List<Case> out) throws Exception {
+    static void pots49(List<Case> out) {
         Case c;
         String pot = "minecraft:decorated_pot[facing=north,cracked=false,waterlogged=false]";
         String sherds = "sherds:{back:{id:\"minecraft:archer_pottery_sherd\"},left:{id:\"minecraft:brick\"},right:{id:\"minecraft:blade_pottery_sherd\"},front:{id:\"minecraft:angler_pottery_sherd\"}}";
