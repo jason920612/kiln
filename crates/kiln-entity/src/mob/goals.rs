@@ -32,6 +32,8 @@ pub enum MeleeKind {
     Plain,
     Zombie,
     Spider,
+    /// `Bee$BeeAttackGoal`: only while angry and not yet stung.
+    Bee,
 }
 
 #[derive(Clone, Debug)]
@@ -610,6 +612,9 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
             if *kind == MeleeKind::Spider && m.is_vehicle {
                 return false;
             }
+            if *kind == MeleeKind::Bee && !(super::kinds::bee::is_angry(m, level) && !super::kinds::bee::has_stung(m)) {
+                return false;
+            }
             let now = level.game_time();
             if now - *last_can_use < 20 {
                 return false;
@@ -748,6 +753,9 @@ pub(crate) fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level:
         Goal::RandomLookAround { look_time, .. } => *look_time >= 0,
         Goal::EatBlock { tick } => *tick > 0,
         Goal::Melee { kind, follow_unseen, .. } => {
+            if *kind == MeleeKind::Bee && !(super::kinds::bee::is_angry(m, level) && !super::kinds::bee::has_stung(m)) {
+                return false;
+            }
             if *kind == MeleeKind::Spider && light_ok_for_spider_to_stop(e, level) && e.random.next_int_bounded(100) == 0 {
                 super::set_target(e, m, None);
                 return false;
@@ -767,6 +775,10 @@ pub(crate) fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level:
             *try_ticks >= -*max_stay && *try_ticks <= 1200 && is_turtle_egg_target(level, *block)
         }
         Goal::HurtByTarget { target_mob, unseen, unseen_memory, .. } => {
+            // `Bee$BeeHurtByOtherGoal.canContinueToUse`: only while angry.
+            if m.kind == MobKind::Bee && !super::kinds::bee::is_angry(m, level) {
+                return false;
+            }
             continue_target(e, m, level, *target_mob, true, unseen, *unseen_memory)
         }
         // `NearestAttackableTargetGoal` never sets `targetMob`: once the mob's target is cleared
@@ -1192,8 +1204,12 @@ pub fn free_partner(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<
 }
 
 /// `HurtByTargetGoal.alertOthers`: mobs of the same type nearby without a target.
-fn alert_others_of_kind(e: &Entity, m: &MobData, level: &mut dyn EntityLevel) {
+fn alert_others_of_kind(e: &Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     let Some(attacker) = m.last_hurt_by_mob else { return };
+    // `Bee$BeeHurtByOtherGoal.alertOther`: only when this bee can see the attacker.
+    if m.kind == MobKind::Bee && !living(level, attacker).is_some_and(|t| super::has_line_of_sight_cached(e, m, level, &t)) {
+        return;
+    }
     let r = m.attrs.value(Attr::FollowRange);
     let p = e.position();
     let area = crate::math::Aabb::new(p.x, p.y, p.z, p.x + 1.0, p.y + 1.0, p.z + 1.0).inflate(r, 10.0, r);

@@ -67,7 +67,7 @@ const FLOWERS: [(&str, &str, f32); 17] = [
 ];
 
 /// `SuspiciousEffectHolder.tryGet(item).getSuspiciousEffects()`.
-fn flower_effects(stack: &ItemStack) -> Option<Vec<StewEffect>> {
+pub(crate) fn flower_effects(stack: &ItemStack) -> Option<Vec<StewEffect>> {
     let name = mob::item_name(stack);
     let &(_, effect, seconds) = FLOWERS.iter().find(|(f, _, _)| *f == name)?;
     let effect = kiln_data::builtin_id("minecraft:mob_effect", effect)?;

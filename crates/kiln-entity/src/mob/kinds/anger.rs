@@ -30,6 +30,7 @@ pub fn get(m: &MobData) -> Option<&Anger> {
         MobKind::Wolf => ext::state::<super::wolf::State>(m).map(|s| &s.anger),
         MobKind::IronGolem => ext::state::<super::iron_golem::State>(m).map(|s| &s.anger),
         MobKind::PolarBear => ext::state::<super::polar_bear::State>(m).map(|s| &s.anger),
+        MobKind::Bee => ext::state::<super::bee::State>(m).map(|s| &s.anger),
         _ => None,
     }
 }
@@ -39,6 +40,7 @@ pub fn get_mut(m: &mut MobData) -> Option<&mut Anger> {
         MobKind::Wolf => ext::state_mut::<super::wolf::State>(m).map(|s| &mut s.anger),
         MobKind::IronGolem => ext::state_mut::<super::iron_golem::State>(m).map(|s| &mut s.anger),
         MobKind::PolarBear => ext::state_mut::<super::polar_bear::State>(m).map(|s| &mut s.anger),
+        MobKind::Bee => ext::state_mut::<super::bee::State>(m).map(|s| &mut s.anger),
         _ => None,
     }
 }
@@ -117,6 +119,10 @@ impl CustomGoal for AngryAtPlayerGoal {
         TARGET
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        // `Bee$BeeBecomeAngryTargetGoal.beeCanTarget`.
+        if m.kind == MobKind::Bee && !(super::bee::is_angry(m, level) && !super::bee::has_stung(m)) {
+            return false;
+        }
         if e.random.next_int_bounded(reduced_tick_delay(10)) != 0 {
             return false;
         }
@@ -126,6 +132,12 @@ impl CustomGoal for AngryAtPlayerGoal {
         self.target.is_some()
     }
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        if m.kind == MobKind::Bee {
+            if !(super::bee::is_angry(m, level) && !super::bee::has_stung(m)) || m.target.is_none() {
+                self.target = None;
+                return false;
+            }
+        }
         goals::continue_target(e, m, level, self.target, true, &mut self.unseen, 60)
     }
     fn start(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {

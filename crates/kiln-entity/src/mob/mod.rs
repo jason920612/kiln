@@ -157,6 +157,8 @@ pub enum MobKind {
     WanderingTrader,
     // -- wp32: parrots
     Parrot,
+    // -- wp49: bees
+    Bee,
 }
 
 /// `MobCategory`.
@@ -331,6 +333,8 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::WanderingTrader,
     // -- wp32: parrots
     MobKind::Parrot,
+    // -- wp49: bees
+    MobKind::Bee,
 ];
 
 impl MobKind {

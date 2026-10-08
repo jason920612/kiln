@@ -141,6 +141,26 @@ pub fn hover_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v
     })
 }
 
+/// `AirRandomPos.getPosTowards(mob, h, v, y, target, angle)`: `AirAndWaterRandomPos`' spot toward
+/// `target`, unless it is in water.
+#[allow(clippy::too_many_arguments)]
+pub fn air_pos_towards(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, y: i32, target: Vec3, angle: f64) -> Option<Vec3> {
+    let d = target - e.position();
+    let restrict = mob_restricted(e, m.home, h as f64);
+    generate(e, m, level, |e| {
+        let dir = direction_within_radians(e, 0.0, h as f64, v, y, d.x, d.z, angle)?;
+        let p = toward_home(e, h as f64, dir, m.home);
+        if outside_limits(level, p) || (restrict && !within_home(m.home, p)) {
+            return None;
+        }
+        let p = move_up_out_of_solid_raw(level, p);
+        if has_malus(m, level, p) || crate::physics::fluid_state(level.block(p)).kind.is_water() {
+            return None;
+        }
+        Some(p)
+    })
+}
+
 /// `AirAndWaterRandomPos.getPos(mob, h, v, flyingHeight, x, z, angle)`.
 #[allow(clippy::too_many_arguments)]
 pub fn air_and_water_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, flying_height: i32, dx: f64, dz: f64, angle: f64) -> Option<Vec3> {

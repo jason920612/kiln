@@ -97,6 +97,8 @@ pub mod nautilus;
 pub mod wandering_trader;
 // -- wp32: parrots
 pub mod parrot;
+// -- wp49: bees
+pub mod bee;
 
 
 /// The behaviour of an extension type; `None` for the shared-code types.
@@ -196,6 +198,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::WanderingTrader => &wandering_trader::KIND,
         // -- wp32: parrots
         MobKind::Parrot => &parrot::KIND,
+        MobKind::Bee => &bee::KIND,
 
         _ => return None,
     })

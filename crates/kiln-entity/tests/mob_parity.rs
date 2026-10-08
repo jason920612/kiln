@@ -43,6 +43,7 @@ fn goal_class(name: &'static str, kind: MobKind) -> &'static str {
         "melee" => match kind {
             k if k.is_zombie() => "ZombieAttackGoal",
             MobKind::Spider | MobKind::CaveSpider => "SpiderAttackGoal",
+            MobKind::Bee => "BeeAttackGoal",
             // `AbstractSkeleton$1` (an anonymous class: no simple name).
             k if k.is_skeleton() => "",
             _ => "MeleeAttackGoal",
@@ -53,7 +54,13 @@ fn goal_class(name: &'static str, kind: MobKind) -> &'static str {
         "restrict_sun" => "RestrictSunGoal",
         "flee_sun" => "FleeSunGoal",
         "turtle_egg" => "ZombieAttackTurtleEggGoal",
-        "hurt_by" => "HurtByTargetGoal",
+        "hurt_by" => {
+            if kind == MobKind::Bee {
+                "BeeHurtByOtherGoal"
+            } else {
+                "HurtByTargetGoal"
+            }
+        }
         "nearest_attackable" => {
             if matches!(kind, MobKind::Spider | MobKind::CaveSpider) {
                 "SpiderTargetGoal"

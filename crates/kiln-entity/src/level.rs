@@ -263,6 +263,13 @@ pub enum DamageKind {
     Named(&'static str),
 }
 
+/// What a bee needs to know of a beehive or bee nest block entity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BeehiveView {
+    pub full: bool,
+    pub fire_nearby: bool,
+}
+
 /// Side effects the simulation carries out or broadcasts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
@@ -284,6 +291,8 @@ pub enum Event {
     /// Vanilla block side effects of an entity inside a block that this crate does not
     /// simulate (hoppers, pressure plates, tripwires, portals, detector rails).
     EntityInsideBlock { pos: BlockPos, state: u16, entity: i32 },
+    /// `BeehiveBlockEntity.addOccupant(bee)`: bee `bee` goes into the hive at `hive`.
+    BeeEntersHive { bee: i32, hive: BlockPos },
     /// A projectile hit a block (`Block.onProjectileHit`) or an entity: damage, egg hatching,
     /// pearl teleports and potion splashes are the simulation's.
     ProjectileHit { projectile: i32, projectile_type: &'static str, owner: Option<i32>, hit: crate::projectile::Hit },
@@ -785,6 +794,22 @@ pub trait EntityLevel {
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
         let _ = pos;
         15 - sky_darken
+    }
+
+    /// The beehive or bee nest block entity at `pos`, if there is one.
+    fn beehive_at(&self, pos: BlockPos) -> Option<BeehiveView> {
+        let _ = pos;
+        None
+    }
+
+    /// The `minecraft:gameplay/bees_stay_in_hive` environment attribute.
+    fn bees_stay_in_hive(&self) -> bool {
+        false
+    }
+
+    /// `Level.isRaining` (the level's rain level over 0.2).
+    fn is_raining(&self) -> bool {
+        false
     }
 
     /// The sky light at `pos`.
