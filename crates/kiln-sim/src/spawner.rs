@@ -957,7 +957,6 @@ fn no_collision(level: &RegionLevel, pos: [f64; 3], w: f32, h: f32) -> bool {
 /// feature of a farther chunk reaches it).
 pub(crate) fn initial_mobs(level: &RegionLevel, pending: &[ChunkPos], spawns: &mut Vec<Spawn>) {
     let env = level.env;
-    crate::testing::trace(&format!("initial_mobs {} pending, spawn_mobs {} table {}", pending.len(), env.mobs.spawn_mobs, env.spawn_table.is_some()));
     if !env.mobs.spawn_mobs {
         return;
     }
@@ -1023,8 +1022,6 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
     // `region.getBiome(center.getWorldPosition().atY(region.getMaxY()))`.
     let biome = zoomed_biome_at(level, min_x, env.min_y + env.height - 1, min_z);
     let list = table.list(biome, Category::Creature);
-    let name = |b: u16| kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome").map_or("?", |(_, e)| e[b as usize]);
-    crate::testing::trace(&format!("initial_chunk {c:?} biome {biome} {} mid {} creatures {} p {}", name(biome), name(zoomed_biome_at(level, min_x + 8, 70, min_z + 8)), list.len(), table.world_gen_probability(biome)));
     if list.is_empty() {
         return;
     }
@@ -1037,8 +1034,6 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
         Some(p) => Box::new(p.world().generator.region_random.at(min_x, 0, min_z)),
         None => Box::new(LegacyRandom::new(env.seed ^ ((c.x as i64) << 32) ^ c.z as i64)),
     };
-    let top_y = env.min_y + env.height - 1;
-    let _ = top_y;
     let moon = moon_brightness(env.mobs.day_time);
     let mut made = 0u64;
     while r.next_float() < probability {
@@ -1059,14 +1054,6 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
                     continue;
                 };
                 let top = top_non_colliding(level, kind, x, z);
-                let dbg = std::env::var_os("KILN_INITIAL_DEBUG").is_some();
-                if dbg {
-                    use std::io::Write as _;
-                    let line = format!("INITIAL chunk ({}, {}) {:?} at {x},{z} top {top:?} placement {} below {} at {} sky {} bright {}", c.x, c.z, kind, placement_ok(level, top, kind), kiln_data::blocks_types::block_of(level.block(top.below())).name, kiln_data::blocks_types::block_of(level.block(top)).name, level.raw_brightness(top, 0), level.raw_brightness(top.above(), 0)) + &format!(" above {} above2 {}", kiln_data::blocks_types::block_of(level.block(top.above())).name, kiln_data::blocks_types::block_of(level.block(top.above().above())).name);
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/initial_debug.txt") {
-                        let _ = writeln!(f, "{line}");
-                    }
-                }
                 if placement_ok(level, top, kind) {
                     let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
                     let w = t.width as f64;

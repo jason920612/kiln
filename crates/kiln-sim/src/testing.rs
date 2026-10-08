@@ -362,14 +362,6 @@ pub type InitialMob = ((i32, i32), &'static str, [f64; 3], f32);
 /// The log of [`log_initial_mobs`].
 pub(crate) static INITIAL_LOG: Mutex<Option<Vec<InitialMob>>> = Mutex::new(None);
 
-/// Debug trace into a file (the test harness swallows the tick threads' output).
-pub(crate) fn trace(line: &str) {
-    use std::io::Write as _;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/kiln_trace.txt") {
-        let _ = writeln!(f, "{line}");
-    }
-}
-
 /// Starts (or stops, with `false`) logging the mobs chunk generation makes; [`take_initial_mobs`] gives them.
 pub fn log_initial_mobs(on: bool) {
     *INITIAL_LOG.lock().unwrap() = on.then(Vec::new);

@@ -113,7 +113,6 @@ impl RegionBlocks {
         self.sculk.chunk_loaded(pos, chunk);
         self.hearts.chunk_loaded(pos, chunk);
         self.spawners.chunk_loaded(pos, chunk);
-        crate::testing::trace(&format!("chunk_loaded {pos:?} original_mobs {}", chunk.original_mobs));
         if std::mem::take(&mut chunk.original_mobs) {
             self.initial_mobs.push(pos);
         }
