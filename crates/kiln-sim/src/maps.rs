@@ -1036,10 +1036,10 @@ mod tests {
         assert_eq!(store.free_id(), 0);
         let mut data = MapData::create_fresh(300.0, -200.0, 2, true, false, "minecraft:overworld");
         data.set_color(5, 6, 77);
-        data.banners.insert("banner-1,2,3".to_owned(), Banner { pos: [1, 2, 3], color: 14, name: Some(Tag::String("Home".into())) });
-        data.add_decoration(BANNER_FIRST + 14, None, "banner-1,2,3", 1.0, 3.0, 180.0, Some(Tag::String("Home".into())));
-        data.frames.insert("frame-9,9,9".to_owned(), Frame { pos: [9, 9, 9], rotation: 90, entity_id: 12 });
-        data.add_decoration(FRAME, None, "frame-12", 9.0, 9.0, 90.0, None);
+        data.banners.insert("banner-300,70,-200".to_owned(), Banner { pos: [300, 70, -200], color: 14, name: Some(Tag::String("Home".into())) });
+        data.add_decoration(BANNER_FIRST + 14, None, "banner-300,70,-200", 300.0, -200.0, 180.0, Some(Tag::String("Home".into())));
+        data.frames.insert("frame-310,70,-190".to_owned(), Frame { pos: [310, 70, -190], rotation: 90, entity_id: 12 });
+        data.add_decoration(FRAME, None, "frame-12", 310.0, -190.0, 90.0, None);
         let want = data.to_nbt();
         store.set(0, data);
         store.save();
