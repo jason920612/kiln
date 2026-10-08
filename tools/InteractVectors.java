@@ -800,6 +800,14 @@ public class InteractVectors {
         c.cmd(full);
         c.step(attackEntity(2.5, 100, 0.5)).step(attackEntity(2.5, 100, 0.5));
         out.add(c);
+        c = new Case("stand_hit_waiting").stands();
+        c.cmd(full);
+        c.step(attackEntity(2.5, 100, 0.5)).step(op("op", "wait", "ticks", 3)).step(attackEntity(2.5, 100, 0.5)).step(op("op", "wait", "ticks", 6)).step(attackEntity(2.5, 100, 0.5));
+        out.add(c);
+        c = new Case("stand_hit_waiting_long").stands();
+        c.cmd(full);
+        c.step(attackEntity(2.5, 100, 0.5)).step(op("op", "wait", "ticks", 6)).step(attackEntity(2.5, 100, 0.5));
+        out.add(c);
         c = new Case("stand_hit_once").stands();
         c.cmd(full);
         c.step(attackEntity(2.5, 100, 0.5));
@@ -1472,7 +1480,11 @@ public class InteractVectors {
         return out;
     }
 
+    /** The game time a case begins at (`lastHit` of an armor stand is compared with it). */
+    static final long START_TIME = 100;
+
     static void setup(ServerPlayer p, Case c) throws Exception {
+        ((net.minecraft.world.level.storage.ServerLevelData) server.overworld().getLevelData()).setGameTime(START_TIME);
         p.setGameMode(GameType.byName(c.gameMode));
         call(p.connection, "markClientLoaded");
         p.snapTo(c.pos[0], c.pos[1], c.pos[2], c.yaw, c.pitch);
@@ -1691,6 +1703,11 @@ public class InteractVectors {
                 }
             }
             case "command" -> command((String) s.get("command"));
+            // wp49: the game time moves on (the level itself does not tick here).
+            case "wait" -> {
+                var data = (net.minecraft.world.level.storage.ServerLevelData) level.getLevelData();
+                data.setGameTime(data.getGameTime() + (int) s.get("ticks"));
+            }
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
             case "cooldown" -> p.getCooldowns().addCooldown(stack((String) s.get("item")), (int) s.get("ticks"));
             case "lock_sign" -> {
@@ -1773,6 +1790,7 @@ public class InteractVectors {
         command("kill @e[type=minecraft:item_frame]");
         command("kill @e[type=minecraft:glow_item_frame]");
         command("kill @e[type=minecraft:painting]");
+        command("kill @e[type=minecraft:armor_stand]");
         command("kill @e[type=minecraft:item]");
         Map<String, Object> line = new LinkedHashMap<>();
         line.put("name", c.name);
