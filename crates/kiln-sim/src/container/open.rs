@@ -868,18 +868,25 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
     if touched {
         c.mark_changed();
         // The chunk's copy is what the update packet clients get is made of (a decorated pot shows its sherds).
-        let (type_id, saved) = (c.type_id, c.save());
-        c.dirty = false;
-        let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
-        if let Some(chunk) = level.cells.chunk_mut(kiln_world::ChunkPos::of_block(pos.x, pos.z))
-            && chunk.block_entity(x, pos.y, z).is_some_and(|be| be.kind == type_id)
-        {
-            let mut be = kiln_world::block_entity::BlockEntity::new(type_id);
-            if let (Tag::Compound(out), Tag::Compound(fields)) = (&mut be.nbt, saved) {
-                out.extend(fields);
-            }
-            chunk.set_block_entity(x, pos.y, z, be);
+        sync_chunk_copy(level, pos);
+    }
+}
+
+/// Writes the live block entity at `pos` into its chunk (the copy that is saved and sent to clients).
+pub(crate) fn sync_chunk_copy(level: &mut RegionLevel, pos: BlockPos) {
+    use kiln_world::Blocks as _;
+    let Some(c) = level.blocks.containers.get_mut(pos) else { return };
+    let (type_id, saved) = (c.type_id, c.save());
+    c.dirty = false;
+    let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
+    if let Some(chunk) = level.cells.chunk_mut(kiln_world::ChunkPos::of_block(pos.x, pos.z))
+        && chunk.block_entity(x, pos.y, z).is_some_and(|be| be.kind == type_id)
+    {
+        let mut be = kiln_world::block_entity::BlockEntity::new(type_id);
+        if let (Tag::Compound(out), Tag::Compound(fields)) = (&mut be.nbt, saved) {
+            out.extend(fields);
         }
+        chunk.set_block_entity(x, pos.y, z, be);
     }
 }
 

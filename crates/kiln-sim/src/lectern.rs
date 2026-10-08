@@ -46,6 +46,7 @@ pub(crate) fn use_item_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
     c.page = 0;
     c.mark_changed();
     kiln_blocks::behaviour::lectern::reset_book_state(level, pos, s, true);
+    crate::container::open::sync_chunk_copy(level, pos);
     level.effect(Effect::Sound { pos, sound: "minecraft:item.book.put", volume: 1.0, pitch: 1.0 });
     Some(true)
 }
@@ -60,12 +61,11 @@ pub(crate) fn after_menu(level: &mut RegionLevel, pos: BlockPos) {
         c.page = 0;
     }
     let s = level.block(pos);
-    if std::env::var_os("KILN_LEC_DEBUG").is_some() {
-        eprintln!("after_menu {pos:?} state {s} turned {turned} gone {gone}");
-    }
     if logic::block_class(s) != C::LecternBlock {
         return;
     }
+    // The chunk keeps what the lectern holds now.
+    crate::container::open::sync_chunk_copy(level, pos);
     if gone && state::get_bool(s, "has_book") {
         kiln_blocks::behaviour::lectern::reset_book_state(level, pos, s, false);
     } else if turned {

@@ -661,11 +661,21 @@ public class InteractVectors {
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
         // The menu: opened, pages turned, jumped to, the book taken.
-        c = blockCase("lectern_open_and_turn", with).menus().custom("minecraft:interact_with_lectern");
-        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 2)).step(op("op", "menu_button", "button", 1)).step(op("op", "menu_close"));
+        // (Kiln's level ticks between the steps and the pulse ends two ticks after the turn; the recorded level stands
+        // still: a turn is followed by at most one more step.)
+        c = blockCase("lectern_open_and_next", with).menus().custom("minecraft:interact_with_lectern");
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 2)).step(op("op", "menu_close"));
         out.add(c);
-        c = blockCase("lectern_jump_and_clamp", with).menus();
-        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 103)).step(op("op", "menu_button", "button", 2)).step(op("op", "menu_button", "button", 100));
+        c = blockCase("lectern_open_and_previous", with).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 1)).step(op("op", "menu_close"));
+        out.add(c);
+        for (int jump : new int[] {100, 103, 104, 150}) {
+            c = blockCase("lectern_jump_" + jump, with).menus();
+            c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", jump));
+            out.add(c);
+        }
+        c = blockCase("lectern_next_past_the_end", with.replace("Page:1", "Page:4")).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 2));
         out.add(c);
         c = blockCase("lectern_first_page_back", with.replace("Page:1", "Page:0")).menus();
         c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 1));
