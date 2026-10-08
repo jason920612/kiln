@@ -36,6 +36,12 @@ fn container_json(sim: &Sim, pos: BlockPos) -> Value {
         crate::container::BeKind::Furnace(_) => {
             m.insert("furnace".into(), json!([c.lit_remaining, c.lit_total, c.cook_timer, c.cook_total]));
         }
+        // A campfire: the four timers, then the four totals.
+        crate::container::BeKind::Campfire => {
+            let mut v: Vec<i32> = c.cooking.to_vec();
+            v.extend(c.cooking_total);
+            m.insert("campfire".into(), json!(v));
+        }
         // The song player: playing, ticks since the song started.
         crate::container::BeKind::Jukebox => {
             m.insert("jukebox".into(), json!([i32::from(c.song.is_some()), c.song.map_or(0, |s| s.1)]));
@@ -66,6 +72,24 @@ fn cart_json(sim: &Sim, pos: BlockPos) -> Value {
         }
     }
     json!({})
+}
+
+/// The item entities lying in the scenario's area: [item, total count], sorted by item
+/// (`ContainerVectors.dropsState`).
+fn drops_json(sim: &Sim) -> Value {
+    let mut sums: std::collections::BTreeMap<String, i64> = Default::default();
+    let (lo, hi) = ([BASE[0] as f64 - 3.0, BASE[1] as f64 - 3.0, BASE[2] as f64 - 3.0], [BASE[0] as f64 + 7.0, BASE[1] as f64 + 7.0, BASE[2] as f64 + 7.0]);
+    for region in sim.dims[OVERWORLD_ID].regions.iter() {
+        for e in region.part().0.list.iter().filter(|e| !e.removed) {
+            let Some(phys) = e.phys.as_deref() else { continue };
+            let kiln_entity::EntityKind::Item(d) = &phys.kind else { continue };
+            let bb = phys.bounding_box();
+            if bb.min_x < hi[0] && bb.max_x > lo[0] && bb.min_y < hi[1] && bb.max_y > lo[1] && bb.min_z < hi[2] && bb.max_z > lo[2] {
+                *sums.entry(d.stack.item_name().to_owned()).or_default() += d.stack.count() as i64;
+            }
+        }
+    }
+    Value::Array(sums.into_iter().map(|(k, v)| json!([k, v])).collect())
 }
 
 /// A comparator block entity's `OutputSignal` (-1 without one).
@@ -162,6 +186,13 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             compared += 1;
             if got != want["carts"][i] {
                 errors.push(format!("tick {tick} cart {i} {p:?}: kiln {got}, vanilla {}", want["carts"][i]));
+            }
+        }
+        if line["drops"].as_bool() == Some(true) {
+            let got = drops_json(&sim);
+            compared += 1;
+            if got != want["drops"] {
+                errors.push(format!("tick {tick} dropped items: kiln {got}, vanilla {}", want["drops"]));
             }
         }
         for (i, &p) in comparators.iter().enumerate() {

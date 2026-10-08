@@ -56,6 +56,8 @@ public class ContainerVectors {
         List<int[]> comparators = new ArrayList<>();
         /** Container minecarts watched by the block they stand in. */
         List<int[]> carts = new ArrayList<>();
+        /** The item entities lying about (by item, with the sum of their counts) are recorded every tick. */
+        boolean watchDrops;
 
         Scenario(String name, int ticks) {
             this.name = name;
@@ -98,6 +100,11 @@ public class ContainerVectors {
             return block(x, y, z, "minecraft:comparator[facing=" + facing + "]");
         }
 
+        Scenario drops() {
+            watchDrops = true;
+            return this;
+        }
+
         Scenario at(int tick, String command) {
             actions.computeIfAbsent(tick, k -> new ArrayList<>()).add(command);
             return this;
@@ -117,6 +124,7 @@ public class ContainerVectors {
             m.put("states", positions(states));
             m.put("comparators", positions(comparators));
             m.put("carts", positions(carts));
+            m.put("drops", watchDrops);
             return m;
         }
 
@@ -248,6 +256,7 @@ public class ContainerVectors {
                 .comparator(0, -1, 1, "north"));
         cartScenarios(out);
         jukeboxScenarios(out);
+        campfireScenarios(out);
         return out;
     }
 
@@ -321,6 +330,34 @@ public class ContainerVectors {
         out.add(new Scenario("jukebox_empty_comparator", 8)
                 .container(0, 0, 1, "minecraft:jukebox")
                 .comparator(0, 0, 0, "south"));
+    }
+
+    /** wp49: campfires cooking food, cooling down, going out, dropping what they hold. */
+    static void campfireScenarios(List<Scenario> out) {
+        // Four foods on a lit fire, each with its own time left; what is done drops as the recipe's result.
+        String cf = "minecraft:campfire[facing=north,lit=true,waterlogged=false,signal_fire=false]";
+        String four = "{Items:[{Slot:0b,id:\"minecraft:beef\",count:1},{Slot:1b,id:\"minecraft:potato\",count:1},{Slot:2b,id:\"minecraft:porkchop\",count:1},{Slot:3b,id:\"minecraft:kelp\",count:1}],"
+                + "CookingTimes:[I;0,5,10,15],CookingTotalTimes:[I;30,30,30,30]}";
+        out.add(new Scenario("campfire_cooks_four", 45).container(0, 0, 0, cf + four).state(0, 0, 0).drops());
+        // A food without a campfire recipe comes back out as it is.
+        out.add(new Scenario("campfire_unknown_food_comes_back", 20).container(0, 0, 0, cf
+                + "{Items:[{Slot:0b,id:\"minecraft:stone\",count:1}],CookingTimes:[I;8,0,0,0],CookingTotalTimes:[I;10,0,0,0]}").drops());
+        // An unlit campfire lets the cooking go back two ticks at a time (never below nothing).
+        out.add(new Scenario("campfire_unlit_cools_down", 14).container(0, 0, 0, "minecraft:campfire[facing=north,lit=false,waterlogged=false,signal_fire=false]"
+                + "{Items:[{Slot:0b,id:\"minecraft:beef\",count:1},{Slot:2b,id:\"minecraft:potato\",count:1}],CookingTimes:[I;9,0,4,0],CookingTotalTimes:[I;100,100,100,100]}"));
+        // Lit, then put out half way, then the same food on a lit fire again.
+        out.add(new Scenario("campfire_put_out_and_relit", 40).container(0, 0, 0, cf
+                + "{Items:[{Slot:1b,id:\"minecraft:chicken\",count:1}],CookingTimes:[I;0,0,0,0],CookingTotalTimes:[I;0,30,0,0]}").state(0, 0, 0)
+                .at(10, "setblock ~0 ~0 ~0 minecraft:campfire[facing=north,lit=false,waterlogged=false,signal_fire=false]{Items:[{Slot:1b,id:\"minecraft:chicken\",count:1}],CookingTimes:[I;0,10,0,0],CookingTotalTimes:[I;0,30,0,0]}")
+                .at(22, "setblock ~0 ~0 ~0 minecraft:campfire[facing=north,lit=true,waterlogged=false,signal_fire=false]{Items:[{Slot:1b,id:\"minecraft:chicken\",count:1}],CookingTimes:[I;0,20,0,0],CookingTotalTimes:[I;0,30,0,0]}")
+                .drops());
+        // Soul campfires cook too.
+        out.add(new Scenario("soul_campfire_cooks", 20).container(0, 0, 0, "minecraft:soul_campfire[facing=east,lit=true,waterlogged=false,signal_fire=false]"
+                + "{Items:[{Slot:3b,id:\"minecraft:cod\",count:1}],CookingTimes:[I;0,0,0,15],CookingTotalTimes:[I;0,0,0,18]}").drops());
+        // A campfire that is broken drops its food.
+        out.add(new Scenario("campfire_broken_drops_food", 10).container(0, 0, 0, cf
+                + "{Items:[{Slot:0b,id:\"minecraft:salmon\",count:1},{Slot:2b,id:\"minecraft:mutton\",count:1}],CookingTimes:[I;1,1,1,1],CookingTotalTimes:[I;600,600,600,600]}")
+                .at(3, "setblock ~0 ~0 ~0 minecraft:air").drops());
     }
 
     /** Hoppers and container minecarts exchanging items (the minecarts hang in the air, at rest). */
@@ -539,6 +576,19 @@ public class ContainerVectors {
 
     static Map<String, Object> containerState(BlockEntity be) throws Exception {
         Map<String, Object> m = new LinkedHashMap<>();
+        // wp49: a campfire is no Container: its four spots and their timers.
+        if (be instanceof net.minecraft.world.level.block.entity.CampfireBlockEntity cf) {
+            List<Object> items = new ArrayList<>();
+            var list = cf.getItems();
+            for (int i = 0; i < list.size(); i++) {
+                ItemStack st = list.get(i);
+                if (!st.isEmpty()) items.add(List.of(i, BuiltInRegistries.ITEM.getKey(st.getItem()).toString(), st.getCount()));
+            }
+            m.put("items", items);
+            int[] times = (int[]) field(be, "cookingTimes"), totals = (int[]) field(be, "cookingTotalTimes");
+            m.put("campfire", List.of(times[0], times[1], times[2], times[3], totals[0], totals[1], totals[2], totals[3]));
+            return m;
+        }
         if (!(be instanceof Container c)) return m;
         List<Object> items = new ArrayList<>();
         for (int i = 0; i < c.getContainerSize(); i++) {
@@ -556,6 +606,18 @@ public class ContainerVectors {
                     field(be, "cookingTotalTime")));
         }
         return m;
+    }
+
+    /** The item entities in the scenario's area: [item, total count], sorted by item. */
+    static List<Object> dropsState(ServerLevel level) {
+        TreeMap<String, Integer> sums = new TreeMap<>();
+        var box = new net.minecraft.world.phys.AABB(BASE[0] - 3, BASE[1] - 3, BASE[2] - 3, BASE[0] + 7, BASE[1] + 7, BASE[2] + 7);
+        for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, box)) {
+            sums.merge(BuiltInRegistries.ITEM.getKey(e.getItem().getItem()).toString(), e.getItem().getCount(), Integer::sum);
+        }
+        List<Object> out = new ArrayList<>();
+        for (var en : sums.entrySet()) out.add(List.of(en.getKey(), en.getValue()));
+        return out;
     }
 
     /** The slots of the container minecart standing in the block (empty when there is none). */
@@ -599,6 +661,7 @@ public class ContainerVectors {
                 List<Object> carts = new ArrayList<>();
                 for (int[] p : s.carts) carts.add(cartState(level, p));
                 tick.put("carts", carts);
+                if (s.watchDrops) tick.put("drops", dropsState(level));
                 List<Object> cmp = new ArrayList<>();
                 for (int[] p : s.comparators) {
                     cmp.add(level.getBlockEntity(pos(p)) instanceof ComparatorBlockEntity c ? c.getOutputSignal() : -1);
