@@ -191,6 +191,26 @@ impl Pipeline {
         Tag::Compound(vec![("References".into(), Tag::Compound(references)), ("starts".into(), Tag::Compound(starts))])
     }
 
+    /// `ChunkGenerator.findNearestMapStructure(level, structures, origin, radius, false)`:
+    /// the nearest start of any of the structures (by name) around `origin`, with the
+    /// structure's name. `None` when structures are off, none of the names is a structure
+    /// that can generate here, or nothing is within `radius`.
+    pub fn find_nearest_structure(&self, gs: &mut GenScratch, names: &[String], origin: [i32; 3], radius: i32) -> Option<([i32; 3], String)> {
+        let w = &self.world;
+        if !w.generate_structures {
+            return None;
+        }
+        let wanted: Vec<usize> = names.iter().filter_map(|n| w.structures.id(n)).collect();
+        let found = w.structures.find_nearest(
+            &w.generator,
+            &mut |x, z| self.starts.get(&w.structures, &w.generator, &mut gs.structures, x, z),
+            &wanted,
+            origin,
+            radius,
+        )?;
+        Some((found.pos, w.structures.structures[found.structure].name.clone()))
+    }
+
     /// Makes sure the chunk is at TERRAIN or later.
     fn terrain(&self, gs: &mut GenScratch, x: i32, z: i32) {
         let mut s = self.state.lock().unwrap();

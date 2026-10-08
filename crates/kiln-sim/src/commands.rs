@@ -1773,6 +1773,12 @@ impl Host for Sim {
         Some(kiln_command::host::Located { pos, id })
     }
 
+    fn locate_structure(&mut self, dimension: &str, origin: [i32; 3], structures: &[String]) -> Option<kiln_command::host::Located> {
+        let d = crate::dim_id(dimension)?;
+        let (pos, id) = Sim::locate_structure(self, d, origin, structures)?;
+        Some(kiln_command::host::Located { pos, id })
+    }
+
     fn locate_poi(&mut self, dimension: &str, origin: [i32; 3], matches: &dyn Fn(&str) -> bool) -> Option<kiln_command::host::Located> {
         let d = crate::dim_id(dimension)?;
         let (pos, id) = Sim::locate_poi(self, d, origin, matches)?;
@@ -1815,9 +1821,9 @@ impl Host for Sim {
             Placement::Template { id, rotation, mirror, integrity, seed, strict } => {
                 self.place_template(dim, id.as_str(), pos, *rotation, *mirror, *integrity, *seed, *strict)
             }
-            Placement::Feature { .. } => Err(CommandError::unsupported("place feature")),
-            Placement::Jigsaw { .. } => Err(CommandError::unsupported("place jigsaw")),
-            Placement::Structure(_) => Err(CommandError::unsupported("place structure")),
+            Placement::Feature { id, .. } => self.place_generated_feature(dim, id.as_ref().map(|i| i.as_str()), pos),
+            Placement::Jigsaw { pool, target, max_depth } => self.place_generated_jigsaw(dim, pool.as_str(), target.as_str(), *max_depth, pos),
+            Placement::Structure(id) => self.place_generated_structure(dim, id.as_str(), pos),
         }
     }
 }

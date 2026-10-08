@@ -9,6 +9,7 @@ pub mod container;
 pub mod farming;
 pub mod copper;
 pub mod growth;
+pub mod end_portal;
 pub mod misc;
 pub mod misc2;
 pub mod misc3;

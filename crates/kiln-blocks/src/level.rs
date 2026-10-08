@@ -82,6 +82,9 @@ pub enum Effect {
     /// `levelEvent(id, pos, data)`: particles and sounds (1501 lava fizz, 1502 redstone torch
     /// burnout, 2001 block destroyed with data = state id, ...).
     LevelEvent { id: i32, pos: BlockPos, data: i32 },
+    /// `globalLevelEvent(id, pos, data)`: heard by every player of the level (1038 an end portal
+    /// opening).
+    GlobalLevelEvent { id: i32, pos: BlockPos, data: i32 },
     /// A sound event (`minecraft:block.lever.click`, ...) at the block's center.
     Sound { pos: BlockPos, sound: &'static str, volume: f32, pitch: f32 },
     /// A sound the acting player's client plays itself (`level.playSound(player, ...)`):

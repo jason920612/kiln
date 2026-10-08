@@ -128,6 +128,7 @@ public class EntityVectors {
         Scenarios.orbs(out);
         Scenarios.players(out);
         Scenarios.throwables(out);
+        Scenarios.eyes(out);
         Scenarios.arrows(out);
         Scenarios.vehicles(out);
         Scenarios.cargo(out);
@@ -426,6 +427,11 @@ public class EntityVectors {
                 setInt(net.minecraft.world.entity.projectile.FireworkRocketEntity.class, rocket, "lifetime", (Integer) spec.extra.getOrDefault("lifetime", 20));
                 e = rocket;
             }
+            case "eye_of_ender" -> {
+                var eye = new net.minecraft.world.entity.projectile.EyeOfEnder(level, spec.x, spec.y, spec.z);
+                eye.setItem(new ItemStack(net.minecraft.world.item.Items.ENDER_EYE));
+                e = eye;
+            }
             case "minecart" -> e = new net.minecraft.world.entity.vehicle.minecart.Minecart(EntityTypes.MINECART, level);
             case "furnace_minecart" -> {
                 var c = new net.minecraft.world.entity.vehicle.minecart.MinecartFurnace(EntityTypes.FURNACE_MINECART, level);
@@ -488,6 +494,10 @@ public class EntityVectors {
         if (spec.extra.containsKey("fall_distance")) e.fallDistance = ((Number) spec.extra.get("fall_distance")).doubleValue();
         if (spec.extra.containsKey("on_ground")) e.setOnGround(true);
         e.getRandom().setSeed(spec.seed);
+        // EnderEyeItem.use: signalTo after the entity exists (its random draws the eye's fate).
+        if (e instanceof net.minecraft.world.entity.projectile.EyeOfEnder eye && spec.extra.get("target") instanceof double[][] t) {
+            eye.signalTo(new Vec3(t[0][0], t[0][1], t[0][2]));
+        }
         if (!level.addFreshEntity(e)) throw new IllegalStateException("could not add " + spec.kind);
         return e;
     }
@@ -590,6 +600,15 @@ public class EntityVectors {
             }
             sb.append(',').append(inGround ? 1 : 0).append(',').append(arrow.shakeTime)
                     .append(',').append(getInt(net.minecraft.world.entity.projectile.arrow.AbstractArrow.class, arrow, "life"));
+        } else if (e instanceof net.minecraft.world.entity.projectile.EyeOfEnder eye) {
+            try {
+                var surviveField = net.minecraft.world.entity.projectile.EyeOfEnder.class.getDeclaredField("surviveAfterDeath");
+                surviveField.setAccessible(true);
+                sb.append(',').append(getInt(net.minecraft.world.entity.projectile.EyeOfEnder.class, eye, "life"))
+                        .append(',').append(surviveField.getBoolean(eye) ? 1 : 0);
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
         } else if (e instanceof net.minecraft.world.entity.projectile.FireworkRocketEntity rocket) {
             sb.append(',').append(getInt(net.minecraft.world.entity.projectile.FireworkRocketEntity.class, rocket, "life"))
                     .append(',').append(getInt(net.minecraft.world.entity.projectile.FireworkRocketEntity.class, rocket, "lifetime"));
@@ -1075,6 +1094,25 @@ class Scenarios {
             String kind = k % 3 == 2 ? "ender_pearl" : "snowball";
             s.entity(kind, rnd(r, -2, 3), rnd(r, 1.5, 5), rnd(r, -2, 3), rnd(r, -0.5, 0.5), rnd(r, -0.3, 0.6), rnd(r, -0.5, 0.5), r.nextLong());
             s.ticks(60);
+            out.add(s);
+        }
+    }
+
+    /** Eyes of ender thrown at structures near (sinking) and far (rising), over land and water, until they are gone. */
+    static void eyes(List<EntityVectors.Scenario> out) {
+        Random r = new Random(44);
+        for (int k = 0; k < 40; k++) {
+            var s = new EntityVectors.Scenario("eye/" + k, r.nextLong());
+            s.fill(-10, 0, -10, 10, 0, 10, "minecraft:stone");
+            if (k % 4 == 1) s.fill(-6, 1, -6, 6, 3, 6, "minecraft:water");
+            if (k % 5 == 3) s.fill(-3, 1, -3, 3, 4, 3, "minecraft:stone");
+            double x = rnd(r, -3, 3), y = rnd(r, 1.5, 5), z = rnd(r, -3, 3);
+            // The structure: horizontal distance 0..200, y as locate gives it (0 + offset).
+            double dist = k % 3 == 0 ? rnd(r, 0, 12) : rnd(r, 12, 200);
+            double angle = rnd(r, 0, Math.PI * 2);
+            double[][] target = {{EntityVectors.BX + x + Math.cos(angle) * dist, k % 7 == 6 ? EntityVectors.BY + 40 : 0, EntityVectors.BZ + z + Math.sin(angle) * dist}};
+            s.entity("eye_of_ender", x, y, z, 0, 0, 0, r.nextLong()).with("target", target);
+            s.ticks(88);
             out.add(s);
         }
     }
