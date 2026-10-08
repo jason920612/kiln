@@ -250,7 +250,9 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                 for e in region.part().0.list.iter().filter(|e| !e.removed && e.kind.name != "minecraft:item" && e.kind.name != "minecraft:player") {
                     if pending_entities.contains(&e.id) {
                         let r = |v: f64| (v * 10000.0).round() / 10000.0;
-                        reported.push((e.kind.name.to_owned(), r(e.pos[0]), r(e.pos[1]), r(e.pos[2])));
+                        // (A primed TNT hops a random way at its making: only where it is to a tenth is compared.)
+                        let t = |v: f64| if e.kind.name == "minecraft:tnt" { (v * 10.0).round() / 10.0 } else { r(v) };
+                        reported.push((e.kind.name.to_owned(), t(e.pos[0]), r(e.pos[1]), t(e.pos[2])));
                     }
                     if seen_entities.insert(e.id) {
                         now_new.push(e.id);

@@ -987,8 +987,10 @@ public class ContainerVectors {
                     for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.Entity.class, box)) {
                         if (e instanceof net.minecraft.world.entity.item.ItemEntity || e instanceof net.minecraft.world.entity.player.Player) continue;
                         if (seenEntities.add(e.getUUID())) {
-                            fresh.add(List.of(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(), Math.round(e.getX() * 10000) / 10000.0,
-                                    Math.round(e.getY() * 10000) / 10000.0, Math.round(e.getZ() * 10000) / 10000.0));
+                            // (A primed TNT hops a random way at its making: only where it is to a tenth is compared.)
+                            double q = e instanceof net.minecraft.world.entity.item.PrimedTnt ? 10.0 : 10000.0;
+                            fresh.add(List.of(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(), Math.round(e.getX() * q) / q,
+                                    Math.round(e.getY() * 10000) / 10000.0, Math.round(e.getZ() * q) / q));
                         }
                     }
                     fresh.sort(Comparator.<List<Object>, String>comparing(l -> (String) l.get(0)).thenComparingDouble(l -> (Double) l.get(1))

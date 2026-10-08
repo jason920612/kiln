@@ -74,7 +74,7 @@ pub(super) fn behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Bl
     Ok(match name {
         "minecraft:bone_meal" => bone_meal(level, target, stack),
         "minecraft:flint_and_steel" => flint_and_steel(level, rng, target, facing, stack),
-        "minecraft:honeycomb" => honeycomb(level, target, stack),
+        "minecraft:honeycomb" => honeycomb(level, rng, pos, facing, target, stack),
         "minecraft:glowstone" => glowstone(level, target, rng, pos, facing, stack),
         "minecraft:glass_bottle" => glass_bottle(level, rng, pos, facing, target, stack),
         "minecraft:potion" => potion(level, rng, pos, facing, target, stack),
@@ -135,9 +135,14 @@ fn flint_and_steel(level: &mut RegionLevel, rng: &mut LegacyRandom, target: Bloc
 }
 
 /// `DispenseItemBehavior$12`: honeycomb waxes the copper in front.
-fn honeycomb(level: &mut RegionLevel, target: BlockPos, mut stack: ItemStack) -> Done {
+fn honeycomb(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, target: BlockPos, mut stack: ItemStack) -> Done {
     let s = level.block(target);
-    let Some(waxed) = crate::tools::waxed(s) else { return failed(stack) };
+    let Some(waxed) = crate::tools::waxed(s) else {
+        // (`OptionalDispenseItemBehavior`'s own execute: dropped as an item, the flag still set.)
+        let one = stack.split_count(1);
+        spawn_item(level, rng, one, 6, facing, dispense_position(pos, facing));
+        return Done { stack, success: None };
+    };
     kiln_blocks::set_block_and_update(level, target, waxed);
     level.effect(Effect::LevelEvent { id: 3003, pos: target, data: 0 });
     level.effect(Effect::Sound { pos: target, sound: "minecraft:item.honeycomb.wax_on", volume: 1.0, pitch: 1.0 });
