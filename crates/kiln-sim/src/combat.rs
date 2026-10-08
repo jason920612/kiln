@@ -290,6 +290,9 @@ pub(crate) enum EntityClass {
     Unhurtable,
     /// A mob: a living target hurt through the region's entities (see [`crate::melee`]).
     Mob,
+    /// An item frame or painting (`BlockAttachedEntity.skipAttackInteraction`): the hit hurts it
+    /// for nothing, and the attack goes no further (no sound, no cooldown).
+    Hanging,
     /// A fireball or wind charge (`#minecraft:redirectable_projectile`): `Player.deflectProjectile`
     /// turns it along the attacker's look before any damage.
     Redirectable,
@@ -304,6 +307,7 @@ pub(crate) fn classify(e: &kiln_entity::Entity) -> EntityClass {
         EntityKind::FallingBlock(_) => EntityClass::NotAttackable,
         // `EndCrystal.hurtServer`: an attack breaks it.
         EntityKind::Ext(_) if e.type_name == "minecraft:end_crystal" => EntityClass::Mob,
+        EntityKind::Ext(_) if kiln_entity::ext_entity::hanging::is_hanging(e) => EntityClass::Hanging,
         EntityKind::Ext(_) if kiln_entity::spear::redirectable_projectile(e.type_name) => EntityClass::Redirectable,
         // A dying mob is attackable, but nothing hurts it (the hit sounds as no damage).
         EntityKind::Mob(_) => EntityClass::Mob,

@@ -772,6 +772,14 @@ pub(crate) fn attack(w: &mut Work<'_, '_, '_>, a: usize, target: Target, target_
             (true, f.view, f.bb)
         }
         Target::Entity { kind: EntityClass::NotAttackable, .. } => return,
+        // `Player.attack`: `target.skipAttackInteraction(this)` is true for a hanging entity, whose hit
+        // is `hurtOrSimulate(playerAttack, 0)` and no more.
+        Target::Entity { kind: EntityClass::Hanging, .. } => {
+            let p = &mut *w.players[a];
+            let source = Source { cause: Cause::PlayerAttack, attacker: Some(p.as_attacker()), direct: None, weapon: Some(p.inv.selected_item().clone()), position: None };
+            w.hurt(a, victim, 0.0, &source);
+            return;
+        }
         Target::Entity { kind, bb, type_id, pos, part } => {
             let live = w.facts(victim);
             let mut view = live.as_ref().map(|f| f.view.clone()).unwrap_or_default();

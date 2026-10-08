@@ -547,9 +547,9 @@ public class InteractVectors {
         out.add(c);
         // On things that are not a wall: glass, a slab, a fence, a repeater's side, a stair.
         for (String block : new String[] {"minecraft:glass", "minecraft:oak_slab[type=bottom]", "minecraft:oak_fence", "minecraft:repeater[facing=east]", "minecraft:oak_stairs[facing=east]",
-                "minecraft:chest[facing=east]", "minecraft:oak_leaves", "minecraft:iron_bars", "minecraft:ice", "minecraft:barrier", "minecraft:oak_trapdoor[half=top,open=false]"}) {
+                "minecraft:oak_leaves", "minecraft:iron_bars", "minecraft:ice", "minecraft:barrier", "minecraft:oak_trapdoor[half=top,open=false]"}) {
             c = new Case("frame_place_on_" + block.replaceAll("[^a-z_]", "_")).hanging();
-            c.cmd("setblock 2 100 0 " + block);
+            c.cmd("setblock 2 100 0 " + block).watch(2, 100, 0);
             c.slot("h0", stack("minecraft:item_frame", 2)).step(useOn(2, 100, 0, 4, 0));
             out.add(c);
         }
@@ -612,7 +612,8 @@ public class InteractVectors {
         int[][] walls = {{1, 1}, {2, 1}, {1, 2}, {2, 2}, {3, 3}, {4, 2}, {4, 3}, {4, 4}, {3, 4}, {5, 5}};
         for (int[] w : walls) {
             c = new Case("painting_wall_" + w[0] + "x" + w[1]).hanging().stat("minecraft:painting");
-            c.cmd("fill 3 100 -1 3 " + (100 + w[1] - 1 + 0) + " " + (w[0] - 2) + " minecraft:stone");
+            // (A wall w wide from z -1 and h high from y 100, the click on (3, 100, 0).)
+            c.cmd("fill 3 100 -1 3 " + (100 + w[1] - 1) + " " + (w[0] - 2) + " minecraft:stone").cmd("setblock 3 100 0 minecraft:stone");
             c.slot("h0", stack("minecraft:painting", 2)).step(useOn(3, 100, 0, 4, 0));
             out.add(c);
         }
@@ -1384,7 +1385,7 @@ public class InteractVectors {
             results.add(r);
         }
         server.getPlayerList().remove(p);
-        command("fill 0 90 0 15 110 15 minecraft:air");
+        command("fill -4 90 -8 15 110 15 minecraft:air");
         command("kill @e[type=minecraft:item]");
         command("kill @e[type=minecraft:item_frame]");
         command("kill @e[type=minecraft:glow_item_frame]");

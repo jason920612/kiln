@@ -82,8 +82,12 @@ pub(crate) fn use_on(p: &mut Player, level: &mut RegionLevel, clicked: BlockPos,
             survives.then_some(e)
         }
     };
-    // A failed placement (`CONSUME`) uses nothing up.
-    let Some(entity) = entity else { return true };
+    // A placement that fails (`CONSUME`) uses nothing up, but counts as a use.
+    let Some(entity) = entity else {
+        let item = p.in_hand(off_hand).item();
+        p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, item), 1);
+        return true;
+    };
     let at = entity.position();
     let sound = if let Some(f) = kiln_entity::ext_entity::get::<item_frame::ItemFrame>(&entity) {
         f.placement_sound()
