@@ -147,6 +147,14 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
     }
+    // The game time is a multiple of 20 as the scenario begins (daylight detectors work on it).
+    if line["align20"].as_bool() == Some(true) {
+        while sim.game_time() % 20 != 0 {
+            let mut inbox = Vec::new();
+            client.tick(None, &mut inbox);
+            assert!(sim.step(inbox));
+        }
+    }
     let containers: Vec<BlockPos> = line["containers"].as_array().unwrap().iter().map(pos_of).collect();
     let states: Vec<BlockPos> = line["states"].as_array().unwrap().iter().map(pos_of).collect();
     let comparators: Vec<BlockPos> = line["comparators"].as_array().unwrap().iter().map(pos_of).collect();

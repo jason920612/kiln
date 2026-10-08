@@ -261,6 +261,16 @@ pub trait Level {
         0
     }
 
+    /// `getBrightness(LightLayer.SKY, pos)`: the sky light stored at `pos` (15 above the world).
+    fn sky_light(&self, _pos: BlockPos) -> i32 {
+        0
+    }
+
+    /// The `minecraft:visual/sun_angle` attribute, in degrees (0 at noon).
+    fn sun_angle(&self) -> f32 {
+        0.0
+    }
+
     /// `LevelReader.getMaxLocalRawBrightness(pos)`.
     fn max_local_raw_brightness(&self, pos: BlockPos) -> i32 {
         self.raw_brightness(pos, self.sky_darken())

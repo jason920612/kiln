@@ -55,6 +55,8 @@ pub(crate) enum BeKind {
     Campfire,
     /// Six slots for one book each (`ChiseledBookShelfBlockEntity`).
     ChiseledBookshelf,
+    /// Holds nothing; works its signal out every 20 ticks (`DaylightDetectorBlockEntity`).
+    DaylightDetector,
 }
 
 impl BeKind {
@@ -77,6 +79,7 @@ impl BeKind {
             "jukebox" => BeKind::Jukebox,
             "campfire" => BeKind::Campfire,
             "chiseled_bookshelf" => BeKind::ChiseledBookshelf,
+            "daylight_detector" => BeKind::DaylightDetector,
             _ => return None,
         })
     }
@@ -92,18 +95,18 @@ impl BeKind {
             BeKind::Jukebox => 1,
             BeKind::Campfire => 4,
             BeKind::ChiseledBookshelf => 6,
-            BeKind::EnderChest | BeKind::Beacon => 0,
+            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector => 0,
         }
     }
 
     /// `RandomizableContainerBlockEntity`: can hold an unopened loot table.
     pub fn randomizable(self) -> bool {
-        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf)
+        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector)
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire)
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector)
     }
 
     /// `getDefaultName` translation key.
@@ -124,6 +127,7 @@ impl BeKind {
             BeKind::Jukebox => "container.jukebox",
             BeKind::Campfire => "container.campfire",
             BeKind::ChiseledBookshelf => "container.chiseled_bookshelf",
+            BeKind::DaylightDetector => "container.daylight_detector",
         }
     }
 }
@@ -769,7 +773,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
         .containers
         .map
         .iter()
-        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire))
+        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::DaylightDetector))
         .filter(|(p, _)| ticking.contains(chunk_of(**p)))
         .map(|(p, c)| (*p, c.kind))
         .collect();
@@ -788,6 +792,13 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
             BeKind::Beacon => beacon::tick(level, pos),
             BeKind::Jukebox => crate::jukebox::tick(level, pos),
             BeKind::Campfire => crate::campfire::tick(level, pos),
+            BeKind::DaylightDetector => {
+                // `DaylightDetectorBlock.tickEntity` (only where the level has sky light).
+                let s = level.block(pos);
+                if level.env.dim == crate::OVERWORLD_ID && level.env.game_time % 20 == 0 && kiln_data::block_logic::block_class(s) == kiln_data::block_logic::BlockClass::DaylightDetectorBlock {
+                    kiln_blocks::behaviour::daylight::update_signal(level, s, pos);
+                }
+            }
             _ => {
                 let mut spawns = std::mem::take(&mut level.out.spawns);
                 furnace::server_tick(level, pos, &mut spawns);

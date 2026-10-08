@@ -58,6 +58,8 @@ public class ContainerVectors {
         List<int[]> carts = new ArrayList<>();
         /** The item entities lying about (by item, with the sum of their counts) are recorded every tick. */
         boolean watchDrops;
+        /** The game time is a multiple of 20 when the first tick begins (daylight detectors work on it). */
+        boolean align20;
 
         Scenario(String name, int ticks) {
             this.name = name;
@@ -100,6 +102,11 @@ public class ContainerVectors {
             return block(x, y, z, "minecraft:comparator[facing=" + facing + "]");
         }
 
+        Scenario align20() {
+            align20 = true;
+            return this;
+        }
+
         Scenario drops() {
             watchDrops = true;
             return this;
@@ -125,6 +132,7 @@ public class ContainerVectors {
             m.put("comparators", positions(comparators));
             m.put("carts", positions(carts));
             m.put("drops", watchDrops);
+            m.put("align20", align20);
             return m;
         }
 
@@ -257,6 +265,7 @@ public class ContainerVectors {
         cartScenarios(out);
         jukeboxScenarios(out);
         campfireScenarios(out);
+        daylightScenarios(out);
         return out;
     }
 
@@ -330,6 +339,33 @@ public class ContainerVectors {
         out.add(new Scenario("jukebox_empty_comparator", 8)
                 .container(0, 0, 1, "minecraft:jukebox")
                 .comparator(0, 0, 0, "south"));
+    }
+
+    /** wp49: daylight detectors through a day, under a roof, inverted, in the rain. */
+    static void daylightScenarios(List<Scenario> out) {
+        String sensor = "minecraft:daylight_detector[inverted=false,power=0]";
+        String inverted = "minecraft:daylight_detector[inverted=true,power=0]";
+        Scenario s = new Scenario("daylight_day", 500).align20()
+                .container(0, 0, 0, sensor).state(0, 0, 0).container(2, 0, 0, inverted).state(2, 0, 0);
+        for (int i = 0; i < 25; i++) s.at(1 + 20 * i, "time set " + (i * 1000));
+        out.add(s);
+        // Between the hours too, a tick short of each sample.
+        s = new Scenario("daylight_dawn_dusk", 300).align20()
+                .container(0, 0, 0, sensor).state(0, 0, 0).container(2, 0, 0, inverted).state(2, 0, 0);
+        int[] times = {23000, 23400, 23800, 100, 200, 400, 600, 11400, 11800, 12200, 12600, 13000, 13400, 13800, 14200};
+        for (int i = 0; i < times.length; i++) s.at(1 + 20 * i, "time set " + times[i]);
+        out.add(s);
+        // A roof: no sky light under it.
+        s = new Scenario("daylight_roof", 100).align20()
+                .block(-1, 1, -1, "minecraft:stone").block(0, 1, 0, "minecraft:stone").block(1, 1, 1, "minecraft:stone")
+                .container(0, 0, 0, sensor).state(0, 0, 0).container(2, 0, 0, inverted).state(2, 0, 0)
+                .at(1, "time set 6000");
+        out.add(s);
+        // Rain and thunder darken the sky.
+        s = new Scenario("daylight_rain", 300).align20()
+                .container(0, 0, 0, sensor).state(0, 0, 0).container(2, 0, 0, inverted).state(2, 0, 0)
+                .at(1, "time set 6000").at(1, "weather rain 100000").at(160, "weather thunder 100000");
+        out.add(s);
     }
 
     /** wp49: campfires cooking food, cooling down, going out, dropping what they hold. */
@@ -648,6 +684,7 @@ public class ContainerVectors {
         // `ServerLevel.tick` checks (the manager only updates it in its own tick).
         setRunsNormally(level, true);
         try {
+            if (s.align20) while (level.getGameTime() % 20 != 0) level.tick(() -> true);
             for (int t = 1; t <= s.ticks; t++) {
                 for (String cmd : s.actions.getOrDefault(t, List.of())) command(server, absolute(cmd));
                 level.tick(() -> true);

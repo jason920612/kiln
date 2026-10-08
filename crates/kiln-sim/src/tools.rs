@@ -383,6 +383,11 @@ pub(crate) fn block_use_without_item(p: &mut Player, level: &mut RegionLevel, po
     if logic::block_class(s) == C::FlowerPotBlock {
         return pot_take(p, level, pos, s, spawns);
     }
+    // `DaylightDetectorBlock.useWithoutItem`: a player who may build turns it over.
+    if logic::block_class(s) == C::DaylightDetectorBlock && p.game_mode <= 1 {
+        kiln_blocks::behaviour::daylight::toggle(level, s, pos);
+        return true;
+    }
     if logic::block_class(s) == C::ChiseledBookShelfBlock {
         return crate::bookshelf::use_without_item(p, level, pos, s, face, cursor, spawns);
     }

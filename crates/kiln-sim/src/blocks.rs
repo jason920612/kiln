@@ -509,6 +509,15 @@ impl Level for RegionLevel<'_> {
         &self.env.rules
     }
 
+    fn sky_light(&self, pos: BlockPos) -> i32 {
+        let top = self.env.min_y + self.env.height;
+        self.cells.light_at(LightLayer::Sky, pos.x, pos.y, pos.z).map_or(if pos.y >= top { 15 } else { 0 }, i32::from)
+    }
+
+    fn sun_angle(&self) -> f32 {
+        kiln_blocks::behaviour::daylight::sun_angle(self.env.mobs.day_time)
+    }
+
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
         let top = self.env.min_y + self.env.height;
         let sky = self.cells.light_at(LightLayer::Sky, pos.x, pos.y, pos.z).map_or(if pos.y >= top { 15 } else { 0 }, i32::from);

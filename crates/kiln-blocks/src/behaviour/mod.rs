@@ -9,6 +9,7 @@ pub mod connect;
 pub mod container;
 pub mod farming;
 pub mod copper;
+pub mod daylight;
 pub mod growth;
 pub mod end_portal;
 pub mod misc;
