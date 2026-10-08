@@ -737,16 +737,16 @@ public class InteractVectors {
         out.add(c);
         // A map in an item frame: the frame is marked on the map, every player is sent the map, and the marker goes with the map.
         c = mapCase("map_frame").hanging().cmd("setblock 2 100 0 minecraft:stone");
-        c.slot("h0", stack("minecraft:map", 1));
+        c.slot("h0", stack("minecraft:map", 1)).slot("h1", stack("minecraft:item_frame", 1));
         c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20))
-                .step(op("op", "command", "command", "summon minecraft:item_frame 3 100 0 {Facing:5b}"))
+                .step(op("op", "select", "slot", 1)).step(useOn(2, 100, 0, 5, 0)).step(op("op", "select", "slot", 0))
                 .step(useEntity(3.0, 100.5, 0.5, 0, false)).step(op("op", "map_wait", "ticks", 70))
                 .step(op("op", "attack_entity", "pos", List.of(3.0, 100.5, 0.5))).step(op("op", "map_wait", "ticks", 12));
         out.add(c);
         c = mapCase("map_frame_glow_south").hanging().cmd("setblock 2 100 0 minecraft:stone").cmd("setblock 3 100 -1 minecraft:stone");
-        c.slot("h0", stack("minecraft:map", 1));
+        c.slot("h0", stack("minecraft:map", 1)).slot("h1", stack("minecraft:glow_item_frame", 1));
         c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20))
-                .step(op("op", "command", "command", "summon minecraft:glow_item_frame 3 100 0 {Facing:3b}"))
+                .step(op("op", "select", "slot", 1)).step(useOn(3, 100, -1, 3, 0)).step(op("op", "select", "slot", 0))
                 .step(useEntity(3.0, 100.5, 0.0, 0, false)).step(op("op", "map_wait", "ticks", 70))
                 .step(useEntity(3.0, 100.5, 0.0, 0, false)).step(op("op", "map_wait", "ticks", 12));
         out.add(c);
