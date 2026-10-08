@@ -235,7 +235,11 @@ impl ArmorStand {
     }
 
     fn show_breaking_particles(&self, e: &Entity, level: &mut dyn EntityLevel) {
-        level.emit(Event::LevelEvent { event: 2001, pos: Self::block_pos(e), data: kiln_data::blocks::default_state::OAK_PLANKS as i32 });
+        // `sendParticles(BlockParticleOption(BLOCK, oak_planks), x, getY(2/3), z, 10, w/4, h/4, w/4, 0.05)`.
+        let p = e.position();
+        let (w, h) = (e.width, e.height);
+        let at = Vec3::new(p.x, p.y + h as f64 * 0.6666666666666666, p.z);
+        level.block_particles("minecraft:block", at, kiln_data::blocks::default_state::OAK_PLANKS, 10, Vec3::new((w / 4.0) as f64, (h / 4.0) as f64, (w / 4.0) as f64), 0.05);
     }
 
     /// `brokenByAnything`: the break sound, the death loot, everything worn falls out.

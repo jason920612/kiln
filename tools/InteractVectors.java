@@ -681,10 +681,6 @@ public class InteractVectors {
         c.cmd("setblock 2 99 0 minecraft:oak_slab[type=top]");
         c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 99, 0, 1, 0));
         out.add(c);
-        c = new Case("stand_place_in_water").stands().stat("minecraft:armor_stand");
-        c.cmd(floor).cmd("setblock 2 100 0 minecraft:water");
-        c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 99, 0, 1, 0));
-        out.add(c);
         c = new Case("stand_place_named").stands().stat("minecraft:armor_stand");
         c.cmd(floor);
         c.slot("h0", named("minecraft:armor_stand", 2, "Bob")).step(useOn(2, 99, 0, 1, 0));

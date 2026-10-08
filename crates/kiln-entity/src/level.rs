@@ -770,6 +770,11 @@ pub trait EntityLevel {
         let _ = (pos, target, color, duration);
     }
 
+    /// `sendParticles(BlockParticleOption(particle, state), pos, count, dx, dy, dz, speed)`.
+    fn block_particles(&mut self, particle: &'static str, pos: Vec3, state: u16, count: i32, spread: Vec3, speed: f32) {
+        let _ = (particle, pos, state, count, spread, speed);
+    }
+
     /// `sendParticles(BlockParticleOption(block_crumble, state), pos, count, dx, dy, dz, 0)`.
     fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
         let _ = (pos, state, count, spread);

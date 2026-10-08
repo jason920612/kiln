@@ -1279,7 +1279,13 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
-        if let Some(p) = crumble_packet(pos, state, count, spread) {
+        if let Some(p) = crumble_packet("minecraft:block_crumble", pos, state, count, spread, 0.0) {
+            self.level.push_packet(p);
+        }
+    }
+
+    fn block_particles(&mut self, particle: &'static str, pos: Vec3, state: u16, count: i32, spread: Vec3, speed: f32) {
+        if let Some(p) = crumble_packet(particle, pos, state, count, spread, speed) {
             self.level.push_packet(p);
         }
     }
@@ -1688,15 +1694,15 @@ fn trail_packet(pos: Vec3, target: Vec3, color: i32, duration: i32) -> Option<Ne
 }
 
 /// [`EntityLevel::crumble_particles`]'s packet.
-fn crumble_packet(pos: Vec3, state: u16, count: i32, spread: Vec3) -> Option<NearPacket> {
-    let kind = kiln_data::builtin_id("minecraft:particle_type", "minecraft:block_crumble")?;
+fn crumble_packet(particle: &str, pos: Vec3, state: u16, count: i32, spread: Vec3, speed: f32) -> Option<NearPacket> {
+    let kind = kiln_data::builtin_id("minecraft:particle_type", particle)?;
     let pkt = world_fx::level_particles(&world_fx::LevelParticles {
         particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Block(state as i32) },
         override_limiter: false,
         always_show: false,
         pos: [pos.x, pos.y, pos.z],
         offset: [spread.x as f32, spread.y as f32, spread.z as f32],
-        max_speed: [0.0; 3],
+        max_speed: [speed; 3],
         count,
         randomization: world_fx::ParticleRandomization::Default,
     });
