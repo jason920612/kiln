@@ -595,8 +595,9 @@ public class ContainerVectors {
         for (String part : cmd.split(" ")) {
             if (out.length() > 0) out.append(' ');
             if (part.startsWith("~")) {
-                int d = part.length() > 1 ? Integer.parseInt(part.substring(1)) : 0;
-                out.append(BASE[axis % 3] + d);
+                double d = part.length() > 1 ? Double.parseDouble(part.substring(1)) : 0;
+                double v = BASE[axis % 3] + d;
+                out.append(v == Math.rint(v) ? String.valueOf((long) v) : Double.toString(v));
                 axis++;
             } else {
                 out.append(part);

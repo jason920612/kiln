@@ -109,9 +109,10 @@ fn absolute(cmd: &str) -> String {
     cmd.split(' ')
         .map(|part| match part.strip_prefix('~') {
             Some(d) => {
-                let v = BASE[axis % 3] + if d.is_empty() { 0 } else { d.parse::<i32>().unwrap() };
+                let v = BASE[axis % 3] as f64 + if d.is_empty() { 0.0 } else { d.parse::<f64>().unwrap() };
                 axis += 1;
-                v.to_string()
+                // (Java's `Double.toString`/`Long.toString`: whole values print without a point.)
+                if v == v.round() { (v as i64).to_string() } else { v.to_string() }
             }
             None => part.to_owned(),
         })
