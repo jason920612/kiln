@@ -116,9 +116,14 @@ impl RegionWork<'_> {
     /// Lights the chunks installed since the region last ran ([`kiln_world::light::light_new_chunk`]):
     /// light spreads at most one chunk, so it stays within the region's own cells.
     pub(crate) fn light_new_chunks(&mut self) {
+        if self.unlit.is_empty() {
+            return;
+        }
+        let dt = std::time::Instant::now();
         for pos in std::mem::take(&mut self.unlit) {
             kiln_world::light::light_new_chunk(&mut *self.cells, pos);
         }
+        crate::diag::lap("r.light_new", dt);
     }
 }
 
