@@ -542,6 +542,12 @@ impl Chunk {
         self.min_y
     }
 
+    /// Whether the block at local `x`, `z` and absolute `y` ticks randomly.
+    pub fn ticks_randomly_at(&self, x: usize, y: i32, z: usize) -> bool {
+        let rel = y - self.min_y;
+        rel >= 0 && self.sections.get((rel >> 4) as usize).is_some_and(|s| s.ticks_randomly_at(x, (rel & 15) as usize, z))
+    }
+
     /// Whether light is stored at absolute `y`: the chunk's height plus one section each side.
     pub fn in_light_range(&self, y: i32) -> bool {
         self.light_section(y).is_some()

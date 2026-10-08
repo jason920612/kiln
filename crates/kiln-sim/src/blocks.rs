@@ -792,28 +792,18 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
     crate::diag::lap("tb.events", dt);
 }
 
-struct DiagOnDrop(&'static str, std::time::Instant);
-impl Drop for DiagOnDrop {
-    fn drop(&mut self) {
-        crate::diag::add(self.0, self.1.elapsed());
-    }
-}
-
-/// [`kiln_blocks::tick::tick_chunk_blocks`] for chunk `c` with the picked blocks read straight
-/// from the chunk: most picks land on blocks that do not tick, and those cost one read instead
-/// of a level lookup. The same picks, in the same order, reading the blocks as they are at the
+/// [`kiln_blocks::tick::tick_chunk_blocks`] for chunk `c` with the picked blocks looked up in
+/// the sections' random tick bits: most picks land on blocks that do not tick, and those cost
+/// one bit read instead of a level lookup and a block read. The same picks, in the same order, reading the blocks as they are at the
 /// moment of each pick.
 fn tick_chunk_blocks(level: &mut RegionLevel, c: ChunkPos, sections: &[(i32, bool)], speed: i32) {
     let (x, z) = (c.x * 16, c.z * 16);
-    let dt = std::time::Instant::now();
     for _ in 0..speed {
         if level.blocks.random.next_int_bounded(48) == 0 {
             let pos = kiln_blocks::tick::block_random_pos(level, x, 0, z, 15);
             kiln_blocks::weather::tick_precipitation(level, pos);
         }
     }
-    let dt = crate::diag::lap("tb.precipitation", dt);
-    let _guard = DiagOnDrop("tb.picks", dt);
     if speed <= 0 {
         return;
     }
@@ -822,16 +812,14 @@ fn tick_chunk_blocks(level: &mut RegionLevel, c: ChunkPos, sections: &[(i32, boo
         if !ticking {
             continue;
         }
-        crate::diag::add("tb.n_sections_us", std::time::Duration::from_nanos(1000));
         for _ in 0..speed {
             // `block_random_pos`.
             let data = &mut level.blocks.data;
             data.rand_value = data.rand_value.wrapping_mul(3).wrapping_add(1013904223);
             let j = data.rand_value >> 2;
             let pos = BlockPos::new(x + (j & 15), sy * 16 + ((j >> 16) & 15), z + (j >> 8 & 15));
-            let state = chunk.map_or(kiln_data::blocks::default_state::VOID_AIR, |ch| ch.get((pos.x & 15) as usize, pos.y, (pos.z & 15) as usize));
-            if kiln_blocks::tick::randomly_ticks(state) || kiln_data::block_logic::fluid(state).kind == kiln_data::block_logic::FluidKind::Lava {
-                crate::diag::add("tb.n_ticks_us", std::time::Duration::from_nanos(1000));
+            // (Lava, the one fluid that ticks randomly, is a randomly ticking block too.)
+            if chunk.is_some_and(|ch| ch.ticks_randomly_at((pos.x & 15) as usize, pos.y, (pos.z & 15) as usize)) {
                 kiln_blocks::tick::random_tick_at(level, pos);
                 chunk = level.cells.chunk(c);
             }
@@ -1520,6 +1508,17 @@ pub(crate) fn direction(face: i32) -> Option<Direction> {
 mod tests {
     use super::*;
     use kiln_blocks::{ScheduledTick, TickPriority};
+
+    /// The random tick fast path picks blocks by their random tick bit alone: every state whose
+    /// fluid ticks randomly (lava) must tick randomly as a block too.
+    #[test]
+    fn lava_states_tick_randomly() {
+        for state in 0..kiln_data::blocks::STATE_COUNT as u16 {
+            if kiln_data::block_logic::fluid(state).kind == kiln_data::block_logic::FluidKind::Lava {
+                assert!(kiln_blocks::tick::randomly_ticks(state), "state {state}");
+            }
+        }
+    }
 
     fn with_ticks(chunks: &[(i32, i32)]) -> RegionBlocks {
         let mut b = RegionBlocks::default();
