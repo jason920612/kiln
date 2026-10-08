@@ -7,7 +7,7 @@
 //! map redraws and sends what changed, [`crate::Sim::tick_maps`]), the empty map ([`use_empty_map`]),
 //! banners ([`use_on_banner`]), item frames and the cartography table.
 
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use kiln_item::ItemStack;
 use kiln_proto::codec::WriteExt;
 use kiln_proto::nbt::Tag;

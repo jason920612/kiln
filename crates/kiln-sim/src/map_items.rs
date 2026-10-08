@@ -84,7 +84,7 @@ pub(crate) fn use_empty_map(p: &mut Player, off_hand: bool, dim: crate::DimId, s
         p.inv.times_changed += 1;
     }
     p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, used.item()), 1);
-    p.sound_for_all("minecraft:ui.cartography_table.take_result", kiln_proto::packets::world_fx::SoundSource::Player, 1.0, 1.0);
+    p.sound_for_all("minecraft:ui.cartography_table.take_result", kiln_proto::packets::world_fx::SoundSource::Players, 1.0, 1.0);
     let (x, z) = (p.pos[0].floor() as i32, p.pos[2].floor() as i32);
     let map = create(&p.maps, x, z, 0, true, false, crate::DIMENSIONS[dim].0);
     let i = p.hand_index(off_hand);
