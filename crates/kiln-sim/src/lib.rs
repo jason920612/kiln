@@ -1071,10 +1071,13 @@ impl Dim {
             self.timed_install(pos, chunk);
             return true;
         }
-        let Some(pool) = &self.generation else {
+        // `KILN_SYNC_PLACEMENT=1`: the chunk is made here and now, holding the tick up (the
+        // player never waits outside the regions, so its own tick never pauses).
+        if self.generation.is_none() || sync_placement() {
             self.load_chunk(pos);
             return true;
-        };
+        }
+        let pool = self.generation.as_ref().unwrap();
         // A chunk queued already was not stored when it was asked for.
         if !pool.is_queued(pos) {
             let started = Instant::now();
@@ -1314,6 +1317,14 @@ pub struct Sim {
 
 /// Tick time a world save spends per tick copying chunks for the storage threads.
 const SAVE_BUDGET: Duration = Duration::from_millis(2);
+
+/// `KILN_SYNC_PLACEMENT=1`: players joining or teleported into terrain not generated yet get
+/// their chunk generated on the tick thread at once (holding every player up), instead of
+/// waiting in [`LIMBO`] while it is generated in the background.
+fn sync_placement() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("KILN_SYNC_PLACEMENT").is_ok_and(|v| v == "1"))
+}
 
 /// The region of players whose chunk is still being generated (teleported or moved to another
 /// level into terrain not made yet): they wait outside every region, untouched by the region
