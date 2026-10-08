@@ -399,6 +399,8 @@ struct Player {
     awaiting_teleport: Option<i32>,
     keep_alive: Option<(i64, Instant)>,
     last_keep_alive: Instant,
+    /// Since when the player waits in [`LIMBO`].
+    limbo_since: Option<Instant>,
     chunks_per_tick: f32,
     unacked_batches: u32,
     /// Main slots, equipment and the selected hotbar slot.
@@ -1293,6 +1295,8 @@ pub struct Sim {
     /// Joins waiting for the chunk they stand in (generated ahead of everything else); the
     /// client stays on its joining screen meanwhile.
     waiting_joins: Vec<(persist::Joining, JoinInfo)>,
+    /// When each waiting join arrived.
+    join_arrival: HashMap<ConnId, Instant>,
     /// Packets of players in [`LIMBO`], applied once they are placed.
     held_packets: Vec<(ConnId, PlayIn)>,
     /// A world save going on over several ticks: the chunks still to copy, by level.
@@ -1522,6 +1526,7 @@ impl Sim {
             trader: Default::default(),
             world: world_state::WorldState { pipelines, feature_hosts, ..Default::default() },
             waiting_joins: Vec::new(),
+            join_arrival: HashMap::new(),
             held_packets: Vec::new(),
             save_run: None,
         };
@@ -1574,7 +1579,10 @@ impl Sim {
                 ToSim::Leave(conn) => match joins.iter().position(|j: &JoinInfo| j.conn == conn) {
                     Some(i) => drop(joins.remove(i)),
                     None => match self.waiting_joins.iter().position(|(_, j)| j.conn == conn) {
-                        Some(i) => drop(self.waiting_joins.remove(i)),
+                        Some(i) => {
+                            self.join_arrival.remove(&conn);
+                            drop(self.waiting_joins.remove(i));
+                        }
                         None => leaves.push(conn),
                     },
                 },
@@ -1605,6 +1613,14 @@ impl Sim {
         joining.extend(joins.into_iter().map(|j| (self.joining(j.uuid), j)));
         let (joining, waiting): (Vec<_>, Vec<_>) =
             joining.into_iter().partition(|(jn, _)| self.dims[jn.dim].request_urgent(player_chunk(jn.pos)));
+        for (_, j) in &waiting {
+            self.join_arrival.entry(j.conn).or_insert_with(Instant::now);
+        }
+        for (_, j) in &joining {
+            if let Some(at) = self.join_arrival.remove(&j.conn) {
+                chunkstats::JOIN_WAIT.add(at.elapsed());
+            }
+        }
         self.waiting_joins = waiting;
         let changed = self.apply_topology();
         let dt = diag::lap("b0.topology", dt);
@@ -2664,6 +2680,11 @@ impl Sim {
             // No owner: the chunk is still being generated.
             let r = dims[p.dim].regions.owner(player_chunk(p.pos).cell()).unwrap_or(LIMBO);
             if r != p.region {
+                if r == LIMBO {
+                    p.limbo_since = Some(Instant::now());
+                } else if let Some(since) = p.limbo_since.take() {
+                    chunkstats::LIMBO.add(since.elapsed());
+                }
                 p.region = r;
                 moved = true;
             }
@@ -3280,6 +3301,7 @@ impl Sim {
             awaiting_teleport: Some(1),
             keep_alive: None,
             last_keep_alive: Instant::now(),
+            limbo_since: None,
             chunks_per_tick: 9.0,
             unacked_batches: 0,
             inv: joining.inv,
