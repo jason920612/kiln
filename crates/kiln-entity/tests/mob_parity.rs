@@ -759,6 +759,13 @@ fn replay(s: &Value) -> Result<usize, String> {
             {
                 eprintln!("dbg tick {tick} explosion at {pos:?} power {power} ({} positions)", blocks.len());
             }
+            // wp49 bees: a bee that went into its hive is gone (`BeehiveBlockEntity.addOccupant` discards it).
+            if let kiln_entity::level::Event::BeeEntersHive { bee, .. } = ev {
+                if let Some(e) = level.entity_mut(bee) {
+                    e.discard();
+                }
+                continue;
+            }
             if let kiln_entity::level::Event::Hurt { target, amount, kind, attacker } = ev
                 && Some(target) == player.map(|p| p.id)
             {

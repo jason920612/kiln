@@ -346,6 +346,27 @@ impl EntityLevel for MemoryLevel {
         self.day_time
     }
 
+    /// A hive or bee nest block (never full: the replay's hives take every bee).
+    fn beehive_at(&self, pos: BlockPos) -> Option<crate::level::BeehiveView> {
+        use kiln_data::block_logic::{BlockClass, block_class};
+        if block_class(self.block(pos)) != BlockClass::BeehiveBlock {
+            return None;
+        }
+        let mut fire_nearby = false;
+        for x in -1..=1 {
+            for y in -1..=1 {
+                for z in -1..=1 {
+                    fire_nearby |= block_class(self.block(BlockPos::new(pos.x + x, pos.y + y, pos.z + z))) == BlockClass::FireBlock;
+                }
+            }
+        }
+        Some(crate::level::BeehiveView { full: false, fire_nearby })
+    }
+
+    fn bees_stay_in_hive(&self) -> bool {
+        (12542..23460).contains(&self.day_time.rem_euclid(24000))
+    }
+
     fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: crate::level::PoiOccupancy) -> Vec<BlockPos> {
         self.poi_in_range_impl(types, center, radius, occupancy)
     }
