@@ -817,10 +817,10 @@ pub(crate) fn moon_brightness(day_time: i64) -> f32 {
 /// The type's `SpawnPlacementType.isSpawnPositionOk`.
 fn placement_ok(level: &RegionLevel, pos: KBlockPos, kind: MobKind) -> bool {
     use kiln_entity::mob::ext::Placement;
-    let Some(k) = kind.ext() else { return spawn_position_ok(level, pos, kind.is_animal()) };
+    let Some(k) = kind.ext() else { return spawn_position_ok(level, pos, kind) };
     let fluid = |p: KBlockPos| kiln_entity::physics::fluid_state(level.block(p));
     match k.placement() {
-        Placement::OnGround => spawn_position_ok(level, pos, kind.is_animal()),
+        Placement::OnGround => spawn_position_ok(level, pos, kind),
         Placement::InWater => fluid(pos).kind.is_water() && !kiln_data::block_logic::is_redstone_conductor(level.block(pos.above())),
         Placement::InLava => fluid(pos).kind.is_lava(),
         Placement::NoRestrictions => true,
@@ -892,9 +892,18 @@ pub(crate) fn monster_light_rules(dim: usize) -> (i32, i32, i32) {
 }
 
 /// `SpawnPlacementTypes.ON_GROUND.isSpawnPositionOk`.
-fn spawn_position_ok(level: &RegionLevel, pos: KBlockPos, animal: bool) -> bool {
+fn spawn_position_ok(level: &RegionLevel, pos: KBlockPos, kind: MobKind) -> bool {
+    let animal = kind.is_animal();
     let below = level.block(pos.below());
-    kiln_entity::mob::path::valid_spawn(below, animal)
+    // `BlockBehaviour.isValidSpawn` answers per type for a few blocks (checked on every block state and entity type):
+    // leaves for ocelots and parrots, ice for polar bears, magma blocks for the fire-immune.
+    let by_type = match kiln_data::blocks_types::block_of(below).name {
+        "minecraft:ice" | "minecraft:frosted_ice" => kind == MobKind::PolarBear,
+        "minecraft:magma_block" => kind.fire_immune(),
+        n if n.ends_with("_leaves") => matches!(kind, MobKind::Ocelot | MobKind::Parrot),
+        _ => false,
+    };
+    (by_type || kiln_entity::mob::path::valid_spawn(below, animal))
         && kiln_entity::mob::path::valid_empty_spawn(level.block(pos), animal)
         && kiln_entity::mob::path::valid_empty_spawn(level.block(pos.above()), animal)
 }
