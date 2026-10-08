@@ -82,10 +82,10 @@ fn a_teleported_player_waiting_for_its_chunk_ticks_like_one_in_loaded_terrain() 
     }
     // The same effects on both: hunger drains the food bar (0.005 exhaustion a tick per level,
     // 256 levels), speed just counts down.
-    for who in ["Alice", "Bob"] {
-        console(&mut sim, &mut clients, &format!("effect give {who} minecraft:hunger 100 255"));
-        console(&mut sim, &mut clients, &format!("effect give {who} minecraft:speed 100 0"));
-    }
+    let both = ["Alice", "Bob"].into_iter().flat_map(|who| {
+        [format!("effect give {who} minecraft:hunger 100 255"), format!("effect give {who} minecraft:speed 100 0")].map(ToSim::Console)
+    });
+    tick(&mut sim, &mut clients, both.collect());
     assert_eq!(state(&sim, 1), state(&sim, 2), "the same start");
     // Bob goes to terrain nobody generated; Alice stays.
     let mut longest = console(&mut sim, &mut clients, "tp Bob 41000 120 41000");
@@ -165,6 +165,6 @@ fn a_player_joining_into_new_terrain_is_in_the_level_at_once_and_ticks_while_the
         }
     }
     assert!(waited >= 30, "the chunk was there after {waited} ticks: too soon to tell");
-    assert!(state(&sim, 1).1.0 < start_food, "hunger ran while waiting");
+    assert!(state(&sim, 1).1.0 < start_food, "hunger ran while waiting: {:?} -> {:?} in {waited} ticks", start_effects, state(&sim, 1));
     assert!(longest < Duration::from_millis(500), "a tick took {longest:?} during the wait of {waited} ticks");
 }
