@@ -1194,6 +1194,42 @@ pub trait EntityLevel {
         0
     }
 
+    // -- wp49 trial spawners (`crate::trial_spawner`).
+
+    /// The `minecraft:trial_spawner` config the datapack holds under `key`.
+    fn trial_config(&self, key: &str) -> Option<std::sync::Arc<crate::trial_spawner::Config>> {
+        let _ = key;
+        None
+    }
+
+    /// The `spawn_mobs` game rule.
+    fn spawn_mobs_rule(&self) -> bool {
+        true
+    }
+
+    /// Whether the player `id` has the effect (`minecraft:` name).
+    fn player_has_effect(&self, id: i32, effect: &str) -> bool {
+        let _ = (id, effect);
+        false
+    }
+
+    /// `TrialSpawnerStateData.transformBadOmenIntoTrialOmen`: the player's Bad Omen becomes Trial Omen.
+    fn transform_bad_omen(&mut self, player: i32) {
+        let _ = player;
+    }
+
+    /// A mob the trial spawner remembers by UUID goes (`remove(DISCARDED)`, its equipment dropped).
+    fn discard_trial_mob(&mut self, uuid: u128) {
+        let _ = uuid;
+    }
+
+    /// `TrialSpawner.ejectReward`: the loot table's items fly out of the top of the spawner at
+    /// `pos` (`DefaultDispenseItemBehavior.spawnItem`). True when there were any.
+    fn trial_eject(&mut self, table: &str, pos: BlockPos) -> bool {
+        let _ = (table, pos);
+        false
+    }
+
     /// `Level.blockEvent` of the block entity's block at `pos` (a spawner's `1`: its delay was reset).
     fn block_event(&mut self, pos: BlockPos, a: i32, b: i32) {
         self.emit(Event::BlockEvent { pos, a, b });

@@ -36,6 +36,7 @@ pub mod shape;
 pub mod spawner;
 pub mod spear;
 pub mod tnt;
+pub mod trial_spawner;
 pub mod vibration;
 pub mod xp_orb;
 

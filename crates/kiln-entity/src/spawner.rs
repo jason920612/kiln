@@ -145,7 +145,7 @@ impl SpawnData {
 
 /// `Identifier.CODEC` on a string: `namespace:path` with vanilla's character sets, the
 /// namespace `minecraft` by default.
-fn normalize_identifier(s: &str) -> Option<String> {
+pub(crate) fn normalize_identifier(s: &str) -> Option<String> {
     let (ns, path) = s.split_once(':').unwrap_or(("minecraft", s));
     let ok_ns = !ns.is_empty() && ns.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.'));
     let ok_path = !path.is_empty() && path.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.' | b'/'));
@@ -194,7 +194,7 @@ impl Default for SpawnerBe {
 }
 
 /// Any numeric tag as an int (`getIntOr` and `getShortOr` read numbers leniently).
-fn number(t: Option<&Tag>) -> Option<i64> {
+pub(crate) fn number(t: Option<&Tag>) -> Option<i64> {
     match t? {
         Tag::Float(v) => Some(*v as i64),
         Tag::Double(v) => Some(*v as i64),
@@ -557,7 +557,7 @@ pub fn spawn_dimensions_scale(type_name: &str) -> f32 {
 }
 
 /// `DifficultyInstance` for a new mob.
-fn spawn_context(level: &dyn EntityLevel, e: &Entity) -> mob::SpawnContext {
+pub(crate) fn spawn_context(level: &dyn EntityLevel, e: &Entity) -> mob::SpawnContext {
     let at = e.block_position();
     let effective = level.effective_difficulty(at);
     let special = if effective < 2.0 {
@@ -572,13 +572,13 @@ fn spawn_context(level: &dyn EntityLevel, e: &Entity) -> mob::SpawnContext {
 
 /// `PathfinderMob.checkSpawnRules`: the walk target value at the mob's block is not negative (types that are
 /// no `PathfinderMob`, or have no preference, pass).
-fn walk_target_ok(level: &dyn EntityLevel, e: &Entity, at: BlockPos) -> bool {
+pub(crate) fn walk_target_ok(level: &dyn EntityLevel, e: &Entity, at: BlockPos) -> bool {
     let Some(m) = mob::data(e) else { return true };
     m.kind.ext().is_some_and(|k| k.spawn_ignores_light()) || mob::walk_target_value(m, level, at) >= 0.0
 }
 
 /// `Mob.checkSpawnObstruction`: no liquid in the box, and nothing that blocks building in it.
-fn spawn_obstruction_ok(level: &dyn EntityLevel, e: &Entity) -> bool {
+pub(crate) fn spawn_obstruction_ok(level: &dyn EntityLevel, e: &Entity) -> bool {
     let kind = mob::data(e).map(|m| m.kind);
     let in_liquid_ok = kind.and_then(MobKind::ext).is_some_and(|k| k.spawn_in_liquids());
     let bb = e.bounding_box();
