@@ -534,6 +534,89 @@ public class InteractVectors {
     }
 
     /** wp49: beehives and bee nests: a bottle or shears on a full hive, its bees coming out (angry, or calmed by smoke). */
+    static ItemStack parseStack(String snbt) throws Exception {
+        var tag = net.minecraft.nbt.TagParser.parseCompoundFully(snbt);
+        return ItemStack.CODEC.parse(server.registryAccess().createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), tag).getOrThrow();
+    }
+
+    /** wp49: decorated pots: items in, the head shake, breaking (cracked, sherds), placing with sherds. */
+    static void pots49(List<Case> out) throws Exception {
+        Case c;
+        String pot = "minecraft:decorated_pot[facing=north,cracked=false,waterlogged=false]";
+        String sherds = "sherds:{back:{id:\"minecraft:archer_pottery_sherd\"},left:{id:\"minecraft:brick\"},right:{id:\"minecraft:blade_pottery_sherd\"},front:{id:\"minecraft:angler_pottery_sherd\"}}";
+        c = blockCase("pot_insert_into_empty", pot).stat("minecraft:stone");
+        c.slot("h0", stack("minecraft:stone", 3));
+        c.step(useOn(2, 100, 0, 1, 0)).step(useOn(2, 100, 0, 1, 0)).step(useOn(2, 100, 0, 1, 0)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_insert_grows", pot + "{item:{id:\"minecraft:stone\",count:60}," + sherds + "}").stat("minecraft:stone");
+        c.slot("h0", stack("minecraft:stone", 10));
+        for (int i = 0; i < 6; i++) c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_insert_other_item", pot + "{item:{id:\"minecraft:stone\",count:5}}").stat("minecraft:dirt");
+        c.slot("h0", stack("minecraft:dirt", 4));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_empty_hand", pot + "{item:{id:\"minecraft:stone\",count:5}}");
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_creative_insert", pot).stat("minecraft:stone");
+        c.gameMode = "creative";
+        c.slot("h0", stack("minecraft:stone", 2));
+        c.step(useOn(2, 100, 0, 1, 0)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_adventure_insert", pot).stat("minecraft:stone");
+        c.gameMode = "adventure";
+        c.slot("h0", stack("minecraft:stone", 2));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_unstackable_item", pot).stat("minecraft:iron_sword");
+        c.slot("h0", stack("minecraft:iron_sword", 2));
+        c.step(useOn(2, 100, 0, 1, 0)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_sneaking_insert", pot).stat("minecraft:stone");
+        c.sneaking = true;
+        c.slot("h0", stack("minecraft:stone", 2));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        // Breaking: by hand a pot drops itself (with its sherds and the item inside it), cracked by a pickaxe it drops
+        // the sherds, with silk touch itself again.
+        String full = pot + "{item:{id:\"minecraft:stone\",count:5}," + sherds + "}";
+        c = blockCase("pot_break_by_hand", full);
+        c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("pot_break_creative", full);
+        c.gameMode = "creative";
+        c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("pot_break_pickaxe", full);
+        c.slot("h0", stack("minecraft:iron_pickaxe"));
+        c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("pot_break_axe", full);
+        c.slot("h0", stack("minecraft:iron_axe"));
+        c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("pot_break_silk_pickaxe", full);
+        c.slot("h0", enchanted("minecraft:iron_pickaxe", "minecraft:silk_touch", 1));
+        c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("pot_break_empty_pickaxe", pot);
+        c.slot("h0", stack("minecraft:diamond_pickaxe"));
+        c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
+        out.add(c);
+        // Placing a decorated pot item with sherds (and something inside it).
+        ItemStack placed = parseStack("{id:'minecraft:decorated_pot',count:2,components:{'minecraft:pot_decorations':{back:{id:'minecraft:archer_pottery_sherd'},front:{id:'minecraft:brick'}},"
+                + "'minecraft:container':[{slot:0,item:{id:'minecraft:stone',count:3}}]}}");
+        c = new Case("pot_place_with_sherds").cmd("setblock 2 99 0 minecraft:stone").watch(2, 100, 0);
+        c.slot("h0", placed);
+        c.step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = new Case("pot_place_plain").cmd("setblock 2 99 0 minecraft:stone").watch(2, 100, 0);
+        c.slot("h0", stack("minecraft:decorated_pot", 2));
+        c.step(useOn(2, 99, 0, 1, 0)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+    }
+
     static Case hiveCase(String name, String block) {
         Case c = new Case(name);
         c.cmd("setblock 2 99 0 minecraft:stone").late("setblock 2 100 0 " + block).watch(2, 100, 0);
@@ -2078,6 +2161,7 @@ public class InteractVectors {
             stands49(all);
             bells49(all);
             hives49(all);
+            pots49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {
