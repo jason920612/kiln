@@ -359,6 +359,7 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
     match logic::block_class(s) {
         C::ComposterBlock => compost(p, level, pos, s, off_hand, &stack),
         C::JukeboxBlock => crate::jukebox::use_item_on(p, level, pos, s, off_hand),
+        C::CampfireBlock => crate::campfire::use_item_on(p, level, pos, s, off_hand),
         C::PumpkinBlock if !stack.is_empty() && stack.item_name() == "minecraft:shears" => {
             carve(p, level, pos, face, off_hand, spawns);
             Some(true)

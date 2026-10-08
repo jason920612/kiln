@@ -51,6 +51,8 @@ pub(crate) enum BeKind {
     Beacon,
     /// One slot for a music disc (`JukeboxBlockEntity`); plays the disc's song.
     Jukebox,
+    /// Four spots for food to cook on (`CampfireBlockEntity`; not a `Container`).
+    Campfire,
 }
 
 impl BeKind {
@@ -71,6 +73,7 @@ impl BeKind {
             "brewing_stand" => BeKind::BrewingStand,
             "beacon" => BeKind::Beacon,
             "jukebox" => BeKind::Jukebox,
+            "campfire" => BeKind::Campfire,
             _ => return None,
         })
     }
@@ -84,18 +87,19 @@ impl BeKind {
             BeKind::Furnace(_) => 3,
             BeKind::BrewingStand => 5,
             BeKind::Jukebox => 1,
+            BeKind::Campfire => 4,
             BeKind::EnderChest | BeKind::Beacon => 0,
         }
     }
 
     /// `RandomizableContainerBlockEntity`: can hold an unopened loot table.
     pub fn randomizable(self) -> bool {
-        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox)
+        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire)
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        !matches!(self, BeKind::EnderChest | BeKind::Beacon)
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire)
     }
 
     /// `getDefaultName` translation key.
@@ -114,12 +118,15 @@ impl BeKind {
             BeKind::BrewingStand => "container.brewing",
             BeKind::Beacon => "container.beacon",
             BeKind::Jukebox => "container.jukebox",
+            BeKind::Campfire => "container.campfire",
         }
     }
 }
 
 /// Saved fields a container block entity models; the rest of its NBT is kept as is.
-const MODELED: [&str; 26] = [
+const MODELED: [&str; 28] = [
+    "CookingTimes",
+    "CookingTotalTimes",
     "RecordItem",
     "ticks_since_song_started",
     "primary_effect",
@@ -199,6 +206,9 @@ pub(crate) struct ContainerBe {
     /// `song` was read from the saved data and has yet to be checked against the song's length
     /// (the data of the songs is the level's, not at hand when the chunk loads).
     pub song_unchecked: bool,
+    /// A campfire's `cookingTimes` and `cookingTotalTimes` per spot.
+    pub cooking: [i32; 4],
+    pub cooking_total: [i32; 4],
     /// A jukebox's item changed (`setTheItem`): its block state, song and neighbours follow once
     /// the block entity is back in the level.
     pub item_changed: bool,
@@ -242,7 +252,7 @@ impl ContainerBe {
         // `BrewingStandBlockEntity.loadAdditional`: brewing under way remembers its ingredient.
         let ingredient = (kind == BeKind::BrewingStand && int("BrewTime", 0) > 0).then(|| list.stacks.get(3).map_or(0, ItemStack::item));
         static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        ContainerBe {
+        let mut loaded = ContainerBe {
             kind,
             type_id,
             serial: SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -269,11 +279,17 @@ impl ContainerBe {
             input_changed: false,
             song,
             song_unchecked,
+            cooking: [0; 4],
+            cooking_total: [0; 4],
             item_changed: false,
             changes: 0,
             dirty: false,
             extra,
+        };
+        if kind == BeKind::Campfire {
+            crate::campfire::load_timers(&mut loaded, nbt);
         }
+        loaded
     }
 
     /// `saveAdditional`: the saved NBT (without `id` and position, which kiln-world adds).
@@ -299,6 +315,11 @@ impl ContainerBe {
                 if let Some(b) = &self.beacon {
                     b.save(&mut out);
                 }
+            }
+            BeKind::Campfire => {
+                out.push(("Items".into(), self.item_list().save()));
+                out.push(("CookingTimes".into(), Tag::IntArray(self.cooking.to_vec())));
+                out.push(("CookingTotalTimes".into(), Tag::IntArray(self.cooking_total.to_vec())));
             }
             BeKind::BrewingStand => {
                 out.push(("BrewTime".into(), Tag::Int(self.cook_timer)));
@@ -665,6 +686,12 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32) {
         }
         return;
     }
+    // `CampfireBlockEntity.preRemoveSideEffects`: the food on the fire drops.
+    if removed.kind == BeKind::Campfire && flags & kiln_blocks::flags::SKIP_BLOCK_ENTITY_SIDEEFFECTS == 0 {
+        let mut rng = pos_random(level, pos, 1);
+        drop_contents(pos, &removed.items, &mut rng, &mut level.out.spawns);
+        return;
+    }
     if flags & kiln_blocks::flags::SKIP_BLOCK_ENTITY_SIDEEFFECTS != 0 || !removed.kind.is_container() || removed.kind == BeKind::ShulkerBox {
         return;
     }
@@ -726,7 +753,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
         .containers
         .map
         .iter()
-        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox))
+        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire))
         .filter(|(p, _)| ticking.contains(chunk_of(**p)))
         .map(|(p, c)| (*p, c.kind))
         .collect();
@@ -744,6 +771,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
             }
             BeKind::Beacon => beacon::tick(level, pos),
             BeKind::Jukebox => crate::jukebox::tick(level, pos),
+            BeKind::Campfire => crate::campfire::tick(level, pos),
             _ => {
                 let mut spawns = std::mem::take(&mut level.out.spawns);
                 furnace::server_tick(level, pos, &mut spawns);
