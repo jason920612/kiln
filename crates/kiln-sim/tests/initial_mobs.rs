@@ -85,7 +85,7 @@ fn check(path: &Path, pack: &Path) {
         }
         std::thread::yield_now();
     }
-    for _ in 0..40 {
+    for _ in 0..std::env::var("KILN_INITIAL_EXTRA").ok().and_then(|v| v.parse().ok()).unwrap_or(40) {
         let mut inbox = Vec::new();
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
