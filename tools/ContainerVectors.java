@@ -675,6 +675,10 @@ public class ContainerVectors {
 
     static String run(MinecraftServer server, Scenario s) throws Exception {
         ServerLevel level = server.overworld();
+        if (s.align20) {
+            setRunsNormally(level, true);
+            while (level.getGameTime() % 20 != 0) level.tick(() -> true);
+        }
         for (Object[] b : s.sortedBlocks()) {
             command(server, String.format(Locale.ROOT, "setblock %d %d %d %s", BASE[0] + (int) b[0], BASE[1] + (int) b[1],
                     BASE[2] + (int) b[2], b[3]));
@@ -684,7 +688,6 @@ public class ContainerVectors {
         // `ServerLevel.tick` checks (the manager only updates it in its own tick).
         setRunsNormally(level, true);
         try {
-            if (s.align20) while (level.getGameTime() % 20 != 0) level.tick(() -> true);
             for (int t = 1; t <= s.ticks; t++) {
                 for (String cmd : s.actions.getOrDefault(t, List.of())) command(server, absolute(cmd));
                 level.tick(() -> true);
