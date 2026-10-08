@@ -84,7 +84,14 @@ pub(crate) fn use_empty_map(p: &mut Player, off_hand: bool, dim: crate::DimId, s
         p.inv.times_changed += 1;
     }
     p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, used.item()), 1);
-    p.sound_for_all("minecraft:ui.cartography_table.take_result", kiln_proto::packets::world_fx::SoundSource::Players, 1.0, 1.0);
+    // `level.playSound(null, player, ...)`: a sound that follows the player.
+    if let Some(id) = kiln_data::builtin_id("minecraft:sound_event", "minecraft:ui.cartography_table.take_result") {
+        use kiln_javamath::random::RandomSource;
+        let seed = p.sound_seed.next_long();
+        let pkt = kiln_proto::packets::world_fx::sound_entity(&kiln_proto::packets::world_fx::Sound::Registered(id), kiln_proto::packets::world_fx::SoundSource::Players, p.entity_id, 1.0, 1.0, seed);
+        p.send(pkt.clone());
+        p.pending_sounds.push(pkt);
+    }
     let (x, z) = (p.pos[0].floor() as i32, p.pos[2].floor() as i32);
     let map = create(&p.maps, x, z, 0, true, false, crate::DIMENSIONS[dim].0);
     let i = p.hand_index(off_hand);

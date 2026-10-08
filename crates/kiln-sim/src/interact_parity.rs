@@ -77,6 +77,52 @@ fn decode(pkt: &Bytes) -> Option<Value> {
             json!({"t": "sound", "name": name, "source": sound_source_name(source), "pos": [x as f64 / 8.0, y as f64 / 8.0, z as f64 / 8.0],
                    "volume": java(volume), "pitch": java(pitch)})
         }
+        ids::SOUND_ENTITY => {
+            let holder = r.varint().ok()?;
+            let name = if holder == 0 { "?".to_owned() } else { kiln_data::builtin_entries("minecraft:sound_event")?.get(holder as usize - 1)?.to_string() };
+            let source = r.varint().ok()?;
+            let _entity = r.varint().ok()?;
+            let (volume, pitch) = (r.f32().ok()?, r.f32().ok()?);
+            let java = |f: f32| format!("{f}").parse::<f64>().unwrap_or(f as f64);
+            json!({"t": "sound_entity", "name": name, "source": sound_source_name(source), "volume": java(volume), "pitch": java(pitch)})
+        }
+        ids::MAP_ITEM_DATA => {
+            let id = r.varint().ok()?;
+            let scale = r.u8().ok()? as i8;
+            let locked = r.bool().ok()?;
+            let decos = if r.bool().ok()? {
+                let n = r.varint().ok()?;
+                let mut rows = Vec::new();
+                for _ in 0..n {
+                    let kind = r.varint().ok()?;
+                    let (x, y, rot) = (r.u8().ok()? as i8, r.u8().ok()? as i8, r.u8().ok()? as i8);
+                    let name = if r.bool().ok()? {
+                        let tail = r.rest();
+                        let (tag, used) = kiln_proto::nbt::read_network(tail).ok()?;
+                        r = kiln_proto::codec::Reader::new(&tail[used..]);
+                        let mut out = BytesMut::new();
+                        sorted(&tag).write_network(&mut out);
+                        Value::String(hex(&out))
+                    } else {
+                        Value::Null
+                    };
+                    rows.push(json!([kind, x, y, rot, name]));
+                }
+                Value::Array(rows)
+            } else {
+                Value::Null
+            };
+            let w = r.u8().ok()? as i32;
+            let patch = if w > 0 {
+                let (h, x, y) = (r.u8().ok()? as i32, r.u8().ok()? as i32, r.u8().ok()? as i32);
+                let n = r.varint().ok()? as usize;
+                let colors = r.bytes(n).ok()?.to_vec();
+                json!([x, y, w, h, hex(&colors)])
+            } else {
+                Value::Null
+            };
+            json!({"t": "map", "id": id, "scale": scale, "locked": locked, "decos": decos, "patch": patch})
+        }
         ids::OPEN_SIGN_EDITOR => {
             let p = pos(&mut r).ok()?;
             json!({"t": "open_sign_editor", "pos": p, "front": r.varint().ok()? != 0})
@@ -138,7 +184,9 @@ fn decode(pkt: &Bytes) -> Option<Value> {
     })
 }
 
-const INTERESTING: [i32; 13] = [
+const INTERESTING: [i32; 15] = [
+    kiln_data::packets::play::clientbound::SOUND_ENTITY,
+    kiln_data::packets::play::clientbound::MAP_ITEM_DATA,
     kiln_data::packets::play::clientbound::OPEN_SCREEN,
     kiln_data::packets::play::clientbound::CONTAINER_SET_CONTENT,
     kiln_data::packets::play::clientbound::CONTAINER_SET_SLOT,
@@ -154,13 +202,13 @@ const INTERESTING: [i32; 13] = [
     kiln_data::packets::play::clientbound::SYSTEM_CHAT,
 ];
 
-fn take_packets(stats: &SinkStats, menus: bool) -> Vec<Value> {
+fn take_packets(stats: &SinkStats, menus: bool, maps: bool) -> Vec<Value> {
     use kiln_data::packets::play::clientbound as ids;
     let all = std::mem::take(stats.log.lock().unwrap().as_mut().unwrap());
     all.iter()
         .filter(|p| {
             kiln_proto::codec::Reader::new(p).varint().ok().is_some_and(|id| {
-                INTERESTING.contains(&id) && (menus || !matches!(id, ids::OPEN_SCREEN | ids::CONTAINER_SET_CONTENT | ids::CONTAINER_SET_SLOT | ids::CONTAINER_SET_DATA | ids::CONTAINER_CLOSE))
+                INTERESTING.contains(&id) && (maps || !matches!(id, ids::SOUND_ENTITY | ids::MAP_ITEM_DATA)) && (menus || !matches!(id, ids::OPEN_SCREEN | ids::CONTAINER_SET_CONTENT | ids::CONTAINER_SET_SLOT | ids::CONTAINER_SET_DATA | ids::CONTAINER_CLOSE))
             })
         })
         .filter_map(decode)
@@ -233,6 +281,33 @@ fn hangings_json(sim: &Sim) -> Value {
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.total_cmp(&b.2)).then(a.3.total_cmp(&b.3)));
     Value::Array(rows.into_iter().map(|r| r.4).collect())
+}
+
+/// The saved data of the maps in the player's inventory, as `InteractVectors.mapsOf` lists them.
+fn maps_json(sim: &Sim) -> Value {
+    let p = &sim.players[&1];
+    let mut ids: Vec<i32> = p.inv.items.iter().chain(p.inv.equipment.iter()).filter_map(|s| if s.is_empty() { None } else { crate::maps::map_id_of(s) }).collect();
+    ids.sort();
+    ids.dedup();
+    let mut store = sim.maps.lock().unwrap();
+    let mut rows = Vec::new();
+    for id in ids {
+        let Some(d) = store.get(id) else { continue };
+        let decos: Vec<Value> = d
+            .decorations()
+            .map(|x| {
+                let name = x.name.as_ref().map_or(Value::Null, |t| {
+                    let mut out = BytesMut::new();
+                    sorted(t).write_network(&mut out);
+                    Value::String(hex(&out))
+                });
+                json!([x.kind, x.x, x.y, x.rot, name])
+            })
+            .collect();
+        rows.push(json!({"id": id, "scale": d.scale, "center": [d.center[0], d.center[1]], "locked": d.locked, "tracking": d.tracking_position,
+                         "unlimited": d.unlimited_tracking, "colors": hex(&d.colors), "decos": decos}));
+    }
+    Value::Array(rows)
 }
 
 /// A stand's saved data as compared: its fields (no uuid; where it stands and how it moved are
@@ -335,8 +410,11 @@ fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
 }
 
 fn run_case(line: &Value) -> Vec<String> {
-    let mut sim = Sim::new(SimConfig::new(2, 2, None));
-    let (msg, stats) = join(1, "Interact", 2);
+    // (A map covers 128 blocks around the origin: the replay's player sees as far.)
+    let maps = line["maps"].as_bool() == Some(true);
+    let view = if maps { 8 } else { 2 };
+    let mut sim = Sim::new(SimConfig::new(2, view, None));
+    let (msg, stats) = join(1, "Interact", view);
     assert!(sim.step([msg]));
     let mut client = Client::new(1, stats.clone());
     for _ in 0..5 {
@@ -400,7 +478,7 @@ fn run_case(line: &Value) -> Vec<String> {
         let mut inbox: Vec<ToSim> = late.iter().map(|c| ToSim::Console(c.as_str().unwrap().to_owned())).collect();
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
-        let _ = take_packets(&stats, false);
+        let _ = take_packets(&stats, false, false);
     }
     let mut errors = Vec::new();
     let mut seen_bees: std::collections::HashSet<i32> = Default::default();
@@ -460,6 +538,14 @@ fn run_case(line: &Value) -> Vec<String> {
                     assert!(sim.step(idle));
                 }
             }
+            // `ticks` server ticks pass for the maps: the step's own tick is one of them.
+            "map_wait" => {
+                for _ in 1..i32_of(&step["ticks"]) {
+                    let mut idle = Vec::new();
+                    client.tick(None, &mut idle);
+                    assert!(sim.step(idle));
+                }
+            }
             "select" => inbox.push(ToSim::Packet(1, PlayIn::SetCarriedItem { slot: i32_of(&step["slot"]) as i16 })),
             "menu_button" => {
                 let id = sim.players[&1].containers.counter;
@@ -500,7 +586,7 @@ fn run_case(line: &Value) -> Vec<String> {
         // The same packets, whatever the order: vanilla sends a sound the moment it is made and
         // the block changes at the end of the tick, Kiln's regions deliver both with the tick's
         // block work (the client cannot tell).
-        let mut got_packets: Vec<String> = take_packets(&stats, line["menus"].as_bool() == Some(true)).iter().map(|v| v.to_string()).collect();
+        let mut got_packets: Vec<String> = take_packets(&stats, line["menus"].as_bool() == Some(true), maps).iter().map(|v| v.to_string()).collect();
         let mut want_packets: Vec<String> = want["packets"].as_array().unwrap().iter().map(|v| normalize_want(v).to_string()).collect();
         // Vanilla sends two or more changes of one section as a Section Blocks Update, which the
         // vectors do not record (Kiln sends each change on its own).
@@ -567,6 +653,9 @@ fn run_case(line: &Value) -> Vec<String> {
             // (The flag is an integer in the vectors.)
             let rows: Vec<Value> = fresh.iter().map(|r| json!([r[0], r[1], r[2], r[3] as i64])).collect();
             eq("new bees", Value::Array(rows).to_string(), want_bees.to_string());
+        }
+        if let Some(want_maps) = want.get("maps") {
+            eq("maps", maps_json(&sim).to_string(), want_maps.to_string());
         }
         if want.get("hangings").is_some() {
             eq("hanging entities", hangings_json(&sim).to_string(), want["hangings"].to_string());

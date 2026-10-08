@@ -99,6 +99,8 @@ public class InteractVectors {
         boolean watchBees;
         // wp49: the menu packets are recorded.
         boolean watchMenus;
+        // wp49: maps are watched.
+        boolean watchMaps;
         // wp49: commands the replay runs together with the first step (after the level has settled), not before it
         // (a hive ages while the replay's level ticks; the recorded one stands still).
         List<String> late = new ArrayList<>();
@@ -155,6 +157,12 @@ public class InteractVectors {
 
         Case late(String c) {
             late.add(c);
+            return this;
+        }
+
+        /** wp49: maps are recorded (their data and packets) and every step is followed by a tick of the player's maps. */
+        Case maps() {
+            watchMaps = true;
             return this;
         }
 
@@ -629,6 +637,81 @@ public class InteractVectors {
     }
 
     /** wp49: lecterns: putting a book on, the menu (pages, jump, take), redstone pulse, breaking. */
+    /** wp49: a landscape across the map around the origin, built with commands (the same ones build it in the replay). */
+    static Case mapCase(String name) {
+        Case c = new Case(name).maps();
+        for (int y = 62; y <= 70; y += 2) c.cmd("fill -64 " + y + " -64 63 " + Math.min(y + 1, 70) + " 63 minecraft:air");
+        // The ground: stone up to y=61 (lakes and pools are flush with it, so nothing flows).
+        for (int y = 56; y <= 60; y += 2) c.cmd("fill -64 " + y + " -64 63 " + (y + 1) + " 63 minecraft:stone");
+        c.cmd("fill -64 61 -64 63 61 63 minecraft:stone");
+        c.cmd("fill -60 62 -60 -20 63 -20 minecraft:grass_block");
+        c.cmd("fill 0 62 -60 40 62 -20 minecraft:sand");
+        c.cmd("fill 10 63 -50 30 64 -30 minecraft:sand");
+        c.cmd("fill -60 60 20 -20 61 60 minecraft:water");
+        c.cmd("fill -50 58 30 -30 59 50 minecraft:water");
+        c.cmd("fill 30 62 30 33 69 33 minecraft:stone");
+        c.cmd("fill 40 62 40 50 62 50 minecraft:snow_block");
+        c.cmd("fill 40 61 52 50 61 62 minecraft:ice");
+        c.cmd("fill 50 60 -10 60 61 0 minecraft:lava");
+        c.cmd("fill -10 62 -10 0 62 0 minecraft:glass");
+        c.cmd("fill 10 62 10 20 62 20 minecraft:oak_planks");
+        c.cmd("fill 20 62 10 22 62 12 minecraft:red_wool");
+        c.cmd("fill -30 62 -10 -25 66 -5 minecraft:oak_leaves[persistent=true]");
+        c.cmd("fill -5 62 40 -5 69 40 minecraft:gold_block");
+        return c;
+    }
+
+    static void maps49(List<Case> out) {
+        Case c;
+        c = mapCase("map_empty_use_hand").stat("minecraft:map");
+        c.slot("h0", stack("minecraft:map", 1));
+        c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20)).step(op("op", "command", "command", "setblock 5 62 5 minecraft:gold_block"))
+                .step(op("op", "map_wait", "ticks", 20));
+        out.add(c);
+        c = mapCase("map_empty_use_stack").stat("minecraft:map");
+        c.slot("h0", stack("minecraft:map", 2));
+        c.step(op("op", "use", "hand", 0)).step(op("op", "select", "slot", 1)).step(op("op", "map_wait", "ticks", 20));
+        out.add(c);
+        c = mapCase("map_empty_use_creative").stat("minecraft:map");
+        c.gameMode = "creative";
+        c.slot("h0", stack("minecraft:map", 2));
+        c.step(op("op", "use", "hand", 0)).step(op("op", "select", "slot", 1)).step(op("op", "map_wait", "ticks", 20));
+        out.add(c);
+        c = mapCase("map_empty_use_offhand").stat("minecraft:map");
+        c.slot("offhand", stack("minecraft:map", 1));
+        c.step(op("op", "use", "hand", 1)).step(op("op", "map_wait", "ticks", 20));
+        out.add(c);
+        c = mapCase("map_empty_use_full_inventory").stat("minecraft:map");
+        c.slot("h0", stack("minecraft:map", 2));
+        for (int i = 1; i < 9; i++) c.slot("h" + i, stack("minecraft:dirt", 64));
+        for (int i = 9; i < 36; i++) c.slot("m" + i, stack("minecraft:cobblestone", 64));
+        c.step(op("op", "use", "hand", 0));
+        out.add(c);
+        // The map follows the player, who leaves it and comes back.
+        c = mapCase("map_player_marker");
+        c.slot("h0", stack("minecraft:map", 1));
+        c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20)).step(op("op", "command", "command", "tp Interact 40.5 100 -30.5"))
+                .step(op("op", "map_wait", "ticks", 20)).step(op("op", "command", "command", "tp Interact 90.5 100 90.5")).step(op("op", "map_wait", "ticks", 12))
+                .step(op("op", "command", "command", "tp Interact -20.5 100 30.5")).step(op("op", "map_wait", "ticks", 20));
+        out.add(c);
+        // Banners are put on the map and taken off it, and go when the banner does.
+        c = mapCase("map_banner").watch(10, 62, 10).cmd("setblock 10 62 10 minecraft:red_banner[rotation=4]");
+        c.slot("h0", stack("minecraft:map", 1));
+        c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20)).step(useOn(10, 62, 10, 1, 0)).step(op("op", "map_wait", "ticks", 6))
+                .step(useOn(10, 62, 10, 1, 0)).step(op("op", "map_wait", "ticks", 6)).step(useOn(10, 62, 10, 1, 0))
+                .step(op("op", "command", "command", "setblock 10 62 10 minecraft:air")).step(op("op", "map_wait", "ticks", 20));
+        out.add(c);
+        c = mapCase("map_banner_named").watch(10, 62, 10).cmd("setblock 10 62 10 minecraft:blue_banner[rotation=8]{CustomName:'\"Home\"'}");
+        c.slot("h0", stack("minecraft:map", 1));
+        c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20)).step(useOn(10, 62, 10, 1, 0)).step(op("op", "map_wait", "ticks", 6));
+        out.add(c);
+        // A banner outside the map's area is not taken.
+        c = mapCase("map_banner_outside").cmd("setblock 70 62 70 minecraft:red_banner[rotation=4]");
+        c.slot("h0", stack("minecraft:map", 1));
+        c.step(op("op", "use", "hand", 0)).step(useOn(70, 62, 70, 1, 0)).step(op("op", "map_wait", "ticks", 6));
+        out.add(c);
+    }
+
     static void lecterns49(List<Case> out) {
         Case c;
         String stand = "minecraft:lectern[facing=north,has_book=false,powered=false]";
@@ -1847,6 +1930,8 @@ public class InteractVectors {
 
     /// wp49: the menu packets (open, contents, slots, data, close) are recorded for cases that watch menus.
     static boolean recordMenus;
+    /// wp49: map packets (and the entity sounds around them) are recorded for cases that watch maps.
+    static boolean recordMaps;
 
     static List<Object> packets(ServerPlayer p) throws Exception {
         List<Object> out = new ArrayList<>();
@@ -1873,6 +1958,13 @@ public class InteractVectors {
             } else if (o instanceof ClientboundLevelEventPacket l) {
                 out.add(op("t", "level_event", "event", l.getType(), "pos", List.of(l.getPos().getX(), l.getPos().getY(), l.getPos().getZ()),
                         "data", l.getData(), "global", l.isGlobalEvent()));
+            } else if (recordMaps && o instanceof ClientboundSoundEntityPacket s) {
+                out.add(op("t", "sound_entity", "name", s.getSound().unwrapKey().map(k -> k.identifier().toString()).orElse("?"),
+                        "source", s.getSource().getName(), "volume", s.getVolume(), "pitch", s.getPitch()));
+            } else if (recordMaps && o instanceof ClientboundMapItemDataPacket m) {
+                out.add(op("t", "map", "id", m.mapId().id(), "scale", (int) m.scale(), "locked", m.locked(),
+                        "decos", m.decorations().map(l -> (Object) decoRows(l)).orElse(null),
+                        "patch", m.colorPatch().map(pp -> (Object) List.of(pp.startX(), pp.startY(), pp.width(), pp.height(), ByteBufUtil.hexDump(pp.mapColors()))).orElse(null)));
             } else if (recordMenus && o instanceof ClientboundOpenScreenPacket m) {
                 out.add(op("t", "open_screen", "id", m.getContainerId(), "type", BuiltInRegistries.MENU.getId(m.getType()), "title", nbtHex(net.minecraft.network.chat.ComponentSerialization.CODEC
                         .encodeStart(server.registryAccess().createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), m.getTitle()).getOrThrow())));
@@ -2042,6 +2134,10 @@ public class InteractVectors {
                         new BlockPos(at.get(0), at.get(1), at.get(2)), Direction.UP, 1));
             }
             case "cooldown" -> p.getCooldowns().addCooldown(stack((String) s.get("item")), (int) s.get("ticks"));
+            // wp49: `ticks` server ticks pass for the player's maps (the step's own tick is one of them).
+            case "map_wait" -> {
+                for (int i = 0; i < (int) s.get("ticks") - 1; i++) mapTick(p);
+            }
             case "lock_sign" -> {
                 @SuppressWarnings("unchecked")
                 List<Integer> at = (List<Integer>) s.get("pos");
@@ -2053,6 +2149,63 @@ public class InteractVectors {
         // Queued work (the sign text filter completes on the server thread's executor).
         for (int i = 0; i < 3; i++) call(server, "runAllTasks");
         broadcastChanges();
+    }
+
+    // ---------------------------------------------------------------- maps (wp49)
+
+    /** `MapDecoration`s as the vectors record them: [type id, x, y, rot, name (hex of its NBT) or null]. */
+    static List<Object> decoRows(Iterable<net.minecraft.world.level.saveddata.maps.MapDecoration> decorations) {
+        List<Object> rows = new ArrayList<>();
+        for (var d : decorations) {
+            String name = null;
+            if (d.name().isPresent()) {
+                try {
+                    name = nbtHex(net.minecraft.network.chat.ComponentSerialization.CODEC
+                            .encodeStart(server.registryAccess().createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), d.name().get()).getOrThrow());
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+            rows.add(java.util.Arrays.asList(BuiltInRegistries.MAP_DECORATION_TYPE.getId(d.type().value()), (int) d.x(), (int) d.y(), (int) d.rot(), name));
+        }
+        return rows;
+    }
+
+    /** The map ids start from zero in every case (the replay's server is new for each). */
+    static void resetMaps() throws Exception {
+        var index = server.overworld().getDataStorage().computeIfAbsent(net.minecraft.world.level.saveddata.maps.MapIndex.TYPE);
+        field(net.minecraft.world.level.saveddata.maps.MapIndex.class, "lastMapId").setInt(index, -1);
+    }
+
+    /** One server tick of the player's maps: `Inventory.tick`, `EntityEquipment.tick` and `ServerPlayer.doTick`'s sync. */
+    static void mapTick(ServerPlayer p) throws Exception {
+        p.getInventory().tick();
+        var equipment = (net.minecraft.world.entity.EntityEquipment) field(net.minecraft.world.entity.LivingEntity.class, "equipment").get(p);
+        equipment.tick(p);
+        Method sync = ServerPlayer.class.getDeclaredMethod("synchronizeSpecialItemUpdates", ItemStack.class);
+        sync.setAccessible(true);
+        for (int i = 0; i < p.getInventory().getContainerSize(); i++) {
+            ItemStack st = p.getInventory().getItem(i);
+            if (!st.isEmpty()) sync.invoke(p, st);
+        }
+    }
+
+    /** The saved data of the maps in the player's inventory. */
+    static List<Object> mapsOf(ServerPlayer p) throws Exception {
+        java.util.TreeSet<Integer> ids = new java.util.TreeSet<>();
+        for (int i = 0; i < p.getInventory().getContainerSize(); i++) {
+            var id = p.getInventory().getItem(i).get(DataComponents.MAP_ID);
+            if (id != null) ids.add(id.id());
+        }
+        List<Object> out = new ArrayList<>();
+        for (int id : ids) {
+            var d = server.overworld().getMapData(new net.minecraft.world.level.saveddata.maps.MapId(id));
+            if (d == null) continue;
+            out.add(op("id", id, "scale", (int) d.scale, "center", List.of(d.centerX, d.centerZ), "locked", d.locked,
+                    "tracking", get(d, "trackingPosition"), "unlimited", get(d, "unlimitedTracking"),
+                    "colors", ByteBufUtil.hexDump(d.colors), "decos", decoRows(d.getDecorations())));
+        }
+        return out;
     }
 
     /** The tick's end sends the blocks that changed to the players tracking them. */
@@ -2111,9 +2264,13 @@ public class InteractVectors {
         for (String n : c.customStats) customBefore.put(n, p.getStats().getValue(net.minecraft.stats.Stats.CUSTOM.get(BuiltInRegistries.CUSTOM_STAT.getValue(Identifier.parse(n)))));
         java.util.Set<UUID> seenBees = new java.util.HashSet<>();
         recordMenus = c.watchMenus;
+        recordMaps = c.watchMaps;
+        if (c.watchMaps) resetMaps();
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
+            if (c.watchMaps) mapTick(p);
             Map<String, Object> r = new LinkedHashMap<>();
+            if (c.watchMaps) r.put("maps", mapsOf(p));
             r.put("inv", inventory(p));
             r.put("packets", packets(p));
             r.put("blocks", blocks(c));
@@ -2172,6 +2329,7 @@ public class InteractVectors {
         line.put("stands", c.watchStands);
         line.put("bees", c.watchBees);
         line.put("menus", c.watchMenus);
+        line.put("maps", c.watchMaps);
         line.put("custom_stats", c.customStats);
         line.put("result", results);
         return toJson(line);
@@ -2256,8 +2414,9 @@ public class InteractVectors {
         server.submit(() -> {
             ServerLevel level = server.overworld();
             level.tickRateManager().setFrozen(true);
-            for (int cx = -2; cx <= 2; cx++)
-                for (int cz = -2; cz <= 2; cz++) {
+            // (wp49: a map covers 128 blocks around the origin.)
+            for (int cx = -4; cx <= 4; cx++)
+                for (int cz = -4; cz <= 4; cz++) {
                     level.setChunkForced(cx, cz, true);
                     level.getChunk(cx, cz);
                 }
@@ -2280,6 +2439,7 @@ public class InteractVectors {
             hives49(all);
             pots49(all);
             lecterns49(all);
+            maps49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {
