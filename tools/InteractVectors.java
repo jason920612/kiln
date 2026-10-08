@@ -2173,7 +2173,7 @@ public class InteractVectors {
 
     /** The map ids start from zero in every case (the replay's server is new for each). */
     static void resetMaps() throws Exception {
-        var index = server.overworld().getDataStorage().computeIfAbsent(net.minecraft.world.level.saveddata.maps.MapIndex.TYPE);
+        var index = server.getDataStorage().computeIfAbsent(net.minecraft.world.level.saveddata.maps.MapIndex.TYPE);
         field(net.minecraft.world.level.saveddata.maps.MapIndex.class, "lastMapId").setInt(index, -1);
     }
 
