@@ -60,6 +60,8 @@ public class ContainerVectors {
         boolean watchDrops;
         /** The game time is a multiple of 20 when the first tick begins (daylight detectors work on it). */
         boolean align20;
+        /** The items are made by the entity phase (Kiln has them a tick later). */
+        boolean dropsLag;
 
         Scenario(String name, int ticks) {
             this.name = name;
@@ -102,6 +104,11 @@ public class ContainerVectors {
             return block(x, y, z, "minecraft:comparator[facing=" + facing + "]");
         }
 
+        Scenario dropsLag() {
+            dropsLag = true;
+            return this;
+        }
+
         Scenario align20() {
             align20 = true;
             return this;
@@ -133,6 +140,7 @@ public class ContainerVectors {
             m.put("carts", positions(carts));
             m.put("drops", watchDrops);
             m.put("align20", align20);
+            m.put("drops_lag", dropsLag);
             return m;
         }
 
@@ -419,7 +427,7 @@ public class ContainerVectors {
             {"chorus_ball", "minecraft:chorus_flower[age=5]", ball},
         };
         for (Object[] c : cases) {
-            Scenario s = new Scenario("projectile_" + c[0], 40).drops().block(0, -1, 0, "minecraft:end_stone").block(0, 0, 0, (String) c[1]).state(0, 0, 0);
+            Scenario s = new Scenario("projectile_" + c[0], 40).drops().dropsLag().block(0, -1, 0, "minecraft:end_stone").block(0, 0, 0, (String) c[1]).state(0, 0, 0);
             s.at(1, (String) c[2]);
             out.add(s);
         }

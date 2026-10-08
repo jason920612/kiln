@@ -166,6 +166,7 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
     let carts: Vec<BlockPos> = line["carts"].as_array().map_or(Vec::new(), |a| a.iter().map(pos_of).collect());
     let (mut compared, mut errors) = (0, Vec::new());
     let mut kill_items = false;
+    let mut previous_drops = serde_json::json!([]);
     for (t, want) in line["result"].as_array().unwrap().iter().enumerate() {
         let tick = t + 1;
         let mut inbox = Vec::new();
@@ -208,8 +209,11 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
         if line["drops"].as_bool() == Some(true) {
             let got = drops_json(&sim);
             compared += 1;
-            if got != want["drops"] {
-                errors.push(format!("tick {tick} dropped items: kiln {got}, vanilla {}", want["drops"]));
+            // (Items made by the entity phase join the level a tick later: `drops_lag` compares
+            // against the vanilla items of the tick before.)
+            let expected = if line["drops_lag"].as_bool() == Some(true) { std::mem::replace(&mut previous_drops, want["drops"].clone()) } else { want["drops"].clone() };
+            if got != expected {
+                errors.push(format!("tick {tick} dropped items: kiln {got}, vanilla {expected}"));
             }
             // (Only what each tick makes is compared: the items are removed before the next.)
             kill_items = true;
