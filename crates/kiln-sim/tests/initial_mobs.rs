@@ -84,6 +84,14 @@ fn initial_mobs_parity() {
     for (c, name, pos, yaw) in take_initial_mobs() {
         got.entry(c).or_default().push((name.to_owned(), pos, yaw, false));
     }
+    // Debug: the blocks at some places (`x,y,z;x,y,z`), to compare with `InitialMobVectors` (INITIAL_MOB_DUMP).
+    if let Ok(dump) = std::env::var("KILN_INITIAL_DUMP") {
+        for p in dump.split(';') {
+            let c: Vec<i32> = p.split(',').map(|v| v.parse().unwrap()).collect();
+            let s = sim.block_at(c[0], c[1], c[2]);
+            println!("BLOCK {p} {}", s.map_or("unloaded".to_owned(), |s| kiln_blocks::state::state_string(s)));
+        }
+    }
     println!("kiln made mobs in {} chunks ({} mobs), vanilla in {} chunks", got.len(), got.values().map(|v| v.len()).sum::<usize>(), want.len());
     let mut checked = 0;
     let mut wrong = Vec::new();
