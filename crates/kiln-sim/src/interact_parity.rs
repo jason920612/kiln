@@ -421,7 +421,11 @@ fn run_case(line: &Value) -> Vec<String> {
                 }
             }
             "select" => inbox.push(ToSim::Packet(1, PlayIn::SetCarriedItem { slot: i32_of(&step["slot"]) as i16 })),
-            "dig" => inbox.push(ToSim::Packet(1, PlayIn::PlayerAction { action: 0, pos: arr3(&step["pos"]), face: 1, sequence: 1 })),
+            "dig" => {
+                // (The recorded player stands on the ground; this one has had ticks to fall in.)
+                sim.players.get_mut(&1).unwrap().on_ground = true;
+                inbox.push(ToSim::Packet(1, PlayIn::PlayerAction { action: 0, pos: arr3(&step["pos"]), face: 1, sequence: 1 }));
+            }
             "cooldown" => {
                 let item = ItemStack::of(step["item"].as_str().unwrap(), 1).unwrap();
                 let p = sim.players.get_mut(&1).unwrap();

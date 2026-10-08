@@ -559,7 +559,7 @@ public class InteractVectors {
         c.slot("h0", stack("minecraft:glass_bottle", 1));
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
-        c = hiveCase("hive_bottle_creative", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c = hiveCase("hive_bottle_creative", "minecraft:beehive[facing=west,honey_level=5]" + "{bees:[{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:100000,ticks_in_hive:0},{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:100000,ticks_in_hive:0}]}").bees().stat("minecraft:glass_bottle");
         c.gameMode = "creative";
         c.slot("h0", stack("minecraft:glass_bottle", 3));
         c.step(useOn(2, 100, 0, 1, 0));
