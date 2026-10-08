@@ -343,6 +343,36 @@ fn no_hive_ticks(t: Tag) -> Tag {
     Tag::Compound(fields)
 }
 
+/// A trial spawner's saved data with the UUIDs of its mobs made alike (the mobs of the vectors are not Kiln's).
+fn no_mob_uuids(t: Tag) -> Tag {
+    let Tag::Compound(mut fields) = t else { return t };
+    for (k, v) in fields.iter_mut() {
+        if k == "current_mobs"
+            && let Tag::List(list) = v
+        {
+            for u in list.iter_mut() {
+                *u = Tag::IntArray(vec![0; 4]);
+            }
+        }
+    }
+    Tag::Compound(fields)
+}
+
+/// The living mobs of the level: (type, x, y, z), as `InteractVectors.mobRows` lists them.
+fn mob_rows(sim: &Sim) -> Vec<(String, f64, f64, f64)> {
+    let mut rows = Vec::new();
+    for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
+        for e in region.part().0.list.iter().filter(|e| !e.removed) {
+            let Some(phys) = e.phys.as_deref() else { continue };
+            if matches!(phys.kind, kiln_entity::entity::EntityKind::Mob(_)) && phys.is_alive() {
+                let p = phys.position();
+                rows.push((phys.type_name.to_owned(), p.x, p.y, p.z));
+            }
+        }
+    }
+    rows
+}
+
 /// The armor stands of the level, sorted by position.
 fn stand_rows(sim: &Sim) -> Vec<StandRow> {
     let mut rows: Vec<StandRow> = Vec::new();
@@ -658,7 +688,7 @@ fn run_case(line: &Value) -> Vec<String> {
             });
             let expected = b["be"].as_str().map(|h| sorted(&tag_of(h)));
             // (A hive's bees age with the ticks Kiln's level makes between the steps; the recorded level stands still.)
-            let (got, expected) = (got.map(no_hive_ticks), expected.map(no_hive_ticks));
+            let (got, expected) = (got.map(no_hive_ticks).map(no_mob_uuids), expected.map(no_hive_ticks).map(no_mob_uuids));
             eq(&format!("block entity {at:?}"), format!("{got:?}"), format!("{expected:?}"));
         }
         let mut got_items: Vec<String> = sim.item_stacks().iter().map(stack_hex).collect();
@@ -685,6 +715,13 @@ fn run_case(line: &Value) -> Vec<String> {
             // (The flag is an integer in the vectors.)
             let rows: Vec<Value> = fresh.iter().map(|r| json!([r[0], r[1], r[2], r[3] as i64])).collect();
             eq("new bees", Value::Array(rows).to_string(), want_bees.to_string());
+        }
+        if let Some(want_mobs) = want.get("mobs") {
+            let mut got: Vec<String> = mob_rows(&sim).iter().map(|r| format!("{r:?}")).collect();
+            let mut want_rows: Vec<String> = want_mobs.as_array().unwrap().iter().map(|r| format!("{:?}", (r[0].as_str().unwrap().to_owned(), r[1].as_f64().unwrap(), r[2].as_f64().unwrap(), r[3].as_f64().unwrap()))).collect();
+            got.sort();
+            want_rows.sort();
+            eq("mobs", format!("{got:?}"), format!("{want_rows:?}"));
         }
         if let Some(want_maps) = want.get("maps") {
             eq("maps", maps_json(&sim).to_string(), want_maps.to_string());

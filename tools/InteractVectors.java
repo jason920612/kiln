@@ -103,6 +103,8 @@ public class InteractVectors {
         boolean watchMaps;
         // wp49: the watched block entities are ticked after every step.
         boolean tickLevel;
+        // wp49: the living mobs around are recorded.
+        boolean watchMobs;
         // wp49: commands the replay runs together with the first step (after the level has settled), not before it
         // (a hive ages while the replay's level ticks; the recorded one stands still).
         List<String> late = new ArrayList<>();
@@ -176,6 +178,12 @@ public class InteractVectors {
         /** wp49: the level ticks the watched block entities after every step (and `wait` is that many ticks). */
         Case ticking() {
             tickLevel = true;
+            return this;
+        }
+
+        /** wp49: the living mobs around are recorded after every step. */
+        Case mobs() {
+            watchMobs = true;
             return this;
         }
 
@@ -869,6 +877,83 @@ public class InteractVectors {
         // A smaller range.
         c = vaultCase("vault_small_range", "vault_state=inactive", "{config:{loot_table:\"minecraft:blocks/stone\",activation_range:2.0d,deactivation_range:2.5d,key_item:{id:\"minecraft:trial_key\",count:1}}}");
         c.step(waitTicks(1)).step(waitTicks(20));
+        out.add(c);
+    }
+
+    /** wp49: a trial spawner at (3, 100, 0) (floor under it and under the place its mobs appear) put there when the level has settled. */
+    static Case trialCase(String name, String props, String nbt) {
+        Case c = new Case(name).ticking().mobs();
+        c.cmd("setblock 3 99 0 minecraft:stone").cmd("setblock 5 99 2 minecraft:stone").late("setblock 3 100 0 minecraft:trial_spawner[" + props + "]" + nbt).watch(3, 100, 0);
+        return c;
+    }
+
+    static Map<String, Object> cmdStep(String command) {
+        return op("op", "command", "command", command);
+    }
+
+    static void trials49(List<Case> out) {
+        Case c;
+        // Zombies that stand still where they appear (the place is given, so nothing is left to the level's random).
+        String zombie = "{data:{entity:{id:\"minecraft:zombie\",NoAI:1b,Pos:[5.5d,100.0d,2.5d]}},weight:1}";
+        String key = "loot_tables_to_eject:[{data:\"minecraft:spawners/trial_chamber/key\",weight:1}]";
+        String normal = "normal_config:{total_mobs:4.0f,simultaneous_mobs:2.0f,ticks_between_spawn:20,spawn_potentials:[" + zombie + "]," + key + "},target_cooldown_length:200";
+        String kill = "kill @e[type=minecraft:zombie]";
+        c = trialCase("trial_wave", "trial_spawner_state=inactive", "{" + normal + "}");
+        c.step(waitTicks(10)).step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep(kill));
+        for (int i = 0; i < 3; i++) {
+            c.step(waitTicks(25)).step(waitTicks(25)).step(waitTicks(30)).step(cmdStep(kill));
+        }
+        for (int i = 0; i < 14; i++) c.step(waitTicks(20));
+        out.add(c);
+        // Left alone the zombies stay; the spawner keeps to its limit of two at a time.
+        c = trialCase("trial_limit", "trial_spawner_state=inactive", "{" + normal + "}");
+        for (int i = 0; i < 12; i++) c.step(waitTicks(20));
+        out.add(c);
+        c = trialCase("trial_default_config", "trial_spawner_state=inactive", "");
+        c.step(waitTicks(5)).step(waitTicks(40)).step(waitTicks(40));
+        out.add(c);
+        c = trialCase("trial_far_player", "trial_spawner_state=inactive", "{" + normal + "}");
+        c.pos = new double[] {0.5, 100.0, 30.5};
+        c.step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30));
+        out.add(c);
+        c = trialCase("trial_creative_player", "trial_spawner_state=inactive", "{" + normal + "}");
+        c.gameMode = "creative";
+        c.step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30));
+        out.add(c);
+        c = trialCase("trial_spectator_player", "trial_spawner_state=inactive", "{" + normal + "}");
+        c.gameMode = "spectator";
+        c.step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30));
+        out.add(c);
+        c = trialCase("trial_peaceful", "trial_spawner_state=inactive", "{" + normal + "}");
+        c.step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep("difficulty peaceful")).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep("difficulty easy"))
+                .step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30));
+        out.add(c);
+        c = trialCase("trial_rule_off", "trial_spawner_state=inactive", "{" + normal + "}");
+        c.step(waitTicks(30)).step(waitTicks(30)).step(cmdStep("gamerule spawner_blocks_work false")).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep("gamerule spawner_blocks_work true"))
+                .step(waitTicks(30)).step(waitTicks(30));
+        out.add(c);
+        // Saved states: the spawner wakes up in the middle of a trial.
+        c = trialCase("trial_resume_cooldown", "trial_spawner_state=cooldown", "{" + normal + ",cooldown_ends_at:230L}");
+        for (int i = 0; i < 6; i++) c.step(waitTicks(20));
+        out.add(c);
+        c = trialCase("trial_resume_ejecting", "trial_spawner_state=waiting_for_reward_ejection",
+                "{" + normal + ",cooldown_ends_at:300L,registered_players:[" + playerUuidTag() + "]}");
+        for (int i = 0; i < 12; i++) c.step(waitTicks(20));
+        out.add(c);
+        c = trialCase("trial_resume_active", "trial_spawner_state=active", "{" + normal + ",total_mobs_spawned:3,registered_players:[" + playerUuidTag() + "]}");
+        for (int i = 0; i < 8; i++) c.step(waitTicks(20));
+        out.add(c);
+        // A spawn egg changes what it spawns and starts it over.
+        c = trialCase("trial_egg", "trial_spawner_state=active", "{" + normal + ",total_mobs_spawned:1,registered_players:[" + playerUuidTag() + "]}");
+        c.slot("h0", stack("minecraft:skeleton_spawn_egg", 2));
+        c.step(waitTicks(3)).step(useOn(3, 100, 0, 1, 0)).step(waitTicks(1)).step(waitTicks(1));
+        out.add(c);
+        // Bad Omen turns it ominous.
+        String ominous = "ominous_config:{total_mobs:6.0f,simultaneous_mobs:3.0f,ticks_between_spawn:10,spawn_potentials:[" + zombie + "],"
+                + "items_to_drop_when_ominous:\"minecraft:empty\"," + key + "}";
+        c = trialCase("trial_ominous", "trial_spawner_state=waiting_for_players", "{" + normal + "," + ominous + "}");
+        c.step(waitTicks(25)).step(cmdStep("effect give @a minecraft:bad_omen 600 0")).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20));
+        for (int i = 0; i < 3; i++) c.step(cmdStep(kill)).step(waitTicks(30)).step(waitTicks(30));
         out.add(c);
     }
 
@@ -2209,6 +2294,19 @@ public class InteractVectors {
         return out;
     }
 
+    /** wp49: the living mobs around, sorted: [type, x, y, z]. */
+    static List<Object> mobRows() {
+        List<Object[]> rows = new ArrayList<>();
+        for (var e : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.Mob.class, new AABB(-32, 60, -32, 64, 140, 64))) {
+            if (!e.isAlive()) continue;
+            rows.add(new Object[] {BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(), e.getX(), e.getY(), e.getZ()});
+        }
+        rows.sort(Comparator.comparing((Object[] r) -> (String) r[0]).thenComparingDouble(r -> (Double) r[1]).thenComparingDouble(r -> (Double) r[2]).thenComparingDouble(r -> (Double) r[3]));
+        List<Object> out = new ArrayList<>();
+        for (Object[] r : rows) out.add(java.util.Arrays.asList(r));
+        return out;
+    }
+
     static List<Object> itemEntities() {
         ServerLevel level = server.overworld();
         List<Object> out = new ArrayList<>();
@@ -2486,6 +2584,7 @@ public class InteractVectors {
             r.put("packets", packets(p));
             r.put("blocks", blocks(c));
             r.put("entities", itemEntities());
+            if (c.watchMobs) r.put("mobs", mobRows());
             Map<String, Object> used = new LinkedHashMap<>();
             for (String item : c.statItems) {
                 used.put(item, p.getStats().getValue(net.minecraft.stats.Stats.ITEM_USED.get(BuiltInRegistries.ITEM.getValue(Identifier.parse(item)))) - usedBefore.get(item));
@@ -2518,6 +2617,7 @@ public class InteractVectors {
         command("kill @e[type=minecraft:armor_stand]");
         command("kill @e[type=minecraft:item]");
         for (var bee : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.bee.Bee.class, new AABB(-64, -64, -64, 64, 320, 64))) bee.discard();
+        for (var mob : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.Mob.class, new AABB(-64, -64, -64, 64, 320, 64))) mob.discard();
         Map<String, Object> line = new LinkedHashMap<>();
         line.put("name", c.name);
         line.put("game_mode", c.gameMode);
@@ -2542,6 +2642,7 @@ public class InteractVectors {
         line.put("menus", c.watchMenus);
         line.put("maps", c.watchMaps);
         line.put("ticking", c.tickLevel);
+        line.put("mobs", c.watchMobs);
         line.put("player_uuid", p.getUUID().toString());
         line.put("custom_stats", c.customStats);
         line.put("result", results);
@@ -2654,6 +2755,7 @@ public class InteractVectors {
             lecterns49(all);
             maps49(all);
             vaults49(all);
+            trials49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {
