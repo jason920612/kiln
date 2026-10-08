@@ -1023,6 +1023,7 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
     // `region.getBiome(center.getWorldPosition().atY(region.getMaxY()))`.
     let biome = zoomed_biome_at(level, min_x, env.min_y + env.height - 1, min_z);
     let list = table.list(biome, Category::Creature);
+    crate::testing::trace(&format!("initial_chunk {c:?} biome {biome} creatures {} p {}", list.len(), table.world_gen_probability(biome)));
     if list.is_empty() {
         return;
     }
