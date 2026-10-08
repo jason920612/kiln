@@ -346,24 +346,24 @@ public class ContainerVectors {
         String sensor = "minecraft:daylight_detector[inverted=false,power=0]";
         String inverted = "minecraft:daylight_detector[inverted=true,power=0]";
         Scenario s = new Scenario("daylight_day", 500).align20()
-                .container(0, 0, 0, sensor).state(0, 0, 0).container(2, 0, 0, inverted).state(2, 0, 0);
+                .block(0, 0, 0, sensor).state(0, 0, 0).block(2, 0, 0, inverted).state(2, 0, 0);
         for (int i = 0; i < 25; i++) s.at(1 + 20 * i, "time set " + (i * 1000));
         out.add(s);
         // Between the hours too, a tick short of each sample.
         s = new Scenario("daylight_dawn_dusk", 300).align20()
-                .container(0, 0, 0, sensor).state(0, 0, 0).container(2, 0, 0, inverted).state(2, 0, 0);
+                .block(0, 0, 0, sensor).state(0, 0, 0).block(2, 0, 0, inverted).state(2, 0, 0);
         int[] times = {23000, 23400, 23800, 100, 200, 400, 600, 11400, 11800, 12200, 12600, 13000, 13400, 13800, 14200};
         for (int i = 0; i < times.length; i++) s.at(1 + 20 * i, "time set " + times[i]);
         out.add(s);
         // A roof: no sky light under it.
         s = new Scenario("daylight_roof", 100).align20()
                 .block(-1, 1, -1, "minecraft:stone").block(0, 1, 0, "minecraft:stone").block(1, 1, 1, "minecraft:stone")
-                .container(0, 0, 0, sensor).state(0, 0, 0).container(2, 0, 0, inverted).state(2, 0, 0)
+                .block(0, 0, 0, sensor).state(0, 0, 0).block(2, 0, 0, inverted).state(2, 0, 0)
                 .at(1, "time set 6000");
         out.add(s);
         // Rain and thunder darken the sky.
         s = new Scenario("daylight_rain", 300).align20()
-                .container(0, 0, 0, sensor).state(0, 0, 0).container(2, 0, 0, inverted).state(2, 0, 0)
+                .block(0, 0, 0, sensor).state(0, 0, 0).block(2, 0, 0, inverted).state(2, 0, 0)
                 .at(1, "time set 6000").at(1, "weather rain 100000").at(160, "weather thunder 100000");
         out.add(s);
     }
