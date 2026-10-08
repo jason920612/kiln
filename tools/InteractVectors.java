@@ -2317,6 +2317,13 @@ public class InteractVectors {
             }
             default -> throw new IllegalArgumentException("unknown op " + s.get("op"));
         }
+        if (System.getenv("VAULT_DEBUG") != null && c.tickLevel) {
+            for (int[] w : c.watch) {
+                if (level.getBlockEntity(new BlockPos(w[0], w[1], w[2])) instanceof net.minecraft.world.level.block.entity.vault.VaultBlockEntity vbe)
+                    System.out.println("VDEBUG " + c.name + " op " + s.get("op") + " time " + level.getGameTime() + " lastFail " + get(vbe.getServerData(), "lastInsertFailTimestamp")
+                            + " key " + vbe.getConfig().keyItem() + " held " + p.getMainHandItem() + " state " + level.getBlockState(new BlockPos(w[0], w[1], w[2])));
+            }
+        }
         if (c.tickLevel && !"wait".equals(s.get("op"))) levelTick(c);
         // Queued work (the sign text filter completes on the server thread's executor).
         for (int i = 0; i < 3; i++) call(server, "runAllTasks");
