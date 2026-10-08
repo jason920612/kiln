@@ -140,6 +140,35 @@ impl Chunk {
         Self::with_light(sections, min_y, None, None)
     }
 
+    /// A copy of what saving writes (blocks, light, block entities, ticks, structures, points of
+    /// interest, inhabited time), for encoding on another thread while the chunk plays on.
+    /// Packet caches are left behind.
+    pub fn snapshot(&self) -> Chunk {
+        Chunk {
+            sections: self.sections.clone(),
+            min_y: self.min_y,
+            sky: self.sky.clone(),
+            block: self.block.clone(),
+            surface: self.surface.clone(),
+            version: self.version,
+            saved_version: self.saved_version,
+            epoch: next_epoch(),
+            edits: self.edits,
+            light_trusted: self.light_trusted,
+            cached: None,
+            cached_packet: None,
+            light_dirty: [0, 0],
+            block_entities: self.block_entities.clone(),
+            saved_ticks: self.saved_ticks.clone(),
+            structures: self.structures.clone(),
+            pending: self.pending.clone(),
+            generated_entities: self.generated_entities.clone(),
+            pois: self.pois.clone(),
+            inhabited_time: self.inhabited_time,
+            inhabited_saved: self.inhabited_saved,
+        }
+    }
+
     /// A chunk with stored light (e.g. from a world save); missing layers are derived.
     pub fn with_light(sections: Vec<Section>, min_y: i32, sky: Option<Vec<Light>>, block: Option<Vec<Light>>) -> Self {
         let n = sections.len();

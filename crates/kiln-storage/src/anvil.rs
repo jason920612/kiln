@@ -46,7 +46,7 @@ pub struct AnvilSource {
     /// (structure references, scheduled ticks, ...) are written back unchanged.
     preserved: HashMap<ChunkPos, Tag>,
     /// Encoded chunks waiting for `flush`, per region.
-    pending: HashMap<(i32, i32), Vec<(usize, usize, Vec<u8>)>>,
+    pending: HashMap<(i32, i32), Updates>,
     pub stats: crate::native::LoadStats,
     /// Threads reading, encoding and writing, once [`ChunkSource::set_background`] asked.
     background: Option<Background>,
@@ -57,7 +57,8 @@ pub struct AnvilSource {
 /// Region writes done since start: a reader with region files open reopens them when this moved.
 static REGION_WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-type Updates = Vec<(usize, usize, Vec<u8>)>;
+/// A region's chunk payloads to write, by local coordinates (shared with readers until written).
+type Updates = Vec<(usize, usize, std::sync::Arc<[u8]>)>;
 
 /// The background side of an [`AnvilSource`]: loads on two reader threads (each with its own
 /// [`AnvilSource`] for decoding), chunk encoding on an encoder thread, and region writes on a
@@ -65,10 +66,10 @@ type Updates = Vec<(usize, usize, Vec<u8>)>;
 /// chunks being encoded (`encoding`, waited for if read), the encoded ones (`pending`) and the
 /// ones being written (`writing`).
 struct Background {
-    load_tx: std::sync::mpsc::Sender<ChunkPos>,
+    load_tx: std::sync::mpsc::Sender<(ChunkPos, Option<std::sync::Arc<[u8]>>)>,
     loaded_rx: std::sync::mpsc::Receiver<(ChunkPos, Option<(Chunk, Option<Tag>)>, std::time::Duration)>,
     encode_tx: std::sync::mpsc::Sender<(ChunkPos, Box<Chunk>, Option<Tag>)>,
-    encoded_rx: std::sync::mpsc::Receiver<(ChunkPos, Vec<u8>)>,
+    encoded_rx: std::sync::mpsc::Receiver<(ChunkPos, std::sync::Arc<[u8]>)>,
     encoding: std::collections::HashSet<ChunkPos>,
     write_tx: std::sync::mpsc::Sender<((i32, i32), PathBuf, Updates)>,
     written_rx: std::sync::mpsc::Receiver<((i32, i32), std::io::Result<()>)>,
@@ -78,7 +79,7 @@ struct Background {
 
 impl Background {
     fn start(region_dir: PathBuf, dimension: Dimension) -> Background {
-        let (load_tx, load_rx) = std::sync::mpsc::channel::<ChunkPos>();
+        let (load_tx, load_rx) = std::sync::mpsc::channel::<(ChunkPos, Option<std::sync::Arc<[u8]>>)>();
         let load_rx = std::sync::Arc::new(std::sync::Mutex::new(load_rx));
         let (loaded_tx, loaded_rx) = std::sync::mpsc::channel();
         for i in 0..2 {
@@ -91,7 +92,7 @@ impl Background {
                     let mut seen_writes = REGION_WRITES.load(std::sync::atomic::Ordering::Acquire);
                     loop {
                         let next = rx.lock().unwrap().recv();
-                        let Ok(pos) = next else { break };
+                        let Ok((pos, payload)) = next else { break };
                         // Region files rewritten since: open them again.
                         let writes = REGION_WRITES.load(std::sync::atomic::Ordering::Acquire);
                         if writes != seen_writes {
@@ -99,7 +100,12 @@ impl Background {
                             seen_writes = writes;
                         }
                         let start = std::time::Instant::now();
+                        // A save not written yet comes with the job.
+                        if let Some(p) = payload {
+                            reader.queue(pos, p);
+                        }
                         let chunk = reader.load_in(pos, dimension);
+                        reader.pending.clear();
                         let kept = reader.preserved.remove(&pos);
                         if tx.send((pos, chunk.map(|c| (c, kept)), start.elapsed())).is_err() {
                             break;
@@ -114,7 +120,7 @@ impl Background {
             .name("kiln-encode".into())
             .spawn(move || {
                 for (pos, chunk, preserved) in encode_rx {
-                    if encoded_tx.send((pos, encode_payload(pos, &chunk, preserved.as_ref()))).is_err() {
+                    if encoded_tx.send((pos, encode_payload(pos, &chunk, preserved.as_ref()).into())).is_err() {
                         break;
                     }
                 }
@@ -152,7 +158,8 @@ fn write_now(path: &std::path::Path, updates: &Updates) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    crate::region::write_region(path, updates, now).map_err(std::io::Error::other)
+    let stamped: Vec<(usize, usize, &[u8], u32)> = updates.iter().map(|(x, z, p)| (*x, *z, &p[..], now)).collect();
+    crate::region::write_region_stamped(path, &stamped).map_err(std::io::Error::other)
 }
 
 impl AnvilSource {
@@ -370,7 +377,7 @@ impl AnvilSource {
     }
 
     /// Queues an encoded chunk for the next flush (replacing an older copy).
-    fn queue(&mut self, pos: ChunkPos, payload: Vec<u8>) {
+    fn queue(&mut self, pos: ChunkPos, payload: std::sync::Arc<[u8]>) {
         let entry = self.pending.entry((pos.x >> 5, pos.z >> 5)).or_default();
         let (lx, lz) = ((pos.x & 31) as usize, (pos.z & 31) as usize);
         entry.retain(|(x, z, _)| (*x, *z) != (lx, lz));
@@ -420,7 +427,7 @@ impl ChunkSource for AnvilSource {
         let payload = encode_payload(pos, chunk, self.preserved.get(&pos));
         // An older copy may still be with the encoder: it must not land after this one.
         self.collect(Some(pos), false);
-        self.queue(pos, payload);
+        self.queue(pos, payload.into());
     }
 
     fn save_many(&mut self, chunks: &[(ChunkPos, &Chunk)]) {
@@ -437,7 +444,7 @@ impl ChunkSource for AnvilSource {
             workers.into_iter().map(|w| w.join().expect("encoding chunks")).collect()
         });
         for (&(pos, _), payload) in chunks.iter().zip(payloads.into_iter().flatten()) {
-            self.queue(pos, payload);
+            self.queue(pos, payload.into());
         }
     }
 
@@ -467,15 +474,21 @@ impl ChunkSource for AnvilSource {
         if self.background.is_none() || (dim.min_y, dim.height) != (self.dimension.min_y, self.dimension.height) {
             return StartLoad::Unsupported;
         }
-        self.collect(None, false);
+        // A copy still with the encoder is waited for (it is newer than anything stored).
+        self.collect(Some(pos), false);
         let key = (pos.x >> 5, pos.z >> 5);
         let local = ((pos.x & 31) as usize, (pos.z & 31) as usize);
         let bg = self.background.as_ref().unwrap();
-        // Saves not written yet are read here, on this thread.
-        let unwritten = bg.encoding.contains(&pos)
-            || self.pending.get(&key).is_some_and(|p| p.iter().any(|(x, z, _)| (*x, *z) == local))
-            || bg.writing.contains_key(&key);
-        if unwritten {
+        // A save not written yet goes to the loader with the job.
+        let unwritten = self.pending.get(&key).and_then(|p| p.iter().find(|(x, z, _)| (*x, *z) == local)).or_else(|| {
+            bg.writing.get(&key).and_then(|w| w.iter().rev().find_map(|u| u.iter().find(|(x, z, _)| (*x, *z) == local)))
+        });
+        if let Some((_, _, payload)) = unwritten {
+            let _ = bg.load_tx.send((pos, Some(payload.clone())));
+            return StartLoad::Started;
+        }
+        if bg.writing.contains_key(&key) {
+            // The region file is being replaced: read it once it is.
             return StartLoad::Unsupported;
         }
         let dir = &self.region_dir;
@@ -485,7 +498,7 @@ impl ChunkSource for AnvilSource {
         });
         match region.as_ref() {
             Some(r) if r.contains(local.0, local.1) => {
-                let _ = self.background.as_ref().unwrap().load_tx.send(pos);
+                let _ = self.background.as_ref().unwrap().load_tx.send((pos, None));
                 StartLoad::Started
             }
             _ => StartLoad::Missing,
@@ -506,6 +519,19 @@ impl ChunkSource for AnvilSource {
                 (pos, chunk, took)
             })
             .collect()
+    }
+
+    fn flush_ready(&mut self) {
+        if self.background.is_none() {
+            return;
+        }
+        self.collect(None, false);
+        let bg = self.background.as_mut().unwrap();
+        for (key, updates) in std::mem::take(&mut self.pending) {
+            let path = self.region_dir.join(format!("r.{}.{}.mca", key.0, key.1));
+            bg.writing.entry(key).or_default().push(updates.clone());
+            let _ = bg.write_tx.send((key, path, updates));
+        }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {

@@ -818,6 +818,10 @@ struct Dim {
     /// those read and not installed yet.
     loading: HashSet<ChunkPos>,
     loaded: BTreeMap<ChunkPos, Chunk>,
+    /// Chunks players wait for (their own): installed whatever the tick's budget.
+    urgent: HashSet<ChunkPos>,
+    /// Tick time spent installing chunks this tick (with background generation only).
+    install_spent: Duration,
     /// World age, for the scheduled ticks of chunks that load or unload.
     game_time: i64,
     /// Entity chunks (`entities/`), when the world is saved somewhere.
@@ -907,6 +911,8 @@ impl Dim {
             generation,
             loading: HashSet::new(),
             loaded: BTreeMap::new(),
+            urgent: HashSet::new(),
+            install_spent: Duration::ZERO,
             game_time,
             entity_store,
             poi_store,
@@ -932,6 +938,7 @@ impl Dim {
     /// Puts a loaded chunk in its region, or pending until its cell gets one. Returns whether
     /// it went straight into a region.
     fn install(&mut self, pos: ChunkPos, chunk: Chunk) -> bool {
+        let was_urgent = self.urgent.remove(&pos);
         // A lent region takes its chunks when it is back.
         if self.lent_at(pos) {
             self.pending.insert(pos, chunk);
@@ -942,6 +949,9 @@ impl Dim {
             Err(chunk) => {
                 self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
                 self.pending.insert(pos, chunk);
+                if was_urgent {
+                    self.urgent.insert(pos);
+                }
                 false
             }
         }
@@ -1022,6 +1032,10 @@ impl Dim {
     /// generated ahead of every other chunk while the player waits. Whether it is loaded.
     fn request_urgent(&mut self, pos: ChunkPos) -> bool {
         if self.is_loaded(pos) {
+            // (Waiting in `pending` for its cell's region: put first then.)
+            if self.pending.contains_key(&pos) {
+                self.urgent.insert(pos);
+            }
             return true;
         }
         if let Some(chunk) = self.loaded.remove(&pos) {
@@ -1046,6 +1060,7 @@ impl Dim {
             chunkstats::count(&chunkstats::DISK_MISSES);
             chunkstats::add_ns(&chunkstats::DISK_MISS_NS, started.elapsed());
         }
+        self.urgent.insert(pos);
         if let Some(pool) = &mut self.generation {
             pool.request_urgent(pos);
         }
@@ -1096,7 +1111,7 @@ impl Dim {
         let started = Instant::now();
         let (now, later): (Vec<ChunkPos>, Vec<ChunkPos>) = ready.into_iter().partition(|p| first.binary_search(p).is_ok());
         for pos in now.into_iter().chain(later) {
-            if first.binary_search(&pos).is_err() && started.elapsed() >= INSTALL_BUDGET {
+            if first.binary_search(&pos).is_err() && self.install_spent + started.elapsed() >= INSTALL_BUDGET {
                 break;
             }
             let chunk = match self.loaded.remove(&pos) {
@@ -1109,6 +1124,7 @@ impl Dim {
                 self.timed_install(pos, chunk);
             }
         }
+        self.install_spent += started.elapsed();
     }
 
     /// Saves and drops chunks the regions released; cells left empty are vacated. Returns
@@ -1157,11 +1173,37 @@ impl Dim {
             }
         }
         let deltas = self.regionizer.apply(&mut self.regions, tick, &mut DefaultCells);
-        for (pos, chunk) in std::mem::take(&mut self.pending) {
-            if let Err(chunk) = self.put(pos, chunk) {
-                self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
-                self.pending.insert(pos, chunk);
+        if self.generation.is_none() {
+            for (pos, chunk) in std::mem::take(&mut self.pending) {
+                if let Err(chunk) = self.put(pos, chunk) {
+                    self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
+                    self.pending.insert(pos, chunk);
+                }
             }
+        } else if !self.pending.is_empty() {
+            // Chunks that arrived before their cell had a region go in within the tick's
+            // install budget (a new region's whole first view at once would hold the tick up),
+            // the chunks players wait for first; the rest stay pending, counted as loaded.
+            let started = Instant::now();
+            let mut todo: Vec<ChunkPos> = self.pending.keys().copied().collect();
+            todo.sort_unstable_by_key(|p| (!self.urgent.contains(p), *p));
+            for pos in todo {
+                let urgent = self.urgent.contains(&pos);
+                if !urgent && self.install_spent + started.elapsed() >= INSTALL_BUDGET {
+                    break;
+                }
+                let chunk = self.pending.remove(&pos).unwrap();
+                match self.put(pos, chunk) {
+                    Ok(()) => {
+                        self.urgent.remove(&pos);
+                    }
+                    Err(chunk) => {
+                        self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
+                        self.pending.insert(pos, chunk);
+                    }
+                }
+            }
+            self.install_spent += started.elapsed();
         }
         for d in &deltas {
             debug!("regions: {d:?}");
@@ -1235,7 +1277,12 @@ pub struct Sim {
     waiting_joins: Vec<(persist::Joining, JoinInfo)>,
     /// Packets of players in [`LIMBO`], applied once they are placed.
     held_packets: Vec<(ConnId, PlayIn)>,
+    /// A world save going on over several ticks: the chunks still to copy, by level.
+    save_run: Option<Vec<(DimId, ChunkPos)>>,
 }
+
+/// Tick time a world save spends per tick copying chunks for the storage threads.
+const SAVE_BUDGET: Duration = Duration::from_millis(2);
 
 /// The region of players whose chunk is still being generated (teleported or moved to another
 /// level into terrain not made yet): they wait outside every region, untouched by the region
@@ -1456,6 +1503,7 @@ impl Sim {
             world: world_state::WorldState { pipelines, feature_hosts, ..Default::default() },
             waiting_joins: Vec::new(),
             held_packets: Vec::new(),
+            save_run: None,
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -2523,6 +2571,11 @@ impl Sim {
             }
             let dt = diag::lap("ch.unload", dt);
             let d = &mut self.dims[dim];
+            d.install_spent = Duration::ZERO;
+            // Encoded saves go to the writer every 30 s (a background writer: no tick time).
+            if self.game_time % 600 == 0 {
+                d.provider.flush_ready();
+            }
             d.install_generated(&keep);
             let dt = diag::lap("ch.install_generated", dt);
             // Every player's own chunk, uncapped: each player must stand in an owned cell (or
@@ -2989,6 +3042,81 @@ impl Sim {
         }
     }
 
+    /// A world save (autosave, `save-all`). Where chunk storage runs on threads of its own, the
+    /// chunks go over the next ticks ([`Sim::continue_save`]): each is copied within the tick's
+    /// [`SAVE_BUDGET`] and encoded and written on the storage threads, so the save holds no tick
+    /// up; everything else is saved at once. Elsewhere, the whole save at once.
+    fn start_save(&mut self) {
+        let background = self.dims.iter().all(|d| d.generation.is_some() && d.lent.is_empty());
+        if !background || std::env::var("KILN_BACKGROUND_STORAGE").is_ok_and(|v| v == "0") {
+            self.save();
+            return;
+        }
+        let start = Instant::now();
+        self.materialize_spawns();
+        let owners = self.owner_uuids();
+        let mut queue = Vec::new();
+        for dim in 0..self.dims.len() {
+            let d = &mut self.dims[dim];
+            for r in d.regions.iter() {
+                for (cell_pos, cell) in r.cells().iter() {
+                    queue.extend(cell.chunks(cell_pos).map(|(p, _)| (dim, p)));
+                }
+            }
+            let gone = d.store_entities(&[], true, &owners);
+            self.forget_entities(gone);
+            if let Err(e) = self.dims[dim].flush_entities() {
+                warn!("saving entities failed: {e}");
+            }
+            if let Some(Err(e)) = self.dims[dim].poi_store.as_mut().map(kiln_storage::PoiStore::flush) {
+                warn!("saving points of interest failed: {e}");
+            }
+        }
+        self.save_rest();
+        queue.sort_unstable();
+        info!("saving {} chunks over the next ticks (entities and the rest saved in {:.1} ms)", queue.len(), start.elapsed().as_secs_f64() * 1e3);
+        queue.reverse();
+        self.save_run = Some(queue);
+    }
+
+    /// Copies chunks of the save going on for the storage threads, within [`SAVE_BUDGET`];
+    /// once all are copied, hands them to the writer.
+    fn continue_save(&mut self) {
+        let Some(mut queue) = self.save_run.take() else { return };
+        let start = Instant::now();
+        let game_time = self.game_time;
+        while start.elapsed() < SAVE_BUDGET {
+            let Some((dim, pos)) = queue.pop() else { break };
+            let d = &mut self.dims[dim];
+            let Some(region) = d.regions.at_mut(pos.cell()) else { continue };
+            let (cells, part) = region.cells_and_part_mut();
+            let Some(chunk) = cells.get_mut(pos.cell()).and_then(|c| c.chunk_mut(pos)) else { continue };
+            // Scheduled ticks and moving pistons onto the chunk, as a save at once puts them.
+            part.1.store(pos, chunk, game_time);
+            if let (Some(store), Some(p)) = (d.poi_store.as_mut(), chunk.pois.as_deref_mut())
+                && p.dirty
+            {
+                store.store(pos, Some(p.to_nbt(kiln_storage::anvil::DATA_VERSION as i32)));
+                p.dirty = false;
+            }
+            if chunk.needs_save() {
+                chunk.mark_saved();
+                let copy = chunk.snapshot();
+                d.provider.save_owned_copy(pos, copy);
+            }
+        }
+        if queue.is_empty() {
+            for d in &mut self.dims {
+                if let Err(e) = d.provider.flush() {
+                    warn!("saving {} failed: {e}", d.key);
+                }
+            }
+            info!("chunks of the save handed to the writer");
+        } else {
+            self.save_run = Some(queue);
+        }
+    }
+
     fn save(&mut self) {
         // Everything is saved together: regions ticking away come back first.
         self.rendezvous();
@@ -3013,22 +3141,38 @@ impl Sim {
                     }
                 }
             }
+            let t0 = Instant::now();
             match d.provider.save_all(&mut d.regions) {
                 Ok(0) => {}
                 Ok(n) => info!("saved {n} chunks of {} in {:.1} ms", d.key, start.elapsed().as_secs_f64() * 1e3),
                 Err(e) => warn!("saving {} failed: {e}", d.key),
             }
+            let t1 = Instant::now();
             let gone = d.store_entities(&[], true, &owners);
             self.forget_entities(gone);
+            let t2 = Instant::now();
             match self.dims[dim].flush_entities() {
                 Ok(0) => {}
                 Ok(n) => debug!("saved {n} entity chunks"),
                 Err(e) => warn!("saving entities failed: {e}"),
             }
+            let t3 = Instant::now();
             if let Some(Err(e)) = self.dims[dim].poi_store.as_mut().map(kiln_storage::PoiStore::flush) {
                 warn!("saving points of interest failed: {e}");
             }
+            let ms = |a: Instant, b: Instant| (b - a).as_secs_f64() * 1e3;
+            if ms(start, Instant::now()) > 50.0 {
+                info!(
+                    "save of {}: ticks and pois onto chunks {:.1} ms, chunks {:.1} ms, entities {:.1} ms, entity files {:.1} ms, poi files {:.1} ms",
+                    self.dims[dim].key, ms(start, t0), ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, Instant::now())
+                );
+            }
         }
+        self.save_rest();
+    }
+
+    /// The parts of a save besides chunks and entities: players, the level and the saved data.
+    fn save_rest(&mut self) {
         for p in self.players.values() {
             self.save_player(p);
         }
@@ -3377,8 +3521,9 @@ impl Sim {
         // `save-all` asks for a save; `save-off` stops the autosave.
         let autosave = normal && self.commands.auto_save && self.game_time % AUTOSAVE_TICKS == 0;
         if std::mem::take(&mut self.commands.save_requested) || autosave {
-            self.save();
+            self.start_save();
         }
+        self.continue_save();
     }
 }
 

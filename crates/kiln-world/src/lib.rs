@@ -173,6 +173,10 @@ pub trait ChunkSource: Send {
         self.flush()
     }
 
+    /// Hands what is ready to the writing side without waiting for anything (a source writing in
+    /// the background); nothing otherwise.
+    fn flush_ready(&mut self) {}
+
     /// [`ChunkSource::save`] for many chunks at once (a save of the whole world): the source may
     /// encode them side by side.
     fn save_many(&mut self, chunks: &[(ChunkPos, &Chunk)]) {
@@ -332,6 +336,21 @@ impl ChunkProvider {
     /// See [`ChunkSource::poll_loads`].
     pub fn poll_loads(&mut self) -> Vec<(ChunkPos, Option<Chunk>, std::time::Duration)> {
         self.source.as_mut().map_or_else(Vec::new, |s| s.poll_loads())
+    }
+
+    /// Queues a copy of a chunk for writing ([`ChunkSource::save_owned`]); the caller marked the
+    /// chunk saved.
+    pub fn save_owned_copy(&mut self, pos: ChunkPos, copy: Chunk) {
+        if let Some(s) = self.source.as_mut() {
+            s.save_owned(pos, copy);
+        }
+    }
+
+    /// See [`ChunkSource::flush_ready`].
+    pub fn flush_ready(&mut self) {
+        if let Some(s) = self.source.as_mut() {
+            s.flush_ready();
+        }
     }
 
     /// See [`ChunkSource::sync`].
