@@ -474,6 +474,16 @@ impl RegionWork<'_> {
         if env.game_time % 20 == 0 {
             self.find_unloads();
         }
+        // Encoded chunk packets are shared by the players a chunk goes to around the same time;
+        // a minute on they only take memory (a later viewer gets the chunk encoded again, the
+        // same bytes).
+        if env.game_time % 1200 == 600 {
+            for (cell_pos, cell) in self.cells.iter_mut() {
+                for (_, chunk) in cell.chunks_mut(cell_pos) {
+                    chunk.drop_packet_cache();
+                }
+            }
+        }
         mark(&mut self.out.times, 2);
         // The chunks that tick, for the block and entity phases (no player changes chunk
         // between them).

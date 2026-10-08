@@ -635,6 +635,12 @@ impl Chunk {
         put_light_data(b, &self.sky, sky, &self.block, block);
     }
 
+    /// Forgets the encoded packet (it is made again when next needed).
+    pub fn drop_packet_cache(&mut self) {
+        self.cached = None;
+        self.cached_packet = None;
+    }
+
     /// Chunk Data body after the coordinates; re-encoded only when the chunk changed.
     pub fn packet_body(&mut self, biome_count: usize) -> Bytes {
         if let Some((v, body)) = &self.cached {
