@@ -95,6 +95,8 @@ public class InteractVectors {
         boolean watchStands;
         // wp49: the custom stats (by name) whose change is recorded.
         List<String> customStats = new ArrayList<>();
+        // wp49: the bees that appear (where, and whether they target someone) are recorded after every step.
+        boolean watchBees;
 
         Case(String name) {
             this.name = name;
@@ -133,6 +135,11 @@ public class InteractVectors {
 
         Case stands() {
             watchStands = true;
+            return this;
+        }
+
+        Case bees() {
+            watchBees = true;
             return this;
         }
 
@@ -516,6 +523,81 @@ public class InteractVectors {
 
     static Map<String, Object> attackEntity(double x, double y, double z) {
         return op("op", "attack_entity", "pos", List.of(x, y, z));
+    }
+
+    /** wp49: beehives and bee nests: a bottle or shears on a full hive, its bees coming out (angry, or calmed by smoke). */
+    static void hives49(List<Case> out) {
+        Case c;
+        String bees2 = "{bees:[{entity_data:{id:\"minecraft:bee\",HasNectar:1b},min_ticks_in_hive:100,ticks_in_hive:7},{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:600,ticks_in_hive:0}]}";
+        for (String kind : new String[] {"beehive", "bee_nest"}) {
+            for (String facing : new String[] {"west", "north"}) {
+                c = blockCase("hive_bottle_" + kind + "_" + facing, "minecraft:" + kind + "[facing=" + facing + ",honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+                c.slot("h0", stack("minecraft:glass_bottle", 2));
+                c.step(useOn(2, 100, 0, 1, 0)).step(useOn(2, 100, 0, 1, 0));
+                out.add(c);
+            }
+        }
+        c = blockCase("hive_bottle_no_bees", "minecraft:beehive[facing=west,honey_level=5]").bees().stat("minecraft:glass_bottle");
+        c.slot("h0", stack("minecraft:glass_bottle", 1));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("hive_bottle_level_4", "minecraft:beehive[facing=west,honey_level=4]" + bees2).bees().stat("minecraft:glass_bottle");
+        c.slot("h0", stack("minecraft:glass_bottle", 1));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("hive_bottle_creative", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c.gameMode = "creative";
+        c.slot("h0", stack("minecraft:glass_bottle", 3));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("hive_bottle_full_inventory", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c.slot("h0", stack("minecraft:glass_bottle", 2));
+        for (int i = 1; i < 9; i++) c.slot("h" + i, stack("minecraft:dirt", 64));
+        for (int i = 9; i < 36; i++) c.slot("m" + i, stack("minecraft:cobblestone", 64));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        for (String kind : new String[] {"beehive", "bee_nest"}) {
+            c = blockCase("hive_shears_" + kind, "minecraft:" + kind + "[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:shears");
+            c.slot("h0", stack("minecraft:shears"));
+            c.step(useOn(2, 100, 0, 1, 0)).step(useOn(2, 100, 0, 1, 0));
+            out.add(c);
+        }
+        c = blockCase("hive_shears_level_3", "minecraft:beehive[facing=west,honey_level=3]" + bees2).bees().stat("minecraft:shears");
+        c.slot("h0", stack("minecraft:shears"));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        // Smoke from a lit campfire below calms them: they stay in the hive's front without a target.
+        c = blockCase("hive_bottle_smoked", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c.cmd("setblock 2 99 0 minecraft:campfire[lit=true]");
+        c.slot("h0", stack("minecraft:glass_bottle", 1));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("hive_bottle_smoked_hay", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c.cmd("setblock 2 99 0 minecraft:hay_block").cmd("setblock 2 98 0 minecraft:campfire[lit=true]");
+        c.slot("h0", stack("minecraft:glass_bottle", 1));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("hive_bottle_unlit_campfire", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c.cmd("setblock 2 99 0 minecraft:campfire[lit=false]");
+        c.slot("h0", stack("minecraft:glass_bottle", 1));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        // A blocked front: the bees still come out (an emergency), inside the hive's own block.
+        c = blockCase("hive_bottle_front_blocked", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c.cmd("setblock 1 100 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:glass_bottle", 1));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("hive_empty_hand_and_stick", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees();
+        c.slot("h1", stack("minecraft:stick"));
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "select", "slot", 1)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        // A player far from the hive: the bees come out but do not turn on them.
+        c = blockCase("hive_bottle_player_far", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c.slot("h0", stack("minecraft:glass_bottle", 1));
+        c.pos = new double[] {-1.5, 100.0, 0.5};
+        c.step(useOnAt(2, 100, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
     }
 
     /** wp49: item frames, glow item frames and paintings. */
@@ -1775,6 +1857,7 @@ public class InteractVectors {
         }
         Map<String, Integer> customBefore = new HashMap<>();
         for (String n : c.customStats) customBefore.put(n, p.getStats().getValue(net.minecraft.stats.Stats.CUSTOM.get(BuiltInRegistries.CUSTOM_STAT.getValue(Identifier.parse(n)))));
+        java.util.Set<UUID> seenBees = new java.util.HashSet<>();
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
             Map<String, Object> r = new LinkedHashMap<>();
@@ -1789,6 +1872,14 @@ public class InteractVectors {
             r.put("used", used);
             if (c.watchHanging) r.put("hangings", hangings());
             if (c.watchStands) r.put("stands", stands());
+            if (c.watchBees) {
+                List<List<Object>> fresh = new ArrayList<>();
+                for (var bee : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.bee.Bee.class, new AABB(-16, 90, -16, 32, 120, 32))) {
+                    if (seenBees.add(bee.getUUID())) fresh.add(List.of(bee.getX(), bee.getY(), bee.getZ(), bee.getTarget() != null ? 1 : 0));
+                }
+                fresh.sort(Comparator.<List<Object>>comparingDouble(l -> (Double) l.get(0)).thenComparingDouble(l -> (Double) l.get(1)).thenComparingDouble(l -> (Double) l.get(2)));
+                r.put("bees_new", new ArrayList<Object>(fresh));
+            }
             if (c.watchFood) r.put("food", List.of(p.getFoodData().getFoodLevel(), p.getFoodData().getSaturationLevel(), (float) get(p.getFoodData(), "exhaustionLevel")));
             if (!c.customStats.isEmpty()) {
                 Map<String, Object> cs = new LinkedHashMap<>();
@@ -1805,6 +1896,7 @@ public class InteractVectors {
         command("kill @e[type=minecraft:painting]");
         command("kill @e[type=minecraft:armor_stand]");
         command("kill @e[type=minecraft:item]");
+        for (var bee : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.bee.Bee.class, new AABB(-64, -64, -64, 64, 320, 64))) bee.discard();
         Map<String, Object> line = new LinkedHashMap<>();
         line.put("name", c.name);
         line.put("game_mode", c.gameMode);
@@ -1824,6 +1916,7 @@ public class InteractVectors {
         line.put("food", c.watchFood ? c.food : null);
         line.put("hanging", c.watchHanging);
         line.put("stands", c.watchStands);
+        line.put("bees", c.watchBees);
         line.put("custom_stats", c.customStats);
         line.put("result", results);
         return toJson(line);
@@ -1929,6 +2022,7 @@ public class InteractVectors {
             frames49(all);
             stands49(all);
             bells49(all);
+            hives49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {

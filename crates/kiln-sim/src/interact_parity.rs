@@ -333,6 +333,7 @@ fn run_case(line: &Value) -> Vec<String> {
     }
     *stats.log.lock().unwrap() = Some(Vec::new());
     let mut errors = Vec::new();
+    let mut seen_bees: std::collections::HashSet<i32> = Default::default();
     let steps = line["steps"].as_array().unwrap();
     let results = line["result"].as_array().unwrap();
     for (n, (step, want)) in steps.iter().zip(results).enumerate() {
@@ -465,6 +466,20 @@ fn run_case(line: &Value) -> Vec<String> {
         if want.get("stands").is_some() {
             let diff = stand_diff(&stand_rows(&sim), &want_stand_rows(&want["stands"]));
             eq("armor stands", diff, String::new());
+        }
+        if let Some(want_bees) = want.get("bees_new") {
+            // The bees that appeared in this step (where, and whether they have a target).
+            let mut fresh: Vec<[f64; 4]> = Vec::new();
+            for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
+                for e in region.part().0.list.iter().filter(|e| !e.removed && e.kind.name == "minecraft:bee") {
+                    if seen_bees.insert(e.id) {
+                        let target = e.phys.as_deref().and_then(kiln_entity::mob::data).is_some_and(|m| m.target.is_some());
+                        fresh.push([e.pos[0], e.pos[1], e.pos[2], f64::from(u8::from(target))]);
+                    }
+                }
+            }
+            fresh.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            eq("new bees", json!(fresh).to_string(), want_bees.to_string());
         }
         if want.get("hangings").is_some() {
             eq("hanging entities", hangings_json(&sim).to_string(), want["hangings"].to_string());
