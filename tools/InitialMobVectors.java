@@ -66,7 +66,7 @@ public class InitialMobVectors {
                     for (String p : dump.split(";")) {
                         String[] c = p.split(",");
                         var bp = new net.minecraft.core.BlockPos(Integer.parseInt(c[0]), Integer.parseInt(c[1]), Integer.parseInt(c[2]));
-                        System.out.println("BLOCK " + p + " " + level.getBlockState(bp));
+                        System.out.println("BLOCK " + p + " " + level.getBlockState(bp) + " biome " + level.getBiome(bp).unwrapKey().map(k -> k.identifier().toString()).orElse("?"));
                     }
                 }
                 // Debug: INITIAL_MOB_TOP="x0,z0,x1,z1" lists the top block of every column of that box.

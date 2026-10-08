@@ -1023,7 +1023,8 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
     // `region.getBiome(center.getWorldPosition().atY(region.getMaxY()))`.
     let biome = zoomed_biome_at(level, min_x, env.min_y + env.height - 1, min_z);
     let list = table.list(biome, Category::Creature);
-    crate::testing::trace(&format!("initial_chunk {c:?} biome {biome} creatures {} p {}", list.len(), table.world_gen_probability(biome)));
+    let name = |b: u16| kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome").map_or("?", |(_, e)| e[b as usize]);
+    crate::testing::trace(&format!("initial_chunk {c:?} biome {biome} {} mid {} creatures {} p {}", name(biome), name(zoomed_biome_at(level, min_x + 8, 70, min_z + 8)), list.len(), table.world_gen_probability(biome)));
     if list.is_empty() {
         return;
     }
