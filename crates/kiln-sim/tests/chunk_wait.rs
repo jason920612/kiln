@@ -114,6 +114,7 @@ fn a_teleported_player_waiting_for_its_chunk_ticks_like_one_in_loaded_terrain() 
     }
     // Generating the chunk did not stall the tick (it takes seconds on a fresh world when the
     // tick thread makes it).
+    eprintln!("waited {waited} ticks, longest tick {longest:?}");
     assert!(longest < Duration::from_millis(500), "a tick took {longest:?} during the wait of {waited} ticks");
 }
 
@@ -167,5 +168,6 @@ fn a_player_joining_into_new_terrain_is_in_the_level_at_once_and_ticks_while_the
     }
     assert!(waited >= 30, "the chunk was there after {waited} ticks: too soon to tell");
     assert!(state(&sim, 1).1.0 < start_food, "hunger ran while waiting: {:?} -> {:?} in {waited} ticks", start_effects, state(&sim, 1));
+    eprintln!("waited {waited} ticks, longest tick {longest:?}");
     assert!(longest < Duration::from_millis(500), "a tick took {longest:?} during the wait of {waited} ticks");
 }
