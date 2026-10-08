@@ -636,7 +636,7 @@ public class InteractVectors {
         out.add(c);
         c = new Case("painting_hit").hanging();
         c.cmd("fill 3 99 -2 3 103 3 minecraft:stone").cmd("summon minecraft:painting 2 100 0 {facing:1b,variant:\"minecraft:courbet\"}");
-        c.step(attackEntity(2.96875, 100.5, 1.0)).step(attackEntity(2.96875, 100.5, 1.0));
+        c.step(attackEntity(2.96875, 100.5, 1.0));
         out.add(c);
         c = new Case("painting_hit_creative").hanging();
         c.gameMode = "creative";
