@@ -56,6 +56,15 @@ SUITES = {
     "command": (["-p", "kiln-command"], {}),
     "region_stacks": (["-p", "kiln-sim", "--test", "region_stacks"], {}),
     "determinism": (["-p", "kiln-sim", "--test", "determinism"], {}),
+    # wp44/wp45 suites: recorded by tools/*Vectors.java into <work>/wp45 (see docs/parity-coverage.md section 7).
+    "block_parity": (["-p", "kiln-blocks", "--lib", "block_parity"], {"KILN_BLOCK_VECTORS": vec("wp45/block/block_vectors.jsonl")}),
+    "tree_parity": (["-p", "kiln-sim", "--test", "tree_parity"], {"KILN_BLOCK_VECTORS": vec("wp45/block/block_vectors.jsonl")}),
+    "melee": (["-p", "kiln-sim", "--lib", "melee_parity"], {"KILN_MELEE_VECTORS": vec("wp45/combat/melee.jsonl")}),
+    "spear": (["-p", "kiln-sim", "--lib", "spear_parity"], {"KILN_SPEAR_VECTORS": vec("wp45/combat/spear.jsonl")}),
+    "effects_player": (["-p", "kiln-sim", "--lib", "effect_parity"], {"KILN_EFFECT_VECTORS": vec("wp45/effects/vectors.jsonl")}),
+    "interact": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": vec("wp45/interact/vectors.jsonl")}),
+    "structure_spawns": (["-p", "kiln-sim", "--lib", "structure_spawns"], {"KILN_STRUCTURE_SPAWN_VECTORS": vec("wp45/spawn/structure_spawns.jsonl")}),
+    "entity_parity_wp45": (["-p", "kiln-entity", "--test", "parity"], {"KILN_PARITY": "1", "KILN_ENTITY_VECTORS": vec("wp45/entity/vectors.jsonl")}),
 }
 
 SUMMARY = re.compile(r"(test result:|skipped|parity|match|scenarios|vectors|rounds|chunks|sequences|cases|agree|mismatch|diverg)", re.I)

@@ -696,7 +696,7 @@ public class EffectVectors {
             case "twisting_vines" -> s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:twisting_vines[age=1]");
             case "ladder" -> s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:ladder[facing=south]")
                     .block(0, 0, -1, "minecraft:stone");
-            case "cactus" -> s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:cactus[age=0]");
+            case "cactus" -> s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
             case "magma" -> s.block(0, -1, 0, "minecraft:magma_block");
             case "stairs" -> s.block(0, -1, 0, "minecraft:stone")
                     .block(0, 0, 0, "minecraft:oak_stairs[facing=north,half=bottom,shape=straight]");
@@ -878,52 +878,52 @@ public class EffectVectors {
         Scenario s;
         // ---- cactus: standing in it, and walking into one
         s = hazard("haz_cactus_inside", 60);
-        s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:cactus[age=0]");
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
         out.add(s);
         s = hazard("haz_cactus_walk", 80);
-        s.block(0, -1, 0, "minecraft:stone").block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:cactus[age=3]");
+        s.block(0, -1, 0, "minecraft:stone").block(1, -2, 0, "minecraft:stone").block(1, -1, 0, "minecraft:sand").block(1, 0, 0, "minecraft:cactus[age=3]");
         walkInto(s, 0.4, 3, 40, 2);
         out.add(s);
         s = hazard("haz_cactus_walk_sneaking", 80);
         s.sneaking = true;
-        s.block(0, -1, 0, "minecraft:stone").block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:cactus[age=3]");
+        s.block(0, -1, 0, "minecraft:stone").block(1, -2, 0, "minecraft:stone").block(1, -1, 0, "minecraft:sand").block(1, 0, 0, "minecraft:cactus[age=3]");
         walkInto(s, 0.2, 3, 40, 2);
         out.add(s);
         s = hazard("haz_cactus_armor", 60);
         s.armor = ARMOR_FULL_DIAMOND;
-        s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:cactus[age=0]");
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
         out.add(s);
         s = hazard("haz_cactus_protection4", 60);
         s.armor = ARMOR_FULL_DIAMOND;
         for (int i = 0; i < 4; i++) s.armorEnch.get(i).put("minecraft:protection", 4);
-        s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:cactus[age=0]");
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
         out.add(s);
         s = hazard("haz_cactus_resistance", 60);
         s.at(1, effect("resistance", 400, 1));
-        s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:cactus[age=0]");
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
         out.add(s);
         s = hazard("haz_cactus_absorption", 60);
         s.at(1, effect("absorption", 400, 0));
-        s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:cactus[age=0]");
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
         out.add(s);
         for (String mode : new String[] {"creative", "adventure", "spectator"}) {
             s = hazard("haz_cactus_" + mode, 40);
             s.gameMode = mode;
-            s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:cactus[age=0]");
+            s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
             out.add(s);
         }
         for (String diff : new String[] {"peaceful", "easy", "hard"}) {
             s = hazard("haz_cactus_" + diff, 40);
             s.difficulty = diff;
-            s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:cactus[age=0]");
+            s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
             out.add(s);
         }
         s = hazard("haz_cactus_low_health", 60);
         s.health = 3f;
-        s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:cactus[age=0]");
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
         out.add(s);
         s = hazard("haz_cactus_two_tall", 40);
-        s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:cactus[age=0]").block(0, 1, 0, "minecraft:cactus[age=0]");
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]").block(0, 1, 0, "minecraft:cactus[age=0]");
         out.add(s);
 
         // ---- sweet berry bushes: slow, and hurt a player that moves in them
@@ -1071,7 +1071,10 @@ public class EffectVectors {
             String id = w.contains("[") ? w.substring(0, w.indexOf('[')) : w;
             s = hazard("haz_wall_" + id + (w.contains("=") ? "_" + Math.abs(w.hashCode() % 1000) : ""), 45);
             s.onGround = true;
-            s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:" + w).block(0, 1, 0, "minecraft:" + w);
+            // (A cactus needs sand under it, and the sand something under that.)
+            if (w.equals("cactus")) s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand");
+            else s.block(0, -1, 0, "minecraft:stone");
+            s.block(0, 0, 0, "minecraft:" + w).block(0, 1, 0, "minecraft:" + w);
             out.add(s);
         }
         s = hazard("haz_wall_head_only", 45);

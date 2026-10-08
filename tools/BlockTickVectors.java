@@ -145,12 +145,15 @@ public class BlockTickVectors {
     }
 
     static void scenarios(List<Sc> out) {
+        // Long scenarios first: water that an earlier scenario poured falls down the void under the
+        // window, spreads over the bottom layer and, hundreds of ticks later, reaches the window's
+        // edge (pending fluid ticks nobody asked for in a scenario of a thousand ops).
+        scenariosMisc(out);
+        scenariosTrees(out);
         scenariosHarness(out);
         scenariosFarming(out);
         scenariosGrowth(out);
         scenariosSpread(out);
-        scenariosMisc(out);
-        scenariosTrees(out);
         scenariosEnd(out);
     }
 

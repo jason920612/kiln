@@ -707,7 +707,7 @@ public class CombatVectors {
     static void writeServerFiles() throws Exception {
         Files.writeString(Path.of("eula.txt"), "eula=true\n");
         Files.writeString(Path.of("server.properties"), String.join("\n",
-                "server-port=" + SpearVectors.harnessPort(),
+                "server-port=" + harnessPort(),
                 "online-mode=false",
                 "level-name=world",
                 "level-type=minecraft\\:flat",
