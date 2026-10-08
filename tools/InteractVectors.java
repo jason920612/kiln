@@ -1338,6 +1338,7 @@ public class InteractVectors {
 
     static String run(Case c) throws Exception {
         for (String cmd : c.commands) command(cmd);
+        if (System.getenv("INTERACT_DEBUG") != null) { command("data get entity @e[type=minecraft:painting,limit=1]"); command("summon minecraft:painting 2 100 0 {facing:1b,variant:\"minecraft:courbet\"}"); }
         players++;
         ServerPlayer p = mockPlayer("Interact");
         setup(p, c);
