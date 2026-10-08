@@ -493,7 +493,7 @@ impl Entity {
     }
 
     /// `BubbleColumnBlock.entityInside` with the box inside the column.
-    pub(crate) fn bubble_column_inside(&mut self, level: &dyn EntityLevel, pos: BlockPos, state: u16) {
+    pub(crate) fn bubble_column_inside(&mut self, level: &mut dyn EntityLevel, pos: BlockPos, state: u16) {
         // AbstractArrow ignores bubble columns while stuck.
         if matches!(&self.kind, EntityKind::Arrow(a) if a.in_ground) {
             return;
@@ -502,6 +502,10 @@ impl Entity {
         let drag_down = kiln_data::blocks_types::block_of(state).property(state, "drag") == Some("true");
         if physics::collision_shape(above).is_empty() && physics::fluid_state(above).is_empty() {
             self.on_above_bubble_column(drag_down);
+            // `sendBubbleColumnParticles`: the level's random places the particles.
+            for _ in 0..8 {
+                level.random().next_double();
+            }
         } else {
             self.on_inside_bubble_column(drag_down);
         }
