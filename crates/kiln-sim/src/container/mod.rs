@@ -61,6 +61,8 @@ pub(crate) enum BeKind {
     Bell,
     /// Holds up to three bees (`BeehiveBlockEntity`).
     Beehive,
+    /// One slot, and four sherds that decorate the sides (`DecoratedPotBlockEntity`).
+    DecoratedPot,
 }
 
 impl BeKind {
@@ -86,6 +88,7 @@ impl BeKind {
             "daylight_detector" => BeKind::DaylightDetector,
             "bell" => BeKind::Bell,
             "beehive" => BeKind::Beehive,
+            "decorated_pot" => BeKind::DecoratedPot,
             _ => return None,
         })
     }
@@ -101,6 +104,7 @@ impl BeKind {
             BeKind::Jukebox => 1,
             BeKind::Campfire => 4,
             BeKind::ChiseledBookshelf => 6,
+            BeKind::DecoratedPot => 1,
             BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive => 0,
         }
     }
@@ -139,12 +143,14 @@ impl BeKind {
             BeKind::DaylightDetector => "container.daylight_detector",
             BeKind::Bell => "block.minecraft.bell",
             BeKind::Beehive => "block.minecraft.beehive",
+            BeKind::DecoratedPot => "block.minecraft.decorated_pot",
         }
     }
 }
 
 /// Saved fields a container block entity models; the rest of its NBT is kept as is.
-const MODELED: [&str; 31] = [
+const MODELED: [&str; 32] = [
+    "item",
     "bees",
     "flower_pos",
     "last_interacted_slot",
@@ -278,6 +284,11 @@ impl ContainerBe {
             }
             list.stacks = vec![disc];
         }
+        // `DecoratedPotBlockEntity.loadAdditional`: its one item is saved as `item`.
+        if kind == BeKind::DecoratedPot {
+            let item = if loot_table.is_some() { None } else { nbt.get("item").and_then(|t| ItemStack::from_nbt(t).ok()) };
+            list.stacks = vec![item.filter(|s| !s.is_empty()).unwrap_or_else(ItemStack::empty)];
+        }
         // `BrewingStandBlockEntity.loadAdditional`: brewing under way remembers its ingredient.
         let ingredient = (kind == BeKind::BrewingStand && int("BrewTime", 0) > 0).then(|| list.stacks.get(3).map_or(0, ItemStack::item));
         static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -340,6 +351,20 @@ impl ContainerBe {
                     h.save(&mut out);
                 }
             }
+            // `sherds` is kept in `extra`; then the loot table or the item.
+            BeKind::DecoratedPot => match &self.loot_table {
+                Some(table) => {
+                    out.push(("LootTable".into(), Tag::String(table.clone())));
+                    if self.loot_seed != 0 {
+                        out.push(("LootTableSeed".into(), Tag::Long(self.loot_seed)));
+                    }
+                }
+                None => {
+                    if let Some(item) = self.items.first().filter(|s| !s.is_empty()) {
+                        out.push(("item".into(), item.to_nbt()));
+                    }
+                }
+            },
             BeKind::Jukebox => {
                 if let Some(disc) = self.items.first().filter(|s| !s.is_empty()) {
                     out.push(("RecordItem".into(), disc.to_nbt()));
@@ -453,6 +478,14 @@ impl ContainerBe {
         }
         if let Some(h) = &self.hive {
             out.extend(h.components());
+        }
+        // `DecoratedPotBlockEntity.collectImplicitComponents`: the sherds (the container follows below).
+        if self.kind == BeKind::DecoratedPot {
+            let sherds = self.extra.iter().find(|(k, _)| k == "sherds").map(|(_, v)| v.clone());
+            let decorations = sherds
+                .and_then(|t| <kiln_item::component::PotDecorations as kiln_item::component::ComponentValue>::from_value(&kiln_item::Value::from_nbt(&t)).ok())
+                .unwrap_or_default();
+            out.push(Component::PotDecorations(decorations));
         }
         if self.kind.is_container() {
             // `ItemContainerContents.fromItems`: up to the last occupied slot.

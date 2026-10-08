@@ -820,6 +820,15 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
         }
         touched = true;
     }
+    // `DecoratedPotBlockEntity.applyImplicitComponents`: the sherds.
+    if c.kind == BeKind::DecoratedPot {
+        let decorations = stack.get(keys::POT_DECORATIONS).cloned().unwrap_or_default();
+        c.extra.retain(|(k, _)| k != "sherds");
+        if decorations != kiln_item::component::PotDecorations::default() {
+            c.extra.push(("sherds".into(), <kiln_item::component::PotDecorations as kiln_item::component::ComponentValue>::to_value(&decorations).to_nbt()));
+        }
+        touched = true;
+    }
     if let Some(h) = c.hive.as_deref_mut() {
         // `BeehiveBlockEntity.applyImplicitComponents`.
         h.occupants.clear();

@@ -2894,6 +2894,10 @@ fn block_projectile_hit(level: &mut RegionLevel, players: &mut [&mut Player], po
             kiln_blocks::destroy_block(level, pos, false, 512);
             level.effect(Effect::EntityDrop { pos, state: s });
         }
+        // `DecoratedPotBlock.onProjectileHit`: the pot cracks and breaks.
+        C::DecoratedPotBlock if may_interact && level.env.mobs.projectiles_break_blocks && crate::bell::in_tag(projectile_type, "minecraft:impact_projectiles") => {
+            crate::decorated_pot::projectile_hit(level, pos, s);
+        }
         C::TargetBlock => {
             // `AbstractArrow` (arrows, spectral arrows, tridents) hold the signal longer.
             let arrow = matches!(projectile_type, "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:trident");

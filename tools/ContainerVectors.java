@@ -285,7 +285,42 @@ public class ContainerVectors {
         targetScenarios(out);
         projectileBlockScenarios(out);
         hiveScenarios(out);
+        potScenarios(out);
         return out;
+    }
+
+    /** wp49: decorated pots as containers: hoppers fill and empty them, comparators read them, broken they drop what they hold. */
+    static void potScenarios(List<Scenario> out) {
+        String pot = "minecraft:decorated_pot[facing=north,cracked=false,waterlogged=false]";
+        String sherds = "sherds:{back:{id:\"minecraft:archer_pottery_sherd\"},left:{id:\"minecraft:brick\"},right:{id:\"minecraft:brick\"},front:{id:\"minecraft:angler_pottery_sherd\"}}";
+        out.add(new Scenario("pot_hopper_fills_it", 40)
+                .container(0, 1, 0, "minecraft:hopper[facing=down]" + items(slot(0, "stone", 10)))
+                .container(0, 0, 0, pot + "{" + sherds + "}"));
+        out.add(new Scenario("pot_hopper_fills_it_to_a_stack", 30)
+                .container(0, 1, 0, "minecraft:hopper[facing=down]" + items(slot(0, "stone", 10)))
+                .container(0, 0, 0, pot + "{item:{id:\"minecraft:stone\",count:62}}"));
+        out.add(new Scenario("pot_hopper_wrong_item_stays_out", 20)
+                .container(0, 1, 0, "minecraft:hopper[facing=down]" + items(slot(0, "dirt", 10)))
+                .container(0, 0, 0, pot + "{item:{id:\"minecraft:stone\",count:3}}"));
+        out.add(new Scenario("pot_hopper_empties_it", 40)
+                .container(0, 1, 0, pot + "{item:{id:\"minecraft:cobblestone\",count:12}}")
+                .container(0, 0, 0, "minecraft:hopper[facing=down]")
+                .container(0, -1, 0, "minecraft:chest"));
+        for (int n : new int[] {1, 7, 32, 64}) {
+            Scenario s = new Scenario("pot_comparator_" + n, 6)
+                    .container(0, 0, 1, pot + "{item:{id:\"minecraft:stone\",count:" + n + "}}")
+                    .comparator(0, 0, 0, "south");
+            out.add(s);
+        }
+        out.add(new Scenario("pot_comparator_unstackable", 6)
+                .container(0, 0, 1, pot + "{item:{id:\"minecraft:iron_sword\",count:1}}")
+                .comparator(0, 0, 0, "south"));
+        out.add(new Scenario("pot_comparator_16_stack", 6)
+                .container(0, 0, 1, pot + "{item:{id:\"minecraft:ender_pearl\",count:16}}")
+                .comparator(0, 0, 0, "south"));
+        out.add(new Scenario("pot_removed_drops_contents", 10).drops()
+                .container(0, 0, 0, pot + "{item:{id:\"minecraft:cobblestone\",count:40}," + sherds + "}")
+                .at(3, "setblock ~0 ~0 ~0 minecraft:air"));
     }
 
     /** wp49: beehives and bee nests: bees leave after their time, leave honey, stay in at night, wait for a free front. */
@@ -442,6 +477,7 @@ public class ContainerVectors {
 
     /** wp49: what arrows (burning or not) and snowballs do to the blocks they hit. */
     static void projectileBlockScenarios(List<Scenario> out) {
+        String POT = "minecraft:decorated_pot[facing=north,cracked=false,waterlogged=false]{item:{id:\"minecraft:stone\",count:5},sherds:{back:{id:\"minecraft:archer_pottery_sherd\"},left:{id:\"minecraft:brick\"},front:{id:\"minecraft:angler_pottery_sherd\"}}}";
         String fire = "summon minecraft:arrow ~-3 ~0.5 ~0.5 {NoGravity:1b,Fire:200s,Motion:[1.0d,0.0d,0.0d]}";
         String plain = "summon minecraft:arrow ~-3 ~0.5 ~0.5 {NoGravity:1b,Motion:[1.0d,0.0d,0.0d]}";
         String ball = "summon minecraft:snowball ~-3 ~0.5 ~0.5 {NoGravity:1b,Motion:[1.0d,0.0d,0.0d]}";
@@ -458,6 +494,7 @@ public class ContainerVectors {
             {"candle_lit_fire", "minecraft:candle[candles=1,lit=true,waterlogged=false]", fire},
             {"chorus_plain", "minecraft:chorus_flower[age=5]", plain}, {"chorus_fire", "minecraft:chorus_flower[age=5]", fire},
             {"chorus_ball", "minecraft:chorus_flower[age=5]", ball},
+            {"pot_plain", POT, plain}, {"pot_fire", POT, fire}, {"pot_ball", POT, ball},
         };
         for (Object[] c : cases) {
             Scenario s = new Scenario("projectile_" + c[0], 40).drops().block(0, -1, 0, "minecraft:end_stone").block(0, 0, 0, (String) c[1]).state(0, 0, 0);

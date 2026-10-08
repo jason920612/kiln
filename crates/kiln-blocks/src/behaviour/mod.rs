@@ -399,6 +399,8 @@ pub fn trigger_event<L: Level>(level: &mut L, s: u16, pos: BlockPos, a: i32, b: 
         BlockClass::NoteBlock => devices::note_trigger(level, s, pos),
         BlockClass::PistonBaseBlock => piston::trigger_event(level, s, pos, a, b),
         BlockClass::BellBlock => bell::trigger_event(level, pos, a, b),
+        // `DecoratedPotBlockEntity.triggerEvent`: the wobble (event 1, a style).
+        BlockClass::DecoratedPotBlock => a == 1 && (0..2).contains(&b),
         // `BaseEntityBlock.triggerEvent`: the lids of chests, ender chests and shulker boxes
         // (their block entities answer event 1 with the openers count).
         BlockClass::EnderChestBlock | BlockClass::ShulkerBoxBlock => a == 1,

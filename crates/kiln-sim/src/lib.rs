@@ -29,6 +29,7 @@ mod commands;
 mod consume;
 mod buckets;
 mod beehive;
+mod decorated_pot;
 mod bell;
 mod campfire;
 mod stands;

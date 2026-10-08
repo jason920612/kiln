@@ -361,6 +361,7 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
         C::JukeboxBlock => crate::jukebox::use_item_on(p, level, pos, s, off_hand),
         C::CampfireBlock => crate::campfire::use_item_on(p, level, pos, s, off_hand),
         C::BeehiveBlock => crate::beehive::use_item_on(p, level, pos, s, off_hand, spawns),
+        C::DecoratedPotBlock => crate::decorated_pot::use_item_on(p, level, pos, s, off_hand),
         C::CakeBlock => cake_candle(p, level, pos, s, off_hand, &stack),
         C::FlowerPotBlock => pot_plant(p, level, pos, s, off_hand, &stack),
         C::ChiseledBookShelfBlock => crate::bookshelf::use_item_on(p, level, pos, s, face, cursor, off_hand, &stack),
@@ -399,6 +400,9 @@ pub(crate) fn block_use_without_item(p: &mut Player, level: &mut RegionLevel, po
     }
     if logic::block_class(s) == C::ChiseledBookShelfBlock {
         return crate::bookshelf::use_without_item(p, level, pos, s, face, cursor, spawns);
+    }
+    if logic::block_class(s) == C::DecoratedPotBlock {
+        return crate::decorated_pot::use_without_item(level, pos, s);
     }
     if logic::block_class(s) != C::ComposterBlock || state::get_int(s, "level") != 8 {
         return false;

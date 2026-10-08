@@ -259,6 +259,7 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     crate::container::open::player_will_destroy(level, bp, state, actor.creative);
     crate::heart::player_will_destroy(level, bp, state, p.entity_id, p.game_mode == 0 || p.game_mode == 2);
     crate::beehive::player_will_destroy(level, bp, state, actor.creative);
+    crate::decorated_pot::will_destroy(level, bp, state, &p.inv.selected_item().clone());
     // `BeehiveBlock.playerDestroy`: for a player who harvests the block.
     if drops && kiln_data::block_logic::block_class(state) == kiln_data::block_logic::BlockClass::BeehiveBlock {
         crate::beehive::player_destroy(level, bp, state, p);

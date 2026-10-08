@@ -1447,6 +1447,20 @@ impl kiln_loot::LootContext for BreakContext {
     fn explosion_radius(&self) -> Option<f32> {
         self.explosion
     }
+    /// `DecoratedPotBlock`'s `sherds` dynamic drop: the sherds, left, back, front, right.
+    fn dynamic_drops(&self, name: &kiln_item::ident::Identifier, sink: &mut dyn FnMut(kiln_item::ItemStack)) {
+        if name.as_str() != "minecraft:sherds" {
+            return;
+        }
+        let Some(kiln_item::component::PotDecorations { back, left, right, front }) =
+            self.block_entity.as_ref().and_then(|c| c.iter().find_map(|c| if let kiln_item::component::Component::PotDecorations(d) = c { Some(d.clone()) } else { None }))
+        else {
+            return;
+        };
+        for sherd in [left, back, front, right].into_iter().flatten() {
+            sink(sherd.create());
+        }
+    }
     fn has_entity(&self, target: kiln_loot::EntityTarget) -> bool {
         self.player && target == kiln_loot::EntityTarget::This
     }
