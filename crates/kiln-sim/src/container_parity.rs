@@ -216,7 +216,7 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                 errors.push(format!("tick {tick} dropped items: kiln {got}, vanilla {expected}"));
             }
             // (Only what each tick makes is compared: the items are removed before the next.)
-            kill_items = true;
+            kill_items = line["drops_lag"].as_bool() != Some(true) || got.as_array().is_some_and(|a| !a.is_empty());
         }
         for (i, &p) in comparators.iter().enumerate() {
             let got = comparator_output(&sim, p);
