@@ -65,7 +65,7 @@ fn unwaxed(s: u16) -> Option<u16> {
 }
 
 /// `HoneycombItem.getWaxed`: copper blocks that have a waxed form.
-fn waxed(s: u16) -> Option<u16> {
+pub(crate) fn waxed(s: u16) -> Option<u16> {
     let n = short(s);
     if n.starts_with("waxed_") || !(n.contains("copper") || n.contains("lightning_rod")) {
         return None;
@@ -257,11 +257,24 @@ fn next_int_between(r: &mut dyn RandomSource, lo: i32, hi: i32) -> i32 {
 /// `BoneMealItem.useOn`: `growCrop` on a bonemealable block (the bone meal is used up whether
 /// or not it took), with the growth particles.
 fn bone_meal(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, _face: Direction, off_hand: bool, spawns: &mut Vec<Spawn>) -> bool {
+    if !bone_meal_block(level, pos, spawns) {
+        return false;
+    }
+    let i = p.hand_index(off_hand);
+    kiln_inventory::Container::item_mut(&mut p.inv, i).shrink(1);
+    p.inv.times_changed += 1;
+    level.effect(Effect::LevelEvent { id: 1505, pos, data: 15 });
+    true
+}
+
+/// `BoneMealItem.growCrop` without the stack: whether the block at `pos` took bone meal (the item is used up
+/// then, whether or not it grew).
+pub(crate) fn bone_meal_block(level: &mut RegionLevel, pos: BlockPos, spawns: &mut Vec<Spawn>) -> bool {
     let s = level.block(pos);
     // Saplings, propagules, azaleas, huge mushrooms, grass: kiln-blocks (with the level's worldgen).
     match kiln_blocks::behaviour::trees::grow_crop(level, pos) {
-        Some(true) => {}
-        Some(false) => return false,
+        Some(true) => true,
+        Some(false) => false,
         None => {
             if !valid_target(level, pos, s) {
                 return false;
@@ -269,13 +282,9 @@ fn bone_meal(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, _face: Dire
             if success(level, s) {
                 perform(level, pos, s, spawns);
             }
+            true
         }
     }
-    let i = p.hand_index(off_hand);
-    kiln_inventory::Container::item_mut(&mut p.inv, i).shrink(1);
-    p.inv.times_changed += 1;
-    level.effect(Effect::LevelEvent { id: 1505, pos, data: 15 });
-    true
 }
 
 fn max_age(s: u16) -> i32 {

@@ -16,6 +16,7 @@
 pub(crate) mod beacon;
 pub(crate) mod brewing;
 pub(crate) mod dispense;
+mod dispense_items;
 pub(crate) mod furnace;
 pub(crate) mod hopper;
 pub(crate) mod open;

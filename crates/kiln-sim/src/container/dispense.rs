@@ -31,13 +31,13 @@ fn random_slot(items: &[ItemStack], rng: &mut dyn RandomSource) -> Option<usize>
 }
 
 /// `DispenserBlock.getDispensePosition`: 0.7 blocks out of the front face's centre.
-fn dispense_position(pos: BlockPos, facing: Direction) -> [f64; 3] {
+pub(super) fn dispense_position(pos: BlockPos, facing: Direction) -> [f64; 3] {
     let st = facing.step();
     [pos.x as f64 + 0.5 + 0.7 * st[0] as f64, pos.y as f64 + 0.5 + 0.7 * st[1] as f64, pos.z as f64 + 0.5 + 0.7 * st[2] as f64]
 }
 
 /// `DefaultDispenseItemBehavior.spawnItem`.
-fn spawn_item(level: &mut RegionLevel, rng: &mut LegacyRandom, stack: ItemStack, accuracy: i32, facing: Direction, at: [f64; 3]) {
+pub(super) fn spawn_item(level: &mut RegionLevel, rng: &mut LegacyRandom, stack: ItemStack, accuracy: i32, facing: Direction, at: [f64; 3]) {
     let y = at[1] - if facing.axis() == kiln_blocks::Axis::Y { 0.125 } else { 0.15625 };
     // The `ItemEntity` constructor's random throw, replaced below.
     rng.next_double();
@@ -205,6 +205,16 @@ fn dispense_minecart(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Block
 }
 
 fn dispense_behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, stack: ItemStack) -> ItemStack {
+    // The behaviours of `dispense_items`: `DefaultDispenseItemBehavior.dispense` follows them with its sound and animation.
+    let stack = match super::dispense_items::behaviour(level, rng, pos, facing, stack) {
+        Ok(done) => {
+            let id = if done.success == Some(false) { 1001 } else { 1000 };
+            level.effect(Effect::LevelEvent { id, pos, data: 0 });
+            level.effect(Effect::LevelEvent { id: 2000, pos, data: facing as i32 });
+            return done.stack;
+        }
+        Err(stack) => stack,
+    };
     let target = pos.relative(facing);
     match stack.item_name() {
         name if kiln_entity::ext_entity::minecart::is_minecart(name) => dispense_minecart(level, rng, pos, facing, stack),

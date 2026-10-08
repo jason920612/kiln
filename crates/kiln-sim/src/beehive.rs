@@ -438,21 +438,7 @@ pub(crate) fn use_item_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
     let name = stack.item_name();
     let item = stack.item();
     let used = if name == "minecraft:shears" {
-        // `dropHoneycomb`: the `harvest/beehive` table (three honeycombs) popped out of the block.
-        if let Some(comb) = ItemStack::of("minecraft:honeycomb", 3) {
-            let r = level.random();
-            let at = [
-                pos.x as f64 + 0.5 + (r.next_double() * 0.5 - 0.25),
-                pos.y as f64 + 0.5 + (r.next_double() * 0.5 - 0.25) - 0.125,
-                pos.z as f64 + 0.5 + (r.next_double() * 0.5 - 0.25),
-            ];
-            let mut spawn = crate::mobs::drop_item(comb, at, (pos.x as u64) << 24 ^ pos.z as u64 ^ pos.y as u64);
-            spawn.pos = at;
-            if let Body::Item { pickup_delay, .. } = &mut spawn.body {
-                *pickup_delay = 10;
-            }
-            spawns.push(spawn);
-        }
+        drop_honeycombs_into(level, pos, spawns);
         sound_at(level, p.pos, "minecraft:block.beehive.shear", 1.0, 1.0, 2);
         p.hurt_and_break(crate::tools::hand_slot(off_hand), 1, None);
         level.effect(Effect::GameEvent { pos, event: "minecraft:shear" });
@@ -492,6 +478,38 @@ pub(crate) fn use_item_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
         reset_honey(level, pos, s);
     }
     Some(true)
+}
+
+/// `BeehiveBlock.dropHoneycomb`: the `harvest/beehive` table (three honeycombs) popped out of the block.
+fn drop_honeycombs_into(level: &mut RegionLevel, pos: BlockPos, spawns: &mut Vec<Spawn>) {
+    if let Some(comb) = ItemStack::of("minecraft:honeycomb", 3) {
+        let r = level.random();
+        let at = [
+            pos.x as f64 + 0.5 + (r.next_double() * 0.5 - 0.25),
+            pos.y as f64 + 0.5 + (r.next_double() * 0.5 - 0.25) - 0.125,
+            pos.z as f64 + 0.5 + (r.next_double() * 0.5 - 0.25),
+        ];
+        let mut spawn = crate::mobs::drop_item(comb, at, (pos.x as u64) << 24 ^ pos.z as u64 ^ pos.y as u64);
+        spawn.pos = at;
+        if let Body::Item { pickup_delay, .. } = &mut spawn.body {
+            *pickup_delay = 10;
+        }
+        spawns.push(spawn);
+    }
+}
+
+/// [`drop_honeycombs_into`] for the level's own spawns (a dispenser's shears).
+pub(crate) fn drop_honeycombs(level: &mut RegionLevel, pos: BlockPos) {
+    let mut spawns = Vec::new();
+    drop_honeycombs_into(level, pos, &mut spawns);
+    level.out.spawns.extend(spawns);
+}
+
+/// `BeehiveBlock.releaseBeesAndResetHoneyLevel(level, state, pos, null, BEE_RELEASED)`: a dispenser took the
+/// honey.
+pub(crate) fn release_after_harvest(level: &mut RegionLevel, pos: BlockPos, s: u16) {
+    reset_honey(level, pos, s);
+    empty_all(level, pos, s, None, Release::BeeReleased);
 }
 
 /// `BeehiveBlock.resetHoneyLevel`.
