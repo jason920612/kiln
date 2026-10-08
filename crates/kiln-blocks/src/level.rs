@@ -75,6 +75,9 @@ impl Default for Rules {
 pub enum Effect {
     /// `Block.dropResources`: the block at `pos` (in `state`) drops its loot.
     Drop { pos: BlockPos, state: u16 },
+    /// `Block.dropResources` for a block a non-player entity (a projectile) destroyed: the
+    /// loot context has `this_entity` but no tool.
+    EntityDrop { pos: BlockPos, state: u16 },
     /// A block an explosion with drop decay destroyed: its loot rolls with the
     /// `explosion_radius` parameter (`survives_explosion` keeps each drop with a chance of
     /// `1 / radius`).

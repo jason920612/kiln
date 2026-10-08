@@ -2855,7 +2855,8 @@ fn block_projectile_hit(level: &mut RegionLevel, players: &mut [&mut Player], po
         }
         // `ChorusFlowerBlock.onProjectileHit`: a flying thing that may break blocks breaks the flower.
         C::ChorusFlowerBlock if may_interact && level.env.mobs.projectiles_break_blocks && crate::bell::in_tag(projectile_type, "minecraft:impact_projectiles") => {
-            kiln_blocks::destroy_block(level, pos, true, 512);
+            kiln_blocks::destroy_block(level, pos, false, 512);
+            level.effect(Effect::EntityDrop { pos, state: s });
         }
         C::TargetBlock => {
             // `AbstractArrow` (arrows, spectral arrows, tridents) hold the signal longer.

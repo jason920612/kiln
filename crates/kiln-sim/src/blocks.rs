@@ -1117,9 +1117,10 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
     for (i, (actor, effect)) in std::mem::take(&mut out.effects).into_iter().enumerate() {
         let others = |p: &&mut Player| Some(p.conn) != actor;
         match effect {
-            effect @ (Effect::Drop { .. } | Effect::ExplosionDrop { .. }) => {
+            effect @ (Effect::Drop { .. } | Effect::ExplosionDrop { .. } | Effect::EntityDrop { .. }) => {
+                let by_entity = matches!(effect, Effect::EntityDrop { .. });
                 let (pos, state, explosion) = match effect {
-                    Effect::Drop { pos, state } => (pos, state, None),
+                    Effect::Drop { pos, state } | Effect::EntityDrop { pos, state } => (pos, state, None),
                     Effect::ExplosionDrop { pos, state, radius } => (pos, state, Some(radius)),
                     _ => unreachable!("matched above"),
                 };
@@ -1131,6 +1132,7 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                 if env.drops {
                     // The breaking player's held item is the tool; other breaks use an empty hand.
                     let tool = actor.and_then(|c| players.iter().find(|p| p.conn == c)).map(|p| p.inv.selected_item().clone());
+                    let tool = if by_entity { Some(kiln_item::ItemStack::empty()) } else { tool };
                     let components = out.removed_components.iter().rev().find(|(p, _)| *p == pos).map(|(_, c)| c.clone());
                     // `InfestedBlock.spawnAfterBreak`: a silverfish comes out unless the tool has
                     // silk touch (`#prevents_infested_spawns`).
