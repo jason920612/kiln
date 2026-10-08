@@ -1050,7 +1050,7 @@ public class InteractVectors {
         Thread.sleep(1000);
         server.submit(() -> command("gamerule block_drops true")).get();
         // The mock player earns advancements as it uses things; their announcements are not what these vectors are about.
-        server.submit(() -> command("gamerule announce_advancements false")).get();
+        server.submit(() -> command("gamerule show_advancement_messages false")).get();
         List<Case> all = new ArrayList<>();
         server.submit(() -> {
             equip(all);

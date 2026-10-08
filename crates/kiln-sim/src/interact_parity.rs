@@ -193,7 +193,7 @@ fn run_case(line: &Value) -> Vec<String> {
         sim.players.get_mut(&2).unwrap().pos = [pos[0] + 0.5, pos[1], pos[2]];
     }
     // (The vectors were recorded without announcements of advancements; with a datapack Kiln has them.)
-    let mut console: Vec<ToSim> = vec![ToSim::Console("gamerule minecraft:announce_advancements false".into())];
+    let mut console: Vec<ToSim> = vec![ToSim::Console("gamerule minecraft:show_advancement_messages false".into())];
     console.extend(line["commands"].as_array().unwrap().iter().map(|c| ToSim::Console(c.as_str().unwrap().to_owned())));
     assert!(sim.step(console));
     let pos: Vec<f64> = line["pos"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();

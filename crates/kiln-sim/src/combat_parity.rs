@@ -451,6 +451,9 @@ fn run_lift(v: &Value) -> Vec<String> {
     }
     *stats[0].log.lock().unwrap() = Some(Vec::new());
     *stats[1].log.lock().unwrap() = Some(Vec::new());
+    // (Vanilla's mock player is not ticked: it is on the ground or not as the scenario set it, while
+    // Kiln's body of the player settled on the floor during the eleven ticks of drawing the trident.)
+    sim.players.get_mut(&1).unwrap().on_ground = v["on_ground"].as_bool().unwrap();
     seq += 1;
     assert!(sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 6, pos: [0, 0, 0], face: 0, sequence: seq })]));
     let want = &v["result"];

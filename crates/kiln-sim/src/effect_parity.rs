@@ -483,6 +483,7 @@ fn effect_parity() {
     };
     let text = std::fs::read_to_string(path).unwrap();
     let (mut passed, mut failed) = (0, Vec::new());
+    let mut seen = Vec::new();
     let mut ticks = 0;
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let v: Value = serde_json::from_str(line).unwrap();
@@ -498,6 +499,7 @@ fn effect_parity() {
             continue;
         }
         let errors = run_scenario(&v);
+        seen.push(name.clone());
         if errors.is_empty() {
             passed += 1;
             ticks += v["result"].as_array().unwrap().len();
@@ -513,7 +515,8 @@ fn effect_parity() {
     assert!(new.is_empty(), "failed: {new:?}");
     // (Only when the whole file ran.)
     if filter.is_none() && exclude.is_none() {
-        let fixed: Vec<&str> = KNOWN_GAPS.iter().map(|(k, _)| *k).filter(|k| !failed.iter().any(|f| f == k)).collect();
+        // (Only the ones this file has: older recordings do not hold the hazard scenarios.)
+        let fixed: Vec<&str> = KNOWN_GAPS.iter().map(|(k, _)| *k).filter(|k| seen.iter().any(|n| n == k) && !failed.iter().any(|f| f == k)).collect();
         assert!(fixed.is_empty(), "known gaps that now pass (take them off the list): {fixed:?}");
     }
 }
