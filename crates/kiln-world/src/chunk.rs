@@ -655,7 +655,12 @@ impl Chunk {
         {
             return p.clone();
         }
-        let p = kiln_proto::packets::level_chunk_with_light(x, z, &self.packet_body(biome_count));
+        // The body is kept inside the packet only (one copy of the chunk's encoding).
+        let body = match self.cached.take() {
+            Some((v, body)) if v == self.version => body,
+            _ => self.encode(biome_count),
+        };
+        let p = kiln_proto::packets::level_chunk_with_light(x, z, &body);
         self.cached_packet = Some((self.version, p.clone()));
         p
     }
