@@ -887,10 +887,6 @@ public class InteractVectors {
         return c;
     }
 
-    static Map<String, Object> cmdStep(String command) {
-        return op("op", "command", "command", command);
-    }
-
     static void trials49(List<Case> out) {
         Case c;
         // Zombies that stand still where they appear (the place is given, so nothing is left to the level's random).
