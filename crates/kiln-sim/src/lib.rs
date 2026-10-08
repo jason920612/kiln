@@ -1290,6 +1290,7 @@ pub struct Sim {
     config: SimConfig,
     /// Recipes and item rules from the vanilla datapack.
     rules: std::sync::Arc<kiln_inventory::Rules>,
+    trial_configs: std::sync::Arc<mob_spawner::TrialConfigs>,
     /// Loot tables from the vanilla datapack (block drops), if it was found.
     loot: Option<std::sync::Arc<kiln_loot::LootData>>,
     /// Biome spawn lists from the vanilla datapack (natural mob spawning).
@@ -1563,6 +1564,7 @@ impl Sim {
         let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
         let mut sim = Sim {
             rules,
+            trial_configs: std::sync::Arc::new(mob_spawner::TrialConfigs::load(&vanilla_pack)),
             loot,
             spawn_table,
             pool: kiln_sched::TickPool::with_config(config.pool.clone()),
@@ -2436,6 +2438,7 @@ impl Sim {
             },
             spawn_table: self.spawn_table.clone(),
             menus: self.rules.clone(),
+            trial_configs: self.trial_configs.clone(),
             weather: weather::WeatherEnv {
                 weather: kiln_blocks::weather::Weather {
                     raining: self.is_raining(dim),

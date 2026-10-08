@@ -300,6 +300,8 @@ pub(crate) struct BlockEnv {
     pub spawn_table: Option<std::sync::Arc<crate::spawner::SpawnTable>>,
     /// Recipes and item rules for menus and furnaces.
     pub menus: std::sync::Arc<kiln_inventory::Rules>,
+    /// The trial spawner configs the datapack holds.
+    pub trial_configs: std::sync::Arc<crate::mob_spawner::TrialConfigs>,
     /// The level's weather and the biome climates.
     pub weather: crate::weather::WeatherEnv,
     /// `minecraft:fire_spread_radius_around_player` (-1: everywhere).
@@ -1655,6 +1657,7 @@ mod tests {
             mobs: Default::default(),
             spawn_table: None,
             menus: Default::default(),
+            trial_configs: Default::default(),
             weather: Default::default(),
             fire_spread_radius: 128,
             fire_watchers: Default::default(),

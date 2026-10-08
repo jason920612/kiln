@@ -490,15 +490,20 @@ impl TrialBe {
 
     /// `overrideEntityToSpawn` (a spawn egg on the spawner): the state data is reset and only this
     /// entity spawns; the state goes back to inactive.
-    pub fn override_entity(&mut self, entity_type: &str, level: &mut dyn EntityLevel, pos: BlockPos) {
+    /// `lookup` finds the configs the datapack holds; the block's state is the caller's to set.
+    pub fn override_entity(&mut self, entity_type: &str, lookup: &dyn Fn(&str) -> Option<Arc<Config>>) {
+        let config_of = |slot: &Slot| match slot {
+            Slot::Default => Config::default(),
+            Slot::Inline(c) => c.clone(),
+            Slot::Key(k) => lookup(k).map(|c| (*c).clone()).unwrap_or_default(),
+        };
+        let normal = config_of(&self.normal).with_spawning(entity_type);
+        let ominous = config_of(&self.ominous).with_spawning(entity_type);
         self.reset();
-        let normal = self.config_of(false).with_spawning(entity_type);
-        let ominous = self.config_of(true).with_spawning(entity_type);
         self.normal = Slot::Inline(normal.clone());
         self.ominous = Slot::Inline(ominous.clone());
         self.resolved = [Some(Arc::new(normal)), Some(Arc::new(ominous))];
         self.display_ok = None;
-        self.set_state(level, pos, State::Inactive);
         self.changed = true;
     }
 

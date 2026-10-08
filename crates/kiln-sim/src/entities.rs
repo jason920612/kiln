@@ -1415,6 +1415,54 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.env().mobs.spawner_blocks
     }
 
+    fn trial_config(&self, key: &str) -> Option<std::sync::Arc<kiln_entity::trial_spawner::Config>> {
+        self.level.env().trial_configs.get(key)
+    }
+
+    fn spawn_mobs_rule(&self) -> bool {
+        self.level.env().mobs.spawn_mobs
+    }
+
+    fn player_has_effect(&self, id: i32, effect: &str) -> bool {
+        self.players.iter().find(|p| p.entity_id == id).is_some_and(|p| p.has_effect(effect))
+    }
+
+    fn transform_bad_omen(&mut self, player: i32) {
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == player) else { return };
+        let Some(amplifier) = p.effect_amplifier("minecraft:bad_omen") else { return };
+        let Some(id) = kiln_data::builtin_id("minecraft:mob_effect", "minecraft:bad_omen") else { return };
+        p.remove_effect(id as i32);
+        if let Some(omen) = kiln_entity::effect::Effect::named("minecraft:trial_omen", kiln_entity::trial_spawner::TRIAL_OMEN_PER_LEVEL * (amplifier + 1), 0) {
+            p.add_effect(omen);
+        }
+    }
+
+    fn discard_trial_mob(&mut self, uuid: u128) {
+        let Some(e) = self.list.iter_mut().find(|e| e.uuid.as_u128() == uuid && !e.removed) else { return };
+        let at = e.pos;
+        e.removed = true;
+        let pos = kiln_entity::math::BlockPos::containing(at[0], at[1], at[2]);
+        self.emit(Event::LevelEvent { event: 3012, pos, data: 0 });
+    }
+
+    fn trial_eject(&mut self, table: &str, pos: BlockPos) -> bool {
+        use kiln_javamath::random::RandomSource;
+        let loot = self.level.env().loot.clone();
+        let (Some(loot), Some(id)) = (loot, kiln_item::ident::Identifier::parse(table)) else { return false };
+        let p = kb(pos);
+        let Some(level) = self.level.region() else { return false };
+        let mut rng = crate::container::pos_random(level, p, 0x7e57);
+        let items = loot.random_items(&id, &kiln_loot::EmptyContext, &mut rng);
+        if items.is_empty() {
+            return false;
+        }
+        let at = [p.x as f64 + 0.5, p.y as f64 + 1.2, p.z as f64 + 0.5];
+        for item in items {
+            crate::container::dispense::spawn_item(level, &mut rng, item, 2, kiln_blocks::Direction::Up, at);
+        }
+        true
+    }
+
     fn block_light(&self, pos: BlockPos) -> i32 {
         kiln_world::light::light_at(self.level.cells(), kiln_world::chunk::LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
     }
