@@ -786,6 +786,10 @@ impl Player {
     fn teleport(&mut self, pos: [f64; 3], rot: [f32; 2], now: i64) {
         self.pos = pos;
         self.rot = rot;
+        // `ServerPlayer.teleport` resets the connection's position (`resetPosition`): the
+        // "moved too quickly" check measures from here (a player whose tick waited in limbo
+        // has its accept and first moves applied in one tick).
+        self.first_good = pos;
         // A teleport is not movement through blocks, and it ends the server body's momentum.
         self.movements.clear();
         self.server_delta = [0.0; 3];
