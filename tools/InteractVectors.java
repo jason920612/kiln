@@ -508,6 +508,115 @@ public class InteractVectors {
     }
 
     /** wp49: item frames, glow item frames and paintings. */
+    /** wp49: bells (a click on the body or the beam, from every side), bells put up against every kind of support. */
+    static void bells49(List<Case> out) {
+        Case c;
+        String[] attach = {"floor", "ceiling", "single_wall", "double_wall"};
+        String[] facings = {"north", "east"};
+        // faces: down 0, up 1, north 2, south 3, west 4, east 5
+        for (String a : attach) {
+            for (String f : facings) {
+                for (int face = 0; face < 6; face++) {
+                    c = blockCase("bell_" + a + "_" + f + "_face" + face, "minecraft:bell[attachment=" + a + ",facing=" + f + ",powered=false]").custom("minecraft:bell_ring");
+                    c.step(useOnAt(2, 100, 0, face, 0, 0.5, 0.5, 0.5));
+                    out.add(c);
+                }
+            }
+            // The top beam (above 0.8124 of the block) does not ring it.
+            c = blockCase("bell_" + a + "_beam", "minecraft:bell[attachment=" + a + ",facing=north,powered=false]").custom("minecraft:bell_ring");
+            c.step(useOnAt(2, 100, 0, 2, 0, 0.5, 0.9, 0.5)).step(useOnAt(2, 100, 0, 5, 0, 0.5, 0.9, 0.5)).step(useOnAt(2, 100, 0, 2, 0, 0.5, 0.8, 0.5));
+            out.add(c);
+        }
+        String floor = "minecraft:bell[attachment=floor,facing=north,powered=false]";
+        c = blockCase("bell_creative", floor).custom("minecraft:bell_ring");
+        c.gameMode = "creative";
+        c.step(useOnAt(2, 100, 0, 2, 0, 0.5, 0.5, 0.5));
+        out.add(c);
+        c = blockCase("bell_adventure", floor).custom("minecraft:bell_ring");
+        c.gameMode = "adventure";
+        c.step(useOnAt(2, 100, 0, 2, 0, 0.5, 0.5, 0.5));
+        out.add(c);
+        c = blockCase("bell_sneaking", floor).custom("minecraft:bell_ring");
+        c.sneaking = true;
+        c.step(useOnAt(2, 100, 0, 2, 0, 0.5, 0.5, 0.5));
+        out.add(c);
+        c = blockCase("bell_sneaking_with_block", floor).custom("minecraft:bell_ring");
+        c.sneaking = true;
+        c.slot("h0", stack("minecraft:stone", 3)).step(useOnAt(2, 100, 0, 2, 0, 0.5, 0.5, 0.5));
+        out.add(c);
+        c = blockCase("bell_with_block_in_hand", floor).custom("minecraft:bell_ring");
+        c.slot("h0", stack("minecraft:stone", 3)).step(useOnAt(2, 100, 0, 2, 0, 0.5, 0.5, 0.5));
+        out.add(c);
+        c = blockCase("bell_ring_twice", "minecraft:bell[attachment=ceiling,facing=east,powered=false]").custom("minecraft:bell_ring");
+        c.step(useOnAt(2, 100, 0, 2, 0, 0.5, 0.5, 0.5)).step(useOnAt(2, 100, 0, 4, 0, 0.5, 0.5, 0.5));
+        out.add(c);
+        // Redstone: a bell rings when power reaches it, once.
+        c = blockCase("bell_powered", floor);
+        c.step(command("setblock 3 100 0 minecraft:redstone_block")).step(command("setblock 3 100 0 minecraft:air"))
+                .step(command("setblock 2 101 0 minecraft:redstone_block"));
+        out.add(c);
+
+        // ---- put up against a support
+        Object[][] places = {
+            {"floor", 2, 99, 0, 1},       // on a stone
+            {"ceiling", 2, 101, 0, 0},    // under a stone
+            {"wall_east", 1, 100, 0, 5},  // against a stone to the west, on its east face
+            {"wall_west", 3, 100, 0, 4},
+            {"wall_north", 2, 100, 1, 2},
+            {"wall_south", 2, 100, -1, 3},
+        };
+        for (Object[] pl : places) {
+            c = new Case("bell_place_" + pl[0]);
+            c.cmd("setblock " + pl[1] + " " + pl[2] + " " + pl[3] + " minecraft:stone").watch(2, 100, 0);
+            c.slot("h0", stack("minecraft:bell", 3)).step(useOn((int) pl[1], (int) pl[2], (int) pl[3], (int) pl[4], 0));
+            out.add(c);
+        }
+        // Between two stones: held by both walls.
+        c = new Case("bell_place_double_wall_x").cmd("setblock 1 100 0 minecraft:stone").cmd("setblock 3 100 0 minecraft:stone").watch(2, 100, 0);
+        c.slot("h0", stack("minecraft:bell", 3)).step(useOn(1, 100, 0, 5, 0));
+        out.add(c);
+        c = new Case("bell_place_double_wall_z").cmd("setblock 2 100 1 minecraft:stone").cmd("setblock 2 100 -1 minecraft:stone").watch(2, 100, 0);
+        c.slot("h0", stack("minecraft:bell", 3)).step(useOn(2, 100, 1, 2, 0));
+        out.add(c);
+        // One wall, a floor below: the wall holds it first.
+        c = new Case("bell_place_wall_with_floor").cmd("setblock 1 100 0 minecraft:stone").cmd("setblock 2 99 0 minecraft:stone").watch(2, 100, 0);
+        c.slot("h0", stack("minecraft:bell", 3)).step(useOn(1, 100, 0, 5, 0));
+        out.add(c);
+        // A wall that does not hold it (a bottom slab's side has no full face), with and without a floor.
+        c = new Case("bell_place_on_slab_side_floor").cmd("setblock 1 100 0 minecraft:oak_slab[type=bottom]").cmd("setblock 2 99 0 minecraft:stone").watch(2, 100, 0);
+        c.slot("h0", stack("minecraft:bell", 3)).step(useOn(1, 100, 0, 5, 0));
+        out.add(c);
+        c = new Case("bell_place_on_slab_side_nothing").cmd("setblock 1 100 0 minecraft:oak_slab[type=bottom]").watch(2, 100, 0);
+        c.slot("h0", stack("minecraft:bell", 3)).step(useOn(1, 100, 0, 5, 0));
+        out.add(c);
+        // On the top of a fence (no full face), and under slabs.
+        c = new Case("bell_place_on_fence").cmd("setblock 2 99 0 minecraft:oak_fence").watch(2, 100, 0);
+        c.slot("h0", stack("minecraft:bell", 3)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = new Case("bell_place_under_bottom_slab").cmd("setblock 2 101 0 minecraft:oak_slab[type=bottom]").watch(2, 100, 0);
+        c.slot("h0", stack("minecraft:bell", 3)).step(useOn(2, 101, 0, 0, 0));
+        out.add(c);
+        c = new Case("bell_place_under_top_slab").cmd("setblock 2 101 0 minecraft:oak_slab[type=top]").watch(2, 100, 0);
+        c.slot("h0", stack("minecraft:bell", 3)).step(useOn(2, 101, 0, 0, 0));
+        out.add(c);
+        // Losing the support: the stone under a floor bell goes; a double wall bell loses one wall, then the other.
+        c = blockCase("bell_floor_loses_floor", floor);
+        c.step(command("setblock 2 99 0 minecraft:air"));
+        out.add(c);
+        c = new Case("bell_double_loses_one").cmd("setblock 1 100 0 minecraft:stone").cmd("setblock 3 100 0 minecraft:stone")
+                .cmd("setblock 2 100 0 minecraft:bell[attachment=double_wall,facing=east,powered=false]").watch(2, 100, 0);
+        c.step(command("setblock 1 100 0 minecraft:air")).step(command("setblock 3 100 0 minecraft:air"));
+        out.add(c);
+        c = new Case("bell_single_gains_second").cmd("setblock 1 100 0 minecraft:stone")
+                .cmd("setblock 2 100 0 minecraft:bell[attachment=single_wall,facing=east,powered=false]").watch(2, 100, 0);
+        c.step(command("setblock 3 100 0 minecraft:stone")).step(command("setblock 3 100 0 minecraft:air"));
+        out.add(c);
+    }
+
+    static Map<String, Object> command(String cmd) {
+        return op("op", "command", "command", cmd);
+    }
+
     static void frames49(List<Case> out) {
         Case c;
         // ---- a stone block at (2, 100, 0), a frame on each of its faces (the player at 0.5, 100, 0.5)
@@ -1310,6 +1419,7 @@ public class InteractVectors {
                     p.connection.handleInteract(new ServerboundInteractPacket(target.getId(), hand, target.position(), (boolean) s.get("sneak")));
                 }
             }
+            case "command" -> command((String) s.get("command"));
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
             case "cooldown" -> p.getCooldowns().addCooldown(stack((String) s.get("item")), (int) s.get("ticks"));
             case "lock_sign" -> {
@@ -1513,6 +1623,7 @@ public class InteractVectors {
             cakes(all);
             blocks49(all);
             frames49(all);
+            bells49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {

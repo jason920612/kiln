@@ -315,6 +315,7 @@ fn run_case(line: &Value) -> Vec<String> {
                     ));
                 }
             }
+            "command" => inbox.push(ToSim::Console(step["command"].as_str().unwrap().to_owned())),
             "select" => inbox.push(ToSim::Packet(1, PlayIn::SetCarriedItem { slot: i32_of(&step["slot"]) as i16 })),
             "cooldown" => {
                 let item = ItemStack::of(step["item"].as_str().unwrap(), 1).unwrap();
