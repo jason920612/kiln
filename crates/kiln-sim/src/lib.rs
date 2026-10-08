@@ -938,10 +938,13 @@ impl Dim {
         let Some(region) = self.regions.at_mut(pos.cell()) else { return Err(chunk) };
         let (cells, part) = region.cells_and_part_mut();
         let Some(cell) = cells.get_mut(pos.cell()) else { return Err(chunk) };
+        let dt = Instant::now();
         part.1.chunk_loaded(pos, &mut chunk, self.game_time);
+        let dt = diag::lap("in.loaded", dt);
         // `PoiManager`: the chunk's saved points of interest, checked against its blocks.
         let stored = self.poi_store.as_mut().and_then(|s| s.load(pos)).map(|t| kiln_world::poi::ChunkPois::from_nbt(&t));
         chunk.init_pois(pos.x, pos.z, stored);
+        let dt = diag::lap("in.pois", dt);
         let new = chunk.is_new();
         let generated = std::mem::take(&mut chunk.generated_entities);
         cell.insert(pos, chunk);
@@ -950,8 +953,11 @@ impl Dim {
         if new {
             kiln_world::light::light_new_chunk(cells, pos);
         }
+        let dt = diag::lap("in.light", dt);
         self.load_entities(pos);
+        let dt = diag::lap("in.entities", dt);
         self.add_saved_entities(pos, generated);
+        diag::lap("in.saved", dt);
         Ok(())
     }
 
@@ -2438,6 +2444,7 @@ impl Sim {
             }
             keep.sort_unstable();
             keep.dedup();
+            let dt = Instant::now();
             let unloads = std::mem::take(&mut self.dims[dim].unloads);
             let unloaded = if unloads.is_empty() { Vec::new() } else { self.dims[dim].unload(unloads, &keep.iter().copied().collect()) };
             if !unloaded.is_empty() {
@@ -2446,13 +2453,16 @@ impl Sim {
                 let gone = self.dims[dim].store_entities(&unloaded, false, &owners);
                 self.forget_entities(gone);
             }
+            let dt = diag::lap("ch.unload", dt);
             let d = &mut self.dims[dim];
             d.install_generated();
+            let dt = diag::lap("ch.install_generated", dt);
             // Every player's own chunk, uncapped: each player must stand in an owned cell (or
             // waits in limbo while it is generated).
             for pos in keep {
                 d.request_urgent(pos);
             }
+            let dt = diag::lap("ch.own", dt);
             // Then the requests, players interleaved (everyone's nearest chunk first), in an
             // order that does not depend on how regions split them.
             let mut wanted = std::mem::take(&mut d.requests);
@@ -2467,6 +2477,7 @@ impl Sim {
                 }
                 loads += 1;
             }
+            diag::lap("ch.requests", dt);
         }
     }
 
