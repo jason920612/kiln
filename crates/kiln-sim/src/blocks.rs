@@ -60,6 +60,8 @@ pub(crate) struct RegionBlocks {
     pub sign_editors: crate::signs::SignEditors,
     /// Mob spawner block entities.
     pub spawners: crate::mob_spawner::Spawners,
+    /// New chunks of generation that still want their animals.
+    pub initial_mobs: Vec<ChunkPos>,
 }
 
 impl Default for RegionBlocks {
@@ -78,6 +80,7 @@ impl Default for RegionBlocks {
             hearts: Default::default(),
             sign_editors: Default::default(),
             spawners: Default::default(),
+            initial_mobs: Vec::new(),
         }
     }
 }
@@ -110,6 +113,9 @@ impl RegionBlocks {
         self.sculk.chunk_loaded(pos, chunk);
         self.hearts.chunk_loaded(pos, chunk);
         self.spawners.chunk_loaded(pos, chunk);
+        if std::mem::take(&mut chunk.original_mobs) {
+            self.initial_mobs.push(pos);
+        }
         let moving = kiln_data::blocks::default_state::MOVING_PISTON;
         for ((x, y, z), be) in chunk.block_entities() {
             if chunk.get(x, y, z) == moving {
@@ -140,6 +146,7 @@ impl RegionBlocks {
         self.containers.chunk_unloaded(pos);
         self.sculk.chunk_unloaded(pos);
         self.hearts.chunk_unloaded(pos);
+        self.initial_mobs.retain(|p| *p != pos);
         self.spawners.chunk_unloaded(pos);
     }
 
@@ -203,6 +210,7 @@ impl RegionPart for RegionBlocks {
         into.hearts.merge(std::mem::take(&mut from.hearts));
         into.sign_editors.merge(std::mem::take(&mut from.sign_editors));
         into.spawners.merge(std::mem::take(&mut from.spawners));
+        into.initial_mobs.append(&mut from.initial_mobs);
     }
 
     fn split(mut self, owner_of: &dyn Fn(CellPos) -> usize, n: usize) -> SmallVec<[Self; 4]> {
@@ -257,13 +265,16 @@ impl RegionPart for RegionBlocks {
             let mut spawners: SmallVec<[&mut crate::mob_spawner::Spawners; 4]> = parts.iter_mut().map(|p| &mut p.spawners).collect();
             self.spawners.split_into(&mut spawners, |c| owner((c.x, c.z)));
         }
+        for c in self.initial_mobs.drain(..) {
+            parts[owner((c.x, c.z))].initial_mobs.push(c);
+        }
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
         parts
     }
 
     fn count(&self) -> usize {
-        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.sign_editors.len() + self.spawners.len()
+        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.sign_editors.len() + self.spawners.len() + self.initial_mobs.len()
     }
 
     fn for_each_cell(&self, f: &mut dyn FnMut(CellPos)) {

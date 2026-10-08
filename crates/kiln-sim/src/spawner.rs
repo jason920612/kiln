@@ -46,6 +46,8 @@ pub(crate) struct SpawnerData {
 pub(crate) struct SpawnTable {
     /// By biome network id (looked up for every spawn attempt).
     biomes: Vec<Option<[Vec<SpawnerData>; N]>>,
+    /// By biome network id: `minecraft:gameplay/creature_world_gen_spawn_probability` (chunk generation's animals).
+    world_gen: Vec<f32>,
     /// The structures' `spawn_overrides`.
     pub structures: crate::structure_spawns::StructureSpawns,
 }
@@ -71,8 +73,19 @@ impl SpawnTable {
                 t.biomes.resize_with(id + 1, || None);
             }
             t.biomes[id] = Some(Category::SPAWNING.map(|c| list(c.name())));
+            if t.world_gen.len() <= id {
+                t.world_gen.resize(id + 1, 0.1);
+            }
+            if let Some(p) = json["attributes"]["minecraft:gameplay/creature_world_gen_spawn_probability"].as_f64() {
+                t.world_gen[id] = p as f32;
+            }
         }
         Some(t)
+    }
+
+    /// `creature_world_gen_spawn_probability` of a biome (0.1 unless the biome says).
+    pub(crate) fn world_gen_probability(&self, biome: u16) -> f32 {
+        self.world_gen.get(biome as usize).copied().unwrap_or(0.1)
     }
 
     pub(crate) fn list(&self, biome: u16, category: Category) -> &[SpawnerData] {
@@ -936,6 +949,172 @@ fn no_collision(level: &RegionLevel, pos: [f64; 3], w: f32, h: f32) -> bool {
         }
     }
     true
+}
+
+/// The mobs chunk generation makes (`ChunkGenerator.spawnOriginalMobs` → `NaturalSpawner.spawnMobsForChunkGeneration`) for
+/// the freshly generated chunks `pending`: the animals of the biome at the chunk's corner, in groups, from a random seeded by
+/// the world seed and the chunk, as vanilla's SPAWN status does (the blocks of a loaded chunk are the ones its SPAWN saw: no
+/// feature of a farther chunk reaches it).
+pub(crate) fn initial_mobs(level: &RegionLevel, pending: &[ChunkPos], spawns: &mut Vec<Spawn>) {
+    let env = level.env;
+    if !env.mobs.spawn_mobs {
+        return;
+    }
+    let Some(table) = env.spawn_table.clone() else { return };
+    for &c in pending {
+        if level.cells.chunk(c).is_some() {
+            initial_chunk(level, &table, c, spawns);
+        }
+    }
+}
+
+/// The biome `WorldGenRegion.getBiome` finds at a block: the zoomed lookup over the noise biomes.
+fn zoomed_biome_at(level: &RegionLevel, x: i32, y: i32, z: i32) -> u16 {
+    if let Some(p) = &level.env.pipeline {
+        let world = p.world().clone();
+        let mut gs = kiln_worldgen::generator::GenScratch::default();
+        return kiln_worldgen::generator::zoomed_biome(world.generator.zoom_seed, x, y, z, &mut |qx, qy, qz| gs.noise_biome(&world.generator, qx, qy, qz));
+    }
+    biome_at(level, KBlockPos::new(x, y, z))
+}
+
+/// `NaturalSpawner.getTopNonCollidingPos`.
+fn top_non_colliding(level: &RegionLevel, kind: MobKind, x: i32, z: i32) -> KBlockPos {
+    use kiln_entity::mob::ext::Placement;
+    let env = level.env;
+    // `SpawnPlacements.getHeightmapType`: ocelots and parrots stand on leaves.
+    let leaves = matches!(kind, MobKind::Ocelot | MobKind::Parrot);
+    let h = level
+        .cells
+        .chunk(ChunkPos::of_block(x, z))
+        .map_or(env.min_y, |ch| ch.column_height((x & 15) as usize, (z & 15) as usize, |s| if leaves { kiln_data::block_props::motion_blocking(s) } else { kiln_data::block_props::motion_blocking_no_leaves(s) }));
+    let mut pos = KBlockPos::new(x, h, z);
+    if env.dim == crate::NETHER_ID {
+        loop {
+            pos = pos.below();
+            if kiln_data::blocks_types::is_air(level.block(pos)) {
+                break;
+            }
+        }
+        loop {
+            pos = pos.below();
+            if !(kiln_data::blocks_types::is_air(level.block(pos)) && pos.y > env.min_y) {
+                break;
+            }
+        }
+    }
+    let placement = kind.ext().map_or(Placement::OnGround, |k| k.placement());
+    if placement == Placement::OnGround {
+        let below = pos.below();
+        if kiln_entity::mob::path::pathfindable_land(level.block(below)) {
+            return below;
+        }
+    }
+    pos
+}
+
+fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &mut Vec<Spawn>) {
+    use crate::entities::Body;
+    let env = level.env;
+    let (min_x, min_z) = (c.x * 16, c.z * 16);
+    // `region.getBiome(center.getWorldPosition().atY(region.getMaxY()))`.
+    let biome = zoomed_biome_at(level, min_x, env.min_y + env.height - 1, min_z);
+    let list = table.list(biome, Category::Creature);
+    if list.is_empty() {
+        return;
+    }
+    let probability = table.world_gen_probability(biome);
+    // `WorldgenRandom` with `setDecorationSeed(seed, minX, minZ)`.
+    let mut r = kiln_worldgen::random::WorldgenRandom::legacy(0);
+    r.set_decoration_seed(env.seed, min_x, min_z);
+    // `WorldGenRegion.getRandom()`: the region's positional random, which `finalizeSpawn` draws from.
+    let mut region_r: Box<dyn RandomSource> = match &env.pipeline {
+        Some(p) => Box::new(p.world().generator.region_random.at(min_x, 0, min_z)),
+        None => Box::new(LegacyRandom::new(env.seed ^ ((c.x as i64) << 32) ^ c.z as i64)),
+    };
+    let top_y = env.min_y + env.height - 1;
+    let _ = top_y;
+    let moon = moon_brightness(env.mobs.day_time);
+    let mut made = 0u64;
+    while r.next_float() < probability {
+        let Some(d) = pick(list, &mut r) else { continue };
+        let count = if d.constant { d.min } else { r.next_int_bounded(d.max - d.min + 1) + d.min };
+        let mut group = mob::GroupData::default();
+        let mut x = min_x + r.next_int_bounded(16);
+        let mut z = min_z + r.next_int_bounded(16);
+        let (start_x, start_z) = (x, z);
+        for _ in 0..count {
+            let mut spawned = false;
+            let mut attempt = 0;
+            while !spawned && attempt < 4 {
+                attempt += 1;
+                let Some(kind) = d.kind else {
+                    // (A type Kiln does not simulate: the position still moves on.)
+                    adjust(&mut r, &mut x, &mut z, (min_x, min_z), (start_x, start_z));
+                    continue;
+                };
+                let top = top_non_colliding(level, kind, x, z);
+                if placement_ok(level, top, kind) {
+                    let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
+                    let w = t.width as f64;
+                    let px = (x as f64).clamp(min_x as f64 + w, min_x as f64 + 16.0 - w);
+                    let pz = (z as f64).clamp(min_z as f64 + w, min_z as f64 + 16.0 - w);
+                    if !no_collision(level, [px, top.y as f64, pz], t.width, t.height) {
+                        continue;
+                    }
+                    let at = KBlockPos::containing(px, top.y as f64, pz);
+                    if !check_spawn_rules(level, at, kind, &mut LegacyRandom::new(0)) {
+                        continue;
+                    }
+                    let yaw = r.next_float() * 360.0;
+                    // `Mob.checkSpawnRules` (the walk target value) and `checkSpawnObstruction`.
+                    let magic = light_magic(level, at);
+                    let walk = if kind.is_animal() {
+                        if kiln_data::blocks_types::block_of(level.block(at.below())).name == "minecraft:grass_block" { 10.0 } else { magic - 0.5 }
+                    } else {
+                        0.0
+                    };
+                    let ignores_light = kind.ext().is_some_and(|k| k.spawn_ignores_light());
+                    let liquid_ok = kind.ext().is_some_and(|k| k.spawn_in_liquids());
+                    let fits = !(walk < 0.0 && !ignores_light) && (liquid_ok || !contains_liquid(level, [px, top.y as f64, pz], t.width, t.height));
+                    if fits {
+                        let mut ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, moon);
+                        ctx.biome = Some(biome as i32);
+                        made += 1;
+                        let seed = (env.seed as u64 ^ (c.x as u32 as u64) << 20 ^ (c.z as u32 as u64) << 40 ^ made.wrapping_mul(0x9E37_79B9_7F4A_7C15)) as i64;
+                        let mut e = mob::new(kind, 0, 0, seed);
+                        e.set_pos(kiln_entity::math::Vec3::new(px, top.y as f64, pz));
+                        e.y_rot = yaw;
+                        e.x_rot = 0.0;
+                        e.set_old_pos_and_rot();
+                        if let Some(m) = mob::data_mut(&mut e) {
+                            m.y_head_rot = yaw;
+                            m.y_body_rot = yaw;
+                            m.y_head_rot_o = yaw;
+                            m.y_body_rot_o = yaw;
+                        }
+                        mob::finalize_spawn(&mut e, &mut *region_r, &ctx, &mut group, false);
+                        let companions = std::mem::take(&mut group.companions);
+                        let chicken = group.nearby_chicken;
+                        let body = if companions.is_empty() && !chicken { Body::Ready(Box::new(e)) } else { Body::Stacked(Box::new(e), companions, false, chicken) };
+                        spawns.push(Spawn { kind: t, pos: [px, top.y as f64, pz], vel: [0.0; 3], body });
+                        spawned = true;
+                    }
+                }
+                adjust(&mut r, &mut x, &mut z, (min_x, min_z), (start_x, start_z));
+            }
+        }
+    }
+}
+
+/// The step to the next place of a group: a little way from the last, kept inside the chunk.
+fn adjust(r: &mut dyn RandomSource, x: &mut i32, z: &mut i32, min: (i32, i32), start: (i32, i32)) {
+    *x += r.next_int_bounded(5) - r.next_int_bounded(5);
+    *z += r.next_int_bounded(5) - r.next_int_bounded(5);
+    while *x < min.0 || *x >= min.0 + 16 || *z < min.1 || *z >= min.1 + 16 {
+        *x = start.0 + r.next_int_bounded(5) - r.next_int_bounded(5);
+        *z = start.1 + r.next_int_bounded(5) - r.next_int_bounded(5);
+    }
 }
 
 /// `containsAnyLiquid` over the mob's box (`checkSpawnObstruction`).

@@ -92,6 +92,9 @@ pub struct Chunk {
     /// Entities generation placed (end crystals, ...), in saved form, for the simulation to
     /// add when the chunk loads.
     pub generated_entities: Vec<kiln_proto::nbt::Tag>,
+    /// A chunk generation made that still wants its animals (`NaturalSpawner.spawnMobsForChunkGeneration`); the
+    /// simulation makes them when it takes the chunk in.
+    pub original_mobs: bool,
     /// Points of interest once the simulation took the chunk in ([`Chunk::init_pois`]); block
     /// changes keep them up to date from then on.
     pub pois: Option<Box<crate::poi::ChunkPois>>,
@@ -163,6 +166,7 @@ impl Chunk {
             structures: self.structures.clone(),
             pending: self.pending.clone(),
             generated_entities: self.generated_entities.clone(),
+            original_mobs: self.original_mobs,
             pois: self.pois.clone(),
             inhabited_time: self.inhabited_time,
             inhabited_saved: self.inhabited_saved,
@@ -191,6 +195,7 @@ impl Chunk {
             structures: None,
             pending: None,
             generated_entities: Vec::new(),
+            original_mobs: false,
             pois: None,
             inhabited_time: 0,
             inhabited_saved: 0,

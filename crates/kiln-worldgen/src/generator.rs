@@ -207,6 +207,8 @@ pub struct Generator {
     pub gen_min_y: i32,
     pub gen_height: i32,
     pub sea_level: i32,
+    /// `disable_mob_generation` of the noise settings: no initial animals.
+    pub disable_mob_generation: bool,
     pub biomes: Vec<BiomeInfo>,
     source: BiomeSource,
     climate: Vec<SamplerRef>,
@@ -380,6 +382,7 @@ impl Generator {
             gen_min_y,
             gen_height,
             sea_level: s.sea_level,
+            disable_mob_generation: s.disable_mob_generation,
             biomes,
             source,
             climate,
