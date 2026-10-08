@@ -2923,7 +2923,7 @@ public class MobVectors {
     static void scenariosBee(List<Scenario> out) {
         String[] flowers = {"minecraft:poppy", "minecraft:dandelion", "minecraft:cornflower", "minecraft:azure_bluet", "minecraft:oxeye_daisy", "minecraft:allium"};
         // Flowers about: wandering, pollinating until it carries nectar, then wandering on with it.
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 10; i++) {
             Scenario s = new Scenario("bee_flowers_" + i);
             floor(s, 16, "minecraft:grass_block");
             for (int k = 0; k < 7; k++) block(s, -5 + (k * 5 + i * 3) % 11, BY, -4 + (k * 7 + i) % 9, flowers[(k + i) % flowers.length]);
@@ -2937,16 +2937,17 @@ public class MobVectors {
         }
         // A bee nest on a trunk: a bee with nectar goes home (its hive known, or found), one without
         // goes in at night.
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 10; i++) {
             Scenario s = new Scenario("bee_hive_" + i);
             floor(s, 16, "minecraft:grass_block");
             for (int y = 0; y < 3; y++) block(s, 6, BY + y, 0, "minecraft:oak_log[axis=y]");
             block(s, 6, BY + 3, 0, "minecraft:bee_nest[facing=west,honey_level=0]");
             for (int k = 0; k < 4; k++) block(s, -5 + 3 * k, BY, -3 + 2 * k, flowers[(k + i) % flowers.length]);
-            MobSpec m = new MobSpec("minecraft:bee", 0.5, BY + 1, 0.5, 40f * i, 34200L + 7 * i);
-            m.nbt = i == 0 ? "{HasNectar:1b,hive_pos:[I;6,103,0]}" : i == 1 ? "{HasNectar:1b}" : i == 2 ? "{hive_pos:[I;6,103,0]}" : "{}";
+            int v = i % 4;
+            MobSpec m = new MobSpec("minecraft:bee", 0.5 + (i % 3), BY + 1, 0.5 - (i % 2), 40f * i, 34200L + 7 * i);
+            m.nbt = v == 0 ? "{HasNectar:1b,hive_pos:[I;6,103,0]}" : v == 1 ? "{HasNectar:1b}" : v == 2 ? "{hive_pos:[I;6,103,0]}" : "{}";
             s.mobs.add(m);
-            s.dayTime = i >= 2 ? 14000 : 1000;
+            s.dayTime = v >= 2 ? 14000 : 1000;
             s.player = new double[] {14.5, BY, 14.5};
             s.playerCreative = true;
             s.levelSeed = 90 + i;
@@ -2954,11 +2955,11 @@ public class MobVectors {
             out.add(s);
         }
         // Hurt by the player: it stings once (poison), then loses its stinger.
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 4; i++) {
             Scenario s = new Scenario("bee_sting_" + i);
             floor(s, 16, "minecraft:grass_block");
             s.mobs.add(new MobSpec("minecraft:bee", 0.5, BY + 1, 0.5, 40f * i, 34300L + 7 * i));
-            if (i == 1) s.mobs.add(new MobSpec("minecraft:bee", 1.5, BY + 1, -1.5, 90f, 34350L));
+            if (i % 2 == 1) s.mobs.add(new MobSpec("minecraft:bee", 1.5, BY + 1, -1.5, 90f, 34350L));
             s.player = new double[] {2.5, BY, 0.5};
             s.levelSeed = 100 + i;
             s.hurts.put(10, new double[] {0, 1.0});
@@ -2980,13 +2981,13 @@ public class MobVectors {
             out.add(s);
         }
         // A bee with nectar over a field: crops grow where it passes.
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 5; i++) {
             Scenario s = new Scenario("bee_crops_" + i);
             floor(s, 16, "minecraft:grass_block");
             for (int x = 2; x <= 6; x++)
                 for (int z = -2; z <= 2; z++) {
                     block(s, x, BY - 1, z, "minecraft:farmland[moisture=7]");
-                    block(s, x, BY, z, i == 0 ? "minecraft:wheat[age=0]" : "minecraft:carrots[age=1]");
+                    block(s, x, BY, z, i % 2 == 0 ? "minecraft:wheat[age=0]" : "minecraft:carrots[age=1]");
                 }
             MobSpec m = new MobSpec("minecraft:bee", 4.5, BY + 1, 0.5, 40f * i, 34500L + i);
             m.nbt = "{HasNectar:1b,TicksSincePollination:0}";
