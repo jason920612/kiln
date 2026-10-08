@@ -819,6 +819,11 @@ impl Entity {
         crate::player::back_off_from_edge(self, level, movement, mover)
     }
 
+    /// Takes the movements recorded since the last call (`movementThisTick`).
+    pub fn drain_movements(&mut self) -> Vec<Movement> {
+        self.movement_this_tick.drain(..).collect()
+    }
+
     fn add_movement_this_tick(&mut self, m: Movement) {
         if self.movement_this_tick.len() >= 100 {
             let a = self.movement_this_tick.pop_front().unwrap();

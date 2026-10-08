@@ -51,6 +51,11 @@ pub(crate) const MAX_HEALTH: Attr = Attr { name: "minecraft:max_health", base: 2
 pub(crate) const MAX_ABSORPTION: Attr = Attr { name: "minecraft:max_absorption", base: 0.0, min: 0.0, max: 2048.0 };
 pub(crate) const LUCK: Attr = Attr { name: "minecraft:luck", base: 0.0, min: -1024.0, max: 1024.0 };
 pub(crate) const SAFE_FALL_DISTANCE: Attr = Attr { name: "minecraft:safe_fall_distance", base: 3.0, min: -1024.0, max: 1024.0 };
+pub(crate) const FALL_DAMAGE_MULTIPLIER: Attr =
+    Attr { name: "minecraft:fall_damage_multiplier", base: 1.0, min: 0.0, max: 100.0 };
+pub(crate) const GRAVITY: Attr = Attr { name: "minecraft:gravity", base: 0.08, min: -1.0, max: 1.0 };
+pub(crate) const JUMP_STRENGTH: Attr = Attr { name: "minecraft:jump_strength", base: 0.41999998688697815, min: 0.0, max: 32.0 };
+pub(crate) const WATER_MOVEMENT_EFFICIENCY: Attr = Attr { name: "minecraft:water_movement_efficiency", base: 0.0, min: 0.0, max: 1.0 };
 pub(crate) const OXYGEN_BONUS: Attr = Attr { name: "minecraft:oxygen_bonus", base: 0.0, min: 0.0, max: 1024.0 };
 pub(crate) const WAYPOINT_TRANSMIT_RANGE: Attr =
     Attr { name: "minecraft:waypoint_transmit_range", base: 6.0e7, min: 0.0, max: 6.0e7 };
@@ -359,6 +364,11 @@ impl Player {
             self.equipment_modifiers().into_iter().filter(|m| m.0 == id).map(|m| (m.1, m.2, m.3)).collect();
         if attr.name == ENTITY_INTERACTION_RANGE.name && self.game_mode == 1 {
             mods.push(("minecraft:creative_mode_entity_range".into(), CREATIVE_ENTITY_RANGE, AttributeOperation::AddValue));
+        }
+        if attr.name == MOVEMENT_SPEED.name
+            && let Some(amount) = self.frost_speed
+        {
+            mods.push(("minecraft:powder_snow".into(), amount, AttributeOperation::AddValue));
         }
         if attr.name == MOVEMENT_SPEED.name && self.sprinting {
             mods.push(("minecraft:sprinting".into(), SPRINT_SPEED, AttributeOperation::AddMultipliedTotal));

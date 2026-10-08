@@ -14,7 +14,7 @@ use crate::testing::{Client, SinkStats, join};
 use crate::{Sim, SimConfig};
 use kiln_entity::math::BlockPos;
 use kiln_item::ItemStack;
-use kiln_link::ToSim;
+use kiln_link::{PlayIn, ToSim};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -143,6 +143,20 @@ fn take_packets(stats: &SinkStats, ids: &[i32]) -> Vec<bytes::Bytes> {
     all.into_iter().filter(|p| kiln_proto::codec::Reader::new(p).varint().ok().is_some_and(|id| ids.contains(&id))).collect()
 }
 
+/// Sets attribute base values the way `/attribute base set` keeps them (`[[id, value], ..]`).
+fn set_attributes(p: &mut crate::Player, attrs: &Value) {
+    for a in attrs.as_array().map(Vec::as_slice).unwrap_or_default() {
+        let name = a[0].as_str().unwrap();
+        let attr = crate::command_data::PLAYER_ATTRIBUTES
+            .iter()
+            .find(|x| x.name() == name)
+            .unwrap_or_else(|| panic!("attribute {name}"));
+        let c = &mut p.command_attributes;
+        c.bases.retain(|(n, _)| *n != attr.name());
+        c.bases.push((attr.name(), a[1].as_f64().unwrap()));
+    }
+}
+
 fn run_scenario(line: &Value) -> Vec<String> {
     use kiln_data::packets::play::clientbound as ids;
     let mut sim = Sim::new(SimConfig::new(2, 2, None));
@@ -165,9 +179,9 @@ fn run_scenario(line: &Value) -> Vec<String> {
     let snapshot = |sim: &Sim| {
         let mut m = HashMap::new();
         for x in -3..=3 {
-            for y in -3..=5 {
+            for y in (base[1].min(100) - 8)..=(base[1] + 6) {
                 for z in -3..=3 {
-                    let p = [base[0] + x, base[1] + y, base[2] + z];
+                    let p = [base[0] + x, y, base[2] + z];
                     if let Some(s) = sim.block_at(p[0], p[1], p[2]) {
                         m.insert(p, s);
                     }
@@ -182,11 +196,20 @@ fn run_scenario(line: &Value) -> Vec<String> {
     {
         let p = sim.players.get_mut(&1).unwrap();
         p.pos = [pos[0], pos[1], pos[2]];
-        p.block_effects_from = p.pos;
+        // The join teleport is long confirmed on a real connection; the client moves from here.
+        p.awaiting_teleport = None;
+        p.first_good = p.pos;
         p.rot = [0.0, 0.0];
         p.on_ground = line["on_ground"].as_bool().unwrap();
         p.sneaking = line["sneaking"].as_bool().unwrap();
         p.fall_distance = 0.0;
+        p.main_supporting_block = None;
+        p.on_ground_no_blocks = false;
+        p.was_touching_water = false;
+        p.starting_to_fall = None;
+        p.ticks_frozen = 0;
+        p.is_in_powder_snow = false;
+        p.frost_speed = None;
         p.game_mode = match line["game_mode"].as_str().unwrap() {
             "creative" => 1,
             "adventure" => 2,
@@ -223,7 +246,10 @@ fn run_scenario(line: &Value) -> Vec<String> {
         p.tick_count = 0;
         p.entity_rng = kiln_javamath::random::LegacyRandom::new(seed.wrapping_add(1));
         p.level_rng = kiln_javamath::random::LegacyRandom::new(seed);
+        // Attribute base values the scenario set (the way `/attribute base set` keeps them).
+        set_attributes(p, &line["attrs"]);
     }
+    let client = line["client"].as_bool().unwrap_or(false);
     *stats.log.lock().unwrap() = Some(Vec::new());
     let entity_id = sim.players[&1].entity_id;
     let stone = kiln_data::blocks_types::block_by_name("minecraft:stone").unwrap().default;
@@ -267,17 +293,42 @@ fn run_scenario(line: &Value) -> Vec<String> {
                     p.inv.items[0] = held(a);
                     p.inv.times_changed += 1;
                 }
+                "offhand" => {
+                    let index = kiln_inventory::inventory::equipment_index(kiln_item::component::EquipmentSlot::OffHand, p.inv.selected);
+                    *kiln_inventory::Container::item_mut(&mut p.inv, index) = stack(a["item"].as_str().unwrap());
+                    p.inv.times_changed += 1;
+                }
                 "finish" => {
                     finished = true;
                     p.finish_using(false, &block, &mut ctx);
                 }
                 "use" => p.use_item(false, &block, &mut ctx),
+                // (`jump` is the shadow client's: its moves arrive as packets.)
+                "jump" | "velocity" => {}
+                "attribute" => set_attributes(p, &serde_json::json!([[a["id"], a["value"]]])),
+                "sneak" => p.sneaking = a["on"].as_bool().unwrap(),
+                "gamerule" => inbox.push(ToSim::Console(format!("gamerule {} {}", a["name"].as_str().unwrap(), a["value"]))),
                 "setblock" => {
                     let at = a["pos"].as_array().unwrap();
                     inbox.push(ToSim::Console(format!("setblock {} {} {} {}", at[0], at[1], at[2], a["state"].as_str().unwrap())));
                 }
                 other => panic!("unknown op {other}"),
             }
+        }
+        if client {
+            // What the shadow client sent before this tick (`LocalPlayer.sendPosition`).
+            let mv = &line["moves"][i];
+            let pos = mv["pos"].as_array().map(|c| [c[0].as_f64().unwrap(), c[1].as_f64().unwrap(), c[2].as_f64().unwrap()]);
+            inbox.push(ToSim::Packet(
+                1,
+                PlayIn::Move {
+                    pos,
+                    rot: None,
+                    on_ground: mv["on_ground"].as_bool().unwrap(),
+                    horizontal_collision: mv["hcol"].as_bool().unwrap(),
+                },
+            ));
+            inbox.push(ToSim::Packet(1, PlayIn::ClientTickEnd));
         }
         assert!(sim.step(inbox));
         if actions.iter().any(|a| a["op"] == "setblock") {
@@ -333,6 +384,12 @@ fn run_scenario(line: &Value) -> Vec<String> {
             eq(name, format!("{:?}", p.attribute(attr)), format!("{:?}", value.as_f64().unwrap()));
         }
         eq("destroy_speed", format!("{speed:?}"), format!("{:?}", f32_of(&want["destroy_speed"])));
+        if let Some(fz) = want["frozen"].as_i64() {
+            eq("frozen", p.ticks_frozen.to_string(), fz.to_string());
+        }
+        if let Some(fd) = want["fall_distance"].as_f64() {
+            eq("fall_distance", format!("{:?}", p.fall_distance), format!("{fd:?}"));
+        }
         let got_packets: Vec<bytes::Bytes> =
             take_packets(&stats, &[ids::UPDATE_MOB_EFFECT, ids::REMOVE_MOB_EFFECT, ids::ENTITY_EVENT])
                 .into_iter()
@@ -397,7 +454,13 @@ fn effect_parity() {
         eprintln!("skipped: set KILN_EFFECT_VECTORS (tools/effect_vectors.py)");
         return;
     };
+    // Several name parts may be given, separated by commas (a scenario matching any runs).
     let filter = std::env::var("KILN_PARITY_FILTER").ok();
+    let exclude = std::env::var("KILN_PARITY_EXCLUDE").ok();
+    let matches = |name: &str| {
+        filter.as_ref().is_none_or(|f| f.split(',').any(|part| name.contains(part)))
+            && !exclude.as_ref().is_some_and(|x| x.split(',').any(|part| name.contains(part)))
+    };
     let text = std::fs::read_to_string(path).unwrap();
     let (mut passed, mut failed) = (0, Vec::new());
     let mut ticks = 0;
@@ -411,7 +474,7 @@ fn effect_parity() {
             println!("ok   registries");
             continue;
         }
-        if filter.as_ref().is_some_and(|f| !name.contains(f.as_str())) {
+        if !matches(&name) {
             continue;
         }
         let errors = run_scenario(&v);
