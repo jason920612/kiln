@@ -84,6 +84,7 @@ fn initial_mobs_parity() {
     for (c, name, pos, yaw) in take_initial_mobs() {
         got.entry(c).or_default().push((name.to_owned(), pos, yaw, false));
     }
+    println!("kiln made mobs in {} chunks ({} mobs), vanilla in {} chunks", got.len(), got.values().map(|v| v.len()).sum::<usize>(), want.len());
     let mut checked = 0;
     let mut wrong = Vec::new();
     for cx in -radius..=radius {
