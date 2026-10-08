@@ -76,7 +76,7 @@ fn check(path: &Path, pack: &Path) {
     let mut client = Client::new(1, stats);
     // Until the window's corners are loaded (generation runs on its own threads in real time).
     let corners: Vec<(i32, i32)> = (-radius..=radius).flat_map(|x| (-radius..=radius).map(move |z| (x, z))).collect();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(std::env::var("KILN_INITIAL_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(600));
     loop {
         let mut inbox = Vec::new();
         client.tick(None, &mut inbox);
@@ -84,7 +84,10 @@ fn check(path: &Path, pack: &Path) {
         if corners.iter().all(|&(cx, cz)| sim.block_at(cx * 16 + 8, 0, cz * 16 + 8).is_some()) {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "the window's corners did not load");
+        if std::time::Instant::now() >= deadline {
+            let loaded = corners.iter().filter(|&&(cx, cz)| sim.block_at(cx * 16 + 8, 0, cz * 16 + 8).is_some()).count();
+            panic!("the window did not load: {loaded} of {} chunks", corners.len());
+        }
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     for _ in 0..std::env::var("KILN_INITIAL_EXTRA").ok().and_then(|v| v.parse().ok()).unwrap_or(40) {
