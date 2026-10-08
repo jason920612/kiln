@@ -84,6 +84,23 @@ fn initial_mobs_parity() {
     for (c, name, pos, yaw) in take_initial_mobs() {
         got.entry(c).or_default().push((name.to_owned(), pos, yaw, false));
     }
+    // Debug: the blocks of a box by type (`x0,z0,x1,z1`), to compare with `InitialMobVectors` (INITIAL_MOB_COUNT).
+    if let Ok(count) = std::env::var("KILN_INITIAL_COUNT") {
+        let c: Vec<i32> = count.split(',').map(|v| v.parse().unwrap()).collect();
+        let mut counts: BTreeMap<&'static str, i32> = BTreeMap::new();
+        for x in c[0]..=c[2] {
+            for z in c[1]..=c[3] {
+                for y in -64..320 {
+                    if let Some(s) = sim.block_at(x, y, z) {
+                        *counts.entry(kiln_blocks::state::BlockId::of(s).name()).or_default() += 1;
+                    }
+                }
+            }
+        }
+        for (n, v) in counts {
+            println!("COUNT {n} {v}");
+        }
+    }
     // Debug: the blocks at some places (`x,y,z;x,y,z`), to compare with `InitialMobVectors` (INITIAL_MOB_DUMP).
     if let Ok(dump) = std::env::var("KILN_INITIAL_DUMP") {
         for p in dump.split(';') {

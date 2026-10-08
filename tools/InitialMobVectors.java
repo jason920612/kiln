@@ -69,6 +69,21 @@ public class InitialMobVectors {
                         System.out.println("BLOCK " + p + " " + level.getBlockState(bp));
                     }
                 }
+                // Debug: INITIAL_MOB_COUNT="x0,z0,x1,z1" counts the blocks of that box by type.
+                String count = System.getenv("INITIAL_MOB_COUNT");
+                if (count != null) {
+                    String[] c = count.split(",");
+                    Map<String, Integer> counts = new TreeMap<>();
+                    for (int x = Integer.parseInt(c[0]); x <= Integer.parseInt(c[2]); x++) {
+                        for (int z = Integer.parseInt(c[1]); z <= Integer.parseInt(c[3]); z++) {
+                            for (int y = level.getMinY(); y < level.getMaxY(); y++) {
+                                String n = BuiltInRegistries.BLOCK.getKey(level.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).getBlock()).toString();
+                                counts.merge(n, 1, Integer::sum);
+                            }
+                        }
+                    }
+                    for (var en : counts.entrySet()) System.out.println("COUNT " + en.getKey() + " " + en.getValue());
+                }
                 Map<Long, List<Entity>> byChunk = new TreeMap<>();
                 for (Entity e : level.getAllEntities()) {
                     if (!(e instanceof Mob)) continue;
