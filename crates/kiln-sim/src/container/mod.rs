@@ -59,6 +59,8 @@ pub(crate) enum BeKind {
     DaylightDetector,
     /// Holds nothing; shakes when hit (`BellBlockEntity`).
     Bell,
+    /// Holds up to three bees (`BeehiveBlockEntity`).
+    Beehive,
 }
 
 impl BeKind {
@@ -83,6 +85,7 @@ impl BeKind {
             "chiseled_bookshelf" => BeKind::ChiseledBookshelf,
             "daylight_detector" => BeKind::DaylightDetector,
             "bell" => BeKind::Bell,
+            "beehive" => BeKind::Beehive,
             _ => return None,
         })
     }
@@ -98,18 +101,21 @@ impl BeKind {
             BeKind::Jukebox => 1,
             BeKind::Campfire => 4,
             BeKind::ChiseledBookshelf => 6,
-            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell => 0,
+            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive => 0,
         }
     }
 
     /// `RandomizableContainerBlockEntity`: can hold an unopened loot table.
     pub fn randomizable(self) -> bool {
-        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell)
+        !matches!(
+            self,
+            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive
+        )
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell)
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive)
     }
 
     /// `getDefaultName` translation key.
@@ -132,12 +138,15 @@ impl BeKind {
             BeKind::ChiseledBookshelf => "container.chiseled_bookshelf",
             BeKind::DaylightDetector => "container.daylight_detector",
             BeKind::Bell => "block.minecraft.bell",
+            BeKind::Beehive => "block.minecraft.beehive",
         }
     }
 }
 
 /// Saved fields a container block entity models; the rest of its NBT is kept as is.
-const MODELED: [&str; 29] = [
+const MODELED: [&str; 31] = [
+    "bees",
+    "flower_pos",
     "last_interacted_slot",
     "CookingTimes",
     "CookingTotalTimes",
@@ -232,6 +241,8 @@ pub(crate) struct ContainerBe {
     pub changes: u64,
     /// A bell's shaking.
     pub bell: Option<Box<crate::bell::BellState>>,
+    /// A beehive's bees.
+    pub hive: Option<Box<crate::beehive::Hive>>,
     /// Changed since its NBT was last written into the chunk.
     pub dirty: bool,
     /// Saved fields not modeled here (`components`, ...).
@@ -303,6 +314,7 @@ impl ContainerBe {
             item_changed: false,
             changes: 0,
             bell: (kind == BeKind::Bell).then(Default::default),
+            hive: (kind == BeKind::Beehive).then(|| Box::new(crate::beehive::Hive::load(nbt))),
             dirty: false,
             extra,
         };
@@ -323,6 +335,11 @@ impl ContainerBe {
         }
         match self.kind {
             BeKind::EnderChest | BeKind::Bell | BeKind::DaylightDetector => {}
+            BeKind::Beehive => {
+                if let Some(h) = &self.hive {
+                    h.save(&mut out);
+                }
+            }
             BeKind::Jukebox => {
                 if let Some(disc) = self.items.first().filter(|s| !s.is_empty()) {
                     out.push(("RecordItem".into(), disc.to_nbt()));
@@ -433,6 +450,9 @@ impl ContainerBe {
         }
         if let Some(lock) = self.lock.as_ref().and_then(|t| <LockCode as kiln_item::component::ComponentValue>::from_value(&kiln_item::Value::from_nbt(t)).ok()) {
             out.push(Component::Lock(lock));
+        }
+        if let Some(h) = &self.hive {
+            out.extend(h.components());
         }
         if self.kind.is_container() {
             // `ItemContainerContents.fromItems`: up to the last occupied slot.
@@ -780,7 +800,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
         .containers
         .map
         .iter()
-        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::DaylightDetector))
+        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Beehive))
         .filter(|(p, _)| ticking.contains(chunk_of(**p)))
         .map(|(p, c)| (*p, c.kind))
         .collect();
@@ -799,6 +819,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
             BeKind::Beacon => beacon::tick(level, pos),
             BeKind::Jukebox => crate::jukebox::tick(level, pos),
             BeKind::Campfire => crate::campfire::tick(level, pos),
+            BeKind::Beehive => crate::beehive::tick(level, pos),
             BeKind::DaylightDetector => {
                 // `DaylightDetectorBlock.tickEntity` (only where the level has sky light).
                 let s = level.block(pos);

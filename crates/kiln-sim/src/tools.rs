@@ -73,7 +73,7 @@ fn waxed(s: u16) -> Option<u16> {
     same_shape(&format!("waxed_{n}"), s)
 }
 
-fn hand_slot(off_hand: bool) -> EquipmentSlot {
+pub(crate) fn hand_slot(off_hand: bool) -> EquipmentSlot {
     if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand }
 }
 
@@ -360,6 +360,7 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
         C::ComposterBlock => compost(p, level, pos, s, off_hand, &stack),
         C::JukeboxBlock => crate::jukebox::use_item_on(p, level, pos, s, off_hand),
         C::CampfireBlock => crate::campfire::use_item_on(p, level, pos, s, off_hand),
+        C::BeehiveBlock => crate::beehive::use_item_on(p, level, pos, s, off_hand, spawns),
         C::CakeBlock => cake_candle(p, level, pos, s, off_hand, &stack),
         C::FlowerPotBlock => pot_plant(p, level, pos, s, off_hand, &stack),
         C::ChiseledBookShelfBlock => crate::bookshelf::use_item_on(p, level, pos, s, face, cursor, off_hand, &stack),

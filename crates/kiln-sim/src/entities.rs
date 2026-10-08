@@ -1456,6 +1456,18 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         crate::weather::is_raining_at(self.level.cells(), self.level.env(), kb(pos))
     }
 
+    fn is_raining(&self) -> bool {
+        self.level.env().weather.weather.raining
+    }
+
+    fn beehive_at(&self, pos: BlockPos) -> Option<kiln_entity::level::BeehiveView> {
+        self.level.region_ref().and_then(|l| crate::beehive::view(l, kb(pos)))
+    }
+
+    fn bees_stay_in_hive(&self) -> bool {
+        crate::beehive::bees_stay_in_hive(self.level.env())
+    }
+
     fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
         self.level.region_ref().is_some_and(|l| kiln_blocks::Level::can_spread_fire_around(l, kb(pos)))
     }
@@ -3116,6 +3128,21 @@ fn carry_out(
         Event::DragonFight(ev) => {
             if let Some(f) = &env.dragon_fight {
                 f.send(crate::dragon_fight::FightMsg::Entity(ev));
+            }
+        }
+        // wp49 bees: a bee went into its hive (`addOccupant` saves it and discards the entity).
+        Event::BeeEntersHive { bee, hive } => {
+            let Ok(i) = list.binary_search_by_key(&bee, |e| e.id) else { return };
+            let at = kb(hive);
+            if list[i].removed || !crate::beehive::exists(level, at) {
+                return;
+            }
+            let Some(phys) = list[i].phys.as_deref_mut() else { return };
+            let tag = kiln_entity::persist::save(phys, &|_| None);
+            let flower = kiln_entity::mob::kinds::bee::saved_flower_pos(phys).map(|p| kiln_blocks::BlockPos::new(p.x, p.y, p.z));
+            if crate::beehive::add_occupant(level, at, tag, flower) {
+                phys.discard();
+                list[i].removed = true;
             }
         }
         // wp32 parrots: a parrot flew onto its owner's shoulder (or, when the shoulder turns out

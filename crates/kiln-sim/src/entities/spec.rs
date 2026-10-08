@@ -500,6 +500,18 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
         self.base.is_raining_at(pos)
     }
 
+    fn is_raining(&self) -> bool {
+        self.base.is_raining()
+    }
+
+    fn beehive_at(&self, pos: BlockPos) -> Option<kiln_entity::level::BeehiveView> {
+        self.base.beehive_at(pos)
+    }
+
+    fn bees_stay_in_hive(&self) -> bool {
+        self.base.bees_stay_in_hive()
+    }
+
     fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
         self.base.can_spread_fire_around(pos)
     }

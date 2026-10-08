@@ -49,6 +49,9 @@ pub(crate) struct RegionBlocks {
     pub containers: crate::container::Containers,
     /// Raider news for the level's raids, until the next raid tick takes them.
     pub raid_events: Vec<kiln_entity::level::RaidEvent>,
+    /// Hives whose nearby bees take a player as their target (`BeehiveBlock.angerNearbyBees`),
+    /// for the region, which has the entities.
+    pub bee_anger: Vec<BlockPos>,
     /// Game event listeners: sculk block entities and wardens.
     pub sculk: crate::sculk::Sculk,
     /// Creaking heart block entities.
@@ -70,6 +73,7 @@ impl Default for RegionBlocks {
             generated: Vec::new(),
             containers: Default::default(),
             raid_events: Vec::new(),
+            bee_anger: Vec::new(),
             sculk: Default::default(),
             hearts: Default::default(),
             sign_editors: Default::default(),
@@ -194,6 +198,7 @@ impl RegionPart for RegionBlocks {
         into.sub_tick = into.sub_tick.max(from.sub_tick);
         into.containers.merge(std::mem::take(&mut from.containers));
         into.raid_events.append(&mut from.raid_events);
+        into.bee_anger.append(&mut from.bee_anger);
         into.sculk.merge(std::mem::take(&mut from.sculk));
         into.hearts.merge(std::mem::take(&mut from.hearts));
         into.sign_editors.merge(std::mem::take(&mut from.sign_editors));
@@ -235,6 +240,7 @@ impl RegionPart for RegionBlocks {
             self.containers.split_into(&mut containers, |c| owner((c.x, c.z)));
         }
         parts[0].raid_events = std::mem::take(&mut self.raid_events);
+        parts[0].bee_anger = std::mem::take(&mut self.bee_anger);
         {
             let mut sculk: SmallVec<[&mut crate::sculk::Sculk; 4]> = parts.iter_mut().map(|p| &mut p.sculk).collect();
             self.sculk.split_into(&mut sculk, |c| owner((c.x, c.z)));
@@ -526,6 +532,10 @@ impl Level for RegionLevel<'_> {
 
     fn bell_event(&mut self, pos: BlockPos, dir: kiln_blocks::Direction) -> bool {
         crate::bell::trigger_event(self, pos, dir)
+    }
+
+    fn beehive_fire(&mut self, pos: BlockPos, state: u16) {
+        crate::beehive::neighbour_fire(self, pos, state);
     }
 
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
@@ -1310,9 +1320,19 @@ fn effect_hash(env: &BlockEnv, pos: BlockPos, i: usize) -> u64 {
 }
 
 fn sound_packet(sound: &str, source: world_fx::SoundSource, pos: BlockPos, volume: f32, pitch: f32, env: &BlockEnv, i: usize) -> Option<Bytes> {
-    let id = kiln_data::builtin_id("minecraft:sound_event", sound)?;
     let at = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
-    Some(world_fx::sound(&world_fx::Sound::Registered(id), source, at, volume, pitch, effect_hash(env, pos, i) as i64))
+    sound_packet_at_pos(sound, source, at, volume, pitch, effect_hash(env, pos, i) as i64)
+}
+
+fn sound_packet_at_pos(sound: &str, source: world_fx::SoundSource, at: [f64; 3], volume: f32, pitch: f32, seed: i64) -> Option<Bytes> {
+    let id = kiln_data::builtin_id("minecraft:sound_event", sound)?;
+    Some(world_fx::sound(&world_fx::Sound::Registered(id), source, at, volume, pitch, seed))
+}
+
+/// A block sound at exact coordinates (`Level.playSound(null, x, y, z, ...)`).
+pub(crate) fn sound_packet_at(sound: &str, at: [f64; 3], volume: f32, pitch: f32, env: &BlockEnv, salt: usize) -> Option<Bytes> {
+    let p = BlockPos::new(at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32);
+    sound_packet_at_pos(sound, world_fx::SoundSource::Blocks, at, volume, pitch, effect_hash(env, p, salt) as i64)
 }
 
 /// `NoteBlock.triggerEvent`: the instrument's sound, pitched by the note for tunable ones.

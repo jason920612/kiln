@@ -280,6 +280,10 @@ pub trait Level {
         false
     }
 
+    /// `BeehiveBlock.updateShape` with a fire beside it: the bees come out
+    /// (`emptyAllLivingFromHive(null, state, EMERGENCY)`).
+    fn beehive_fire(&mut self, _pos: BlockPos, _state: u16) {}
+
     /// `BellBlockEntity.triggerEvent(1, dir)`: the shaking starts and the villagers around hear
     /// it; whether the event was taken.
     fn bell_event(&mut self, _pos: BlockPos, _dir: Direction) -> bool {

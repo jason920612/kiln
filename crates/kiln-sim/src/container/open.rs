@@ -820,6 +820,14 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
         }
         touched = true;
     }
+    if let Some(h) = c.hive.as_deref_mut() {
+        // `BeehiveBlockEntity.applyImplicitComponents`.
+        h.occupants.clear();
+        if let Some(bees) = stack.get(keys::BEES) {
+            h.apply(bees);
+        }
+        touched = true;
+    }
     if let Some(loot) = stack.get(keys::CONTAINER_LOOT)
         && c.kind.randomizable()
     {

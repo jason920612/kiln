@@ -1095,3 +1095,63 @@ impl CustomGoal for BeeWanderGoal {
         }
     }
 }
+
+// ---------------------------------------------------------------------- the hive's side
+
+/// `Bee.getSavedFlowerPos`.
+pub fn saved_flower_pos(e: &Entity) -> Option<BlockPos> {
+    crate::mob::data(e).and_then(ext::state::<State>).and_then(|s| s.flower_pos)
+}
+
+/// `Occupant.createEntity` for a bee: `setHivePos` and `setBeeReleaseData` (the bee grows up, or
+/// its love cools, by the ticks it spent in the hive).
+pub fn release_setup(e: &mut Entity, hive: BlockPos, ticks_in_hive: i32) {
+    e.no_gravity = true;
+    let Some(m) = crate::mob::data_mut(e) else { return };
+    if let Some(s) = ext::state_mut::<State>(m) {
+        s.hive_pos = Some(hive);
+    }
+    if !m.age_locked {
+        let age = m.age;
+        if age < 0 {
+            m.age = (age + ticks_in_hive).min(0);
+        } else if age > 0 {
+            m.age = (age - ticks_in_hive).max(0);
+        }
+    }
+    m.in_love = (m.in_love - ticks_in_hive).max(0);
+}
+
+/// `Bee.setSavedFlowerPos`.
+pub fn set_saved_flower_pos(e: &mut Entity, p: BlockPos) {
+    if let Some(s) = crate::mob::data_mut(e).and_then(ext::state_mut::<State>) {
+        s.flower_pos = Some(p);
+    }
+}
+
+/// `Bee.dropOffNectar`.
+pub fn drop_off_nectar(e: &mut Entity) {
+    if let Some(s) = crate::mob::data_mut(e).and_then(ext::state_mut::<State>) {
+        s.nectar = false;
+        s.crops_grown = 0;
+    }
+}
+
+/// `Bee.setStayOutOfHiveCountdown`.
+pub fn set_stay_out_of_hive(e: &mut Entity, ticks: i32) {
+    if let Some(s) = crate::mob::data_mut(e).and_then(ext::state_mut::<State>) {
+        s.stay_out_of_hive = ticks;
+    }
+}
+
+/// `Bee.setTarget(player)` (a plain `Mob.setTarget`).
+pub fn set_target(e: &mut Entity, target: i32) {
+    let mut m = crate::mob::take(e);
+    crate::mob::set_target(e, &mut m, Some(target));
+    crate::mob::put(e, m);
+}
+
+/// Whether the bee has a target.
+pub fn has_target(e: &Entity) -> bool {
+    crate::mob::data(e).is_some_and(|m| m.target.is_some())
+}

@@ -663,6 +663,7 @@ impl RegionWork<'_> {
             };
             crate::container::tick_block_entities(&mut level, &mut items, &ticking);
             crate::bell::requests(&mut level, items.entities_mut());
+            crate::beehive::anger_requests(&mut level, items.entities_mut(), &self.players);
             crate::bell::tick(&mut level, items.entities_mut(), &ticking);
             crate::sculk::tick_block_entities(&mut level, &ticking);
             crate::sculk::requests(&mut level, &mut self.players, items.entities(), &mut self.out.spawns);

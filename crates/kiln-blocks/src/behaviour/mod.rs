@@ -113,6 +113,13 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
         C::NetherPortalBlock => return portal::portal_update_shape(level, s, pos, dir, neighbor_state),
         C::BubbleColumnBlock => return bubble::update_shape(level, s, pos, dir, neighbor_state),
         C::BellBlock => return bell::update_shape(level, s, pos, dir, neighbor_pos, neighbor_state),
+        // `BeehiveBlock.updateShape`: a fire beside the hive sends its bees out.
+        C::BeehiveBlock => {
+            if logic::block_class(neighbor_state) == C::FireBlock {
+                level.beehive_fire(pos, s);
+            }
+            return s;
+        }
         C::FireBlock | C::SoulFireBlock => return crate::fire::update_shape(level, s, pos),
         _ => {}
     }

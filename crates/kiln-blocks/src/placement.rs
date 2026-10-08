@@ -244,6 +244,7 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
             });
         }
         C::BellBlock => return crate::behaviour::bell::placement(level, d, pos, c.face, c.horizontal()),
+        C::BeehiveBlock => state::set_dir(d, "facing", c.horizontal().opposite()),
         C::RepeaterBlock | C::ComparatorBlock => diode::placement(level, pos, state::set_dir(d, "facing", c.horizontal().opposite())),
         C::RedstoneWireBlock => wire::placement(level, pos),
         C::HopperBlock => container::hopper_placement(d, c.face),
