@@ -740,14 +740,14 @@ public class InteractVectors {
         c.slot("h0", stack("minecraft:map", 1));
         c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20))
                 .step(op("op", "command", "command", "summon minecraft:item_frame 3 100 0 {Facing:5b}"))
-                .step(useEntity(3.0, 100.5, 0.5, 0, false)).step(op("op", "map_wait", "ticks", 25))
+                .step(useEntity(3.0, 100.5, 0.5, 0, false)).step(op("op", "map_wait", "ticks", 70))
                 .step(op("op", "attack_entity", "pos", List.of(3.0, 100.5, 0.5))).step(op("op", "map_wait", "ticks", 12));
         out.add(c);
         c = mapCase("map_frame_glow_south").hanging().cmd("setblock 2 100 0 minecraft:stone").cmd("setblock 3 100 -1 minecraft:stone");
         c.slot("h0", stack("minecraft:map", 1));
         c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20))
                 .step(op("op", "command", "command", "summon minecraft:glow_item_frame 3 100 0 {Facing:3b}"))
-                .step(useEntity(3.0, 100.5, 0.0, 0, false)).step(op("op", "map_wait", "ticks", 12))
+                .step(useEntity(3.0, 100.5, 0.0, 0, false)).step(op("op", "map_wait", "ticks", 70))
                 .step(useEntity(3.0, 100.5, 0.0, 0, false)).step(op("op", "map_wait", "ticks", 12));
         out.add(c);
         // A banner outside the map's area is not taken.
@@ -2254,6 +2254,10 @@ public class InteractVectors {
         java.util.TreeSet<Integer> ids = new java.util.TreeSet<>();
         for (int i = 0; i < p.getInventory().getContainerSize(); i++) {
             var id = p.getInventory().getItem(i).get(DataComponents.MAP_ID);
+            if (id != null) ids.add(id.id());
+        }
+        for (var frame : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.ItemFrame.class, new AABB(-128, -64, -128, 128, 320, 128))) {
+            var id = frame.getItem().get(DataComponents.MAP_ID);
             if (id != null) ids.add(id.id());
         }
         List<Object> out = new ArrayList<>();

@@ -230,7 +230,7 @@ impl crate::Sim {
     }
 
     /// The item frames that hold a filled map, by level and entity id.
-    fn map_frames(&self) -> Vec<FrameRow> {
+    pub(crate) fn map_frames(&self) -> Vec<FrameRow> {
         use kiln_entity::ext_entity::item_frame::ItemFrame;
         let mut rows = Vec::new();
         for (dim, d) in self.dims.iter().enumerate() {
@@ -256,12 +256,12 @@ impl crate::Sim {
 }
 
 /// An item frame with a map in it.
-struct FrameRow {
-    dim: crate::DimId,
-    id: i32,
-    pos: [i32; 3],
-    direction: i32,
-    item: ItemStack,
-    map: i32,
-    age: i32,
+pub(crate) struct FrameRow {
+    pub(crate) dim: crate::DimId,
+    pub(crate) id: i32,
+    pub(crate) pos: [i32; 3],
+    pub(crate) direction: i32,
+    pub(crate) item: ItemStack,
+    pub(crate) map: i32,
+    pub(crate) age: i32,
 }

@@ -287,6 +287,7 @@ fn hangings_json(sim: &Sim) -> Value {
 fn maps_json(sim: &Sim) -> Value {
     let p = &sim.players[&1];
     let mut ids: Vec<i32> = p.inv.items.iter().chain(p.inv.equipment.iter()).filter_map(|s| if s.is_empty() { None } else { crate::maps::map_id_of(s) }).collect();
+    ids.extend(sim.map_frames().iter().map(|f| f.map));
     ids.sort();
     ids.dedup();
     let mut store = sim.maps.lock().unwrap();
