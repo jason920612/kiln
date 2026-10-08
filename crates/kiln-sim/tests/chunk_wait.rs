@@ -83,7 +83,7 @@ fn a_teleported_player_waiting_for_its_chunk_ticks_like_one_in_loaded_terrain() 
     // The same effects on both: hunger drains the food bar (0.005 exhaustion a tick per level,
     // 256 levels), speed just counts down.
     let both = ["Alice", "Bob"].into_iter().flat_map(|who| {
-        [format!("effect give {who} minecraft:hunger 100 255"), format!("effect give {who} minecraft:speed 100 0")].map(ToSim::Console)
+        [format!("gamemode survival {who}"), format!("effect give {who} minecraft:hunger 100 255"), format!("effect give {who} minecraft:speed 100 0")].map(ToSim::Console)
     });
     tick(&mut sim, &mut clients, both.collect());
     assert_eq!(state(&sim, 1), state(&sim, 2), "the same start");
@@ -131,6 +131,7 @@ fn a_player_joining_into_new_terrain_is_in_the_level_at_once_and_ticks_while_the
         assert!(sim.step([carol]));
         let mut clients = [Client::new(1, stats)];
         settle(&mut sim, &mut clients, &[1]);
+        console(&mut sim, &mut clients, "gamemode survival Carol");
         console(&mut sim, &mut clients, "effect give Carol minecraft:hunger 100 255");
         console(&mut sim, &mut clients, "effect give Carol minecraft:speed 100 0");
         console(&mut sim, &mut clients, "tp Carol 52000 120 52000");
