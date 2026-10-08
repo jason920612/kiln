@@ -322,7 +322,7 @@ impl ContainerBe {
             out.push(("CustomName".into(), name.clone()));
         }
         match self.kind {
-            BeKind::EnderChest => {}
+            BeKind::EnderChest | BeKind::Bell | BeKind::DaylightDetector => {}
             BeKind::Jukebox => {
                 if let Some(disc) = self.items.first().filter(|s| !s.is_empty()) {
                     out.push(("RecordItem".into(), disc.to_nbt()));
