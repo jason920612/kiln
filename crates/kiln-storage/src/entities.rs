@@ -22,6 +22,8 @@ pub struct EntityStore {
     regions: HashMap<(i32, i32), Option<RegionFile>>,
     /// Writes waiting for `flush`, per region; loads read them first.
     pending: HashMap<(i32, i32), Vec<Update>>,
+    /// Region writes on a thread of its own, once [`Self::set_background`] asked.
+    writer: Option<crate::region::BackgroundWriter>,
     /// Chunks known to have no entities stored (`EntityStorage.emptyChunks`), so saving
     /// them empty again writes nothing.
     empty: HashSet<ChunkPos>,
@@ -30,7 +32,7 @@ pub struct EntityStore {
 
 impl EntityStore {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { native: None, dir: dir.into(), regions: HashMap::new(), pending: HashMap::new(), empty: HashSet::new(), warned_version: false }
+        Self { native: None, dir: dir.into(), regions: HashMap::new(), pending: HashMap::new(), writer: None, empty: HashSet::new(), warned_version: false }
     }
 
     /// Entity chunks kept in a native store.
@@ -52,6 +54,14 @@ impl EntityStore {
         // A write not flushed yet is newer than the region file.
         if let Some((_, _, payload)) = self.pending.get(&key).and_then(|p| p.iter().find(|(x, z, _)| (*x, *z) == local)) {
             return payload.as_ref().and_then(|p| crate::region::decompress_chunk(p).map_err(|e| warn!("entity chunk {pos:?}: {e}")).ok());
+        }
+        if let Some(w) = self.writer.as_mut() {
+            for k in w.written() {
+                self.regions.remove(&k);
+            }
+            if let Some(p) = w.find(key, local) {
+                return (!p.is_empty()).then(|| crate::region::decompress_chunk(p).map_err(|e| warn!("entity chunk {pos:?}: {e}")).ok()).flatten();
+            }
         }
         let dir = &self.dir;
         let region = self.regions.entry(key).or_insert_with(|| {
@@ -147,6 +157,25 @@ impl EntityStore {
     }
 
     /// Writes the queued chunks into their region files.
+    /// Region files written on a thread of its own from now on (`flush` returns before they
+    /// are written; [`Self::sync`] waits). Native stores keep writing in place.
+    pub fn set_background(&mut self, on: bool) {
+        if on && self.writer.is_none() && self.native.is_none() {
+            self.writer = Some(crate::region::BackgroundWriter::start("kiln-write-entities"));
+        }
+    }
+
+    /// Flushes and waits until everything is written.
+    pub fn sync(&mut self) -> std::io::Result<usize> {
+        let n = self.flush()?;
+        if let Some(w) = self.writer.as_mut() {
+            for k in w.wait() {
+                self.regions.remove(&k);
+            }
+        }
+        Ok(n)
+    }
+
     pub fn flush(&mut self) -> std::io::Result<usize> {
         if let Some(store) = &self.native {
             return store.lock().unwrap().flush();
@@ -160,10 +189,15 @@ impl EntityStore {
         for ((rx, rz), updates) in std::mem::take(&mut self.pending) {
             let path = self.dir.join(format!("r.{rx}.{rz}.mca"));
             // Deleting from a region that does not exist changes nothing.
-            if !path.exists() && updates.iter().all(|(_, _, p)| p.is_none()) {
+            if !path.exists() && updates.iter().all(|(_, _, p)| p.is_none()) && !self.writer.as_ref().is_some_and(|w| w.writing((rx, rz))) {
                 continue;
             }
             written += updates.len();
+            if let Some(w) = self.writer.as_mut() {
+                let updates = updates.into_iter().map(|(x, z, p)| (x, z, crate::region::Payload::from(p.unwrap_or_default()))).collect();
+                w.submit((rx, rz), path, updates);
+                continue;
+            }
             self.regions.remove(&(rx, rz));
             let updates: Vec<(usize, usize, Vec<u8>)> = updates.into_iter().map(|(x, z, p)| (x, z, p.unwrap_or_default())).collect();
             crate::region::write_region(&path, &updates, now).map_err(std::io::Error::other)?;

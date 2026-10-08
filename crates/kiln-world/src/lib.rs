@@ -177,6 +177,11 @@ pub trait ChunkSource: Send {
     /// the background); nothing otherwise.
     fn flush_ready(&mut self) {}
 
+    /// Saves handed over ([`ChunkSource::save_owned`]) still being encoded.
+    fn encoding(&mut self) -> usize {
+        0
+    }
+
     /// [`ChunkSource::save`] for many chunks at once (a save of the whole world): the source may
     /// encode them side by side.
     fn save_many(&mut self, chunks: &[(ChunkPos, &Chunk)]) {
@@ -344,6 +349,11 @@ impl ChunkProvider {
         if let Some(s) = self.source.as_mut() {
             s.save_owned(pos, copy);
         }
+    }
+
+    /// See [`ChunkSource::encoding`].
+    pub fn encoding(&mut self) -> usize {
+        self.source.as_mut().map_or(0, |s| s.encoding())
     }
 
     /// See [`ChunkSource::flush_ready`].

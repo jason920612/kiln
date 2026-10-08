@@ -216,6 +216,24 @@ errors, digging and placing success, plus the CPU of server, bots and machine. `
 makes a bot print what it does; `--phase-detail` and `--slow-print <ms>` pass `KILN_PHASE_DETAIL`
 and `KILN_SLOW_PRINT` to the server.
 
+Groups' sites are `--spacing` blocks apart (1536 by default) and explorers roam at most `--roam`
+blocks (320) from their site, so that groups stay in regions of their own (regions merge across
+gaps of two 128-block cells or less). `--save-all-at <s>` tells the server `save-all` that many
+seconds into the measured stretch, which puts a world save (an autosave comes every 5 minutes)
+inside the measurement.
+
+The server can run on another machine, with the bots connecting over the network as remote
+players would (and without taking the server's CPU): `--ssh user@host` starts it there over
+ssh (`--remote-dir` its working directory; `--server`, `--datapack` and `--world` are paths on
+that machine), reads its tick trace, world size and CPU there, and connects the bots through an
+ssh tunnel (`--tunnel-port`, for a machine whose game port is not reachable, such as a VM behind
+NAT) unless `--connect host[:port]` names the address to use:
+
+```
+cargo build --release -p kiln-bot --bin kiln-bot --example survival_bench   # on the bot machine
+survival_bench --ssh test@192.168.1.169 --remote-dir /home/test/wt/<branch>     --server target/release/kiln --datapack /home/test/kiln/work/generated     --world /home/test/bench/w200 --bot target/release/kiln-bot.exe --count 200 --port 25565     --phase both --format anvil --save-all-at 60 --phase-detail --slow-print 40
+```
+
 Packets Kiln encodes are checked by decoding them with vanilla's own codecs
 (`tools/VanillaDecode.java`); saved worlds are checked by loading them in the vanilla server
 (`tools/vanilla_check_world.py`), and native conversion by a round trip of vanilla worlds

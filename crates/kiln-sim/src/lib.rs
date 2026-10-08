@@ -822,6 +822,8 @@ struct Dim {
     urgent: HashSet<ChunkPos>,
     /// Tick time spent installing chunks this tick (with background generation only).
     install_spent: Duration,
+    /// A save handed its chunks to the encoders: they go to the writer once all are encoded.
+    flush_when_encoded: bool,
     /// World age, for the scheduled ticks of chunks that load or unload.
     game_time: i64,
     /// Entity chunks (`entities/`), when the world is saved somewhere.
@@ -886,7 +888,8 @@ impl Dim {
         // With chunks generated in the background, storage reads and writes go there too
         // (`KILN_BACKGROUND_STORAGE=0` keeps them on the tick thread: the order chunks arrive
         // in then depends on nothing but the requests, for comparing runs).
-        if generation.is_some() && std::env::var("KILN_BACKGROUND_STORAGE").map_or(true, |v| v != "0") {
+        let background = generation.is_some() && std::env::var("KILN_BACKGROUND_STORAGE").map_or(true, |v| v != "0");
+        if background {
             provider.set_background(true);
         }
         let entity_store = match native.clone() {
@@ -897,6 +900,15 @@ impl Dim {
             Some(store) => Some(kiln_storage::PoiStore::native(store)),
             None => world.map(|dir| kiln_storage::PoiStore::new(dir.join(dimension_dir(key)).join("poi"))),
         };
+        let (mut entity_store, mut poi_store) = (entity_store, poi_store);
+        if background {
+            if let Some(s) = entity_store.as_mut() {
+                s.set_background(true);
+            }
+            if let Some(s) = poi_store.as_mut() {
+                s.set_background(true);
+            }
+        }
         Dim {
             key,
             kind,
@@ -913,6 +925,7 @@ impl Dim {
             loaded: BTreeMap::new(),
             urgent: HashSet::new(),
             install_spent: Duration::ZERO,
+            flush_when_encoded: false,
             game_time,
             entity_store,
             poi_store,
@@ -1384,7 +1397,9 @@ impl Sim {
                         let source: Box<dyn kiln_world::ChunkSource> = if format == Some(kiln_storage::WorldFormat::Native) {
                             let store = kiln_storage::NativeStore::shared(dir.join(dimension_dir(key)).join("native"));
                             native_stores.push(Some(store.clone()));
-                            Box::new(kiln_storage::NativeSource::new(store))
+                            let mut native = kiln_storage::NativeSource::new(store);
+                            native.dimension = dimension;
+                            Box::new(native)
                         } else {
                             native_stores.push(None);
                             let mut anvil = kiln_storage::AnvilSource::new(dir.join(dimension_dir(key)).join("region"));
@@ -2572,9 +2587,15 @@ impl Sim {
             let dt = diag::lap("ch.unload", dt);
             let d = &mut self.dims[dim];
             d.install_spent = Duration::ZERO;
-            // Encoded saves go to the writer every 30 s (a background writer: no tick time).
+            // Encoded saves go to the writer every 30 s (a background writer: no tick time), and
+            // a save's chunks once they are all encoded.
             if self.game_time % 600 == 0 {
                 d.provider.flush_ready();
+            }
+            if d.flush_when_encoded && d.provider.encoding() == 0 {
+                d.flush_when_encoded = false;
+                d.provider.flush_ready();
+                info!("chunks of the save of {} handed to the writer", d.key);
             }
             d.install_generated(&keep);
             let dt = diag::lap("ch.install_generated", dt);
@@ -3032,6 +3053,12 @@ impl Sim {
             if let Err(e) = d.provider.sync() {
                 warn!("saving {} failed: {e}", d.key);
             }
+            if let Some(Err(e)) = d.entity_store.as_mut().map(kiln_storage::EntityStore::sync) {
+                warn!("saving entities of {} failed: {e}", d.key);
+            }
+            if let Some(Err(e)) = d.poi_store.as_mut().map(kiln_storage::PoiStore::sync) {
+                warn!("saving points of interest of {} failed: {e}", d.key);
+            }
         }
         // Compactions still copying cell files in the background finish and swap in before the
         // server stops, so a store opened right after (a restart, a tool) sees the final files.
@@ -3107,11 +3134,8 @@ impl Sim {
         }
         if queue.is_empty() {
             for d in &mut self.dims {
-                if let Err(e) = d.provider.flush() {
-                    warn!("saving {} failed: {e}", d.key);
-                }
+                d.flush_when_encoded = true;
             }
-            info!("chunks of the save handed to the writer");
         } else {
             self.save_run = Some(queue);
         }
