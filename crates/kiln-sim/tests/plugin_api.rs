@@ -170,11 +170,14 @@ fn the_shop_menu_is_locked_and_sells() {
     g.ticks(1);
     assert!(g.sim.open_menu(1).is_none(), "closed");
     // The wand: bought, tagged by the shop, and a right click zaps (the shop hears of it).
-    g.click(0, 0, 0, ContainerInput::Pickup);
     g.command(0, "shop");
     g.ticks(2);
+    let (kind, _) = g.sim.open_menu(1).expect("the menu opens again");
+    assert_eq!(kind, "minecraft:generic_9x3");
+    g.received(0);
     g.click(0, 1, 16, ContainerInput::Pickup);
     g.ticks(3);
+    assert!(g.got_text(0, "Bought Magic wand"), "the purchase went through");
     assert!(g.inventory_has(0, "minecraft:stick"), "the wand");
     g.send(0, PlayIn::ContainerClose { container_id: 2 });
     g.ticks(1);
@@ -205,10 +208,11 @@ fn claims_protect_land_and_players() {
     let d = g.ground(0);
     // Dora places the gold block on the ground in front of her.
     g.received(0);
-    g.send(0, PlayIn::UseItemOn { hand: 0, pos: d, face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: 1 });
+    let beside = [d[0] + 1, d[1], d[2]];
+    g.send(0, PlayIn::UseItemOn { hand: 0, pos: beside, face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: 1 });
     g.ticks(1);
     assert!(g.got_text(0, "Claimed 17x17 blocks."), "the claim was made");
-    assert_eq!(g.block_name([d[0], d[1] + 1, d[2]]), "minecraft:gold_block");
+    assert_eq!(g.block_name([beside[0], beside[1] + 1, beside[2]]), "minecraft:gold_block");
     // Eli, a few blocks away, cannot dig the dirt under the claim block's neighbour.
     let e = g.ground(1);
     assert!((e[0] - d[0]).abs() < 8);
