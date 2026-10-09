@@ -59,13 +59,13 @@ pub(crate) fn use_item_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
             m.y_body_rot = yaw;
             m.y_head_rot_o = yaw;
             m.y_body_rot_o = yaw;
+            kiln_entity::mob::kinds::copper_golem::st_mut(m).spawn_sound = true;
         }
         if let Some(n) = name {
             golem.extra.push(("CustomName".into(), n));
         }
         let entity_type = kiln_data::entities::by_name("minecraft:copper_golem").expect("copper golem type");
         spawns.push(Spawn { kind: entity_type, pos: at, vel: [0.0; 3], body: Body::Ready(Box::new(golem)) });
-        level.effect(Effect::Sound { pos, sound: "minecraft:entity.copper_golem.spawn", volume: 1.0, pitch: 1.0 });
         kiln_blocks::set_block(level, pos, d::AIR, flags::ALL);
         return Some(true);
     }

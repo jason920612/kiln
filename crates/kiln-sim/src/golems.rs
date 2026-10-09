@@ -95,7 +95,9 @@ fn build_copper(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, body: Bl
     golem.set_old_pos_and_rot();
     // `spawn(weatherState)`.
     if let Some(m) = kiln_entity::mob::data_mut(&mut golem) {
-        kiln_entity::mob::kinds::copper_golem::st_mut(m).weather = weather_of(copper);
+        let s = kiln_entity::mob::kinds::copper_golem::st_mut(m);
+        s.weather = weather_of(copper);
+        s.spawn_sound = true;
     }
     let seen = kiln_entity::level::Seen::of(&golem);
     let entity_type = kiln_data::entities::by_name("minecraft:copper_golem").expect("copper golem type");
@@ -115,7 +117,6 @@ fn build_copper(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, body: Bl
     let chest = copper_chest_of(copper);
     let chest = kiln_blocks::behaviour::container::chest_placement(level, chest, body, facing.opposite(), kiln_blocks::Direction::Up, false);
     kiln_blocks::set_block(level, body, chest, flags::CLIENTS);
-    level.effect(Effect::Sound { pos, sound: "minecraft:entity.copper_golem.spawn", volume: 1.0, pitch: 1.0 });
 }
 
 /// `spawnGolemInWorld`: the pattern's blocks go (with their break particles), the golem stands

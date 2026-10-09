@@ -65,11 +65,13 @@ pub struct State {
     /// The antenna (`EquipmentSlot.SADDLE`) and its drop chance.
     pub antenna: ItemStack,
     pub antenna_drop: f32,
+    /// `playSpawnSound` is due (a golem just built or brought back).
+    pub spawn_sound: bool,
 }
 
 impl Default for State {
     fn default() -> State {
-        State { weather: 0, state: IDLE, next_weathering_tick: UNSET_WEATHERING_TICK, opened_chest: None, last_lightning: None, antenna: ItemStack::empty(), antenna_drop: 0.085 }
+        State { weather: 0, state: IDLE, next_weathering_tick: UNSET_WEATHERING_TICK, opened_chest: None, last_lightning: None, antenna: ItemStack::empty(), antenna_drop: 0.085, spawn_sound: false }
     }
 }
 
@@ -226,6 +228,10 @@ impl Kind for CopperGolem {
 
     /// `CopperGolem.tick`: the weathering clock.
     fn post_tick(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        // `playSpawnSound`.
+        if std::mem::take(&mut st_mut(m).spawn_sound) && !e.silent {
+            level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.copper_golem.spawn", source: "neutral", volume: 1.0, pitch: 1.0 });
+        }
         if !e.is_removed() {
             Self::update_weathering(e, m, level);
         }
