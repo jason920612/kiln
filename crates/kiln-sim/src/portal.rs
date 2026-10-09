@@ -1141,6 +1141,7 @@ impl Sim {
         p.changed_dimension(DIMENSIONS[from].0, DIMENSIONS[dim].0);
         self.dims[dim].spawns.extend(spawns);
         self.place_player(conn);
+        self.plugin_spawned(conn, crate::plugins::SpawnReason::LevelChange);
     }
 }
 

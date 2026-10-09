@@ -29,17 +29,21 @@ use kiln_command::arguments::ArgumentType;
 use kiln_command::dispatcher::{argument, literal};
 use kiln_link::{ConnId, PlayIn};
 use kiln_plugin_host::{
-    Actor, ChatOutcome, EntityData, EntityRef, ExecMode, PlayerAt, PluginRuntime, RegionPlugins, Registries, RegistryKind,
-    RuntimeConfig, Span, Verdict, World,
+    Actor, ChatOutcome, ClickKind, ContainerClick, EntityData, EntityRef, EventKind, ExecMode, ItemRef,
+    OnlinePlayer, PlayerAt, PlayerInfo, PluginRuntime, RegionPlugins, Registries, RegistryKind, RuntimeConfig, Span, Verdict, World,
 };
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
 use kiln_region::{CellPos, CellSet, RegionId};
 use kiln_world::{Blocks, Cell};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use tracing::{info, warn};
 use uuid::Uuid;
+
+mod effects;
+
+pub(crate) use kiln_plugin_host::SpawnReason;
 
 /// Where plugins come from and how they are budgeted.
 #[derive(Clone, Debug)]
@@ -76,14 +80,36 @@ pub(crate) struct SimPlugins {
     ops: Arc<HashSet<Uuid>>,
     /// Command names registered in the dispatcher.
     registered: HashSet<String>,
+    /// What plugins put on each player's screen (to update and clear it).
+    hud: HashMap<Uuid, Hud>,
+    /// Who was online, and where, when plugins last heard of it.
+    online: Vec<(Uuid, usize)>,
+    /// Players that appeared in a level, to tell the plugins of their region once they have one.
+    spawned: Vec<(ConnId, SpawnReason)>,
+}
+
+/// A player's plugin-made screen elements.
+#[derive(Default)]
+struct Hud {
+    /// The sidebar's line count while one is shown.
+    sidebar: Option<usize>,
+    /// Boss bars shown (`<plugin id>:<id>`).
+    bars: BTreeSet<String>,
 }
 
 /// A region's plugins for one phase of region work.
 pub(crate) struct RegionHook<'a> {
-    rp: &'a mut RegionPlugins,
+    rp: &'a RegionPlugins,
     ops: Arc<HashSet<Uuid>>,
     /// Allowed breaks and placements, to observe if the block really changed.
     watch: Vec<Watch>,
+}
+
+impl RegionHook<'_> {
+    /// The handle players carry to ask the region's plugins about damage, if any hears of it.
+    pub(crate) fn damage_gate(&self) -> Option<RegionPlugins> {
+        self.rp.subscribed(EventKind::PlayerDamage).then(|| self.rp.clone())
+    }
 }
 
 struct Watch {
@@ -95,8 +121,48 @@ struct Watch {
     broken: bool,
 }
 
+/// What plugins can ask about a player (`event.info`).
+pub(crate) fn info_of(p: &Player) -> PlayerInfo {
+    let held = p.inv.selected_item();
+    PlayerInfo {
+        level: p.dim as u32,
+        pos: p.pos,
+        rot: p.rot,
+        health: p.health,
+        food: p.food.max(0) as u32,
+        game_mode: p.game_mode,
+        on_ground: p.on_ground,
+        sneaking: p.sneaking,
+        sprinting: p.sprinting,
+        flying: p.flying,
+        held: (!held.is_empty()).then(|| held.item() as u32),
+        held_count: held.count().max(0) as u32,
+    }
+}
+
 fn actor<'a>(p: &'a Player, ops: &HashSet<Uuid>) -> Actor<'a> {
-    Actor { uuid: p.uuid.as_u128(), name: &p.name, operator: ops.contains(&p.uuid) }
+    Actor::new(p.uuid.as_u128(), &p.name, ops.contains(&p.uuid)).with_info(info_of(p))
+}
+
+impl Player {
+    /// The damage gate: whether the plugins of the player's region let `amount` of damage
+    /// through (`Player::hurt` asks once the hit would land). What bypasses invulnerability
+    /// (`/kill`, the void) is not asked.
+    pub(crate) fn plugin_allows_damage(&self, amount: f32, source: &crate::health::Source) -> bool {
+        let Some(gate) = &self.plugin_gate else { return true };
+        if source.is("minecraft:bypasses_invulnerability") {
+            return true;
+        }
+        let victim = Actor::new(self.uuid.as_u128(), &self.name, self.permission >= 4).with_info(info_of(self));
+        let attacker = source.attacker.as_ref().filter(|a| a.mob.is_none() && a.uuid != 0).map(|a| {
+            Actor::new(a.uuid, &a.name, false).with_info(PlayerInfo { pos: a.pos, game_mode: if a.creative { 1 } else { 0 }, ..PlayerInfo::default() })
+        });
+        let pos = self.pos.map(|c| c.floor() as i32);
+        match gate.player_damage(&victim, attacker.as_ref(), pos, source.type_id() as u32, amount) {
+            Verdict::Allow => true,
+            Verdict::Deny(_) => false,
+        }
+    }
 }
 
 /// The registries plugins see: levels, blocks, items and entity types by registry id, with
@@ -106,13 +172,19 @@ fn registries() -> Arc<Registries> {
     REG.get_or_init(|| {
         let list = |r: &str| kiln_data::builtin_entries(r).unwrap_or(&[]).iter().map(|s| s.to_string()).collect();
         let levels = DIMENSIONS.iter().map(|(k, _)| (*k).to_owned()).collect();
-        let reg = Registries::new(levels, list("minecraft:block"), list("minecraft:item"), list("minecraft:entity_type"));
+        // Damage types by their network id (the order of the synchronized registry).
+        let damage_types = kiln_data::registries::SYNCHRONIZED
+            .iter()
+            .find(|(r, _)| *r == "minecraft:damage_type")
+            .map(|(_, e)| e.iter().map(|s| s.to_string()).collect())
+            .unwrap_or_default();
+        let reg = Registries::new(levels, list("minecraft:block"), list("minecraft:item"), list("minecraft:entity_type")).with_damage_types(damage_types);
         Arc::new(reg.with_tags(Arc::new(|kind, tag| {
             let registry = match kind {
                 RegistryKind::Block => "minecraft:block",
                 RegistryKind::Item => "minecraft:item",
                 RegistryKind::EntityType => "minecraft:entity_type",
-                RegistryKind::Level => return None,
+                RegistryKind::Level | RegistryKind::DamageType => return None,
             };
             let full = if tag.contains(':') { tag.to_owned() } else { format!("minecraft:{tag}") };
             let (_, tags) = kiln_data::registries::TAGS.iter().find(|(r, _)| *r == registry)?;
@@ -241,6 +313,10 @@ pub(crate) fn deny_packet(
             let Some(dir) = crate::blocks::direction(face) else { return false };
             let step = dir.step();
             let next = [pos[0] + step[0], pos[1] + step[1], pos[2] + step[2]];
+            if let Some(Verdict::Deny(msg)) = item_use_verdict(hook, p, hand != 0, Some(pos)) {
+                restore(p, env, spawns, &[(pos, block(pos)), (next, block(next))], sequence, msg);
+                return true;
+            }
             let (item, _) = held_item(p, hand);
             let a = actor(p, &hook.ops);
             match hook.rp.block_place(&a, next, pos, item) {
@@ -260,6 +336,14 @@ pub(crate) fn deny_packet(
         // the same placement check applies to the block they would fill or empty.
         PlayIn::UseItem { hand, sequence, yaw, pitch } => {
             let hand = if hand == kiln_proto::packets::serverbound::Hand::Off { 1 } else { 0 };
+            if let Some(Verdict::Deny(msg)) = item_use_verdict(hook, p, hand != 0, None) {
+                p.ack_block_changes = p.ack_block_changes.max(sequence);
+                resync_menu(p, env, spawns);
+                if let Some(m) = msg {
+                    p.send(packets::system_chat(text_tag(&m), false));
+                }
+                return true;
+            }
             let (item, name) = held_item(p, hand);
             if !crate::buckets::is_bucket(name) {
                 return false;
@@ -279,7 +363,134 @@ pub(crate) fn deny_packet(
                 }
             }
         }
+        PlayIn::ContainerClick { body } => container_click(hook, p, env, body, spawns),
         _ => false,
+    }
+}
+
+/// The plugin tag of a stack (`kiln:tag` in its custom data: `<plugin id>:<tag>`).
+fn plugin_tag(stack: &kiln_item::ItemStack) -> Option<String> {
+    let data = stack.get(kiln_item::keys::CUSTOM_DATA)?;
+    data.0.get("kiln:tag").and_then(Tag::as_str).map(str::to_owned)
+}
+
+/// The plugins' answer to the held item being used (none: nobody hears of it).
+fn item_use_verdict(hook: &RegionHook, p: &Player, off_hand: bool, target: Option<[i32; 3]>) -> Option<Verdict> {
+    if !hook.rp.subscribed(EventKind::ItemUse) {
+        return None;
+    }
+    let stack = if off_hand { p.inv.equipped(kiln_item::component::EquipmentSlot::OffHand) } else { p.inv.selected_item() };
+    if stack.is_empty() {
+        return None;
+    }
+    let tag = plugin_tag(stack);
+    let a = actor(p, &hook.ops);
+    let item = ItemRef { item: stack.item() as u32, count: stack.count().max(0) as u32, tag: tag.as_deref() };
+    Some(hook.rp.item_use(&a, item, off_hand, target))
+}
+
+/// Sends the client the whole open menu again (what it predicted did not happen).
+fn resync_menu(p: &mut Player, env: &Env, spawns: &mut Vec<crate::entities::Spawn>) {
+    p.with_menu(&env.rules, spawns, |menu, _, env| menu.send_all_data_to_remote(env));
+}
+
+/// The stack in a slot of a menu the player sees (the player's own slots and a plugin menu's).
+fn clicked_stack(p: &Player, menu: &kiln_inventory::Menu, slot: i16) -> Option<kiln_item::ItemStack> {
+    let s = menu.slots().get(usize::try_from(slot).ok()?)?;
+    let stack = match s.source {
+        kiln_inventory::Source::Player => p.inv.items.get(s.index)?.clone(),
+        kiln_inventory::Source::Block if matches!(p.containers.open, Some(crate::container::open::OpenBlock::Plugin(_))) => {
+            p.containers.cart.items.get(s.index)?.clone()
+        }
+        _ => return None,
+    };
+    (!stack.is_empty()).then_some(stack)
+}
+
+/// P: a click in a container screen. Clicks in a plugin's menu are always consumed (the menu
+/// is locked: nothing moves) after the plugin heard of them; a vanilla container's click
+/// goes to plugins subscribed with `vanilla`, and a denial puts the client's view back.
+fn container_click(hook: &mut RegionHook, p: &mut Player, env: &Env, body: &bytes::Bytes, spawns: &mut Vec<crate::entities::Spawn>) -> bool {
+    use kiln_inventory::click::ContainerInput;
+    let plugin_menu = match &p.containers.open {
+        Some(crate::container::open::OpenBlock::Plugin(id)) => Some(id.clone()),
+        _ => None,
+    };
+    if plugin_menu.is_none() && !hook.rp.subscribed(EventKind::ContainerClick) {
+        return false;
+    }
+    let Ok(click) = kiln_inventory::ContainerClick::decode(body) else { return false };
+    let (menu, menu_id) = if click.container_id == 0 {
+        (&p.menu, None)
+    } else {
+        match &p.open_menu {
+            Some(m) if m.container_id == click.container_id => (m, plugin_menu.clone()),
+            // A click for a screen that is no longer open: vanilla ignores it.
+            _ => return false,
+        }
+    };
+    let clicked = clicked_stack(p, menu, click.slot);
+    let tag = clicked.as_ref().and_then(plugin_tag);
+    let kind = match (click.input, click.button) {
+        (ContainerInput::Pickup, 0) => ClickKind::Left,
+        (ContainerInput::Pickup, 1) => ClickKind::Right,
+        (ContainerInput::QuickMove, 0) => ClickKind::ShiftLeft,
+        (ContainerInput::QuickMove, _) => ClickKind::ShiftRight,
+        (ContainerInput::Swap, _) => ClickKind::Swap,
+        (ContainerInput::Clone, _) => ClickKind::Middle,
+        (ContainerInput::Throw, _) => ClickKind::Drop,
+        (ContainerInput::QuickCraft, _) => ClickKind::Drag,
+        (ContainerInput::PickupAll, _) => ClickKind::Double,
+        _ => ClickKind::Other,
+    };
+    let event = ContainerClick {
+        menu: menu_id.as_deref(),
+        container: menu.kind.menu_type().unwrap_or("minecraft:inventory"),
+        slot: click.slot as i32,
+        button: click.button as u8,
+        kind,
+        clicked: clicked.as_ref().map(|s| ItemRef { item: s.item() as u32, count: s.count().max(0) as u32, tag: tag.as_deref() }),
+    };
+    let a = actor(p, &hook.ops);
+    let verdict = hook.rp.container_click(&a, &event);
+    if plugin_menu.is_some() && click.container_id != 0 || matches!(verdict, Verdict::Deny(_)) {
+        resync_menu(p, env, spawns);
+        return true;
+    }
+    false
+}
+
+/// P: a player hits an entity (not another player: that is damage, see
+/// [`Player::plugin_allows_damage`]). Returns whether a plugin denied it.
+pub(crate) fn deny_attack(hook: &mut RegionHook, p: &mut Player, entities: &mut crate::entities::Entities, entity_id: i32) -> bool {
+    if !hook.rp.subscribed(EventKind::EntityAttack) {
+        return false;
+    }
+    let Ok(idx) = entities.list.binary_search_by_key(&entity_id, |e| e.id) else { return false };
+    let e = &mut entities.list[idx];
+    let Some(kind) = kiln_data::builtin_id("minecraft:entity_type", e.kind.name) else { return false };
+    let (uuid, pos) = (e.uuid.as_u128(), e.pos);
+    let eye = p.eye_position();
+    if (0..3).map(|i| (pos[i] - eye[i]).powi(2)).sum::<f64>() > 8.0 * 8.0 {
+        return false;
+    }
+    let Some(phys) = e.phys.as_deref_mut() else { return false };
+    let mut data = entity_data(&phys.extra);
+    let before = data.clone();
+    let a = actor(p, &hook.ops);
+    let mut r = EntityRef { uuid, kind: kind as u32, pos, data: &mut data };
+    let v = hook.rp.entity_attack(&a, &mut r);
+    if data != before {
+        set_entity_data(&mut phys.extra, &data);
+    }
+    match v {
+        Verdict::Allow => false,
+        Verdict::Deny(msg) => {
+            if let Some(m) = msg {
+                p.send(packets::system_chat(text_tag(&m), false));
+            }
+            true
+        }
     }
 }
 
@@ -386,14 +597,14 @@ impl SimPlugins {
         let ops = self.ops.clone();
         self.rt
             .regions_mut()
-            .map(|((dim, r), rp)| ((dim as crate::DimId, RegionId(r)), RegionHook { rp, ops: ops.clone(), watch: Vec::new() }))
+            .map(|((dim, r), rp)| ((dim as crate::DimId, RegionId(r)), RegionHook { rp: &*rp, ops: ops.clone(), watch: Vec::new() }))
             .collect()
     }
 
     /// One region's hook (PX: a region packet queued behind a serial one).
     pub(crate) fn hook(&mut self, dim: crate::DimId, region: RegionId) -> Option<RegionHook<'_>> {
         let ops = self.ops.clone();
-        self.rt.region_mut(dim as u32, region.0).map(|rp| RegionHook { rp, ops, watch: Vec::new() })
+        self.rt.region_mut(dim as u32, region.0).map(|rp| RegionHook { rp: &*rp, ops, watch: Vec::new() })
     }
 }
 
@@ -408,7 +619,7 @@ impl World for SimWorld<'_> {
     fn player(&self, uuid: u128) -> Option<PlayerAt> {
         let u = Uuid::from_u128(uuid);
         let p = self.players.values().find(|p| p.uuid == u && !p.disconnected)?;
-        Some(PlayerAt { uuid, level: p.dim as u32, region: p.region.0, name: p.name.clone(), operator: self.ops.contains(&u) })
+        Some(PlayerAt { uuid, level: p.dim as u32, region: p.region.0, name: p.name.clone(), operator: self.ops.contains(&u), info: info_of(p) })
     }
 
     fn owner(&self, level: u32, x: i32, z: i32) -> Option<u64> {
@@ -476,7 +687,14 @@ impl Sim {
                 )),
             ),
         );
-        self.plugins = Some(SimPlugins { rt, ops: Arc::new(HashSet::new()), registered: HashSet::new() });
+        self.plugins = Some(SimPlugins {
+            rt,
+            ops: Arc::new(HashSet::new()),
+            registered: HashSet::new(),
+            hud: HashMap::new(),
+            online: Vec::new(),
+            spawned: Vec::new(),
+        });
         self.register_plugin_commands();
         self.sync_plugin_regions();
     }
@@ -596,8 +814,40 @@ impl Sim {
         if ops != *pl.ops {
             pl.ops = Arc::new(ops);
         }
+        // Who is online and where, for `event.online` (when it changed).
+        let mut online: Vec<(Uuid, usize)> = self.players.values().filter(|p| !p.disconnected).map(|p| (p.uuid, p.dim)).collect();
+        online.sort_unstable();
+        if online != pl.online {
+            let mut list: Vec<OnlinePlayer> = self
+                .players
+                .values()
+                .filter(|p| !p.disconnected)
+                .map(|p| OnlinePlayer { uuid: p.uuid.as_u128(), name: p.name.clone(), level: p.dim as u32 })
+                .collect();
+            list.sort_by_key(|p| p.uuid);
+            pl.rt.set_online(list);
+            pl.online = online;
+        }
         let world = SimWorld { players: &self.players, dims: &self.dims, ops: &pl.ops };
         pl.rt.begin_tick_in(&world);
+        // Players that appeared are told to the region they ended up in.
+        let spawned = std::mem::take(&mut pl.spawned);
+        for (conn, reason) in spawned {
+            let Some(p) = self.players.get(&conn) else { continue };
+            if p.disconnected {
+                continue;
+            }
+            match pl.rt.region_mut(p.dim as u32, p.region.0) {
+                Some(rp) => {
+                    if rp.observing_kind(kiln_plugin_host::ObserveKinds::PLAYER_SPAWNED) {
+                        rp.observe_spawn(&actor(p, &pl.ops), p.pos.map(|c| c.floor() as i32), reason);
+                        rp.flush_observed();
+                    }
+                }
+                // Not in a region yet: try again next tick.
+                None => pl.spawned.push((conn, reason)),
+            }
+        }
         let reloaded = pl.rt.take_reloaded();
         if reloaded.iter().any(|r| r.commands_changed) && self.register_plugin_commands() {
             let conns: Vec<ConnId> = self.players.keys().copied().collect();
@@ -632,7 +882,7 @@ impl Sim {
     pub(crate) fn plugin_command_denied(&mut self, conn: ConnId, command: &str) -> bool {
         let Some(pl) = self.plugins.as_mut() else { return false };
         let Some(p) = self.players.get_mut(&conn) else { return false };
-        let a = Actor { uuid: p.uuid.as_u128(), name: &p.name, operator: pl.ops.contains(&p.uuid) };
+        let a = actor(p, &pl.ops);
         let Some(rp) = pl.rt.region_mut(p.dim as u32, p.region.0) else { return false };
         match rp.command(&a, command) {
             Verdict::Allow => false,
@@ -652,27 +902,35 @@ impl Sim {
             Arc::make_mut(&mut pl.ops).insert(p.uuid);
         }
         pl.rt.player_joined(&actor(p, &pl.ops));
+        pl.spawned.push((conn, SpawnReason::Join));
     }
 
     pub(crate) fn plugins_left(&mut self, p: &Player) {
         let Some(pl) = self.plugins.as_mut() else { return };
         pl.rt.player_left(&actor(p, &pl.ops));
+        pl.hud.remove(&p.uuid);
     }
 
-    /// Sends what plugins said (after P and after G).
-    pub(crate) fn deliver_plugin_messages(&mut self) {
+    /// Tells the plugins of the region a player is in (once it has one) that the player
+    /// appeared: after joining, dying, or changing level.
+    pub(crate) fn plugin_spawned(&mut self, conn: ConnId, reason: SpawnReason) {
         let Some(pl) = self.plugins.as_mut() else { return };
-        for m in pl.rt.take_messages() {
-            let pkt = packets::system_chat(text_tag(&m.text), false);
-            match m.to {
-                None => self.broadcast(pkt),
-                Some(u) => {
-                    let uuid = Uuid::from_u128(u);
-                    if let Some(p) = self.players.values_mut().find(|p| p.uuid == uuid) {
-                        p.send(pkt);
-                    }
-                }
+        pl.spawned.push((conn, reason));
+    }
+
+    /// Tells the plugins that players died (the regions they died in hear of it at once).
+    pub(crate) fn plugin_deaths(&mut self, deaths: &[crate::health::Death]) {
+        let Some(pl) = self.plugins.as_mut() else { return };
+        for d in deaths {
+            let Some(p) = self.players.get(&d.conn) else { continue };
+            let Some(rp) = pl.rt.region_mut(p.dim as u32, p.region.0) else { continue };
+            if !rp.observing_kind(kiln_plugin_host::ObserveKinds::PLAYER_DIED) {
+                continue;
             }
+            let killer = d.killer.as_ref().and_then(|name| self.players.values().find(|q| q.name == *name)).map(|q| q.uuid.as_u128());
+            let a = actor(p, &pl.ops);
+            rp.observe_death(&a, p.pos.map(|c| c.floor() as i32), d.cause.max(0) as u32, killer);
+            rp.flush_observed();
         }
     }
 
