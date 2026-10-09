@@ -2,6 +2,8 @@
 //! that ship a tasks component are not loaded, and the hot path keeps wasmtime without
 //! component-model async. The types here let the rest of the host compile unchanged.
 
+#![allow(dead_code)]
+
 use anyhow::{Result, bail};
 use std::path::PathBuf;
 use std::sync::Arc;
