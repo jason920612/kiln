@@ -430,6 +430,7 @@ fn replay(s: &Value) -> Result<usize, String> {
             v.eye_height = 1.27;
         }
         v.creative = p.get("creative").and_then(Value::as_bool).unwrap_or(false);
+        v.swimming = p.get("swimming").and_then(Value::as_bool).unwrap_or(false);
         // The recording's player is never ticked: it never finds itself in water.
         v.in_water = Some(false);
         // (wp32: a parrot's owner is no spectator, flying or in powder snow; it does not stand on

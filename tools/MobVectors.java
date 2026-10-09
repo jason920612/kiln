@@ -192,6 +192,8 @@ public class MobVectors {
         final Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
         double[] player; // x, y, z or null
         boolean playerSneaking;
+        /// wp49: the player swims (the swimming flag of `Entity.setSwimming`).
+        boolean playerSwimming;
         boolean playerCreative;
         String playerMainHand;
         /// The player's look direction (yaw also turns its head) and head item.
@@ -587,6 +589,7 @@ public class MobVectors {
             // (wp32: the player left standing on the ground by a scenario is in the air again.)
             player.setOnGround(false);
             player.setShiftKeyDown(s.playerSneaking);
+            player.setSwimming(s.playerSwimming);
             player.setPose(s.playerSneaking ? net.minecraft.world.entity.Pose.CROUCHING : net.minecraft.world.entity.Pose.STANDING);
             // wp28: a player who survives what a warden does to him (`playerHealth`, 20 by default).
             player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH).setBaseValue(s.playerHealth);
@@ -903,7 +906,7 @@ public class MobVectors {
             hurts.append(String.format(Locale.ROOT, "[%d,%d,%s]", h.getKey(), (int) h.getValue()[0], d(h.getValue()[1])));
         }
         String playerJson = s.player == null ? "null"
-                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b,\"main_hand\":%s,\"yaw\":%s,\"pitch\":%s,\"head\":%s,\"uuid\":%s,\"tick_count\":%d,\"last_hurt_by_mob_time\":%d}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative,
+                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"swimming\":%b,\"creative\":%b,\"main_hand\":%s,\"yaw\":%s,\"pitch\":%s,\"head\":%s,\"uuid\":%s,\"tick_count\":%d,\"last_hurt_by_mob_time\":%d}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerSwimming, s.playerCreative,
                         s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"", Float.toString(s.playerYaw), Float.toString(s.playerPitch),
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp);
         return String.format(Locale.ROOT,
@@ -3129,9 +3132,34 @@ public class MobVectors {
             s.ticks = 300;
             out.add(s);
         }
+        // A swimming player: the dolphin comes alongside (and gives it dolphin's grace).
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("dolphin_swim_with_player_" + seed);
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 40f * seed, 38300L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, W, 3.5};
+            s.playerSwimming = true;
+            s.levelSeed = 530 + seed;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A player in the water who does not swim.
+        {
+            Scenario s = new Scenario("dolphin_player_floating");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 40f, 38310L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, W, 3.5};
+            s.levelSeed = 540;
+            s.ticks = 200;
+            out.add(s);
+        }
         // A guardian nearby: it keeps away.
         {
-            Scenario s = new Scenario("dolphin_avoids_guardian");
+            Scenario s = new Scenario("dolphin_flees_guardian");
             poolWorld(s, 18, -10, -10, 10, 10, 6);
             MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 38200L);
             m.nbt = "{PersistenceRequired:1b}";
