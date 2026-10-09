@@ -2697,7 +2697,7 @@ public class InteractVectors {
         if (System.getenv("BRUSH_DEBUG") != null) {
             System.out.println("BDEBUG " + c.name + " op " + s.get("op") + " time " + level.getGameTime() + " using " + p.isUsingItem() + " remaining " + p.getUseItemRemainingTicks() + " pos " + p.position()
                     + " rot " + p.getYRot() + "/" + p.getXRot() + " eye " + p.getEyePosition() + " held " + p.getMainHandItem()
-                    + " hit " + net.minecraft.world.entity.projectile.ProjectileUtil.getHitResultOnViewVector(p, net.minecraft.world.entity.EntitySelector.CAN_BE_PICKED, p.blockInteractionRange())
+                    + " hit " + net.minecraft.world.entity.projectile.ProjectileUtil.getHitResultOnViewVector(p, net.minecraft.world.entity.EntitySelector.CAN_BE_PICKED, p.blockInteractionRange()).getType() + " " + net.minecraft.world.entity.projectile.ProjectileUtil.getHitResultOnViewVector(p, net.minecraft.world.entity.EntitySelector.CAN_BE_PICKED, p.blockInteractionRange()).getLocation() + " range " + p.blockInteractionRange()
                     + " block " + level.getBlockState(new BlockPos(2, 99, 0)) + " cd " + p.getCooldowns().isOnCooldown(p.getMainHandItem()));
         }
         if (System.getenv("VAULT_DEBUG") != null && c.tickLevel) {
