@@ -10,6 +10,7 @@ use crate::blocks::{DispenseOp, RegionLevel, Wear};
 use crate::entities::{Body, Entities, Spawn};
 use kiln_blocks::{BlockPos, Direction};
 use kiln_entity::mob::dispense as rules;
+use kiln_inventory::stack::StackExt;
 use kiln_item::component::EquipmentSlot;
 use kiln_item::{ItemStack, keys};
 
