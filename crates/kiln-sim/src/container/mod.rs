@@ -18,6 +18,7 @@ pub(crate) mod brewing;
 pub(crate) mod crafter;
 pub(crate) mod dispense;
 mod dispense_items;
+mod equip;
 pub(crate) mod furnace;
 pub(crate) mod hopper;
 pub(crate) mod open;

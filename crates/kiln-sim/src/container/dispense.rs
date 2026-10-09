@@ -56,7 +56,7 @@ pub(crate) fn spawn_item(level: &mut RegionLevel, rng: &mut LegacyRandom, stack:
 
 /// `DefaultDispenseItemBehavior.dispense`: one item flies out, with the click sound (level
 /// event 1000) and smoke (2000).
-fn default_dispense(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> ItemStack {
+pub(super) fn default_dispense(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> ItemStack {
     let one = stack.split_count(1);
     spawn_item(level, rng, one, 6, facing, dispense_position(pos, facing));
     level.effect(Effect::LevelEvent { id: 1000, pos, data: 0 });
@@ -272,23 +272,6 @@ fn dispense_behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Bloc
     match stack.item_name() {
         name if kiln_entity::ext_entity::minecart::is_minecart(name) => dispense_minecart(level, rng, pos, facing, stack),
         "minecraft:arrow" | "minecraft:tipped_arrow" | "minecraft:spectral_arrow" | "minecraft:fire_charge" | "minecraft:wind_charge" | "minecraft:firework_rocket" | "minecraft:snowball" | "minecraft:egg" | "minecraft:blue_egg" | "minecraft:brown_egg" | "minecraft:splash_potion" | "minecraft:lingering_potion" | "minecraft:experience_bottle" => dispense_projectile(level, rng, pos, facing, stack),
-        "minecraft:water_bucket" | "minecraft:lava_bucket" => {
-            // `DispenseItemBehavior` for filled buckets: `BucketItem.emptyContents`, then an
-            // empty bucket.
-            let t = level.block(target);
-            if kiln_data::block_props::replaceable(t) || kiln_data::blocks_types::is_air(t) {
-                let fluid = if stack.item_name() == "minecraft:water_bucket" {
-                    kiln_data::blocks::default_state::WATER
-                } else {
-                    kiln_data::blocks::default_state::LAVA
-                };
-                let sound = if fluid == kiln_data::blocks::default_state::WATER { "minecraft:item.bucket.empty" } else { "minecraft:item.bucket.empty_lava" };
-                level.effect(Effect::Sound { pos: target, sound, volume: 1.0, pitch: 1.0 });
-                kiln_blocks::set_block(level, target, fluid, kiln_blocks::flags::ALL_IMMEDIATE);
-                return ItemStack::of("minecraft:bucket", 1).unwrap_or_default();
-            }
-            default_dispense(level, rng, pos, facing, stack)
-        }
         "minecraft:bucket" => {
             // Picks up a fluid source in front (`BucketPickup`).
             let t = level.block(target);

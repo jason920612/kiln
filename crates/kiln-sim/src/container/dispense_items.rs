@@ -83,8 +83,96 @@ pub(super) fn behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Bl
         n if n.ends_with("shulker_box") => shulker_box(level, pos, facing, stack),
         n if is_boat(n) => boat(level, pos, facing, stack),
         "minecraft:armor_stand" => armor_stand(level, target, facing, stack),
+        "minecraft:water_bucket" | "minecraft:lava_bucket" | "minecraft:powder_snow_bucket" | "minecraft:salmon_bucket" | "minecraft:cod_bucket" | "minecraft:pufferfish_bucket"
+        | "minecraft:tropical_fish_bucket" | "minecraft:axolotl_bucket" | "minecraft:sulfur_cube_bucket" | "minecraft:tadpole_bucket" => full_bucket(level, rng, pos, facing, target, stack),
+        "minecraft:carved_pumpkin" => carved_pumpkin(level, pos, facing, target, stack),
+        "minecraft:wither_skeleton_skull" => wither_skull(level, pos, facing, target, stack),
+        "minecraft:brush" => brush(level, rng, target, stack),
+        n if n.ends_with("_spawn_egg") => spawn_egg(level, rng, pos, facing, target, stack),
         _ => return Err(stack),
     })
+}
+
+/// `DispenseItemBehavior$3`: a full bucket pours out in front, the empty bucket goes back into the dispenser
+/// (or out of it); where it cannot, the bucket is dropped like any item.
+fn full_bucket(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, target: BlockPos, stack: ItemStack) -> Done {
+    if crate::buckets::dispense_empty(level, &stack, target) {
+        let remainder = ItemStack::of("minecraft:bucket", 1).unwrap_or_default();
+        return Done { stack: consume_with_remainder(level, rng, pos, facing, stack, remainder), success: None };
+    }
+    // (`defaultDispenseItemBehavior.dispense`: its own sound and animation, and then this behaviour's.)
+    Done { stack: super::dispense::default_dispense(level, rng, pos, facing, stack), success: None }
+}
+
+/// `SpawnEggItemBehavior`: the mob of the egg appears in front (1 up when the front is blocked), facing a random way.
+fn spawn_egg(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, target: BlockPos, mut stack: ItemStack) -> Done {
+    use kiln_entity::mob::MobKind;
+    let Some(kind) = stack.item_name().strip_suffix("_spawn_egg").and_then(MobKind::by_name) else { return Done { stack, success: None } };
+    let width = kiln_data::entities::by_name(kind.type_name()).map_or(0.6, |t| t.width);
+    // (`EntityType.create`: aligned to the floor unless the dispenser faces up.)
+    let off = if facing != Direction::Up { crate::mobs::align_offset(level, target, width) } else { 0.0 };
+    let yaw = kiln_entity::mob::mth::wrap_degrees(rng.next_float() * 360.0);
+    let env = level.env;
+    let finalize = crate::mobs::Finalize::command(
+        crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, 1.0),
+        crate::mobs::loot_seed(env.seed, env.game_time, 0, (target.x as u64) << 32 ^ target.z as u64 ^ (target.y as u64) << 16),
+        false,
+        env.mobs.difficulty == 0 || !env.mobs.spawn_monsters,
+    );
+    level.out.spawns.push(crate::mobs::spawn(kind, [target.x as f64 + 0.5, target.y as f64 + off, target.z as f64 + 0.5], Some(yaw), Some(finalize)));
+    stack.shrink_count(1);
+    level.effect(Effect::GameEvent { pos, event: "minecraft:entity_place" });
+    Done { stack, success: None }
+}
+
+/// `DispenseItemBehavior$8`: a carved pumpkin that finishes a golem pattern is put in front (and the golem
+/// made); else it is worn by whoever stands there, else nothing happens.
+fn carved_pumpkin(level: &mut RegionLevel, pos: BlockPos, facing: Direction, target: BlockPos, mut stack: ItemStack) -> Done {
+    if kiln_data::blocks_types::is_air(level.block(target)) && crate::golems::can_spawn_golem(level, target) {
+        kiln_blocks::set_block_and_update(level, target, kiln_data::blocks::default_state::CARVED_PUMPKIN);
+        level.effect(Effect::GameEvent { pos: target, event: "minecraft:block_place" });
+        let mut spawns = Vec::new();
+        crate::golems::try_spawn_golem(None, level, target, &mut spawns);
+        level.out.spawns.extend(spawns);
+        stack.shrink_count(1);
+        return ok(stack);
+    }
+    let worn = super::equip::dispense_equipment(level, pos, facing, &mut stack);
+    Done { stack, success: Some(worn) }
+}
+
+/// `DispenseItemBehavior$7`: a wither skeleton skull that completes the wither pattern is put in front (and the
+/// wither made), else it is worn by whoever stands there.
+fn wither_skull(level: &mut RegionLevel, pos: BlockPos, facing: Direction, target: BlockPos, mut stack: ItemStack) -> Done {
+    if kiln_data::blocks_types::is_air(level.block(target)) && crate::wither::can_spawn_mob(level, target) {
+        // (`RotationSegment.convertToSegment`: 4 steps of 16 to a side, 0 vertically.)
+        let segment = if facing.axis() == kiln_blocks::Axis::Y {
+            0
+        } else {
+            match facing.opposite() {
+                Direction::South => 0,
+                Direction::West => 4,
+                Direction::North => 8,
+                _ => 12,
+            }
+        };
+        let skull = state::set_int(kiln_data::blocks::default_state::WITHER_SKELETON_SKULL, "rotation", segment);
+        kiln_blocks::set_block_and_update(level, target, skull);
+        level.effect(Effect::GameEvent { pos: target, event: "minecraft:block_place" });
+        let mut spawns = Vec::new();
+        crate::wither::check_spawn(level, target, &mut spawns);
+        level.out.spawns.extend(spawns);
+        stack.shrink_count(1);
+        return ok(stack);
+    }
+    let worn = super::equip::dispense_equipment(level, pos, facing, &mut stack);
+    Done { stack, success: Some(worn) }
+}
+
+/// `DispenseItemBehavior$11`: a brush scrapes a scute off an armadillo in front, else it fails.
+fn brush(level: &mut RegionLevel, _rng: &mut LegacyRandom, target: BlockPos, stack: ItemStack) -> Done {
+    let _ = (level, target);
+    failed(stack)
 }
 
 fn is_boat(name: &str) -> bool {

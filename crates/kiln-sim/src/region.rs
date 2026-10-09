@@ -1454,7 +1454,7 @@ fn use_on_block(
     }
     // `SignBlock.setPlacedBy`: the placer edits the new sign.
     crate::signs::placed_by(p, level, placed_at);
-    crate::golems::try_spawn_golem(p, level, placed_at, spawns);
+    crate::golems::try_spawn_golem(Some(&mut *p), level, placed_at, spawns);
     // `WitherSkullBlock.setPlacedBy`.
     crate::wither::check_spawn(level, placed_at, spawns);
     // `ItemStack.useOn`: a successful item interaction counts as a use; `BlockItem.place`
