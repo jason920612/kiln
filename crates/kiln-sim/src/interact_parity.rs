@@ -623,7 +623,7 @@ fn run_case(line: &Value) -> Vec<String> {
                 click.write(&mut body);
                 inbox.push(ToSim::Packet(1, PlayIn::ContainerClick { body: body.freeze() }));
             }
-            "menu_close" => {
+            "menu_close" | "menu_close_tick" => {
                 let id = sim.players[&1].containers.counter;
                 inbox.push(ToSim::Packet(1, PlayIn::ContainerClose { container_id: id }));
             }

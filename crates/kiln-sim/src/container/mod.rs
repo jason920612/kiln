@@ -854,7 +854,16 @@ impl Containers {
 pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32, old: u16) {
     let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
     let now = level.cells.chunk(chunk_of(pos)).and_then(|c| c.block_entity(x, pos.y, z));
-    let Some(mut removed) = level.blocks.containers.block_changed(pos, now) else { return };
+    let existed = level.blocks.containers.get(pos).is_some();
+    let removed = level.blocks.containers.block_changed(pos, now);
+    // `CrafterBlock.newBlockEntity`: a new crafter block entity takes its block's `triggered`.
+    if !existed || removed.is_some() {
+        let triggered = kiln_blocks::state::get_bool(level.block(pos), "triggered");
+        if let Some(cr) = level.blocks.containers.get_mut(pos).and_then(|c| c.crafter.as_mut()) {
+            cr.triggered = triggered;
+        }
+    }
+    let Some(mut removed) = removed else { return };
     level.out.removed_components.push((pos, removed.components()));
     // `JukeboxBlockEntity.preRemoveSideEffects`: the disc pops out; a jukebox cleared by a command
     // (`Clearable.tryClear`, no side effects) loses it and the music stops.

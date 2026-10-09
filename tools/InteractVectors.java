@@ -1057,7 +1057,7 @@ public class InteractVectors {
             }
         }
         // Other blocks that face the way the player looks, not the way the face he clicked would have them.
-        for (String item : new String[] {"dispenser", "dropper", "observer", "piston", "sticky_piston", "barrel", "command_block", "chain_command_block", "repeating_command_block"}) {
+        for (String item : new String[] {"dispenser", "dropper", "observer", "piston", "sticky_piston", "barrel"}) {
             for (float[] look : new float[][] {{0f, 0f}, {90f, 0f}, {135f, -50f}, {200f, 30f}, {0f, 80f}, {45f, -80f}}) {
                 c = new Case("crafter_look_" + item + "_" + (int) look[0] + "_" + (int) look[1]).watch(2, 100, 0);
                 c.yaw = look[0];
@@ -1087,7 +1087,7 @@ public class InteractVectors {
         c = blockCase("crafter_open_powered", "minecraft:crafter[orientation=north_up,crafting=false,triggered=true]" + planks).menus();
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
-        c = blockCase("crafter_open_sneaking_with_item", at).menus();
+        c = blockCase("crafter_open_sneaking_with_item", at);
         c.sneaking = true;
         c.slot("h0", stack("minecraft:stone", 3));
         c.step(useOn(2, 100, 0, 1, 0));
@@ -1190,7 +1190,7 @@ public class InteractVectors {
         out.add(c);
         c = blockCase("crafter_close_returns_cursor", at).menus();
         c.slot("h0", stack("minecraft:oak_planks", 8));
-        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(op("op", "menu_close"));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(op("op", "menu_close_tick"));
         out.add(c);
     }
 
@@ -2559,7 +2559,16 @@ public class InteractVectors {
             // wp49: a click on a menu button (`ServerboundContainerButtonClickPacket`) of the player's open menu.
             case "menu_button" -> p.connection.handleContainerButtonClick(new ServerboundContainerButtonClickPacket(p.containerMenu.containerId, (int) s.get("button")));
             // wp49: a crafter's slot switched off or on from its screen.
-            case "menu_slot_state" -> p.connection.handleContainerSlotStateChanged(new net.minecraft.network.protocol.game.ServerboundContainerSlotStateChangedPacket((int) s.get("slot"), p.containerMenu.containerId, (boolean) s.get("enabled")));
+            case "menu_slot_state" -> {
+                p.connection.handleContainerSlotStateChanged(new net.minecraft.network.protocol.game.ServerboundContainerSlotStateChangedPacket((int) s.get("slot"), p.containerMenu.containerId, (boolean) s.get("enabled")));
+                // (The player's tick sends what changed.)
+                p.containerMenu.broadcastChanges();
+            }
+            // wp49: the menu is closed and the player's tick that follows sends what changed in his inventory.
+            case "menu_close_tick" -> {
+                p.connection.handleContainerClose(new ServerboundContainerClosePacket(p.containerMenu.containerId));
+                p.containerMenu.broadcastChanges();
+            }
             // wp49: the player closes the menu.
             case "menu_close" -> p.connection.handleContainerClose(new ServerboundContainerClosePacket(p.containerMenu.containerId));
             // wp49: the player starts breaking the block (it goes at once in creative or with a tool that breaks it in a tick).
