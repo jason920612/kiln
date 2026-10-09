@@ -155,8 +155,8 @@ impl Frame {
         let n = &mut self.names[i];
         n.clear();
         n.push_str(name);
-//EXP         self.operators.push(operator);
-//EXP         self.infos.push(info.copied().unwrap_or_default());
+        self.operators.push(operator);
+        self.infos.push(info.copied().unwrap_or_default());
     }
 
     pub fn is_clean(&self) -> bool {

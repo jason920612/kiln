@@ -50,6 +50,10 @@
 //!
 //! Not here: the WASI 0.3 `async-tasks` world.
 
+#[cfg(feature = "async-tasks")]
+mod async_tasks;
+#[cfg(not(feature = "async-tasks"))]
+#[path = "async_tasks_off.rs"]
 mod async_tasks;
 mod cache;
 mod effects;
@@ -2261,7 +2265,18 @@ impl PluginRuntime {
         let strict = cfg.mode == ExecMode::Strict;
         // The async-tasks worker starts when some plugin ships a tasks component (strict mode has
         // none: its jobs fail at once, since their outcomes depend on wall-clock time).
-        let worker = (!strict && plugins.iter().any(|(m, _, _)| m.tasks_wasm.is_some())).then(async_tasks::AsyncTasks_::start).transpose()?;
+        let worker = if !strict && plugins.iter().any(|(m, _, _)| m.tasks_wasm.is_some()) {
+            match async_tasks::AsyncTasks_::start() {
+                Ok(w) => Some(w),
+                // (Plugins with a tasks component are then skipped, with the reason.)
+                Err(e) => {
+                    warn!("async tasks: {e:#}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         for (mut manifest, wasm, source) in plugins {
             if strict {
                 manifest.tasks_wasm = None;

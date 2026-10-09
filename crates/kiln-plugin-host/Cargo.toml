@@ -5,6 +5,14 @@ edition.workspace = true
 version.workspace = true
 publish.workspace = true
 
+[features]
+default = ["async-tasks"]
+# The `async-tasks` world (WASI 0.3 component-model async): HTTP, timers and storage for a
+# plugin's second component. It builds wasmtime with component-model async, which makes every
+# call into a plugin about 13 ns dearer (a trivial handler: 87 ns without, 100 ns with), so
+# builds that want the lean hot path turn it off.
+async-tasks = ["wasmtime/component-model-async", "dep:tokio", "dep:ureq", "dep:futures"]
+
 [dependencies]
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
@@ -13,9 +21,9 @@ serde.workspace = true
 toml.workspace = true
 tracing.workspace = true
 uuid.workspace = true
-tokio.workspace = true
-ureq.workspace = true
-futures.workspace = true
+tokio = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest.workspace = true

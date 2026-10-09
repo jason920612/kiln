@@ -55,7 +55,6 @@ pub(crate) struct JobIn {
 
 /// A finished job.
 pub(crate) struct JobDone {
-    pub plugin: usize,
     pub generation: u32,
     pub ticket: u64,
     /// The result bytes, or the failure text.
@@ -397,7 +396,6 @@ async fn worker(
                     let _ = r.jobs.send(job);
                 }
                 None => done.lock().unwrap().push(JobDone {
-                    plugin: job.plugin,
                     generation: job.generation,
                     ticket: job.ticket,
                     result: Err("the plugin has no tasks component running".into()),
@@ -464,7 +462,7 @@ async fn instance_loop(
                             Ok(hooks::JobResult::Failed(why)) => Err(why),
                             Err(e) => Err(format!("the task trapped: {e:#}")),
                         };
-                        done.lock().unwrap().push(JobDone { plugin, generation, ticket, result });
+                        done.lock().unwrap().push(JobDone { generation, ticket, result });
                     }
                     else => break,
                 }

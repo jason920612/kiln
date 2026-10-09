@@ -59,7 +59,7 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 uuid = "1"
 zstd = { version = "0.13", default-features = false, features = ["zdict_builder"] }
 crc32fast = "1"
-wasmtime = { version = "49", default-features = false, features = ["runtime", "cranelift", "component-model", "component-model-async", "async", "pooling-allocator", "parallel-compilation", "std", "addr2line", "anyhow"] }
+wasmtime = { version = "49", default-features = false, features = ["runtime", "cranelift", "component-model", "pooling-allocator", "parallel-compilation", "std", "addr2line", "anyhow"] }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }
 

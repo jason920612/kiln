@@ -1,3 +1,4 @@
+#![cfg(feature = "async-tasks")]
 //! The `async-tasks` world (WASI 0.3 component-model async): a plugin's second component runs
 //! jobs off the tick (HTTP to a granted host, timers in server ticks, a small key-value store),
 //! and a hot reload interrupts the jobs in flight and lets the new generation submit them again.
