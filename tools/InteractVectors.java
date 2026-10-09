@@ -1123,8 +1123,8 @@ public class InteractVectors {
         c.slot("h0", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 0)).step(wait(10));
         out.add(c);
         // Nothing to hold on to: the block falls (and the brush with nothing under it).
-        c = brushCase("brush_block_falls", SAND + emerald);
-        c.cmd("setblock 2 98 0 minecraft:air");
+        c = brushCase("brush_block_falls", "minecraft:air");
+        c.late("setblock 2 99 0 " + SAND + emerald).late("setblock 2 98 0 minecraft:air");
         c.slot("h0", stack("minecraft:brush", 1)).step(wait(5));
         out.add(c);
         c = brushCase("brush_place_block_item", "minecraft:air");
@@ -2974,6 +2974,7 @@ public class InteractVectors {
         command("kill @e[type=minecraft:glow_item_frame]");
         command("kill @e[type=minecraft:painting]");
         command("kill @e[type=minecraft:armor_stand]");
+        command("kill @e[type=minecraft:falling_block]");
         command("kill @e[type=minecraft:item]");
         for (var bee : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.bee.Bee.class, new AABB(-64, -64, -64, 64, 320, 64))) bee.discard();
         for (var mob : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.Mob.class, new AABB(-64, -64, -64, 64, 320, 64))) mob.discard();
