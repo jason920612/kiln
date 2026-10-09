@@ -1217,6 +1217,7 @@ impl RegionPlugins {
         mut decide: impl FnMut(R, Option<Vec<Span>>) -> Option<Verdict>,
     ) -> Verdict {
         let RegionPlugins { set, shared, insts, calls, .. } = self;
+        let set: &Arc<PluginSet> = &*set;
         let subs = set.subscribers(kind);
         if subs.is_empty() {
             return Verdict::Allow;
@@ -1233,8 +1234,7 @@ impl RegionPlugins {
             let closed = subs.iter().any(|&i| called(i) && policy(i) == FailPolicy::Closed);
             return if closed { Verdict::Deny(None) } else { Verdict::Allow };
         }
-        let subs: Vec<usize> = subs.to_vec();
-        for i in subs {
+        for &i in subs {
             if !called(i) {
                 continue;
             }
