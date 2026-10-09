@@ -797,6 +797,10 @@ pub trait Kind: Sync + Send {
         let _ = (e, m, level, bolt);
         false
     }
+    /// What the type does after the plain `Entity.thunderHit` (which the caller runs when `thunder_hit` is false).
+    fn after_thunder_hit(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, bolt: i32) {
+        let _ = (e, m, level, bolt);
+    }
     /// `isPushable` (false: bats neither push nor get pushed).
     fn pushable(&self) -> bool {
         true

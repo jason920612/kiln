@@ -119,6 +119,7 @@ pub enum MobKind {
     GlowSquid,
     Dolphin,
     HappyGhast,
+    CopperGolem,
     Cod,
     Salmon,
     TropicalFish,
@@ -298,6 +299,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::GlowSquid,
     MobKind::Dolphin,
     MobKind::HappyGhast,
+    MobKind::CopperGolem,
     MobKind::Cod,
     MobKind::Salmon,
     MobKind::TropicalFish,
@@ -2393,6 +2395,9 @@ pub fn thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, _bolt: i32) -> b
     if let Some(k) = kind.ext() {
         let mut m = take(e);
         let handled = k.thunder_hit(e, &mut m, level, _bolt);
+        if !handled {
+            k.after_thunder_hit(e, &mut m, level, _bolt);
+        }
         put(e, m);
         if handled {
             return true;

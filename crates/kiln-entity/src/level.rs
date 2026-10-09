@@ -299,6 +299,9 @@ pub enum Event {
     EntityInsideBlock { pos: BlockPos, state: u16, entity: i32 },
     /// `BeehiveBlockEntity.addOccupant(bee)`: bee `bee` goes into the hive at `hive`.
     BeeEntersHive { bee: i32, hive: BlockPos },
+    /// `CopperGolem.turnToStatue`: the block at `pos` becomes an oxidized statue in `pose` (0 to 3) facing `facing`, its
+    /// block entity holding the golem's custom name.
+    CopperGolemStatue { pos: BlockPos, pose: u8, facing: crate::math::Direction, name: Option<kiln_proto::nbt::Tag> },
     /// A projectile hit a block (`Block.onProjectileHit`) or an entity: damage, egg hatching,
     /// pearl teleports and potion splashes are the simulation's.
     ProjectileHit { projectile: i32, projectile_type: &'static str, owner: Option<i32>, hit: crate::projectile::Hit },
@@ -1126,6 +1129,54 @@ pub trait EntityLevel {
     /// `at`) was hurt by a player: the heart hurts, spreading resin).
     fn heart_creaking_hurt(&mut self, home: BlockPos, id: i32, uuid: u128, at: Vec3) {
         let _ = (home, id, uuid, at);
+    }
+
+    /// The `ChestBlockEntity`s (chests, trapped chests, copper chests) of chunk (`cx`, `cz`):
+    /// `None` when the chunk is not loaded (`getChunkNow`).
+    fn chest_block_entities(&self, cx: i32, cz: i32) -> Option<Vec<BlockPos>> {
+        let _ = (cx, cz);
+        None
+    }
+
+    /// The block entity at `pos` as an identity: the same number while it is the same object
+    /// (`BlockEntity.equals`), `None` without one.
+    fn block_entity_serial(&self, pos: BlockPos) -> Option<u64> {
+        let _ = pos;
+        None
+    }
+
+    /// The slots of the container block entity at `pos`.
+    fn container_items(&self, pos: BlockPos) -> Option<Vec<kiln_item::ItemStack>> {
+        let _ = pos;
+        None
+    }
+
+    /// Writes the slots of the container block entity at `pos` back (`setChanged`).
+    fn set_container_items(&mut self, pos: BlockPos, items: Vec<kiln_item::ItemStack>) {
+        let _ = (pos, items);
+    }
+
+    /// `BaseContainerBlockEntity.isLocked`.
+    fn container_locked(&self, pos: BlockPos) -> bool {
+        let _ = pos;
+        false
+    }
+
+    /// `ChestBlockEntity.getEntitiesWithContainerOpen`: the ids of the entities (players
+    /// too) that have the container at `pos` open.
+    fn container_users(&self, pos: BlockPos) -> Vec<i32> {
+        let _ = pos;
+        Vec::new()
+    }
+
+    /// `ChestBlockEntity.startOpen(user)` (`range`: `getContainerInteractionRange`).
+    fn container_start_open(&mut self, pos: BlockPos, user: i32, range: f64) {
+        let _ = (pos, user, range);
+    }
+
+    /// `ChestBlockEntity.stopOpen(user)`.
+    fn container_stop_open(&mut self, pos: BlockPos, user: i32) {
+        let _ = (pos, user);
     }
 
     /// The entity with this UUID (`ServerLevel.getEntity(UUID)`), among the entities and the

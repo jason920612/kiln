@@ -82,6 +82,8 @@ pub struct MemoryLevel {
     /// last tick (`game_event` posts to them like `GameEventDispatcher`).
     pub ears: Vec<(i32, crate::vibration::Ear)>,
     pub heard: Vec<(i32, crate::vibration::Heard)>,
+    /// The chests (container block entities) by position.
+    pub chests: FastMap<BlockPos, ChestBe>,
     /// The creaking hearts (their block entities) by position.
     pub hearts: FastMap<BlockPos, crate::mob::kinds::creaking_heart::HeartBe>,
     /// The `minecraft:gameplay/creaking_active` attribute.
@@ -132,6 +134,7 @@ impl MemoryLevel {
             poi_taken: FastMap::default(),
             ears: Vec::new(),
             heard: Vec::new(),
+            chests: FastMap::default(),
             hearts: FastMap::default(),
             creaking_active: false,
             spawners: FastMap::default(),
@@ -592,6 +595,42 @@ impl EntityLevel for MemoryLevel {
             self.ears.push((id, ear));
         }
     }
+    fn chest_block_entities(&self, cx: i32, cz: i32) -> Option<Vec<BlockPos>> {
+        let mut v: Vec<BlockPos> = self.chests.keys().copied().filter(|p| p.x >> 4 == cx && p.z >> 4 == cz).collect();
+        v.sort_by_key(|p| (p.x, p.y, p.z));
+        Some(v)
+    }
+    fn block_entity_serial(&self, pos: BlockPos) -> Option<u64> {
+        self.chests.contains_key(&pos).then(|| ((pos.x as u64) << 40) ^ ((pos.y as u64 & 0xFFFF) << 24) ^ (pos.z as u64 & 0xFF_FFFF))
+    }
+    fn container_items(&self, pos: BlockPos) -> Option<Vec<kiln_item::ItemStack>> {
+        self.chests.get(&pos).map(|c| c.items.clone())
+    }
+    fn set_container_items(&mut self, pos: BlockPos, items: Vec<kiln_item::ItemStack>) {
+        if let Some(c) = self.chests.get_mut(&pos) {
+            c.items = items;
+        }
+    }
+    fn container_locked(&self, pos: BlockPos) -> bool {
+        self.chests.get(&pos).is_some_and(|c| c.locked)
+    }
+    fn container_users(&self, pos: BlockPos) -> Vec<i32> {
+        self.chests.get(&pos).map(|c| c.users.clone()).unwrap_or_default()
+    }
+    fn container_start_open(&mut self, pos: BlockPos, user: i32, _range: f64) {
+        if let Some(c) = self.chests.get_mut(&pos) {
+            c.openers += 1;
+            c.users.push(user);
+        }
+    }
+    fn container_stop_open(&mut self, pos: BlockPos, user: i32) {
+        if let Some(c) = self.chests.get_mut(&pos) {
+            c.openers -= 1;
+            if let Some(i) = c.users.iter().position(|&u| u == user) {
+                c.users.remove(i);
+            }
+        }
+    }
     fn heart_protects(&mut self, home: BlockPos, id: i32, uuid: u128) -> bool {
         crate::mob::kinds::creaking_heart::is_heart(self.block(home)) && self.hearts.get(&home).is_some_and(|h| h.protects(id, uuid))
     }
@@ -610,4 +649,14 @@ impl EntityLevel for MemoryLevel {
     fn creaking_active(&self, _pos: BlockPos) -> bool {
         self.creaking_active
     }
+}
+
+/// A chest's block entity in a [`MemoryLevel`]: its slots, who has it open.
+#[derive(Clone, Debug, Default)]
+pub struct ChestBe {
+    pub items: Vec<kiln_item::ItemStack>,
+    pub locked: bool,
+    /// The entities that opened it (`startOpen`), and `ContainerOpenersCounter.openCount`.
+    pub users: Vec<i32>,
+    pub openers: i32,
 }
