@@ -181,6 +181,15 @@ public class InteractVectors {
             return this;
         }
 
+        /** wp49: the level ticks also run the scheduled block ticks and the player's use of his item (a brush). */
+        boolean fullTicks;
+
+        Case fullTicking() {
+            tickLevel = true;
+            fullTicks = true;
+            return this;
+        }
+
         /** wp49: the living mobs around are recorded after every step. */
         Case mobs() {
             watchMobs = true;
@@ -1040,6 +1049,94 @@ public class InteractVectors {
         c = blockCase("lectern_break_empty", stand);
         c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
         out.add(c);
+    }
+
+    /** wp49: a brushing case: suspicious `block` at (2, 99, 0), the player (at the origin) looking down at its top, the level ticking whole. */
+    static Case brushCase(String name, String block) {
+        Case c = new Case(name).fullTicking();
+        c.yaw = -90f;
+        c.pitch = 39f;
+        c.cmd("setblock 2 98 0 minecraft:stone").cmd("setblock 2 99 0 " + block);
+        c.watch(2, 99, 0);
+        return c;
+    }
+
+    static final String SAND = "minecraft:suspicious_sand[dusted=0]";
+
+    /** wp49: archaeology (brushing suspicious sand and gravel). */
+    static void brushes49(List<Case> out) {
+        Case c;
+        String emerald = "{item:{id:\"minecraft:emerald\",count:3}}";
+        // The first brush at the fifth tick of use, then every tenth; the tenth breaks the block.
+        c = brushCase("brush_all_the_way", SAND + emerald);
+        c.slot("h0", stack("minecraft:brush", 1)).stat("minecraft:brush").step(useOn(2, 99, 0, 1, 0)).step(wait(4));
+        for (int i = 0; i < 10; i++) c.step(wait(10));
+        out.add(c);
+        c = brushCase("brush_gravel", "minecraft:suspicious_gravel[dusted=0]{item:{id:\"minecraft:clay_ball\",count:1}}");
+        c.slot("h0", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 0)).step(wait(4));
+        for (int i = 0; i < 10; i++) c.step(wait(10));
+        out.add(c);
+        c = brushCase("brush_nothing_inside", SAND);
+        c.slot("h0", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 0)).step(wait(4));
+        for (int i = 0; i < 10; i++) c.step(wait(10));
+        out.add(c);
+        c = brushCase("brush_loot_table", SAND + "{LootTable:\"minecraft:archaeology/desert_pyramid\",LootTableSeed:12345L}");
+        c.slot("h0", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 0)).step(wait(4));
+        for (int i = 0; i < 10; i++) c.step(wait(10));
+        out.add(c);
+        c = brushCase("brush_loot_table_cold_ruin", "minecraft:suspicious_gravel[dusted=0]{LootTable:\"minecraft:archaeology/ocean_ruin_cold\",LootTableSeed:777L}");
+        c.slot("h0", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 0)).step(wait(4));
+        for (int i = 0; i < 10; i++) c.step(wait(10));
+        out.add(c);
+        // Used up halfway: the brushing fades by itself, two at a time.
+        c = brushCase("brush_fades", SAND + emerald);
+        c.slot("h0", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 0)).step(wait(4)).step(wait(10)).step(wait(10)).step(wait(10)).step(wait(10));
+        c.step(op("op", "release_use")).step(wait(30)).step(wait(30)).step(wait(30));
+        out.add(c);
+        c = brushCase("brush_released_early", SAND + emerald);
+        c.slot("h0", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 0)).step(wait(4)).step(wait(3)).step(op("op", "release_use")).step(wait(20));
+        out.add(c);
+        c = brushCase("brush_off_hand", SAND + emerald);
+        c.slot("offhand", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 1)).step(wait(4));
+        for (int i = 0; i < 10; i++) c.step(wait(10));
+        out.add(c);
+        c = brushCase("brush_creative", SAND + emerald);
+        c.gameMode = "creative";
+        c.slot("h0", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 0)).step(wait(4));
+        for (int i = 0; i < 10; i++) c.step(wait(10));
+        out.add(c);
+        c = brushCase("brush_worn", SAND + emerald);
+        ItemStack worn = stack("minecraft:brush", 1);
+        worn.setDamageValue(worn.getMaxDamage() - 1);
+        c.slot("h0", worn).step(useOn(2, 99, 0, 1, 0)).step(wait(4));
+        for (int i = 0; i < 10; i++) c.step(wait(10));
+        out.add(c);
+        c = brushCase("brush_adventure", SAND + emerald);
+        c.gameMode = "adventure";
+        c.slot("h0", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 0)).step(wait(10));
+        out.add(c);
+        // On other blocks the brush only brushes.
+        c = brushCase("brush_on_stone", "minecraft:stone");
+        c.slot("h0", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 0)).step(wait(4)).step(wait(10));
+        out.add(c);
+        c = brushCase("brush_on_air", "minecraft:air");
+        c.slot("h0", stack("minecraft:brush", 1)).step(useOn(2, 99, 0, 1, 0)).step(wait(10));
+        out.add(c);
+        // Nothing to hold on to: the block falls (and the brush with nothing under it).
+        c = brushCase("brush_block_falls", SAND + emerald);
+        c.cmd("setblock 2 98 0 minecraft:air");
+        c.slot("h0", stack("minecraft:brush", 1)).step(wait(5));
+        out.add(c);
+        c = brushCase("brush_place_block_item", "minecraft:air");
+        c.slot("h0", stack("minecraft:suspicious_sand", 2)).step(useOn(2, 98, 0, 1, 0)).step(wait(3));
+        out.add(c);
+        c = brushCase("brush_put_down_sand", "minecraft:air");
+        c.slot("h0", stack("minecraft:suspicious_gravel", 2)).step(useOn(2, 98, 0, 1, 0)).step(wait(3));
+        out.add(c);
+    }
+
+    static Map<String, Object> wait(int ticks) {
+        return op("op", "wait", "ticks", ticks);
     }
 
     /** wp49: crafters: put up facing the way the player looks, and their screen (slots that switch off, the result that only shows). */
@@ -2569,6 +2666,8 @@ public class InteractVectors {
                 p.connection.handleContainerClose(new ServerboundContainerClosePacket(p.containerMenu.containerId));
                 p.containerMenu.broadcastChanges();
             }
+            // wp49: the use key is let go (`ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM`).
+            case "release_use" -> p.connection.handlePlayerAction(new ServerboundPlayerActionPacket(ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM, BlockPos.ZERO, Direction.DOWN, 1));
             // wp49: the player closes the menu.
             case "menu_close" -> p.connection.handleContainerClose(new ServerboundContainerClosePacket(p.containerMenu.containerId));
             // wp49: the player starts breaking the block (it goes at once in creative or with a tool that breaks it in a tick).
@@ -2636,10 +2735,34 @@ public class InteractVectors {
 
     /** wp49: one tick of the level as far as the watched block entities go: the clock moves on, their tickers run. */
     @SuppressWarnings({"unchecked", "rawtypes"})
+    static ServerPlayer tickPlayer;
+
     static void levelTick(Case c) {
         ServerLevel level = server.overworld();
         var data = (net.minecraft.world.level.storage.ServerLevelData) level.getLevelData();
         data.setGameTime(data.getGameTime() + 1);
+        if (c.fullTicks) {
+            try {
+                // `ServerLevel.tick`: the scheduled block ticks first, then the entities (the player's use of his item), then the block entities.
+                var blockTicks = (net.minecraft.world.ticks.LevelTicks<Block>) level.getBlockTicks();
+                Method tickBlock = ServerLevel.class.getDeclaredMethod("tickBlock", BlockPos.class, Block.class);
+                tickBlock.setAccessible(true);
+                blockTicks.tick(level.getGameTime(), 65536, (pos, block) -> {
+                    try {
+                        tickBlock.invoke(level, pos, block);
+                    } catch (ReflectiveOperationException e) {
+                        throw new IllegalStateException(e);
+                    }
+                });
+                if (tickPlayer != null) {
+                    Method using = net.minecraft.world.entity.LivingEntity.class.getDeclaredMethod("updatingUsingItem");
+                    using.setAccessible(true);
+                    using.invoke(tickPlayer);
+                }
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+        }
         for (int[] w : c.watch) {
             BlockPos wp = new BlockPos(w[0], w[1], w[2]);
             BlockState st = level.getBlockState(wp);
@@ -2722,6 +2845,7 @@ public class InteractVectors {
         if (System.getenv("INTERACT_DEBUG") != null) { command("data get entity @e[type=minecraft:painting,limit=1]"); command("summon minecraft:painting 2 100 0 {facing:1b,variant:\"minecraft:courbet\"}"); }
         players++;
         ServerPlayer p = mockPlayer("Interact");
+        tickPlayer = p;
         setup(p, c);
         broadcastChanges();
         drain(p);
@@ -2938,6 +3062,7 @@ public class InteractVectors {
             vaults49(all);
             trials49(all);
             crafters49(all);
+            brushes49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {
