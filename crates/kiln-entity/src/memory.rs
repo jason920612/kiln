@@ -618,17 +618,33 @@ impl EntityLevel for MemoryLevel {
         self.chests.get(&pos).map(|c| c.users.clone()).unwrap_or_default()
     }
     fn container_start_open(&mut self, pos: BlockPos, user: i32, _range: f64) {
-        if let Some(c) = self.chests.get_mut(&pos) {
-            c.openers += 1;
-            c.users.push(user);
+        let first = match self.chests.get_mut(&pos) {
+            Some(c) => {
+                c.openers += 1;
+                c.users.push(user);
+                c.openers == 1
+            }
+            None => return,
+        };
+        // `ContainerOpenersCounter.onOpen` -> `ChestBlockEntity.playSound`: the left half stays
+        // silent; the sound's pitch is a draw from the level's random.
+        if first && crate::mob::kinds::chest_access::double_half(self.block(pos)) != Some(true) {
+            self.random.next_float();
         }
     }
     fn container_stop_open(&mut self, pos: BlockPos, user: i32) {
-        if let Some(c) = self.chests.get_mut(&pos) {
-            c.openers -= 1;
-            if let Some(i) = c.users.iter().position(|&u| u == user) {
-                c.users.remove(i);
+        let last = match self.chests.get_mut(&pos) {
+            Some(c) => {
+                c.openers -= 1;
+                if let Some(i) = c.users.iter().position(|&u| u == user) {
+                    c.users.remove(i);
+                }
+                c.openers == 0
             }
+            None => return,
+        };
+        if last && crate::mob::kinds::chest_access::double_half(self.block(pos)) != Some(true) {
+            self.random.next_float();
         }
     }
     fn heart_protects(&mut self, home: BlockPos, id: i32, uuid: u128) -> bool {
