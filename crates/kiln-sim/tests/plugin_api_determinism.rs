@@ -3,7 +3,9 @@
 //! gatekeeper all running, must come out the same whatever the regions and the workers: one
 //! region per level on one worker, or a region per group on four workers under chaos
 //! scheduling, with a fuel budget tight enough that some calls run out. The state hash of every
-//! tick, every player's packet stream (digest) and the plugins' own state must agree.
+//! tick, the plugin-made packets every player received (titles, sidebars, boss bars, menus, chat, teleports,
+//! deaths; in order) and the plugins' own state must agree. (Chunk data streams are left out: world generation
+//! runs on other threads, so when a chunk arrives is not part of the tick.)
 
 use bytes::BytesMut;
 use kiln_inventory::{ContainerClick, ContainerInput};
@@ -25,12 +27,47 @@ struct Outcome {
     tasks_run: u64,
 }
 
+/// An order-dependent hash of the packets plugins cause, in the order a client got them.
+fn effect_digest(c: &Client) -> u64 {
+    use kiln_data::packets::play::clientbound as ids;
+    const MINE: [i32; 18] = [
+        ids::SYSTEM_CHAT,
+        ids::SET_TITLE_TEXT,
+        ids::SET_SUBTITLE_TEXT,
+        ids::SET_TITLES_ANIMATION,
+        ids::SET_ACTION_BAR_TEXT,
+        ids::SET_OBJECTIVE,
+        ids::SET_DISPLAY_OBJECTIVE,
+        ids::SET_SCORE,
+        ids::RESET_SCORE,
+        ids::BOSS_EVENT,
+        ids::OPEN_SCREEN,
+        ids::CONTAINER_SET_CONTENT,
+        ids::CONTAINER_SET_SLOT,
+        ids::CONTAINER_CLOSE,
+        ids::PLAYER_POSITION,
+        ids::PLAYER_COMBAT_KILL,
+        ids::RESPAWN,
+        ids::SET_HEALTH,
+    ];
+    let log = c.stats.log.lock().unwrap();
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for p in log.as_ref().expect("a packet log") {
+        let id = kiln_proto::codec::Reader::new(p).varint().unwrap_or(-1);
+        if MINE.contains(&id) {
+            for b in (p.len() as u32).to_le_bytes().iter().chain(p.iter()) {
+                h = (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+    }
+    h
+}
+
 fn item(name: &str) -> i32 {
     kiln_data::builtin_id("minecraft:item", name).unwrap()
 }
 
 fn run(workers: usize, unified: bool, chaos: Option<u64>, fuel: u64) -> Outcome {
-    kiln_sim::testing::hash_packets();
     let ids = ["arena", "chat-format", "claims", "gatekeeper", "homes", "npc", "scoreboard-hud", "shop"];
     let dir = kiln_plugin_host::examples::custom_dir("api-determinism", &ids, &[("homes", "warmup = 12")]).expect("example plugins");
     let mut config = SimConfig::new(PLAYERS, 3, None);
@@ -45,6 +82,7 @@ fn run(workers: usize, unified: bool, chaos: Option<u64>, fuel: u64) -> Outcome 
     for i in 0..PLAYERS {
         let (msg, stats) = join(i as u64 + 1, &format!("P{i}"), 2);
         inbox.push(msg);
+        *stats.log.lock().unwrap() = Some(Vec::new());
         clients.push(Client::new(i as u64 + 1, stats));
     }
     inbox.push(ToSim::Console("gamerule minecraft:spawn_mobs false".into()));
@@ -130,7 +168,7 @@ fn run(workers: usize, unified: bool, chaos: Option<u64>, fuel: u64) -> Outcome 
         hashes.push(sim.state_hash());
     }
     assert_eq!(sim.player_count(), PLAYERS);
-    let digests = clients.iter().map(|c| *c.stats.digest.lock().unwrap()).collect();
+    let digests = clients.iter().map(effect_digest).collect();
     let values = (0..PLAYERS)
         .flat_map(|i| {
             let u = uuid::Uuid::from_u64_pair(0x6b69_6c6e, i as u64 + 1);
