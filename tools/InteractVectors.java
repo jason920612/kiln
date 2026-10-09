@@ -2946,7 +2946,23 @@ public class InteractVectors {
         command("fill -4 90 -8 15 110 15 minecraft:air");
         // (Scheduled ticks that were still due when the case ended would block the next case's: the game time goes back.)
         if (c.fullTicks) {
-            ((net.minecraft.world.ticks.LevelTicks<net.minecraft.world.level.block.Block>) server.overworld().getBlockTicks()).clearArea(new net.minecraft.world.level.levelgen.structure.BoundingBox(-8, 80, -8, 16, 120, 16));
+            // (The ticks run out: a few ticks of the clock, scheduled block ticks only.)
+            var level = server.overworld();
+            var data = (net.minecraft.world.level.storage.ServerLevelData) level.getLevelData();
+            var blockTicks = (net.minecraft.world.ticks.LevelTicks<net.minecraft.world.level.block.Block>) level.getBlockTicks();
+            Method tickBlock = ServerLevel.class.getDeclaredMethod("tickBlock", BlockPos.class, net.minecraft.world.level.block.Block.class);
+            tickBlock.setAccessible(true);
+            for (int i = 0; i < 12; i++) {
+                data.setGameTime(data.getGameTime() + 1);
+                blockTicks.tick(level.getGameTime(), 65536, (pos, block) -> {
+                    try {
+                        tickBlock.invoke(level, pos, block);
+                    } catch (ReflectiveOperationException e) {
+                        throw new IllegalStateException(e);
+                    }
+                });
+            }
+            command("fill -4 90 -8 15 110 15 minecraft:air");
         }
         command("kill @e[type=minecraft:item]");
         command("kill @e[type=minecraft:item_frame]");
