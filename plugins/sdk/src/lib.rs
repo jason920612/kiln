@@ -548,6 +548,20 @@ pub mod events {
     }
 }
 
+/// `jobs`: work for the plugin's async component (`tasks.wasm`, built with `kiln-tasks-sdk`;
+/// the manifest names it with `tasks = "tasks.wasm"`).
+pub mod jobs {
+    use crate::Ticket;
+
+    /// Hands the tasks component a job: `id` is the plugin's own number for it (it comes back in
+    /// `on_cancelled` if a reload interrupts the job), `kind` and `payload` are the component's to
+    /// read. The outcome arrives in `Plugin::on_results` under the ticket returned: `applied` true
+    /// with the result bytes as `GlobalValue::Bytes` in `value`, or false with the failure text.
+    pub fn submit(id: u64, kind: &str, payload: &[u8]) -> Ticket {
+        crate::bindings::kiln::api::jobs::submit(id, kind, payload)
+    }
+}
+
 /// Console logging.
 pub mod log {
     pub use crate::bindings::kiln::api::log::{error, info, warn};
