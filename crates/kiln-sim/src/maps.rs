@@ -983,6 +983,11 @@ impl Explorer {
 }
 
 impl kiln_loot::MapExplorer for Explorer {
+    fn find_structure(&self, names: &[String], origin: [i32; 3], radius: i32) -> Option<[i32; 3]> {
+        let mut gs = kiln_worldgen::generator::GenScratch::default();
+        self.pipeline.find_nearest_structure(&mut gs, names, origin, radius).map(|(target, _)| target)
+    }
+
     fn explore(&self, stack: &ItemStack, origin: [f64; 3], request: &kiln_loot::ExplorationMap<'_>) -> Option<ItemStack> {
         if stack.is_empty() {
             return None;

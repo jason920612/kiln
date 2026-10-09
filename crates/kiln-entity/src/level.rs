@@ -128,6 +128,10 @@ pub struct PlayerView {
     pub hurt_recently: bool,
     /// The entity the player rides.
     pub vehicle: Option<i32>,
+    /// `isSwimming` (the swimming pose).
+    pub swimming: bool,
+    /// `Entity.hasMovedHorizontallyRecently`: the last tick's change of position had a horizontal part.
+    pub moved_horizontally: bool,
     /// The amplifier of the player's Hero of the Village effect.
     pub hero_of_the_village: Option<i32>,
     /// wp32 parrots: `LandOnOwnersShoulderGoal.canUse`'s view of the player (not a spectator,
@@ -171,6 +175,8 @@ impl PlayerView {
             last_hurt_mob_time: 0,
             hurt_recently: false,
             vehicle: None,
+            swimming: false,
+            moved_horizontally: false,
             hero_of_the_village: None,
             parrot_may_land: false,
             parrot_can_sit: false,
@@ -601,6 +607,13 @@ pub trait EntityLevel {
     fn is_raining_at(&self, pos: BlockPos) -> bool {
         let _ = pos;
         false
+    }
+
+    /// `ServerLevel.findNearestMapStructure(structure tag, pos, radius, false)`: the nearest structure of the tag
+    /// within `radius` chunks (`None`: none found, or the level generates none).
+    fn find_nearest_map_structure(&self, tag: &str, pos: BlockPos, radius: i32) -> Option<BlockPos> {
+        let _ = (tag, pos, radius);
+        None
     }
 
     /// `LightningBolt.spawnFire` at one position: fire (or soul fire) where the block is air

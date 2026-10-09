@@ -1789,6 +1789,7 @@ public class MobVectors {
         // -- wp49: bees
         scenariosBee(out);
         scenariosGiant(out);
+        scenariosDolphin(out);
         // -- wp33: mule breeding, jockeys, the undead mounts, projectile deflection
         scenariosWp33(out);
         scenariosSpears(out);
@@ -2918,6 +2919,232 @@ public class MobVectors {
     static String owner() {
         int[] u = net.minecraft.core.UUIDUtil.uuidToIntArray(UUID.nameUUIDFromBytes("KilnMob".getBytes()));
         return String.format(Locale.ROOT, "Owner:[I;%d,%d,%d,%d]", u[0], u[1], u[2], u[3]);
+    }
+
+    // ---------------------------------------------------------- wp49: dolphins
+    static void scenariosDolphin(List<Scenario> out) {
+        double W = BY - 3; // y of a mob in the pool
+        // Swimming about in a big pool, jumping out of it now and then.
+        for (int seed = 1; seed <= 4; seed++) {
+            Scenario s = new Scenario("dolphin_idle_" + seed);
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 40f * seed, 37000L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 400 + seed;
+            s.ticks = 600;
+            out.add(s);
+        }
+        // Near the surface, where the jump goal finds clear water ahead.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("dolphin_jump_" + seed);
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, BY - 1.0, 0.5, 70f * seed, 37100L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 410 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A baby.
+        {
+            Scenario s = new Scenario("dolphin_baby");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 90f, 37200L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 420;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Out of the water it dries out (hurt once its moistness runs out) and flops about.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("dolphin_land_" + seed);
+            floor(s, 20, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, BY, 0.5, 70f * seed, 37300L + seed);
+            m.nbt = "{PersistenceRequired:1b,Moistness:40}";
+            s.mobs.add(m);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 430 + seed;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // On the shore it looks for the water.
+        {
+            Scenario s = new Scenario("dolphin_find_water");
+            poolWorld(s, 18, 3, -4, 9, 4, 4);
+            MobSpec m = new MobSpec("minecraft:dolphin", -1.5, BY, 0.5, 90f, 37400L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 440;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Short of air under a roof with one opening: up to it.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("dolphin_breath_" + seed);
+            poolWorld(s, 18, -6, -6, 6, 6, 5);
+            for (int x = -6; x <= 6; x++)
+                for (int z = -6; z <= 6; z++)
+                    if (!(x == 4 && z == 4)) s.blocks.put(new BlockPos(BX + x, BY, BZ + z), parse("minecraft:stone"));
+            MobSpec m = new MobSpec("minecraft:dolphin", -3.5, BY - 3.0, 0.5, 70f * seed, 37500L + seed);
+            m.nbt = "{PersistenceRequired:1b,Air:120s}";
+            s.mobs.add(m);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 450 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Items in the water: it swims to them, takes one in its mouth and plays with it.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("dolphin_items_" + seed);
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f * seed, 37600L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            MobSpec item = new MobSpec("minecraft:item", 4.5, BY - 3.0, 3.5, 0f, 37610L + seed);
+            item.mainHand = seed == 1 ? "minecraft:cod" : "minecraft:stick";
+            s.others.add(item);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 460 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // With something in its mouth already.
+        {
+            Scenario s = new Scenario("dolphin_holding");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 37700L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.mainHand = "minecraft:cod";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 470;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // A fish: an adult wants to show the way to treasure (there is none in this world), a baby grows up faster.
+        {
+            Scenario s = new Scenario("dolphin_feed_adult");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 37800L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:cod";
+            s.levelSeed = 480;
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:cod";
+            s.actions.add(a);
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("dolphin_feed_baby");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 37810L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:salmon";
+            s.levelSeed = 481;
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:salmon";
+            s.actions.add(a);
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("dolphin_feed_other_item");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 37820L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:stick";
+            s.actions.add(a);
+            s.ticks = 100;
+            out.add(s);
+        }
+        // Already after a fish (the saved flag).
+        {
+            Scenario s = new Scenario("dolphin_got_fish");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 37900L);
+            m.nbt = "{PersistenceRequired:1b,GotFish:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 490;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Hurt by the player (in the water beside the pool): it fights back.
+        {
+            Scenario s = new Scenario("dolphin_hurt");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 38000L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {11.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.levelSeed = 500;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Two dolphins: one hurt, the other alerted.
+        {
+            Scenario s = new Scenario("dolphin_alert_others");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 38100L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            MobSpec m2 = new MobSpec("minecraft:dolphin", 3.5, W, 2.5, 200f, 38101L);
+            m2.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m2);
+            s.player = new double[] {11.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.levelSeed = 510;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A guardian nearby: it keeps away.
+        {
+            Scenario s = new Scenario("dolphin_avoids_guardian");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 38200L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            MobSpec g = new MobSpec("minecraft:guardian", 5.5, W, 0.5, 90f, 38201L);
+            g.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(g);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 520;
+            s.ticks = 300;
+            out.add(s);
+        }
     }
 
     // ---------------------------------------------------------- wp49: giants

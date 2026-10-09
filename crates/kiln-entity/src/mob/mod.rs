@@ -117,6 +117,7 @@ pub enum MobKind {
     // -- slice 3: common mobs B
     Squid,
     GlowSquid,
+    Dolphin,
     Cod,
     Salmon,
     TropicalFish,
@@ -294,6 +295,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     // -- slice 3: common mobs B
     MobKind::Squid,
     MobKind::GlowSquid,
+    MobKind::Dolphin,
     MobKind::Cod,
     MobKind::Salmon,
     MobKind::TropicalFish,
@@ -1562,6 +1564,14 @@ pub fn sync_equipment_modifiers(m: &mut MobData) {
     }
 }
 
+/// `increaseAirSupply`.
+fn increase_air(m: &MobData, current: i32) -> i32 {
+    match m.kind.ext() {
+        Some(k) => k.increase_air_supply(current, m.air_supply_max),
+        None => (current + 4).min(m.air_supply_max),
+    }
+}
+
 /// `Mob.baseTick` → `LivingEntity.baseTick` → `Entity.baseTick`.
 fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     let air_before = e.air_supply;
@@ -1615,10 +1625,10 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
                     hurt(e, m, level, DamageSource::of(DamageKind::Drown), 2.0);
                 }
             } else if e.air_supply < m.air_supply_max && effects::effects_refill_air(m) {
-                e.air_supply = (e.air_supply + 4).min(m.air_supply_max);
+                e.air_supply = increase_air(m, e.air_supply);
             }
         } else if e.air_supply < m.air_supply_max {
-            e.air_supply = (e.air_supply + 4).min(m.air_supply_max);
+            e.air_supply = increase_air(m, e.air_supply);
         }
     }
     if m.hurt_time > 0 {
@@ -2434,6 +2444,11 @@ pub fn swim_sound(type_name: &str) -> Option<&'static str> {
         Some(k) => k.swim_sound(),
         None => Some("minecraft:entity.generic.swim"),
     }
+}
+
+/// The splash and swim sounds `doWaterSplashEffect` plays for `e` (the generic ones unless the mob type has its own).
+pub fn splash_sounds_of(e: &Entity) -> (&'static str, &'static str) {
+    data(e).and_then(|m| m.kind.ext()).and_then(|k| k.splash_sounds()).unwrap_or(("minecraft:entity.generic.splash", "minecraft:entity.generic.swim"))
 }
 
 /// The swim sound of mob `e` (a calf's differs for the nautilus).

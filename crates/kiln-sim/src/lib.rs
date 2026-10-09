@@ -615,6 +615,9 @@ struct Player {
     shoulder_time: i64,
     shoulder_dirty: bool,
     released_shoulders: Vec<kiln_proto::nbt::Tag>,
+    /// `Entity.lastKnownPosition` and the horizontal length of `lastKnownSpeed` (`computeSpeed`).
+    speed_pos: Option<[f64; 3]>,
+    speed_h: f64,
     /// `lastKnownClientMovement`: the last accepted move, zero after a tick without one.
     known_movement: [f64; 3],
     moved_this_tick: bool,
@@ -3554,6 +3557,8 @@ impl Sim {
             released_shoulders: Vec::new(),
             known_movement: [0.0; 3],
             moved_this_tick: false,
+            speed_pos: None,
+            speed_h: 0.0,
             death_location: None,
             death_dim: OVERWORLD_ID,
             exhaustion: joining.exhaustion,

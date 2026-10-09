@@ -931,6 +931,13 @@ fn section_key(e: &kiln_entity::Entity) -> (i32, i64) {
 }
 
 impl EntityLevel for SimLevel<'_, '_, '_> {
+    fn find_nearest_map_structure(&self, tag: &str, pos: BlockPos, radius: i32) -> Option<BlockPos> {
+        let explorer = self.level.env().loot.as_deref()?.explorer.as_ref()?;
+        let names = crate::world_state::worldgen_tag("worldgen/structure", tag)?;
+        let found = explorer.0.find_structure(&names, [pos.x, pos.y, pos.z], radius)?;
+        Some(BlockPos::new(found[0], found[1], found[2]))
+    }
+
     fn biome(&self, pos: BlockPos) -> Option<i32> {
         Some(crate::spawner::biome_at_in(self.level.cells(), self.level.env(), kb(pos)) as i32)
     }
@@ -3272,6 +3279,8 @@ pub(crate) fn view(p: &Player, now: i64) -> PlayerView {
         hurt_recently: p.last_hurt_by_mob.is_some_and(|(_, t)| now - t <= 100),
         hero_of_the_village: p.effect_amplifier("minecraft:hero_of_the_village"),
         vehicle: p.vehicle,
+        swimming: p.swimming,
+        moved_horizontally: p.speed_h.abs() > 9.999999747378752E-6,
         // (filled in by `shoulder::mark_views` where parrots are about)
         parrot_may_land: false,
         parrot_can_sit: false,

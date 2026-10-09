@@ -755,6 +755,12 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     let mut t = PlayerTicked::default();
     let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
     tick_connection(p, env);
+    // `Entity.computeSpeed` (in `baseTick`): the change of position since the last tick.
+    {
+        let last = p.speed_pos.unwrap_or(p.pos);
+        p.speed_h = ((p.pos[0] - last[0]).powi(2) + (p.pos[2] - last[2]).powi(2)).sqrt();
+        p.speed_pos = Some(p.pos);
+    }
     p.tick_damage(env.game_time);
     let mut ctx = damage_ctx(env, &mut t.spawns, &mut t.deaths);
     // What bad omen asks of the level (only looked up while the player has it).

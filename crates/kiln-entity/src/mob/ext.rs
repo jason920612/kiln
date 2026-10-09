@@ -626,6 +626,10 @@ pub trait Kind: Sync + Send {
         let _ = (m, partner);
         true
     }
+    /// `increaseAirSupply(current)` (4 more a tick, up to the maximum; a dolphin takes a full breath at once).
+    fn increase_air_supply(&self, current: i32, max: i32) -> i32 {
+        (current + 4).min(max)
+    }
     /// `getAmbientSound` when it draws randomness or depends on state: `Some(sound)` replaces the
     /// type's `ambient` sound (`Some(None)`: silent this time, no pitch draws).
     fn ambient_sound(&self, e: &mut Entity, m: &MobData, level: &dyn EntityLevel) -> Option<Option<&'static str>> {
@@ -743,6 +747,10 @@ pub trait Kind: Sync + Send {
         Some("minecraft:entity.generic.swim")
     }
     /// A swim sound that depends on the mob's state (a calf's), when it has one.
+    /// `getSwimSplashSound` and `getSwimSound` when they are not the generic ones (`doWaterSplashEffect`).
+    fn splash_sounds(&self) -> Option<(&'static str, &'static str)> {
+        None
+    }
     fn swim_sound_for(&self, _m: &MobData) -> Option<&'static str> {
         None
     }

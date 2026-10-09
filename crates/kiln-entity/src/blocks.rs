@@ -112,6 +112,7 @@ pub enum Tag {
     EdibleForSheep = 1 << 9,
     Cauldrons = 1 << 10,
     AnimalsSpawnableOn = 1 << 11,
+    BlocksDolphinJump = 1 << 12,
 }
 
 const TAGS: &[(Tag, &str)] = &[
@@ -127,6 +128,7 @@ const TAGS: &[(Tag, &str)] = &[
     (Tag::EdibleForSheep, "minecraft:edible_for_sheep"),
     (Tag::Cauldrons, "minecraft:cauldrons"),
     (Tag::AnimalsSpawnableOn, "minecraft:animals_spawnable_on"),
+    (Tag::BlocksDolphinJump, "minecraft:blocks_dolphin_jump"),
 ];
 
 pub fn has_tag(state: u16, tag: Tag) -> bool {
