@@ -3114,6 +3114,9 @@ pub struct GroupData {
     pub patrol: bool,
     pub event: bool,
     pub structure: bool,
+    /// The mob appears inside a piece of a `#minecraft:cats_spawn_as_black` structure (a cat's variant is
+    /// then the all-black one: `VariantUtils.selectVariantToSpawn`'s priority 1 candidate).
+    pub black_cat: bool,
     /// `ZombieGroupData.canSpawnJockey` of the group the first zombie made (its baby chance is
     /// `zombie_baby`): a baby of such a group may ride a chicken.
     pub zombie_can_jockey: bool,

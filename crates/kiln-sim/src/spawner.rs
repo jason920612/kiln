@@ -651,7 +651,7 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
         let count = 1 + r.next_int_bounded(env.mobs.difficulty as i32 + 1);
         for _ in 0..count {
             let seed = r.next_long();
-            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: false, monsters_disabled: false, camel_space: false };
+            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: false, monsters_disabled: false, camel_space: false, black_cat: false };
             spawns.push(crate::mobs::spawn(MobKind::Phantom, [at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5], Some(0.0), Some(fin)));
         }
     }
@@ -770,7 +770,9 @@ fn spawn_category_for_chunk(
             // `Husk.finalizeSpawn`: a camel husk jockey needs the room for the camel.
             let camel_space = kind == MobKind::Husk
                 && kiln_data::entities::by_name("minecraft:camel_husk").is_some_and(|c| no_collision(level, [fx.floor() + 0.5, y as f64, fz.floor() + 0.5], c.width, c.height));
-            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: true, monsters_disabled, camel_space };
+            // `VariantUtils`: a cat inside a swamp hut is all black.
+            let black_cat = kind == MobKind::Cat && black_cat_structure(level, [fx.floor() as i32, y, fz.floor() as i32]);
+            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: true, monsters_disabled, camel_space, black_cat };
             // The caller counts it (nothing below reads the counts).
             spawns.push((crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(fin)), pc));
             spawned += 1;
@@ -891,8 +893,15 @@ pub(crate) fn monster_light_rules(dim: usize) -> (i32, i32, i32) {
     }
 }
 
+/// Whether `at` is inside a piece of a `#minecraft:cats_spawn_as_black` structure (a swamp hut).
+pub(crate) fn black_cat_structure(level: &RegionLevel, at: [i32; 3]) -> bool {
+    let Some(ids) = crate::world_state::worldgen_tag("worldgen/structure", "minecraft:cats_spawn_as_black") else { return false };
+    let structures = |c: ChunkPos| level.cells.chunk(c).and_then(|ch| ch.structures.as_deref());
+    crate::structure_spawns::piece_at(&structures, at, &ids)
+}
+
 /// `SpawnPlacementTypes.ON_GROUND.isSpawnPositionOk`.
-fn spawn_position_ok(level: &RegionLevel, pos: KBlockPos, kind: MobKind) -> bool {
+pub(crate) fn spawn_position_ok(level: &RegionLevel, pos: KBlockPos, kind: MobKind) -> bool {
     let animal = kind.is_animal();
     let below = level.block(pos.below());
     // `BlockBehaviour.isValidSpawn` answers per type for a few blocks (checked on every block state and entity type):
@@ -911,7 +920,7 @@ fn spawn_position_ok(level: &RegionLevel, pos: KBlockPos, kind: MobKind) -> bool
 /// `SpawnPlacements.checkSpawnRules` for the simulated types: animals need light and a
 /// spawnable block below, monsters darkness (`Monster.isDarkEnoughToSpawn`) and a valid spawn
 /// block below.
-fn check_spawn_rules(level: &RegionLevel, pos: KBlockPos, kind: MobKind, r: &mut LegacyRandom) -> bool {
+pub(crate) fn check_spawn_rules(level: &RegionLevel, pos: KBlockPos, kind: MobKind, r: &mut LegacyRandom) -> bool {
     if let Some(k) = kind.ext() {
         if let Some(ok) = k.check_spawn_rules(&View(level), kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z), r) {
             return ok;

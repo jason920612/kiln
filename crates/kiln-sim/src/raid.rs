@@ -461,7 +461,10 @@ impl Sim {
             }
             self.dims[dim].raids.refresh_views();
         }
+        // (`ServerLevel.customSpawners`: phantoms, patrols, cats, village sieges, the wandering trader.)
         self.tick_patrols();
+        self.tick_cat_spawner();
+        self.tick_village_siege();
         self.tick_wandering_trader();
     }
 

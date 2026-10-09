@@ -274,12 +274,14 @@ pub(crate) struct Finalize {
     /// The box a camel husk jockey would stand in is free (`Husk.finalizeSpawn`'s `noCollision`;
     /// only the natural spawner looks).
     pub camel_space: bool,
+    /// The mob appears inside a piece of a `#cats_spawn_as_black` structure (a swamp hut).
+    pub black_cat: bool,
 }
 
 impl Finalize {
     /// A summoned or egg-spawned mob (not `NATURAL`).
     pub(crate) fn command(ctx: mob::SpawnContext, seed: i64, persistent: bool, monsters_disabled: bool) -> Finalize {
-        Finalize { ctx, seed, persistent, natural: false, monsters_disabled, camel_space: false }
+        Finalize { ctx, seed, persistent, natural: false, monsters_disabled, camel_space: false, black_cat: false }
     }
 }
 

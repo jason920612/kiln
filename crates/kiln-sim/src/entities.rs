@@ -314,7 +314,7 @@ impl Entity {
                 }
                 if let Some(f) = finalize {
                     let mut r = LegacyRandom::new(f.seed);
-                    let mut group = kiln_entity::mob::GroupData { monsters_disabled: f.monsters_disabled, camel_space: f.camel_space, ..Default::default() };
+                    let mut group = kiln_entity::mob::GroupData { monsters_disabled: f.monsters_disabled, camel_space: f.camel_space, black_cat: f.black_cat, ..Default::default() };
                     kiln_entity::mob::finalize_spawn(&mut e, &mut r, &f.ctx, &mut group, f.natural);
                     if !group.companions.is_empty() || group.nearby_chicken {
                         jockeys = Some(Box::new(Jockeys { companions: std::mem::take(&mut group.companions), loaded: false, nearby_chicken: group.nearby_chicken }));

@@ -110,6 +110,7 @@ mod stats;
 mod trading;
 mod leash;
 mod trader;
+mod village;
 mod waypoints;
 mod weather;
 mod world_state;
@@ -1357,6 +1358,9 @@ pub struct Sim {
     post_effects_pending: bool,
     /// `WanderingTraderSpawner` (the overworld's).
     trader: trader::TraderSpawner,
+    /// `CatSpawner.nextTick` and `VillageSiege` (the overworld's).
+    cat_next_tick: i32,
+    siege: village::Siege,
     /// Borders, tick rate, forced chunks and random sequences (the world commands).
     world: world_state::WorldState,
     /// Joins waiting for the chunk they stand in (generated ahead of everything else); the
@@ -1610,6 +1614,8 @@ impl Sim {
             unit_costs: Default::default(),
             post_effects_pending: false,
             trader: Default::default(),
+            cat_next_tick: 0,
+            siege: Default::default(),
             world: world_state::WorldState { pipelines, feature_hosts, ..Default::default() },
             waiting_joins: Vec::new(),
             join_arrival: HashMap::new(),
