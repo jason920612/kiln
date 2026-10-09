@@ -52,6 +52,9 @@ pub(crate) enum BlockEdit {
     Destroy(BlockPos),
     /// `FarmBlock.turnToDirt` (a landing on farmland).
     Dirt(BlockPos),
+    /// Frost walker boots: `ReplaceDisk` of frosted ice around `pos`, centred on the block under the feet
+    /// (`origin`), `radius` blocks out.
+    FrostWalker { origin: BlockPos, radius: i32, pos: [f64; 3] },
 }
 
 impl Player {
@@ -197,6 +200,8 @@ impl Player {
         }
         if on_ground {
             if self.fall_distance > 0.0 {
+                // `LivingEntity.checkFallDamage`: landing is a change of block for the enchantments.
+                self.loc_landed = true;
                 self.fall_on(state, pos, ctx);
             }
             self.reset_fall_distance();

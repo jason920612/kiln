@@ -74,6 +74,7 @@ mod fall;
 mod phantom;
 mod pose;
 mod freeze;
+mod enchant_loc;
 mod entities;
 mod entity_world;
 mod fishing;
@@ -568,6 +569,13 @@ struct Player {
     ticks_frozen: i32,
     is_in_powder_snow: bool,
     frost_speed: Option<f64>,
+    /// `LivingEntity.lastPos`: the block the location-changed enchantments last ran for; whether the
+    /// player landed this tick (`checkFallDamage` runs them too); the soul speed level whose modifiers
+    /// are on; whether the client was told of movement efficiency.
+    loc_last_pos: Option<[i32; 3]>,
+    loc_landed: bool,
+    soul_speed: Option<i32>,
+    soul_sent: bool,
     /// Block changes a player's own tick asks of its region (melted powder snow, trampled
     /// farmland).
     block_edits: Vec<fall::BlockEdit>,
@@ -3542,6 +3550,10 @@ impl Sim {
             ticks_frozen: 0,
             is_in_powder_snow: false,
             frost_speed: None,
+            loc_last_pos: None,
+            loc_landed: false,
+            soul_speed: None,
+            soul_sent: false,
             block_edits: Vec::new(),
             flying: false,
             dead: joining.health <= 0.0,

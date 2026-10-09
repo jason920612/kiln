@@ -55,6 +55,7 @@ pub(crate) const FALL_DAMAGE_MULTIPLIER: Attr =
     Attr { name: "minecraft:fall_damage_multiplier", base: 1.0, min: 0.0, max: 100.0 };
 pub(crate) const GRAVITY: Attr = Attr { name: "minecraft:gravity", base: 0.08, min: -1.0, max: 1.0 };
 pub(crate) const JUMP_STRENGTH: Attr = Attr { name: "minecraft:jump_strength", base: 0.41999998688697815, min: 0.0, max: 32.0 };
+pub(crate) const MOVEMENT_EFFICIENCY: Attr = Attr { name: "minecraft:movement_efficiency", base: 0.0, min: 0.0, max: 1.0 };
 pub(crate) const WATER_MOVEMENT_EFFICIENCY: Attr = Attr { name: "minecraft:water_movement_efficiency", base: 0.0, min: 0.0, max: 1.0 };
 pub(crate) const OXYGEN_BONUS: Attr = Attr { name: "minecraft:oxygen_bonus", base: 0.0, min: 0.0, max: 1024.0 };
 pub(crate) const WAYPOINT_TRANSMIT_RANGE: Attr =
@@ -342,6 +343,15 @@ impl Player {
         {
             mods.push(("minecraft:powder_snow".into(), amount, AttributeOperation::AddValue));
         }
+        // The soul speed boots' transient modifiers (`EnchantmentAttributeEffect`, id `<id>/feet`).
+        if let Some(level) = self.soul_speed {
+            if attr.name == MOVEMENT_SPEED.name {
+                mods.push(("minecraft:enchantment.soul_speed/feet".into(), crate::enchant_loc::soul_speed_amount(level), AttributeOperation::AddValue));
+            }
+            if attr.name == MOVEMENT_EFFICIENCY.name {
+                mods.push(("minecraft:enchantment.soul_speed/feet".into(), 1.0, AttributeOperation::AddValue));
+            }
+        }
         if attr.name == MOVEMENT_SPEED.name && self.sprinting {
             mods.push(("minecraft:sprinting".into(), SPRINT_SPEED, AttributeOperation::AddMultipliedTotal));
         }
@@ -380,11 +390,15 @@ impl Player {
     }
 
     /// `ClientboundUpdateAttributesPacket` for the attributes effects change.
-    pub(crate) fn effect_attributes_packet(&self) -> bytes::Bytes {
+    pub(crate) fn effect_attributes_packet(&mut self) -> bytes::Bytes {
         use kiln_proto::packets::entity::{AttributeModifier, AttributeSnapshot, ModifierOperation};
         type Listed = (i32, f64, Vec<(String, f64, AttributeOperation)>);
+        // (Movement efficiency is told while the soul speed boots hold it, and once more when they let go.)
+        let with_efficiency = self.soul_speed.is_some() || self.soul_sent;
+        self.soul_sent = self.soul_speed.is_some();
         let lists: Vec<Listed> = EFFECT_SYNCED
             .iter()
+            .chain(with_efficiency.then_some(&MOVEMENT_EFFICIENCY))
             .filter_map(|a| Some((kiln_data::builtin_id("minecraft:attribute", a.name)?, self.with_base(*a).base, self.attribute_modifiers(*a))))
             .collect();
         let op = |o: AttributeOperation| match o {
@@ -549,6 +563,9 @@ impl Player {
             // `stopLocationBasedEffects`: the broken item's modifiers go at once.
             if let Some(i) = SLOTS.iter().position(|s| *s == slot) {
                 self.equipment_seen[i] = ItemStack::empty();
+            }
+            if slot == EquipmentSlot::Feet && self.soul_speed.take().is_some() {
+                self.attributes_dirty = true;
             }
         }
         self.inv.times_changed += 1;

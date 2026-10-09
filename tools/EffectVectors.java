@@ -99,6 +99,14 @@ public class EffectVectors {
         List<Object> moves = new ArrayList<>();
         // Attribute base values set at the start: {attribute id, value}.
         List<Object[]> attrs = new ArrayList<>();
+        // wp49: blocks (relative to BASE) whose states are recorded each tick, and whether the boots' wear is.
+        List<int[]> watch = new ArrayList<>();
+        boolean watchBoots;
+
+        Scenario watch(int x, int y, int z) {
+            watch.add(new int[] {x, y, z});
+            return this;
+        }
 
         Scenario(String name) {
             this.name = name;
@@ -150,6 +158,8 @@ public class EffectVectors {
             m.put("main_hand", mainHand);
             m.put("armor", armor);
             m.put("armor_enchantments", armorEnch);
+            m.put("watch", watch);
+            m.put("watch_boots", watchBoots);
             List<Object> bl = new ArrayList<>();
             for (Object[] b : blocks) {
                 bl.add(List.of(BASE[0] + (int) b[0], BASE[1] + (int) b[1], BASE[2] + (int) b[2], b[3]));
@@ -852,6 +862,89 @@ public class EffectVectors {
         }
         hazardScenarios(out);
         survivalScenarios(out);
+        enchantLocationScenarios(out);
+    }
+
+    /** wp49: soul speed and frost walker boots (`location_changed`, `tick`). */
+    static Scenario boots(String name, int ticks, String enchantment, int level) {
+        Scenario s = hazard(name, ticks);
+        s.armor[0] = "minecraft:netherite_boots";
+        s.armorEnch.get(0).put("minecraft:" + enchantment, level);
+        s.watchBoots = true;
+        return s;
+    }
+
+    static void enchantLocationScenarios(List<Scenario> out) {
+        Scenario s;
+        // ---- soul speed: standing on soul sand, soul soil, stone; walking on and off; jumping; the wear of the boots
+        for (int level = 1; level <= 3; level++) {
+            s = boots("ench_soul_speed_" + level + "_stand", 30, "soul_speed", level);
+            s.block(0, -1, 0, "minecraft:soul_sand");
+            out.add(s);
+        }
+        s = boots("ench_soul_speed_soil", 20, "soul_speed", 2);
+        s.block(0, -1, 0, "minecraft:soul_soil");
+        out.add(s);
+        s = boots("ench_soul_speed_stone", 20, "soul_speed", 3);
+        s.block(0, -1, 0, "minecraft:stone");
+        out.add(s);
+        s = boots("ench_soul_speed_walk", 70, "soul_speed", 2);
+        s.block(0, -1, 0, "minecraft:stone").fill(1, -1, 0, 3, -1, 0, "minecraft:soul_sand").fill(4, -1, 0, 8, -1, 0, "minecraft:stone");
+        walkInto(s, 0.25, 3, 60, 2);
+        out.add(s);
+        s = boots("ench_soul_speed_jump", 60, "soul_speed", 3);
+        s.fill(0, -1, 0, 2, -1, 0, "minecraft:soul_sand");
+        s.at(10, op("op", "jump"));
+        s.at(30, op("op", "jump"));
+        walkInto(s, 0.1, 10, 50, 3);
+        out.add(s);
+        s = boots("ench_soul_speed_wear", 160, "soul_speed", 3);
+        s.fill(0, -1, 0, 12, -1, 0, "minecraft:soul_sand");
+        walkInto(s, 0.2, 3, 150, 2);
+        out.add(s);
+        s = boots("ench_soul_speed_flying", 30, "soul_speed", 3);
+        s.gameMode = "creative";
+        s.block(0, -1, 0, "minecraft:soul_sand");
+        out.add(s);
+        // The boots come off and go on again.
+        s = boots("ench_soul_speed_swap", 40, "soul_speed", 3);
+        s.block(0, -1, 0, "minecraft:soul_sand");
+        s.at(10, op("op", "armor", "slot", 0, "item", ""));
+        s.at(20, op("op", "armor", "slot", 0, "item", "minecraft:netherite_boots", "enchant", "minecraft:soul_speed", "level", 2));
+        out.add(s);
+        // ---- frost walker
+        for (int level = 1; level <= 2; level++) {
+            s = boots("ench_frost_walker_" + level + "_pool", 40, "frost_walker", level);
+            s.block(0, -1, 0, "minecraft:stone").fill(1, -2, -5, 7, -2, 5, "minecraft:stone").fill(1, -1, -5, 7, -1, 5, "minecraft:water[level=0]");
+            for (int x = 1; x <= 6; x++) s.watch(x, -1, 0);
+            s.watch(1, -1, 3).watch(3, -1, 2).watch(4, -1, 1);
+            out.add(s);
+        }
+        s = boots("ench_frost_walker_walk", 90, "frost_walker", 1);
+        s.fill(0, -1, 0, 2, -1, 0, "minecraft:stone").fill(3, -2, -3, 14, -2, 3, "minecraft:stone").fill(3, -1, -3, 14, -1, 3, "minecraft:water[level=0]");
+        for (int x = 3; x <= 12; x++) s.watch(x, -1, 0);
+        walkInto(s, 0.2, 3, 80, 2);
+        out.add(s);
+        s = boots("ench_frost_walker_flowing", 30, "frost_walker", 2);
+        s.block(0, -1, 0, "minecraft:stone").fill(1, -2, -2, 4, -2, 2, "minecraft:stone").fill(1, -1, -2, 4, -1, 2, "minecraft:water[level=2]");
+        s.block(2, -1, 0, "minecraft:water[level=0]").block(3, 0, 0, "minecraft:stone").block(2, 0, 1, "minecraft:glass");
+        for (int x = 1; x <= 4; x++) s.watch(x, -1, 0);
+        s.watch(2, -1, 1).watch(2, -1, -1);
+        out.add(s);
+        s = boots("ench_frost_walker_air", 30, "frost_walker", 2);
+        s.onGround = false;
+        s.dy = 6;
+        s.fill(0, -2, -3, 6, -2, 3, "minecraft:stone").fill(0, -1, -3, 6, -1, 3, "minecraft:water[level=0]");
+        for (int x = 0; x <= 4; x++) s.watch(x, -1, 0);
+        out.add(s);
+        // Frost walker keeps the feet off magma, and a campfire.
+        s = boots("ench_frost_walker_magma", 60, "frost_walker", 1);
+        s.block(0, -1, 0, "minecraft:magma_block");
+        out.add(s);
+        s = hazard("ench_no_frost_walker_magma", 60);
+        s.armor[0] = "minecraft:netherite_boots";
+        s.block(0, -1, 0, "minecraft:magma_block");
+        out.add(s);
     }
 
     // ---------------------------------------------------------------- wp44: block hazards
@@ -1549,7 +1642,14 @@ public class EffectVectors {
                 System.err.println("DBG   after tick " + t + " pos " + p.position() + " final " + get(p, "finalMovementsThisTick") + " frozen " + p.getTicksFrozen());
             }
             if (shadowPlayer != null) p.connection.handleClientTickEnd(ServerboundClientTickEndPacket.INSTANCE);
-            ticks.add(state(p));
+            Map<String, Object> st = state(p);
+            if (!s.watch.isEmpty()) {
+                List<Object> seen = new ArrayList<>();
+                for (int[] w : s.watch) seen.add(blockString(level.getBlockState(new net.minecraft.core.BlockPos(BASE[0] + w[0], BASE[1] + w[1], BASE[2] + w[2]))));
+                st.put("blocks", seen);
+            }
+            if (s.watchBoots) st.put("boots_damage", p.getItemBySlot(EquipmentSlot.FEET).getDamageValue());
+            ticks.add(st);
         }
         if (shadowPlayer != null) server.getPlayerList().remove(shadowPlayer);
         shadow = null;
@@ -1593,6 +1693,13 @@ public class EffectVectors {
                 }
             }
             case "gamerule" -> command(server, "gamerule " + a.get("name") + " " + a.get("value"));
+            // wp49: the boots change.
+            case "armor" -> {
+                String item = (String) a.get("item");
+                Map<String, Integer> ench = new LinkedHashMap<>();
+                if (a.containsKey("enchant")) ench.put((String) a.get("enchant"), (Integer) a.get("level"));
+                p.setItemSlot(EquipmentSlot.FEET, item.isEmpty() ? ItemStack.EMPTY : stack(server, item, ench));
+            }
             case "velocity" -> {
                 if (shadow != null) {
                     shadow.setDeltaMovement(((Number) a.get("x")).doubleValue(), ((Number) a.get("y")).doubleValue(),
@@ -1641,6 +1748,18 @@ public class EffectVectors {
         }
     }
 
+    static String blockString(net.minecraft.world.level.block.state.BlockState s) {
+        String name = BuiltInRegistries.BLOCK.getKey(s.getBlock()).toString();
+        List<String> props = new ArrayList<>();
+        for (net.minecraft.world.level.block.state.properties.Property<?> p : s.getProperties()) props.add(p.getName() + "=" + propValue(s, p));
+        props.sort(null);
+        return props.isEmpty() ? name : name + "[" + String.join(",", props) + "]";
+    }
+
+    static <T extends Comparable<T>> String propValue(net.minecraft.world.level.block.state.BlockState s, net.minecraft.world.level.block.state.properties.Property<T> p) {
+        return p.getName(s.getValue(p));
+    }
+
     static Object effectJson(MobEffectInstance e) throws Exception {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", e.getEffect().unwrapKey().orElseThrow().identifier().toString());
@@ -1677,7 +1796,7 @@ public class EffectVectors {
         for (MobEffectInstance e : effects) ej.add(effectJson(e));
         m.put("effects", ej);
         Map<String, Object> attrs = new LinkedHashMap<>();
-        for (Holder<Attribute> a : List.of(Attributes.MOVEMENT_SPEED, Attributes.ATTACK_DAMAGE, Attributes.ATTACK_SPEED,
+        for (Holder<Attribute> a : List.of(Attributes.MOVEMENT_SPEED, Attributes.MOVEMENT_EFFICIENCY, Attributes.ATTACK_DAMAGE, Attributes.ATTACK_SPEED,
                 Attributes.MAX_HEALTH, Attributes.MAX_ABSORPTION, Attributes.LUCK, Attributes.SAFE_FALL_DISTANCE,
                 Attributes.OXYGEN_BONUS, Attributes.BURNING_TIME, Attributes.WAYPOINT_TRANSMIT_RANGE)) {
             attrs.put(a.unwrapKey().orElseThrow().identifier().toString(), p.getAttributeValue(a));

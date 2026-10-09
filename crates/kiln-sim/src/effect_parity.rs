@@ -307,6 +307,17 @@ fn run_scenario(line: &Value) -> Vec<String> {
                 "use" => p.use_item(false, &block, &mut ctx),
                 // (`jump` is the shadow client's: its moves arrive as packets.)
                 "jump" | "velocity" => {}
+                // wp49: the boots change.
+                "armor" => {
+                    let mut s = a["item"].as_str().filter(|i| !i.is_empty()).map(stack).unwrap_or_default();
+                    if let Some(e) = a["enchant"].as_str() {
+                        let mut m = serde_json::Map::new();
+                        m.insert(e.to_owned(), a["level"].clone());
+                        enchant(&mut s, &Value::Object(m));
+                    }
+                    p.inv.equipment[0] = s;
+                    p.inv.times_changed += 1;
+                }
                 "attribute" => set_attributes(p, &serde_json::json!([[a["id"], a["value"]]])),
                 "sneak" => p.set_shift_key(a["on"].as_bool().unwrap()),
                 "gamerule" => inbox.push(ToSim::Console(format!("gamerule {} {}", a["name"].as_str().unwrap(), a["value"]))),
@@ -370,6 +381,7 @@ fn run_scenario(line: &Value) -> Vec<String> {
         for (name, value) in want["attributes"].as_object().unwrap() {
             let attr = [
                 crate::combat::MOVEMENT_SPEED,
+                crate::combat::MOVEMENT_EFFICIENCY,
                 crate::combat::ATTACK_DAMAGE,
                 crate::combat::ATTACK_SPEED,
                 crate::combat::MAX_HEALTH,
@@ -386,6 +398,17 @@ fn run_scenario(line: &Value) -> Vec<String> {
             eq(name, format!("{:?}", p.attribute(attr)), format!("{:?}", value.as_f64().unwrap()));
         }
         eq("destroy_speed", format!("{speed:?}"), format!("{:?}", f32_of(&want["destroy_speed"])));
+        // wp49: the watched blocks and the boots' wear.
+        if let Some(watched) = want["blocks"].as_array() {
+            for (w, state) in line["watch"].as_array().unwrap().iter().zip(watched) {
+                let at = |k: usize| w[k].as_i64().unwrap() as i32;
+                let got = sim.block_at(base[0] + at(0), base[1] + at(1), base[2] + at(2)).map(kiln_blocks::state::state_string).unwrap_or_default();
+                eq(&format!("block {w}"), got, state.as_str().unwrap().to_owned());
+            }
+        }
+        if let Some(wear) = want["boots_damage"].as_i64() {
+            eq("boots_damage", p.inv.equipment[0].damage().to_string(), wear.to_string());
+        }
         if let Some(fz) = want["frozen"].as_i64() {
             eq("frozen", p.ticks_frozen.to_string(), fz.to_string());
         }

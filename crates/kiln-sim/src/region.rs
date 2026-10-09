@@ -573,6 +573,9 @@ impl RegionWork<'_> {
                             let pos = BlockPos::new(pos.x, pos.y, pos.z);
                             kiln_blocks::destroy_block(&mut level, pos, false, 512);
                         }
+                        crate::fall::BlockEdit::FrostWalker { origin, radius, pos } => {
+                            crate::enchant_loc::frost_walker_disk(&mut level, origin, radius, pos);
+                        }
                         crate::fall::BlockEdit::Dirt(pos) => {
                             let pos = BlockPos::new(pos.x, pos.y, pos.z);
                             // `FarmBlock.turnToDirt`.
@@ -789,6 +792,8 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
         p.omen_raid_full = crate::raid::raid_at_view(&env.blocks.raids, bp).is_some_and(|r| r.omen_level >= 5);
     }
     p.base_tick(&block, env.min_y, &env.border, &mut ctx);
+    // `LivingEntity.baseTick`: a new block position runs the location-changed enchantments.
+    p.tick_location_changed(&block);
     p.tick_peaceful_regeneration(env.natural_regen, ctx.rules.difficulty);
     p.tick_fall_resets(&block);
     p.tick_glide();
@@ -806,11 +811,18 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     }
     p.tick_using(&block, &mut ctx);
     p.tick_cooldowns();
+    // (`ServerPlayer`: new boots start their location effects at once, old ones stop.)
+    let boots_before = p.equipment_seen[2].clone();
     p.tick_combat();
+    if p.equipment_seen[2] != boots_before {
+        p.boots_changed(&block);
+    }
     // The server's body moves on its own (gravity, drag, a ladder's grip) and the blocks it
     // passes through take effect, then the connection puts the position back (`doTick`).
     let snap = p.pos;
     p.phantom_travel(cells, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
+    // (`checkFallDamage` in the move: a landing runs them as well.)
+    p.landed_location_changed(&block);
     let (_, h, _) = p.dimensions();
     let in_rain = crate::weather::in_rain(cells, &env.blocks, p.pos, p.pos[1] + h as f64);
     p.block_effects(&block, env.dim, in_rain, &mut ctx);
