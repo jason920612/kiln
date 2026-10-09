@@ -484,6 +484,18 @@ interface events {
     raise: func(name: string, payload: list<u8>, actor: option<player-handle>) -> decision;
 }
 
+/// `jobs`: work for the plugin's async component (`tasks.wasm`, the `async-tasks` world in
+/// `async-tasks.wit`). Linked for plugins whose manifest names a `tasks` component.
+interface jobs {
+    use types.{ticket};
+
+    /// Hands the component a job. `id` is the plugin's own number for it (it comes back with a
+    /// cancellation notice if a reload interrupts the job). The outcome arrives in `on-results`
+    /// under the returned ticket: `applied` true with the result bytes in `value`, or false with
+    /// the failure text.
+    submit: func(id: u64, kind: string, payload: list<u8>) -> ticket;
+}
+
 /// Logging to the server console (always linked).
 interface log {
     info: func(msg: string);
@@ -548,6 +560,7 @@ world global-plugin {
     import entities;
     import blocks;
     import events;
+    import jobs;
     import log;
     export global-hooks;
 }
@@ -565,6 +578,7 @@ world region-plugin {
     import entities;
     import blocks;
     import events;
+    import jobs;
     import log;
     export region-hooks;
 }

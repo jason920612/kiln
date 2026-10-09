@@ -51,6 +51,14 @@ pub(crate) struct NewTask {
     pub order: (u32, u32),
 }
 
+/// A job a call handed to the plugin's tasks component (committed with the call).
+pub(crate) struct NewJob {
+    pub ticket: u64,
+    pub id: u64,
+    pub kind: String,
+    pub payload: Vec<u8>,
+}
+
 /// Handle layout: generation (8 bits), call serial (40 bits), kind (2 bits), index (14 bits).
 const KIND_PLAYER: u64 = 0;
 const KIND_CELL: u64 = 1;
@@ -81,6 +89,7 @@ pub(crate) struct Frame {
     pub effects: Vec<(u64, EffectKind)>,
     pub tasks: Vec<NewTask>,
     pub cancels: Vec<u64>,
+    pub jobs: Vec<NewJob>,
     /// The message for the acting player if the handler denies (`event.deny-message`).
     pub deny_msg: Option<Vec<Span>>,
     /// Deterministic id block of the call (reserved on first use): tickets, task handles and
@@ -151,7 +160,7 @@ impl Frame {
     }
 
     pub fn is_clean(&self) -> bool {
-        self.writes.is_empty() && self.ops.is_empty() && self.effects.is_empty() && self.tasks.is_empty() && self.cancels.is_empty()
+        self.writes.is_empty() && self.ops.is_empty() && self.effects.is_empty() && self.tasks.is_empty() && self.cancels.is_empty() && self.jobs.is_empty()
     }
 
     /// Forgets the last call (keeping the capacity) and starts the next one.
@@ -169,6 +178,7 @@ impl Frame {
         self.effects.clear();
         self.tasks.clear();
         self.cancels.clear();
+        self.jobs.clear();
         self.deny_msg = None;
         self.seq = None;
         self.n = 0;
@@ -733,6 +743,20 @@ impl kiln::api::events::Host for HostState {
     }
 }
 
+impl kiln::api::jobs::Host for HostState {
+    fn submit(&mut self, id: u64, kind: String, payload: Vec<u8>) -> wasmtime::Result<u64> {
+        if self.frame()?.jobs.len() >= 64 {
+            wasmtime::bail!("too many jobs in one call");
+        }
+        if kind.len() > 64 || payload.len() > 1 << 20 {
+            wasmtime::bail!("a job kind is at most 64 bytes, a payload 1 MiB");
+        }
+        let (ticket, _) = self.new_id();
+        self.frame.jobs.push(NewJob { ticket, id, kind, payload });
+        Ok(ticket)
+    }
+}
+
 impl kiln::api::log::Host for HostState {
     fn info(&mut self, msg: String) -> wasmtime::Result<()> {
         tracing::info!("[{}] {msg}", self.id);
@@ -808,6 +832,9 @@ pub(crate) fn linker(engine: &wasmtime::Engine, manifest: &Manifest) -> anyhow::
     }
     if manifest.has(Capability::EventsRaise) {
         kiln::api::events::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
+    }
+    if manifest.tasks.is_some() {
+        kiln::api::jobs::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
     }
     Ok(linker)
 }

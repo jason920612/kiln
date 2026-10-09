@@ -242,6 +242,10 @@ pub struct Manifest {
     pub version: String,
     /// The API major version the plugin was written for.
     pub api: u32,
+    /// The file of the plugin's `async-tasks` component next to `plugin.wasm`, if it has one.
+    pub tasks: Option<String>,
+    /// The bytes of that component (filled in by whoever loads the plugin; not part of the toml).
+    pub tasks_wasm: Option<Vec<u8>>,
     pub capabilities: Vec<Capability>,
     pub subscriptions: Vec<Subscription>,
     /// The `[config]` table, values as strings.
@@ -256,6 +260,8 @@ struct Raw {
     version: String,
     #[serde(default)]
     api: Option<String>,
+    #[serde(default)]
+    tasks: Option<String>,
     #[serde(default)]
     capabilities: Vec<String>,
     #[serde(default)]
@@ -373,7 +379,14 @@ impl Manifest {
                 (k, v)
             })
             .collect();
-        Ok(Manifest { id: raw.id, version: raw.version, api, capabilities, subscriptions, config })
+        let needs_tasks = capabilities.iter().any(|c| matches!(c, Capability::Http(_) | Capability::Timers | Capability::Storage));
+        if raw.tasks.is_none() && needs_tasks {
+            bail!("the `http:<host>`, `timers` and `storage` capabilities belong to the async-tasks component: name it with `tasks = \"tasks.wasm\"`");
+        }
+        if raw.tasks.as_ref().is_some_and(|t| t.is_empty() || t.contains(['/', '\\']) || t.starts_with('.')) {
+            bail!("`tasks` is the name of a file next to plugin.toml");
+        }
+        Ok(Manifest { id: raw.id, version: raw.version, api, tasks: raw.tasks, tasks_wasm: None, capabilities, subscriptions, config })
     }
 
     pub fn has(&self, cap: Capability) -> bool {
@@ -464,7 +477,10 @@ mod tests {
         assert!(Manifest::parse("id = \"x\"\napi = \"1.4\"").is_ok());
         assert!(Manifest::parse("id = \"x\"\napi = \"2\"").is_err());
         assert!(Manifest::parse("id = \"x\"\napi = \"soon\"").is_err());
-        let m = Manifest::parse("id = \"x\"\ncapabilities = [\"http:API.example.com\", \"timers\"]").unwrap();
+        let m = Manifest::parse("id = \"x\"\ntasks = \"tasks.wasm\"\ncapabilities = [\"http:API.example.com\", \"timers\"]").unwrap();
+        assert_eq!(m.tasks.as_deref(), Some("tasks.wasm"));
+        assert!(Manifest::parse("id = \"x\"\ncapabilities = [\"timers\"]").is_err(), "the capabilities belong to the component");
+        assert!(Manifest::parse("id = \"x\"\ntasks = \"../x.wasm\"").is_err());
         assert_eq!(m.http_hosts().collect::<Vec<_>>(), ["api.example.com"]);
         assert!(Manifest::parse("id = \"x\"\ncapabilities = [\"http:\"]").is_err());
     }

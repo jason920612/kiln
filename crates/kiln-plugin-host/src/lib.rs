@@ -50,6 +50,7 @@
 //!
 //! Not here: the WASI 0.3 `async-tasks` world.
 
+mod async_tasks;
 mod cache;
 mod effects;
 pub mod examples;
@@ -349,6 +350,16 @@ struct Pending {
     op: wit::AtomicOp,
 }
 
+/// A job handed to a plugin's tasks component.
+struct Inflight {
+    plugin: usize,
+    generation: u32,
+    /// The plugin's own number for it.
+    id: u64,
+    /// The player whose call submitted it (results go back to them).
+    source: u128,
+}
+
 /// An operation's outcome waiting for delivery.
 struct Delivery {
     plugin: usize,
@@ -414,6 +425,10 @@ pub(crate) struct Shared {
     outbox: Mutex<Vec<(u64, u128, Effect)>>,
     /// The players online at the start of the tick (`event.online`).
     pub(crate) online: Mutex<Arc<Vec<OnlinePlayer>>>,
+    /// The async-tasks worker (started when some plugin has a tasks component).
+    async_worker: std::sync::OnceLock<Result<async_tasks::AsyncTasks_, String>>,
+    /// Jobs handed to the worker and not finished: ticket to what they are.
+    jobs_inflight: Mutex<HashMap<u64, Inflight>>,
     health: Vec<Health>,
     /// Plugins subscribed to op-results (by index; updated by reloads).
     wants_results: Vec<AtomicBool>,
@@ -519,6 +534,9 @@ impl Shared {
             }
             t.cancels.extend(f.cancels.drain(..).map(|h| (plugin, h)));
         }
+        for j in f.jobs.drain(..) {
+            self.submit_job(plugin, generation, f.source, j);
+        }
         if !f.effects.is_empty() {
             let mut out = self.outbox.lock().unwrap();
             let source = f.source;
@@ -526,6 +544,76 @@ impl Shared {
                 (tick, source, Effect { plugin, plugin_id: id.clone(), generation, source, ticket, kind })
             }));
         }
+    }
+
+    /// The async-tasks worker, started on first use.
+    pub(crate) fn tasks_worker(&self) -> Option<&async_tasks::AsyncTasks_> {
+        self.async_worker.get_or_init(|| async_tasks::AsyncTasks_::start().map_err(|e| format!("{e:#}"))).as_ref().ok()
+    }
+
+    /// The engine to compile a manifest's tasks component for (the worker starts if it must);
+    /// strict mode has no tasks, so the component is dropped from the manifest.
+    fn tasks_engine_for(&self, manifest: &mut Manifest) -> Option<Engine> {
+        if self.strict {
+            manifest.tasks_wasm = None;
+            return None;
+        }
+        manifest.tasks_wasm.as_ref()?;
+        self.tasks_worker().map(|w| w.engine.clone())
+    }
+
+    /// The worker if it is running (no start).
+    fn started_worker(&self) -> Option<&async_tasks::AsyncTasks_> {
+        self.async_worker.get().and_then(|r| r.as_ref().ok())
+    }
+
+    /// A job a call committed goes to the plugin's tasks component; its outcome is an
+    /// `op-result` later. Without a worker or in strict mode it fails at once.
+    fn submit_job(&self, plugin: usize, generation: u32, source: u128, j: host::NewJob) {
+        let fail = |why: &str| {
+            if self.wants_results[plugin].load(Ordering::Relaxed) {
+                let result = wit::OpResult { ticket: j.ticket, applied: false, value: Some(wit::GlobalValue::Bytes(why.as_bytes().to_vec())) };
+                self.deliveries.lock().unwrap().push(Delivery { plugin, generation, source, result });
+            }
+        };
+        if self.strict {
+            return fail("async tasks are not available in strict mode");
+        }
+        match self.started_worker() {
+            Some(w) => {
+                self.jobs_inflight.lock().unwrap().insert(j.ticket, Inflight { plugin, generation, id: j.id, source });
+                w.submit(async_tasks::JobIn { plugin, generation, ticket: j.ticket, id: j.id, kind: j.kind, payload: j.payload });
+            }
+            None => fail("the plugin has no tasks component running"),
+        }
+    }
+
+    /// B0: jobs the worker finished become results, in ticket order.
+    fn collect_jobs(&self, tick: u64) {
+        let Some(w) = self.started_worker() else { return };
+        w.set_tick(tick);
+        let mut done = w.take_done();
+        if done.is_empty() {
+            return;
+        }
+        done.sort_by_key(|d| d.ticket);
+        let mut inflight = self.jobs_inflight.lock().unwrap();
+        let mut out = Vec::new();
+        for d in done {
+            let Some(job) = inflight.remove(&d.ticket) else { continue };
+            // A job of a generation that was reloaded away was reported as cancelled instead.
+            if job.generation != d.generation || !self.wants_results[job.plugin].load(Ordering::Relaxed) {
+                continue;
+            }
+            let (applied, bytes) = match d.result {
+                Ok(b) => (true, b),
+                Err(why) => (false, why.into_bytes()),
+            };
+            let result = wit::OpResult { ticket: d.ticket, applied, value: Some(wit::GlobalValue::Bytes(bytes)) };
+            out.push(Delivery { plugin: job.plugin, generation: job.generation, source: job.source, result });
+        }
+        drop(inflight);
+        self.deliveries.lock().unwrap().extend(out);
     }
 
     fn demoted(&self, plugin: usize) -> bool {
@@ -745,6 +833,8 @@ struct PluginDef {
     filters: Vec<Option<Compiled>>,
     /// May raise events to other plugins (`events.raise`).
     raises: bool,
+    /// The compiled `async-tasks` component and what it is granted.
+    tasks: Option<(wasmtime::component::Component, async_tasks::TaskGrants)>,
 }
 
 impl PluginDef {
@@ -2027,6 +2117,7 @@ fn prepare(
     registries: &Registries,
     spawn: [i32; 3],
     stats: Option<&Stats>,
+    tasks_engine: Option<&Engine>,
 ) -> Result<PluginDef> {
     let (component, hit) = cache::component(engine, wasm, cache_dir)?;
     if hit && let Some(s) = stats {
@@ -2054,11 +2145,30 @@ fn prepare(
         })
         .collect();
     let raises = manifest.has(Capability::EventsRaise);
-    Ok(PluginDef { id: manifest.id.as_str().into(), manifest, pre, global, region, data_dir, source, init, generation, filters, raises })
+    // The async-tasks component compiles for its own engine.
+    let tasks = match (&manifest.tasks_wasm, tasks_engine) {
+        (Some(bytes), Some(e)) => {
+            let (c, _) = cache::component(e, bytes, cache_dir).context("the tasks component")?;
+            let grants = async_tasks::TaskGrants {
+                id: manifest.id.as_str().into(),
+                hosts: manifest.http_hosts().map(str::to_owned).collect(),
+                timers: manifest.has(Capability::Timers),
+                storage: manifest.has(Capability::Storage),
+                data_dir: data_root.map(|r| r.join("tasks").join(&manifest.id)),
+            };
+            Some((c, grants))
+        }
+        (Some(_), None) => bail!("the async-tasks engine could not be started"),
+        _ => None,
+    };
+    Ok(PluginDef { id: manifest.id.as_str().into(), manifest, pre, global, region, data_dir, source, init, generation, filters, raises, tasks })
 }
 
 fn read_plugin(dir: &Path) -> Result<(Manifest, Vec<u8>)> {
-    let manifest = Manifest::parse(&std::fs::read_to_string(dir.join("plugin.toml"))?)?;
+    let mut manifest = Manifest::parse(&std::fs::read_to_string(dir.join("plugin.toml"))?)?;
+    if let Some(name) = &manifest.tasks {
+        manifest.tasks_wasm = Some(std::fs::read(dir.join(name)).with_context(|| name.clone())?);
+    }
     let wasm = std::fs::read(dir.join("plugin.wasm")).context("plugin.wasm")?;
     Ok((manifest, wasm))
 }
@@ -2092,19 +2202,25 @@ impl PluginRuntime {
         let engine = engine(&cfg)?;
         let mut defs: Vec<Arc<PluginDef>> = Vec::new();
         let stats = Stats::default();
-        for (manifest, wasm, source) in plugins {
+        let strict = cfg.mode == ExecMode::Strict;
+        // The async-tasks worker starts when some plugin ships a tasks component (strict mode has
+        // none: its jobs fail at once, since their outcomes depend on wall-clock time).
+        let worker = (!strict && plugins.iter().any(|(m, _, _)| m.tasks_wasm.is_some())).then(async_tasks::AsyncTasks_::start).transpose()?;
+        for (mut manifest, wasm, source) in plugins {
+            if strict {
+                manifest.tasks_wasm = None;
+            }
             if defs.iter().any(|d| d.manifest.id == manifest.id) {
                 warn!("skipping plugin {}: duplicate id", manifest.id);
                 continue;
             }
             let id = manifest.id.clone();
-            let r = prepare(&engine, manifest, &wasm, source, 0, cfg.cache_dir.as_deref(), cfg.data_dir.as_deref(), &cfg.registries, cfg.spawn, Some(&stats));
+            let r = prepare(&engine, manifest, &wasm, source, 0, cfg.cache_dir.as_deref(), cfg.data_dir.as_deref(), &cfg.registries, cfg.spawn, Some(&stats), worker.as_ref().map(|w| &w.engine));
             match r {
                 Ok(d) => defs.push(Arc::new(d)),
                 Err(e) => warn!("skipping plugin {id}: {e:#}"),
             }
         }
-        let strict = cfg.mode == ExecMode::Strict;
         let set_cfg = if strict {
             SetCfg {
                 call: Budget::Fuel(cfg.call_fuel),
@@ -2150,6 +2266,8 @@ impl PluginRuntime {
             deliveries: Mutex::new(Vec::new()),
             tasks: Mutex::new(Tasks::default()),
             outbox: Mutex::new(Vec::new()),
+            async_worker: worker.map_or_else(std::sync::OnceLock::new, |w| std::sync::OnceLock::from(Ok(w))),
+            jobs_inflight: Mutex::new(HashMap::new()),
             online: Mutex::new(Arc::new(Vec::new())),
             health: defs.iter().map(|_| Health { strikes: Mutex::new(VecDeque::new()), demoted: AtomicBool::new(false) }).collect(),
             wants_results: defs.iter().map(|d| AtomicBool::new(d.manifest.subscription(EventKind::OpResults).is_some())).collect(),
@@ -2175,6 +2293,10 @@ impl PluginRuntime {
             _ticker: ticker,
         };
         for i in 0..rt.set.plugins.len() {
+            // The tasks component first, so that jobs submitted while the plugin starts find it.
+            if let (Some((c, g)), Some(w)) = (&rt.set.plugins[i].tasks, rt.shared.started_worker()) {
+                w.load(i, 0, c.clone(), g.clone());
+            }
             let inst = rt.start_global(i, None);
             rt.globals.push(inst);
             let def = &rt.set.plugins[i];
@@ -2371,6 +2493,7 @@ impl PluginRuntime {
         if changed {
             *self.shared.snapshot.lock().unwrap() = Arc::new(self.shared.globals.lock().unwrap().clone());
         }
+        self.shared.collect_jobs(tick);
         self.deliver_results(world);
         self.run_tasks(world, tick);
     }
@@ -2666,7 +2789,7 @@ impl PluginRuntime {
     pub fn request_reload(&mut self, id: &str, requester: Option<u128>) -> Result<()> {
         let i = self.plugin_index(id).with_context(|| format!("no plugin `{id}`"))?;
         let dir = self.set.plugins[i].source.clone().with_context(|| format!("plugin `{id}` was not loaded from a directory"))?;
-        let (manifest, wasm) = read_plugin(&dir)?;
+        let (mut manifest, wasm) = read_plugin(&dir)?;
         if manifest.id != id {
             bail!("{} now declares id `{}`", dir.display(), manifest.id);
         }
@@ -2676,7 +2799,8 @@ impl PluginRuntime {
         let (registries, spawn, staged) = (self.shared.registries.clone(), self.cfg.spawn, self.staged.clone());
         let shared = self.shared.clone();
         std::thread::Builder::new().name(format!("kiln-plugin-compile-{id}")).spawn(move || {
-            let def = prepare(&engine, manifest, &wasm, Some(dir), generation, cache.as_deref(), data.as_deref(), &registries, spawn, Some(&shared.stats));
+            let tasks_engine = shared.tasks_engine_for(&mut manifest);
+            let def = prepare(&engine, manifest, &wasm, Some(dir), generation, cache.as_deref(), data.as_deref(), &registries, spawn, Some(&shared.stats), tasks_engine.as_ref());
             staged.lock().unwrap().push(Staged { plugin: i, def, requester });
         })?;
         Ok(())
@@ -2684,12 +2808,13 @@ impl PluginRuntime {
 
     /// Hot reload now (compiles on this thread, then swaps as B0 would): for tests and for
     /// embedders that call it at a serial point.
-    pub fn reload(&mut self, id: &str, manifest: Manifest, wasm: &[u8]) -> Result<Reloaded> {
+    pub fn reload(&mut self, id: &str, mut manifest: Manifest, wasm: &[u8]) -> Result<Reloaded> {
         let i = self.plugin_index(id).with_context(|| format!("no plugin `{id}`"))?;
         if manifest.id != id {
             bail!("the new manifest declares id `{}`", manifest.id);
         }
         let source = self.set.plugins[i].source.clone();
+        let tasks_engine = self.shared.tasks_engine_for(&mut manifest);
         let def = prepare(
             &self.set.engine,
             manifest,
@@ -2701,6 +2826,7 @@ impl PluginRuntime {
             &self.shared.registries,
             self.cfg.spawn,
             Some(&self.shared.stats),
+            tasks_engine.as_ref(),
         )?;
         self.swap(i, def)
     }
@@ -2754,6 +2880,19 @@ impl PluginRuntime {
                 });
             }
         }
+        // Jobs the old tasks component was running die with it: reported like cancelled tasks.
+        if let Some(w) = self.shared.started_worker() {
+            w.unload(i);
+        }
+        {
+            let mut inflight = self.shared.jobs_inflight.lock().unwrap();
+            let mut mine: Vec<(u64, u64)> = inflight.iter().filter(|(_, j)| j.plugin == i).map(|(t, j)| (*t, j.id)).collect();
+            mine.sort_unstable();
+            for (ticket, id) in mine {
+                inflight.remove(&ticket);
+                cancelled.push(wit::CancelledTask { id, target: wit::TaskTarget::Global, remaining_ticks: 0, reason: wit::CancelReason::Reload });
+            }
+        }
         // The swap: one new set for every region.
         let mut plugins = self.set.plugins.clone();
         plugins[i] = Arc::new(def);
@@ -2765,6 +2904,9 @@ impl PluginRuntime {
             h.demoted.store(false, Ordering::Relaxed);
         }
         let before = self.commands.clone();
+        if let (Some((c, g)), Some(w)) = (&self.set.plugins[i].tasks, self.shared.tasks_worker()) {
+            w.load(i, generation, c.clone(), g.clone());
+        }
         self.globals[i] = None;
         self.globals[i] = self.start_global(i, blob.clone());
         let mut keys: Vec<(u32, u64)> = self.regions.keys().copied().collect();
