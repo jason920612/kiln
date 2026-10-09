@@ -234,6 +234,9 @@ public class MobVectors {
         /// wp44 spawners: mob spawner blocks (position -> the block entity's NBT as SNBT) whose
         /// `BaseSpawner.serverTick` runs every tick (after the entities), and the `spawner_blocks_work` rule.
         final Map<BlockPos, String> spawners = new LinkedHashMap<>();
+        /// wp49 copper golems: chests (position -> the `Items` list as SNBT) whose block entities hold items; their openers and a
+        /// signature of their slots are traced every tick.
+        final Map<BlockPos, String> chests = new LinkedHashMap<>();
         boolean spawnerBlocksWork = true;
         /// wp32 parrots: the level's random is compared at the end (what a scenario draws from it, imitations).
         boolean checkLevelRandom;
@@ -576,6 +579,25 @@ public class MobVectors {
                     }
         }
         if (!s.spawnerBlocksWork) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawner_blocks_work false");
+        // wp49 copper golems: the chests' block entities get their items (`loadCustomOnly`).
+        StringBuilder chestsJson = new StringBuilder();
+        List<net.minecraft.world.level.block.entity.ChestBlockEntity> chestBes = new ArrayList<>();
+        for (var ch : s.chests.entrySet()) {
+            var be = (net.minecraft.world.level.block.entity.ChestBlockEntity) level.getBlockEntity(ch.getKey());
+            net.minecraft.nbt.CompoundTag tag = net.minecraft.nbt.TagParser.parseCompoundFully("{Items:" + ch.getValue() + "}");
+            be.loadCustomOnly(net.minecraft.world.level.storage.TagValueInput.create(net.minecraft.util.ProblemReporter.DISCARDING, level.registryAccess(), tag));
+            chestBes.add(be);
+            StringBuilder items = new StringBuilder();
+            for (int i = 0; i < be.getContainerSize(); i++) {
+                ItemStack st = be.getItem(i);
+                if (st.isEmpty()) continue;
+                if (items.length() > 0) items.append(',');
+                items.append(String.format(Locale.ROOT, "{\"slot\":%d,\"id\":\"%s\",\"count\":%d}", i, BuiltInRegistries.ITEM.getKey(st.getItem()), st.getCount()));
+            }
+            if (chestsJson.length() > 0) chestsJson.append(',');
+            chestsJson.append(String.format(Locale.ROOT, "{\"pos\":[%d,%d,%d],\"items\":[%s]}", ch.getKey().getX(), ch.getKey().getY(), ch.getKey().getZ(), items));
+        }
+        StringBuilder chestTrace = new StringBuilder();
         level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + s.dayTime);
         if (s.noMobDrops) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:mob_drops false");
         level.updateSkyBrightness();
@@ -678,6 +700,9 @@ public class MobVectors {
                 }
                 beeJson = "[" + get(m, "remainingCooldownBeforeLocatingNewFlower") + "," + vh + "," + vf + "]";
             }
+            // wp49 copper golems: the constructor draws the first transport cooldown from the mob's unseeded random: recorded.
+            String copperJson = m instanceof net.minecraft.world.entity.animal.golem.CopperGolem cg
+                    ? "[" + cg.getBrain().getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.TRANSPORT_ITEMS_COOLDOWN_TICKS).orElse(-1) + "]" : "null";
             int eggTime = m instanceof net.minecraft.world.entity.animal.chicken.Chicken c ? (Integer) get(c, "eggTime") : 0;
             if (!level.addFreshEntity(m)) throw new IllegalStateException("could not add " + spec.type);
             if (spec.heart != null) {
@@ -690,11 +715,11 @@ public class MobVectors {
             tracked.add(m);
             if (specs.length() > 0) specs.append(',');
             specs.append(String.format(Locale.ROOT,
-                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s,\"heart\":%s,\"vehicle\":%d,\"bee\":%s}",
+                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s,\"heart\":%s,\"vehicle\":%d,\"bee\":%s,\"copper\":%s}",
                     spec.type, m.getId(), spec.seed, d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw),
                     spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\"", eggTime,
                     spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove, nbtJson, effectsJson(spec.effects),
-                    spec.heart == null ? "null" : "[" + spec.heart.getX() + "," + spec.heart.getY() + "," + spec.heart.getZ() + "]", spec.vehicle, beeJson));
+                    spec.heart == null ? "null" : "[" + spec.heart.getX() + "," + spec.heart.getY() + "," + spec.heart.getZ() + "]", spec.vehicle, beeJson, copperJson));
         }
         // wp29: riders sit on their mounts before the first tick.
         for (int i = 0; i < s.mobs.size(); i++) {
@@ -857,6 +882,20 @@ public class MobVectors {
                         .append(',').append(d(ov.x)).append(',').append(d(ov.y)).append(',').append(d(ov.z)).append(',').append(oe.isRemoved() ? 1 : 0).append(']');
             }
             othersTrace.append(']');
+            // wp49 copper golems: per chest its openers and a signature of its slots, then what each mob holds.
+            if (!chestBes.isEmpty()) {
+                if (tick > 0) chestTrace.append(',');
+                chestTrace.append('[');
+                for (var be : chestBes) {
+                    Object counter = get(be, "openersCounter");
+                    chestTrace.append(counter.getClass().getMethod("getOpenerCount").invoke(counter)).append(',').append(chestSig(be)).append(',');
+                }
+                for (int i = 0; i < initial; i++) {
+                    if (i > 0) chestTrace.append(',');
+                    chestTrace.append(itemSig(((Mob) tracked.get(i)).getMainHandItem()));
+                }
+                chestTrace.append(']');
+            }
         }
         // wp28 creaking: the blocks around the hearts as the scenario left them (resin), and
         // the hearts' positions.
@@ -911,8 +950,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp);
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
@@ -1198,6 +1237,17 @@ public class MobVectors {
     }
 
     /** [id, x, y, z, dx, dy, dz, yRot, xRot, yHeadRot, yBodyRot, onGround, health, hurtTime, removed, fire, target, goals...] */
+    /// wp49 copper golems: a stack as one number (the hash of its item's name times 31, plus the count).
+    static long itemSig(ItemStack s) {
+        return s.isEmpty() ? 0 : (long) BuiltInRegistries.ITEM.getKey(s.getItem()).toString().hashCode() * 31 + s.getCount();
+    }
+
+    static long chestSig(net.minecraft.world.level.block.entity.ChestBlockEntity be) {
+        long h = 0;
+        for (int i = 0; i < be.getContainerSize(); i++) h += (long) (i + 1) * itemSig(be.getItem(i));
+        return h;
+    }
+
     static String state(Mob m) throws Exception {
         Vec3 p = m.position();
         Vec3 v = m.getDeltaMovement();
@@ -1794,6 +1844,7 @@ public class MobVectors {
         scenariosGiant(out);
         scenariosDolphin(out);
         scenariosHappyGhast(out);
+        scenariosCopperGolem(out);
         // -- wp33: mule breeding, jockeys, the undead mounts, projectile deflection
         scenariosWp33(out);
         scenariosSpears(out);
@@ -3172,6 +3223,190 @@ public class MobVectors {
             s.playerCreative = true;
             s.levelSeed = 520;
             s.ticks = 300;
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp49: copper golems
+    static final String IRON = "{Slot:0b,id:\"minecraft:iron_ingot\",count:40}";
+    static final String GOLD = "{Slot:0b,id:\"minecraft:gold_ingot\",count:7}";
+
+    static Scenario golemWorld(String name, long mobSeed, long levelSeed, int ticks) {
+        Scenario s = new Scenario(name);
+        floor(s, 30, "minecraft:stone");
+        MobSpec m = new MobSpec("minecraft:copper_golem", 0.5, BY, 0.5, 30f, mobSeed);
+        s.mobs.add(m);
+        s.player = new double[] {24.5, BY, 0.5};
+        s.playerCreative = true;
+        s.levelSeed = levelSeed;
+        s.ticks = ticks;
+        return s;
+    }
+
+    /// A chest block with items at (x, BY, z): `block` the full block state.
+    static void chestAt(Scenario s, int x, int z, String block, String items) {
+        block(s, x, BY, z, block);
+        s.chests.put(new BlockPos(x, BY, z), "[" + items + "]");
+    }
+
+    static void scenariosCopperGolem(List<Scenario> out) {
+        // Nothing to carry: strolls and waits.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = golemWorld("copper_golem_idle_" + seed, 41000L + seed, 700 + seed, 700);
+            if (seed == 2) s.player = new double[] {3.5, BY, 0.5};
+            out.add(s);
+        }
+        // Copper chest with items to a chest, back and forth.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = golemWorld("copper_golem_transport_" + seed, 41100L + seed, 710 + seed, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 2 * seed, "minecraft:chest[facing=east]", "");
+            out.add(s);
+        }
+        // Into a double chest.
+        {
+            Scenario s = golemWorld("copper_golem_double", 41200L, 720, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=west,type=right]", "");
+            chestAt(s, -7, 1, "minecraft:chest[facing=west,type=left]", "");
+            out.add(s);
+        }
+        // A trapped chest holding the same item already.
+        {
+            Scenario s = golemWorld("copper_golem_trapped", 41210L, 721, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:trapped_chest[facing=east]", "{Slot:3b,id:\"minecraft:iron_ingot\",count:60}");
+            out.add(s);
+        }
+        // A chest with another item only: the golem keeps its items and looks on.
+        {
+            Scenario s = golemWorld("copper_golem_mismatch", 41220L, 722, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", GOLD);
+            chestAt(s, 0, 9, "minecraft:chest[facing=north]", "{Slot:5b,id:\"minecraft:iron_ingot\",count:64},{Slot:6b,id:\"minecraft:iron_ingot\",count:64}");
+            out.add(s);
+        }
+        // A full chest.
+        {
+            Scenario s = golemWorld("copper_golem_full", 41230L, 723, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            StringBuilder full = new StringBuilder();
+            for (int i = 0; i < 27; i++) full.append(i > 0 ? "," : "").append("{Slot:").append(i).append("b,id:\"minecraft:iron_ingot\",count:64}");
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", full.toString());
+            out.add(s);
+        }
+        // Only an empty copper chest.
+        {
+            Scenario s = golemWorld("copper_golem_empty_source", 41240L, 724, 1200);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", "");
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            out.add(s);
+        }
+        // The destination is covered by a block: not a target.
+        {
+            Scenario s = golemWorld("copper_golem_blocked", 41250L, 725, 900);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            block(s, -7, BY + 1, 0, "minecraft:stone");
+            out.add(s);
+        }
+        // The destination sits in a closed cell.
+        {
+            Scenario s = golemWorld("copper_golem_unreachable", 41260L, 726, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            for (int x = -9; x <= -5; x++)
+                for (int z = -2; z <= 2; z++)
+                    for (int y = BY; y <= BY + 2; y++)
+                        if ((x == -9 || x == -5 || z == -2 || z == 2 || y == BY + 2) && !(x == -7 && z == 0 && y == BY)) block(s, x, y, z, "minecraft:stone");
+            out.add(s);
+        }
+        // Behind a door.
+        {
+            Scenario s = golemWorld("copper_golem_door", 41270L, 727, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -8, 0, "minecraft:chest[facing=east]", "");
+            for (int z = -6; z <= 6; z++)
+                for (int y = BY; y <= BY + 3; y++)
+                    if (!(z == 0 && y <= BY + 1)) block(s, -4, y, z, "minecraft:stone");
+            block(s, -4, BY, 0, "minecraft:oak_door[facing=east,half=lower,hinge=left,open=false]");
+            block(s, -4, BY + 1, 0, "minecraft:oak_door[facing=east,half=upper,hinge=left,open=false]");
+            out.add(s);
+        }
+        // Several of each.
+        {
+            Scenario s = golemWorld("copper_golem_many", 41280L, 728, 2400);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, 7, 5, "minecraft:copper_chest[facing=west]", GOLD);
+            chestAt(s, 7, -5, "minecraft:exposed_copper_chest[facing=west]", "{Slot:2b,id:\"minecraft:iron_ingot\",count:20}");
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            chestAt(s, -7, 5, "minecraft:chest[facing=east]", "{Slot:0b,id:\"minecraft:gold_ingot\",count:3}");
+            chestAt(s, -7, -5, "minecraft:trapped_chest[facing=east]", "");
+            out.add(s);
+        }
+        // A copper chest between chests: first source, then the nearest destination.
+        {
+            Scenario s = golemWorld("copper_golem_near", 41290L, 729, 1500);
+            chestAt(s, 3, 3, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, 3, -3, "minecraft:chest[facing=west]", "");
+            chestAt(s, -3, 3, "minecraft:chest[facing=east]", "");
+            out.add(s);
+        }
+        // A player nearby while it works.
+        {
+            Scenario s = golemWorld("copper_golem_player", 41300L, 730, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            s.player = new double[] {0.5, BY, 5.5};
+            out.add(s);
+        }
+        // Hurt on its way: it panics, the work starts again.
+        {
+            Scenario s = golemWorld("copper_golem_hurt", 41310L, 731, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            s.playerCreative = false;
+            s.hurts.put(250, new double[] {0, 1.0});
+            out.add(s);
+        }
+        // Weathering: a stage every while (the clock set a little ahead), the last stage turning to a statue.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = golemWorld("copper_golem_weather_" + seed, 41400L + seed, 740 + seed, 900);
+            s.mobs.get(0).nbt = "{next_weather_age:" + (1030 + 200 * seed) + "L}";
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = golemWorld("copper_golem_oxidized_" + seed, 41500L + seed, 750 + seed, 900);
+            s.mobs.get(0).nbt = "{next_weather_age:0L,weather_state:\"oxidized\"}";
+            out.add(s);
+        }
+        // Waxed (no weathering), scraped, sheared, and what it holds taken.
+        {
+            Scenario s = golemWorld("copper_golem_wax", 41600L, 760, 300);
+            s.mobs.get(0).nbt = "{next_weather_age:1010L,weather_state:\"weathered\"}";
+            s.playerCreative = false;
+            s.player = new double[] {1.5, BY, 0.5};
+            s.actions.add(interact(3, 0, "minecraft:honeycomb"));
+            s.actions.add(interact(20, 0, "minecraft:iron_axe"));
+            s.actions.add(interact(40, 0, "minecraft:iron_axe"));
+            s.actions.add(interact(60, 0, "minecraft:iron_axe"));
+            s.actions.add(interact(80, 0, "minecraft:iron_axe"));
+            out.add(s);
+        }
+        {
+            Scenario s = golemWorld("copper_golem_shears", 41610L, 761, 120);
+            s.mobs.get(0).nbt = "{equipment:{saddle:{id:\"minecraft:poppy\",count:1}},drop_chances:{saddle:2.0f}}";
+            s.player = new double[] {1.5, BY, 0.5};
+            s.actions.add(interact(5, 0, "minecraft:shears"));
+            s.actions.add(interact(10, 0, "minecraft:shears"));
+            out.add(s);
+        }
+        {
+            Scenario s = golemWorld("copper_golem_take", 41620L, 762, 120);
+            s.mobs.get(0).mainHand = "minecraft:copper_ingot";
+            s.mobs.get(0).nbt = "{PersistenceRequired:1b}";
+            s.player = new double[] {1.5, BY, 0.5};
+            s.actions.add(interact(5, 0, "minecraft:air"));
             out.add(s);
         }
     }
