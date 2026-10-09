@@ -32,6 +32,7 @@ mod beehive;
 mod brush;
 mod command_block;
 mod vault;
+mod copper_golem_statue;
 mod decorated_pot;
 mod lectern;
 mod maps;

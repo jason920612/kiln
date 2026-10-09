@@ -664,6 +664,64 @@ public class InteractVectors {
         out.add(c);
     }
 
+    /** wp49: copper golem statues: the pose turning, the axe bringing the golem back, honeycomb and the axe on the others. */
+    static void statues49(List<Case> out) {
+        Case c;
+        String statue = "minecraft:copper_golem_statue[facing=north,copper_golem_pose=standing,waterlogged=false]";
+        c = blockCase("statue_pose_cycle", statue);
+        for (int i = 0; i < 5; i++) c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_exposed_cycle", "minecraft:exposed_copper_golem_statue[facing=east,copper_golem_pose=sitting,waterlogged=false]");
+        for (int i = 0; i < 3; i++) c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_waxed_cycle", "minecraft:waxed_copper_golem_statue[facing=south,copper_golem_pose=star,waterlogged=false]");
+        for (int i = 0; i < 3; i++) c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_item_click", statue);
+        c.slot("h0", stack("minecraft:stone", 3));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_axe_golem_back", statue).mobs().stat("minecraft:iron_axe");
+        c.slot("h0", stack("minecraft:iron_axe"));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_axe_golem_back_named", "minecraft:copper_golem_statue[facing=west,copper_golem_pose=running,waterlogged=false]{components:{\"minecraft:custom_name\":\"Rusty\"}}").mobs().stat("minecraft:iron_axe");
+        c.slot("h0", stack("minecraft:iron_axe"));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_axe_exposed", "minecraft:exposed_copper_golem_statue[facing=north,copper_golem_pose=standing,waterlogged=false]").mobs().stat("minecraft:iron_axe");
+        c.slot("h0", stack("minecraft:iron_axe"));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_axe_waxed", "minecraft:waxed_exposed_copper_golem_statue[facing=north,copper_golem_pose=standing,waterlogged=false]").mobs().stat("minecraft:iron_axe");
+        c.slot("h0", stack("minecraft:iron_axe"));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_honeycomb", statue).stat("minecraft:honeycomb");
+        c.slot("h0", stack("minecraft:honeycomb", 2));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_honeycomb_waxed", "minecraft:waxed_copper_golem_statue[facing=north,copper_golem_pose=standing,waterlogged=false]").stat("minecraft:honeycomb");
+        c.slot("h0", stack("minecraft:honeycomb", 2));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_adventure_click", statue);
+        c.gameMode = "adventure";
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_sneaking_click", statue);
+        c.sneaking = true;
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("statue_break_by_hand", statue);
+        c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("statue_break_pickaxe", statue);
+        c.slot("h0", stack("minecraft:iron_pickaxe"));
+        c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
+        out.add(c);
+    }
+
     /** wp49: lecterns: putting a book on, the menu (pages, jump, take), redstone pulse, breaking. */
     /** wp49: a landscape across the map around the origin, built with commands (the same ones build it in the replay). */
     static Case mapCase(String name) {
@@ -3219,6 +3277,7 @@ public class InteractVectors {
             bells49(all);
             hives49(all);
             pots49(all);
+            statues49(all);
             lecterns49(all);
             maps49(all);
             vaults49(all);

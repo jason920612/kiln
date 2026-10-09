@@ -373,6 +373,7 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
         C::CampfireBlock => crate::campfire::use_item_on(p, level, pos, s, off_hand),
         C::BeehiveBlock => crate::beehive::use_item_on(p, level, pos, s, off_hand, spawns),
         C::DecoratedPotBlock => crate::decorated_pot::use_item_on(p, level, pos, s, off_hand),
+        C::CopperGolemStatueBlock | C::WeatheringCopperGolemStatueBlock => crate::copper_golem_statue::use_item_on(p, level, pos, s, off_hand, spawns),
         C::LecternBlock => crate::lectern::use_item_on(p, level, pos, s, off_hand),
         C::VaultBlock => crate::vault::use_item_on(p, level, pos, s, off_hand),
         C::CakeBlock => cake_candle(p, level, pos, s, off_hand, &stack),
