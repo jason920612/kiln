@@ -423,7 +423,7 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         // `LecternBlock.getMenuProvider`: only with a book.
         BeKind::Lectern if state::get_bool(s, "has_book") => single(Menu::lectern),
         BeKind::Lectern => return None,
-        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock => return None,
+        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner => return None,
     })
 }
 
@@ -486,7 +486,7 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
         return Some(true);
     }
     // (A jukebox has no menu: its own `useWithoutItem` takes the disc out.)
-    if matches!(level.blocks.containers.get(pos)?.kind, BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock) {
+    if matches!(level.blocks.containers.get(pos)?.kind, BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner) {
         return None;
     }
     if let Some(provider) = container_provider(level, pos, s) {
@@ -882,6 +882,14 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
         // `ItemContainerContents.copyInto`.
         for (i, slot) in c.items.iter_mut().enumerate() {
             *slot = contents.0.get(i).and_then(|s| s.as_ref()).map(|t| t.create()).unwrap_or_default();
+        }
+        touched = true;
+    }
+    // `BannerBlockEntity.applyImplicitComponents`: the pattern layers (the name is read above).
+    if c.kind == BeKind::Banner {
+        c.extra.retain(|(k, _)| k != "patterns");
+        if let Some(layers) = stack.get(keys::BANNER_PATTERNS).filter(|l| !l.0.is_empty()) {
+            c.extra.push(("patterns".into(), <kiln_item::component::BannerPatternLayers as kiln_item::component::ComponentValue>::to_value(layers).to_nbt()));
         }
         touched = true;
     }

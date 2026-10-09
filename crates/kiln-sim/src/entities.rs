@@ -1558,6 +1558,40 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         true
     }
 
+    /// `TrialSpawnerStateData.getDispensingItems`: the table rolled with the world seed plus the low-resolution position.
+    fn trial_dispensing_items(&mut self, table: &str, pos: BlockPos) -> Vec<(kiln_item::ItemStack, i32)> {
+        let loot = self.level.env().loot.clone();
+        let (Some(loot), Some(id)) = (loot, kiln_item::ident::Identifier::parse(table)) else { return Vec::new() };
+        let low = BlockPos::new(
+            kiln_javamath::math::floor_f32(pos.x as f32 / 30.0),
+            kiln_javamath::math::floor_f32(pos.y as f32 / 20.0),
+            kiln_javamath::math::floor_f32(pos.z as f32 / 30.0),
+        );
+        let mut rng = kiln_javamath::random::LegacyRandom::new(self.level.env().seed.wrapping_add(low.as_long()));
+        loot.random_items(&id, &kiln_loot::EmptyContext, &mut rng).into_iter().map(|s| (s.with_count(1), s.count())).collect()
+    }
+
+    fn spawn_item_projectile(&mut self, stack: &kiln_item::ItemStack, origin: Vec3, at: BlockPos, _owner: i32) -> Option<i32> {
+        if !crate::projectile_item::is_projectile_item(stack.item_name()) {
+            return None;
+        }
+        let seed = self.fresh_seed();
+        let origin = [origin.x, origin.y, origin.z];
+        let mut shot = {
+            let rng = self.random();
+            crate::projectile_item::as_projectile(stack, origin, origin, [0, -1, 0], seed, rng)?
+        };
+        // `DispenseConfig.overrideDispenseEvent`.
+        if let Some(event) = shot.event {
+            self.emit(Event::LevelEvent { event, pos: at, data: 0 });
+        }
+        crate::projectile_item::shoot(&mut shot.entity, [0, -1, 0], shot.power, shot.uncertainty);
+        let id = self.next_entity_id();
+        shot.entity.id = id;
+        self.add_entity(shot.entity);
+        Some(id)
+    }
+
     fn block_light(&self, pos: BlockPos) -> i32 {
         kiln_world::light::light_at(self.level.cells(), kiln_world::chunk::LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
     }

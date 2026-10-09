@@ -76,6 +76,8 @@ pub(crate) enum BeKind {
     Brushable,
     /// A command block (`CommandBlockEntity`): the command and what it did.
     CommandBlock,
+    /// Holds nothing; keeps the pattern layers it was made with (`BannerBlockEntity`).
+    Banner,
 }
 
 impl BeKind {
@@ -107,6 +109,7 @@ impl BeKind {
             "crafter" => BeKind::Crafter,
             "brushable_block" => BeKind::Brushable,
             "command_block" => BeKind::CommandBlock,
+            "banner" => BeKind::Banner,
             _ => return None,
         })
     }
@@ -123,7 +126,7 @@ impl BeKind {
             BeKind::Campfire => 4,
             BeKind::ChiseledBookshelf => 6,
             BeKind::DecoratedPot | BeKind::Lectern | BeKind::Brushable => 1,
-            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::CommandBlock => 0,
+            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner => 0,
         }
     }
 
@@ -131,13 +134,13 @@ impl BeKind {
     pub fn randomizable(self) -> bool {
         !matches!(
             self,
-            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::CommandBlock
+            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner
         )
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::Brushable | BeKind::CommandBlock)
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner)
     }
 
     /// `getDefaultName` translation key.
@@ -167,6 +170,7 @@ impl BeKind {
             BeKind::Crafter => "container.crafter",
             BeKind::Brushable => "block.minecraft.suspicious_sand",
             BeKind::CommandBlock => "block.minecraft.command_block",
+            BeKind::Banner => "block.minecraft.banner",
         }
     }
 }
@@ -429,7 +433,7 @@ impl ContainerBe {
             out.push(("CustomName".into(), name.clone()));
         }
         match self.kind {
-            BeKind::EnderChest | BeKind::Bell | BeKind::DaylightDetector => {}
+            BeKind::EnderChest | BeKind::Bell | BeKind::DaylightDetector | BeKind::Banner => {}
             BeKind::CommandBlock => {
                 if let Some(d) = &self.command {
                     d.save(&mut out);
@@ -594,6 +598,13 @@ impl ContainerBe {
         }
         if let Some(h) = &self.hive {
             out.extend(h.components());
+        }
+        // `BannerBlockEntity.collectImplicitComponents`: the pattern layers.
+        if self.kind == BeKind::Banner {
+            let layers = self.extra.iter().find(|(k, _)| k == "patterns").map(|(_, v)| v.clone());
+            if let Some(layers) = layers.and_then(|t| <kiln_item::component::BannerPatternLayers as kiln_item::component::ComponentValue>::from_value(&kiln_item::Value::from_nbt(&t)).ok()) {
+                out.push(Component::BannerPatterns(layers));
+            }
         }
         // `DecoratedPotBlockEntity.collectImplicitComponents`: the sherds (the container follows below).
         if self.kind == BeKind::DecoratedPot {

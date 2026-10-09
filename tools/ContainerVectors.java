@@ -315,6 +315,7 @@ public class ContainerVectors {
         dispenserScenarios(out);
         dispenserScenarios2(out);
         dispenserScenarios50(out);
+        ominousScenarios(out);
         windScenarios(out);
         cropProbes(out);
         crafterScenarios(out);
@@ -625,6 +626,29 @@ public class ContainerVectors {
         Scenario both = dispense("shears50_leash_and_sheep", "shears", 1).block(1, -1, 0, stone).block(4, 0, 1, "minecraft:oak_fence").block(4, -1, 1, stone);
         out.add(mob(mob(both, "sheep", 1.5, 0, 0.5, "leash:" + knotPos), "pig", 1.5, 0, 0.5, "").track());
         out.add(mob(dispense("shears50_unleashed_pig", "shears", 1).block(1, -1, 0, stone), "pig", 1.5, 0, 0.5, "").track());
+    }
+
+    /** wp50: ominous item spawners (summoned: the trial spawner's own are made with the level's random). */
+    static void ominousScenarios(List<Scenario> out) {
+        String at = (BASE[0] + 0.5) + " " + (BASE[1] + 2.0) + " " + (BASE[2] + 0.5);
+        String summon = "summon minecraft:ominous_item_spawner " + at + " {item:%s,spawn_item_after_ticks:%dL}";
+        String bone = "{id:\"minecraft:bone\",count:1}";
+        // A plain item: dropped where the spawner hangs; the spawner is tracked until it goes.
+        out.add(new Scenario("ominous50_bone", 60).drops().track().at(1, String.format(Locale.ROOT, summon, bone, 20)));
+        out.add(new Scenario("ominous50_bone_later", 60).drops().track().at(1, String.format(Locale.ROOT, summon, bone, 45)));
+        out.add(new Scenario("ominous50_bone_now", 10).drops().track().at(1, String.format(Locale.ROOT, summon, bone, 0)));
+        out.add(new Scenario("ominous50_empty", 40).drops().track().at(1, String.format(Locale.ROOT, summon, "{}", 10)));
+        out.add(new Scenario("ominous50_stack", 40).drops().track().at(1, String.format(Locale.ROOT, summon, "{id:\"minecraft:bone\",count:7}", 10)));
+        // Projectile items are shot down (the shot things themselves fly on their own random: that they appear is compared).
+        for (String item : new String[] {"{id:\"minecraft:arrow\",count:1}", "{id:\"minecraft:fire_charge\",count:1}", "{id:\"minecraft:wind_charge\",count:1}",
+                "{id:\"minecraft:snowball\",count:1}", "{id:\"minecraft:egg\",count:1}", "{id:\"minecraft:experience_bottle\",count:1}",
+                "{id:\"minecraft:spectral_arrow\",count:1}",
+                "{id:\"minecraft:lingering_potion\",count:1,components:{\"minecraft:potion_contents\":{potion:\"minecraft:poison\"}}}",
+                "{id:\"minecraft:splash_potion\",count:1,components:{\"minecraft:potion_contents\":{potion:\"minecraft:healing\"}}}",
+                "{id:\"minecraft:tipped_arrow\",count:1,components:{\"minecraft:potion_contents\":{potion:\"minecraft:swiftness\"}}}"}) {
+            String name = item.substring(item.indexOf("minecraft:") + 10, item.indexOf('"', item.indexOf("minecraft:")));
+            out.add(new Scenario("ominous50_shoots_" + name, 40).entities().at(1, String.format(Locale.ROOT, summon, item, 12)));
+        }
     }
 
     static void cropProbes(List<Scenario> out) {

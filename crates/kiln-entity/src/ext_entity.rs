@@ -14,6 +14,7 @@ pub mod armor_stand;
 pub mod display;
 pub mod interaction;
 pub mod marker;
+pub mod ominous_item_spawner;
 pub mod evoker_fangs;
 pub mod dragon_fireball;
 pub mod end_crystal;
@@ -158,6 +159,8 @@ pub const TYPES: &[&str] = &[
     "minecraft:text_display",
     "minecraft:interaction",
     "minecraft:marker",
+    // -- wp50
+    "minecraft:ominous_item_spawner",
 ];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
@@ -185,6 +188,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         n if display::is_display(n) => display::load(n, r),
         "minecraft:interaction" => interaction::load(r),
         "minecraft:marker" => marker::load(r),
+        "minecraft:ominous_item_spawner" => ominous_item_spawner::load(r),
         _ => None,
     }
 }

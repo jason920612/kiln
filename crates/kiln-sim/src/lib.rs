@@ -79,6 +79,7 @@ mod entities;
 mod entity_world;
 mod fishing;
 mod steer;
+mod projectile_item;
 mod gametest;
 mod profiles;
 mod generation;
