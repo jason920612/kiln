@@ -2744,8 +2744,8 @@ public class InteractVectors {
         if (c.fullTicks) {
             try {
                 // `ServerLevel.tick`: the scheduled block ticks first, then the entities (the player's use of his item), then the block entities.
-                var blockTicks = (net.minecraft.world.ticks.LevelTicks<Block>) level.getBlockTicks();
-                Method tickBlock = ServerLevel.class.getDeclaredMethod("tickBlock", BlockPos.class, Block.class);
+                var blockTicks = (net.minecraft.world.ticks.LevelTicks<net.minecraft.world.level.block.Block>) level.getBlockTicks();
+                Method tickBlock = ServerLevel.class.getDeclaredMethod("tickBlock", BlockPos.class, net.minecraft.world.level.block.Block.class);
                 tickBlock.setAccessible(true);
                 blockTicks.tick(level.getGameTime(), 65536, (pos, block) -> {
                     try {
