@@ -3333,6 +3333,9 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
     let Some(m) = data(e) else { return };
     // (`EntityType.isAllowedInPeaceful`: everything but the monsters, which are `notInPeaceful`; golems and
     // villagers stay.)
+    if std::env::var_os("KILN_DBG_ENTITIES").is_some() {
+        eprintln!("DBG check_despawn {:?} difficulty {} nearest {:?}", m.kind, level.difficulty(), nearest);
+    }
     if level.difficulty() == 0 && !m.kind.ext().and_then(|k| k.allowed_in_peaceful()).unwrap_or(m.kind.category() != Category::Monster) {
         e.discard();
         return;
