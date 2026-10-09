@@ -409,6 +409,122 @@ public class InteractVectors {
     }
 
     /** `use_on` with a chosen cursor (the hit position inside the block). */
+    // ---------------------------------------------------------------- wp50: banners (placing, breaking) and the cauldron's washing
+
+    static ItemStack parsed(String text) {
+        try {
+            var parser = new net.minecraft.commands.arguments.item.ItemParser(server.registryAccess());
+            var input = parser.parse(new com.mojang.brigadier.StringReader(text));
+            return new ItemStack(input.item(), 1, input.components());
+        } catch (Exception e) {
+            throw new RuntimeException(text + ": " + e.getMessage(), e);
+        }
+    }
+
+    static final String LAYERS = "banner_patterns=[{pattern:\"minecraft:stripe_downright\",color:\"red\"},{pattern:\"minecraft:circle\",color:\"blue\"},{pattern:\"minecraft:border\",color:\"black\"}]";
+
+    static void banners50(List<Case> out) {
+        Case c;
+        // ---- placing: a standing banner on the stone, a wall banner on its side; the block entity carries the layers, name and the rest.
+        for (String[] b : new String[][] {
+                {"plain", "minecraft:white_banner"},
+                {"layers", "minecraft:red_banner[" + LAYERS + "]"},
+                {"one_layer", "minecraft:blue_banner[banner_patterns=[{pattern:\"minecraft:skull\",color:\"white\"}]]"},
+                {"named", "minecraft:green_banner[custom_name='\"Flag\"']"},
+                {"lore", "minecraft:black_banner[lore=['\"x\"'],rarity=epic]"},
+                {"everything", "minecraft:yellow_banner[" + LAYERS + ",custom_name='\"Pennant\"',lore=['\"y\"']]"},
+                {"ominous", "minecraft:white_banner[banner_patterns=[{pattern:\"minecraft:rhombus\",color:\"cyan\"},{pattern:\"minecraft:stripe_bottom\",color:\"brown\"}],tooltip_display={hidden_components:[\"minecraft:banner_patterns\"]},item_name='{translate:\"block.minecraft.ominous_banner\"}']"}}) {
+            c = blockCase("banner50_place_" + b[0], "minecraft:air");
+            c.slot("h0", parsed(b[1])).stat(b[1].substring(0, b[1].indexOf('[') < 0 ? b[1].length() : b[1].indexOf('[')));
+            c.step(useOn(2, 99, 0, 1, 0));
+            out.add(c);
+            c = blockCase("banner50_wall_" + b[0], "minecraft:stone").watch(1, 100, 0);
+            c.slot("h0", parsed(b[1])).stat(b[1].substring(0, b[1].indexOf('[') < 0 ? b[1].length() : b[1].indexOf('[')));
+            c.step(useOn(2, 100, 0, 4, 0));
+            out.add(c);
+        }
+        c = blockCase("banner50_place_creative", "minecraft:air");
+        c.gameMode = "creative";
+        c.slot("h0", parsed("minecraft:red_banner[" + LAYERS + "]"));
+        c.step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = blockCase("banner50_place_stack", "minecraft:air");
+        ItemStack three = parsed("minecraft:red_banner[" + LAYERS + "]");
+        three.setCount(3);
+        c.slot("h0", three).stat("minecraft:red_banner");
+        c.step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        // ---- breaking (`/setblock ... destroy`): the dropped banner keeps the layers and the name.
+        String nbt = "{patterns:[{color:\"red\",pattern:\"minecraft:stripe_downright\"},{color:\"blue\",pattern:\"minecraft:circle\"}],CustomName:'\"Flag\"'}";
+        for (String block : new String[] {"minecraft:white_banner[rotation=4]", "minecraft:orange_wall_banner[facing=east]"}) {
+            c = blockCase("banner50_break_" + block.substring(10, block.indexOf('[')), block + nbt);
+            c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:air destroy"));
+            out.add(c);
+        }
+        c = blockCase("banner50_break_plain", "minecraft:white_banner[rotation=4]");
+        c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:air destroy"));
+        out.add(c);
+    }
+
+    static void cauldrons50(List<Case> out) {
+        Case c;
+        String[] customs = {"minecraft:fill_cauldron", "minecraft:use_cauldron", "minecraft:clean_armor", "minecraft:clean_banner", "minecraft:clean_shulker_box"};
+        List<String[]> held = new ArrayList<>(List.of(
+                new String[] {"empty_hand", ""},
+                new String[] {"bucket", "minecraft:bucket"},
+                new String[] {"water_bucket", "minecraft:water_bucket"},
+                new String[] {"lava_bucket", "minecraft:lava_bucket"},
+                new String[] {"powder_snow_bucket", "minecraft:powder_snow_bucket"},
+                new String[] {"glass_bottle", "minecraft:glass_bottle"},
+                new String[] {"water_bottle", "minecraft:potion[potion_contents={potion:\"minecraft:water\"}]"},
+                new String[] {"healing_potion", "minecraft:potion[potion_contents={potion:\"minecraft:healing\"}]"},
+                new String[] {"leather_dyed", "minecraft:leather_chestplate[dyed_color=16711680]"},
+                new String[] {"leather_plain", "minecraft:leather_chestplate"},
+                new String[] {"leather_horse_armor_dyed", "minecraft:leather_horse_armor[dyed_color=255]"},
+                new String[] {"red_shulker", "minecraft:red_shulker_box"},
+                new String[] {"plain_shulker", "minecraft:shulker_box"},
+                new String[] {"banner_layers", "minecraft:red_banner[" + LAYERS + "]"},
+                new String[] {"banner_one", "minecraft:blue_banner[banner_patterns=[{pattern:\"minecraft:skull\",color:\"white\"}]]"},
+                new String[] {"banner_plain", "minecraft:white_banner"},
+                new String[] {"banner_stack", "minecraft:red_banner[" + LAYERS + "]"},
+                new String[] {"tipped_arrow", "minecraft:tipped_arrow[potion_contents={potion:\"minecraft:healing\"}]"},
+                new String[] {"stone", "minecraft:stone"}));
+        for (String[] cauldron : new String[][] {
+                {"empty", "minecraft:cauldron"}, {"water1", "minecraft:water_cauldron[level=1]"}, {"water2", "minecraft:water_cauldron[level=2]"},
+                {"water3", "minecraft:water_cauldron[level=3]"}, {"lava", "minecraft:lava_cauldron"}, {"snow1", "minecraft:powder_snow_cauldron[level=1]"},
+                {"snow3", "minecraft:powder_snow_cauldron[level=3]"}}) {
+            for (String[] h : held) {
+                for (boolean creative : new boolean[] {false, true}) {
+                    if (creative && !(h[0].equals("bucket") || h[0].equals("water_bucket") || h[0].equals("glass_bottle") || h[0].equals("banner_layers") || h[0].equals("water_bottle"))) continue;
+                    c = blockCase("cauldron50_" + cauldron[0] + "_" + h[0] + (creative ? "_creative" : ""), cauldron[1]);
+                    if (creative) c.gameMode = "creative";
+                    if (!h[1].isEmpty()) {
+                        ItemStack s = parsed(h[1]);
+                        if (h[0].equals("banner_stack")) s.setCount(3);
+                        c.slot("h0", s);
+                        c.stat(h[1].contains("[") ? h[1].substring(0, h[1].indexOf('[')) : h[1]);
+                    }
+                    for (String custom : customs) c.custom(custom);
+                    c.step(useOn(2, 100, 0, 1, 0));
+                    out.add(c);
+                }
+            }
+        }
+        // Rain and snow filling are server ticks (verified elsewhere); a sneaking player with an item uses the item, not the cauldron.
+        c = blockCase("cauldron50_sneaking_bucket", "minecraft:water_cauldron[level=3]");
+        c.sneaking = true;
+        c.slot("h0", stack("minecraft:bucket")).stat("minecraft:bucket");
+        for (String custom : customs) c.custom(custom);
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("cauldron50_adventure_bucket", "minecraft:water_cauldron[level=3]");
+        c.gameMode = "adventure";
+        c.slot("h0", stack("minecraft:bucket")).stat("minecraft:bucket");
+        for (String custom : customs) c.custom(custom);
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+    }
+
     static Map<String, Object> useOnAt(int x, int y, int z, int face, int hand, double cx, double cy, double cz) {
         return op("op", "use_on", "hand", hand, "pos", List.of(x, y, z), "face", face, "cursor", List.of(cx, cy, cz));
     }
@@ -3284,6 +3400,8 @@ public class InteractVectors {
             trials49(all);
             crafters49(all);
             brushes49(all);
+            banners50(all);
+            cauldrons50(all);
             commandBlocks49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
