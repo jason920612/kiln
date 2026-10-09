@@ -289,6 +289,11 @@ fn decode_style(fields: &[(String, Tag)], depth: usize) -> std::result::Result<V
         if !valid {
             return invalid(format!("Invalid color name: {color}"));
         }
+        // `TextColor.serialize`: a color by name, any other as `#RRGGBB` in capitals.
+        let color = match color.strip_prefix('#').and_then(|h| u32::from_str_radix(h, 16).ok()) {
+            Some(rgb) if rgb <= 0xFF_FFFF => format!("#{rgb:06X}"),
+            _ => color,
+        };
         style.push(("color", Tag::String(color)));
     }
     if let Some(shadow) = field(fields, "shadow_color") {
