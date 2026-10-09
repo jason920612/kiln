@@ -311,33 +311,33 @@ pub mod hud {
     use crate::bindings::kiln::api::hud as raw;
     use crate::{BossColor, BossStyle, IntoSpans, Ticket, Uuid};
 
-    pub fn title(to: &Uuid, title: impl IntoSpans, subtitle: impl IntoSpans) -> Ticket {
+    pub fn title(to: Uuid, title: impl IntoSpans, subtitle: impl IntoSpans) -> Ticket {
         raw::title(to, &title.into_spans(), &subtitle.into_spans(), 10, 60, 20)
     }
 
-    pub fn title_timed(to: &Uuid, title: impl IntoSpans, subtitle: impl IntoSpans, fade_in: u32, stay: u32, fade_out: u32) -> Ticket {
+    pub fn title_timed(to: Uuid, title: impl IntoSpans, subtitle: impl IntoSpans, fade_in: u32, stay: u32, fade_out: u32) -> Ticket {
         raw::title(to, &title.into_spans(), &subtitle.into_spans(), fade_in, stay, fade_out)
     }
 
-    pub fn action_bar(to: &Uuid, text: impl IntoSpans) -> Ticket {
+    pub fn action_bar(to: Uuid, text: impl IntoSpans) -> Ticket {
         raw::action_bar(to, &text.into_spans())
     }
 
     /// Replaces the player's sidebar: a title and up to 15 lines, top to bottom.
-    pub fn sidebar(to: &Uuid, title: impl IntoSpans, lines: Vec<Vec<crate::Span>>) -> Ticket {
+    pub fn sidebar(to: Uuid, title: impl IntoSpans, lines: Vec<Vec<crate::Span>>) -> Ticket {
         raw::sidebar(to, &title.into_spans(), &lines)
     }
 
-    pub fn clear_sidebar(to: &Uuid) -> Ticket {
+    pub fn clear_sidebar(to: Uuid) -> Ticket {
         raw::clear_sidebar(to)
     }
 
     /// Shows or updates the plugin's boss bar `id` for the player; `progress` is 0.0 to 1.0.
-    pub fn bossbar(to: &Uuid, id: &str, text: impl IntoSpans, progress: f32, color: BossColor, style: BossStyle) -> Ticket {
+    pub fn bossbar(to: Uuid, id: &str, text: impl IntoSpans, progress: f32, color: BossColor, style: BossStyle) -> Ticket {
         raw::bossbar(to, id, &text.into_spans(), progress, color, style)
     }
 
-    pub fn clear_bossbar(to: &Uuid, id: &str) -> Ticket {
+    pub fn clear_bossbar(to: Uuid, id: &str) -> Ticket {
         raw::clear_bossbar(to, id)
     }
 }
@@ -348,19 +348,19 @@ pub mod players {
     use crate::{GameMode, IntoSpans, Ticket, Uuid};
 
     /// To another place of a level (a level id from `registry` or `InitInfo::levels`).
-    pub fn teleport(who: &Uuid, level: u32, pos: (f64, f64, f64), rot: (f32, f32)) -> Ticket {
+    pub fn teleport(who: Uuid, level: u32, pos: (f64, f64, f64), rot: (f32, f32)) -> Ticket {
         raw::teleport(who, level, pos.0, pos.1, pos.2, rot.0, rot.1)
     }
 
-    pub fn set_game_mode(who: &Uuid, mode: GameMode) -> Ticket {
+    pub fn set_game_mode(who: Uuid, mode: GameMode) -> Ticket {
         raw::set_game_mode(who, mode)
     }
 
-    pub fn heal(who: &Uuid) -> Ticket {
+    pub fn heal(who: Uuid) -> Ticket {
         raw::heal(who)
     }
 
-    pub fn kick(who: &Uuid, reason: impl IntoSpans) -> Ticket {
+    pub fn kick(who: Uuid, reason: impl IntoSpans) -> Ticket {
         raw::kick(who, &reason.into_spans())
     }
 }
@@ -443,29 +443,29 @@ pub mod inventory {
     use crate::bindings::kiln::api::inventory as raw;
     use crate::{Item, Menu, Ticket, Uuid};
 
-    pub fn give(who: &Uuid, item: Item) -> Ticket {
+    pub fn give(who: Uuid, item: Item) -> Ticket {
         raw::give(who, &item.0)
     }
 
-    pub fn take(who: &Uuid, key: &str, count: u32) -> Ticket {
+    pub fn take(who: Uuid, key: &str, count: u32) -> Ticket {
         raw::take(who, key, count)
     }
 
-    pub fn clear(who: &Uuid) -> Ticket {
+    pub fn clear(who: Uuid) -> Ticket {
         raw::clear(who)
     }
 
     /// Opens a locked menu: clicks reach [`Plugin::on_container_click`](crate::Plugin) with
     /// the menu's id and never move items.
-    pub fn open_menu(who: &Uuid, menu: Menu) -> Ticket {
+    pub fn open_menu(who: Uuid, menu: Menu) -> Ticket {
         raw::open_menu(who, &menu.into_spec())
     }
 
-    pub fn set_slot(who: &Uuid, menu: &str, slot: u8, item: Option<Item>) -> Ticket {
+    pub fn set_slot(who: Uuid, menu: &str, slot: u8, item: Option<Item>) -> Ticket {
         raw::set_slot(who, menu, slot, item.map(|i| i.0).as_ref())
     }
 
-    pub fn close_menu(who: &Uuid) -> Ticket {
+    pub fn close_menu(who: Uuid) -> Ticket {
         raw::close_menu(who)
     }
 }
@@ -516,7 +516,7 @@ pub mod entities {
         raw::spawn(&s.0)
     }
 
-    pub fn remove(level: u32, id: &Uuid) -> Ticket {
+    pub fn remove(level: u32, id: Uuid) -> Ticket {
         raw::remove(level, id)
     }
 }
