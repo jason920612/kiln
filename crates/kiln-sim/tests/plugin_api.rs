@@ -247,6 +247,14 @@ fn claims_protect_land_and_players() {
     g.send(1, PlayIn::Attack { entity_id: dora });
     g.ticks(2);
     assert!(g.sim.health(1).unwrap().0 < hp, "outside the claim players can fight");
+    // (And the same swing at a cow outside any claim does hurt it: the earlier check was not vacuous.)
+    g.console("summon minecraft:cow 404 -60 400 {NoAI:1b}");
+    g.ticks(2);
+    let cow = g.sim.mobs().into_iter().filter(|m| m.1 == "minecraft:cow").max_by(|a, b| a.2[0].total_cmp(&b.2[0])).expect("a second cow");
+    g.send(1, PlayIn::Attack { entity_id: cow.0 });
+    g.ticks(2);
+    let after = g.sim.mobs().into_iter().find(|m| m.0 == cow.0).map(|m| m.3);
+    assert!(after.is_none_or(|h| h < cow.3), "a cow outside the claims is hurt");
     // An operator digs anywhere.
     g.console("op Eli");
     g.ticks(1);
