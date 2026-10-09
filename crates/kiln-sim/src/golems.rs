@@ -27,23 +27,95 @@ pub(crate) fn try_spawn_golem(p: &mut Player, level: &mut RegionLevel, pos: Bloc
         build(p, level, MobKind::SnowGolem, &[pos, body, feet], feet, spawns);
         return;
     }
-    if !iron(level, body) || !iron(level, feet) {
-        return;
+    if iron(level, body) && iron(level, feet) {
+        // Arms along x or z; the corners beside the feet must be empty (`BlockPatternBuilder`
+        // `~` cells are air).
+        let axes = [[1, 0], [0, 1]];
+        let found = axes.into_iter().find(|a| {
+            let side = |s: i32, at: BlockPos| BlockPos::new(at.x + a[0] * s, at.y, at.z + a[1] * s);
+            iron(level, side(1, body)) && iron(level, side(-1, body)) && air(level, side(1, feet)) && air(level, side(-1, feet))
+        });
+        if let Some(axis) = found {
+            let arms = [
+                BlockPos::new(body.x + axis[0], body.y, body.z + axis[1]),
+                BlockPos::new(body.x - axis[0], body.y, body.z - axis[1]),
+            ];
+            build(p, level, MobKind::IronGolem, &[pos, body, feet, arms[0], arms[1]], feet, spawns);
+            return;
+        }
     }
-    // Arms along x or z; the corners beside the feet must be empty (`BlockPatternBuilder`
-    // `~` cells are air).
-    let axes = [[1, 0], [0, 1]];
-    let Some(axis) = axes.into_iter().find(|a| {
-        let side = |s: i32, at: BlockPos| BlockPos::new(at.x + a[0] * s, at.y, at.z + a[1] * s);
-        iron(level, side(1, body)) && iron(level, side(-1, body)) && air(level, side(1, feet)) && air(level, side(-1, feet))
-    }) else {
-        return;
+    // The copper golem pattern is tried last: a copper block under the pumpkin.
+    if kiln_blocks::tags::is(level.block(body), "minecraft:copper") {
+        build_copper(p, level, pos, body, spawns);
+    }
+}
+
+/// The copper chest of a copper block (`CopperChestBlock.COPPER_TO_COPPER_CHEST_MAPPING`).
+fn copper_chest_of(block: u16) -> u16 {
+    let name = kiln_data::blocks_types::block_of(block).name;
+    let chest = match name {
+        "minecraft:copper_block" => "minecraft:copper_chest".to_owned(),
+        "minecraft:waxed_copper_block" => "minecraft:waxed_copper_chest".to_owned(),
+        n => n.replace("_copper", "_copper_chest"),
     };
-    let arms = [
-        BlockPos::new(body.x + axis[0], body.y, body.z + axis[1]),
-        BlockPos::new(body.x - axis[0], body.y, body.z - axis[1]),
-    ];
-    build(p, level, MobKind::IronGolem, &[pos, body, feet, arms[0], arms[1]], feet, spawns);
+    kiln_data::blocks_types::block_by_name(&chest).or_else(|| kiln_data::blocks_types::block_by_name("minecraft:copper_chest")).map_or(d::AIR, |b| b.default)
+}
+
+/// `CopperGolem` weather stage of a copper block (waxed ones count as their unwaxed stage).
+fn weather_of(block: u16) -> u8 {
+    let name = kiln_data::blocks_types::block_of(block).name;
+    if name.contains("oxidized") {
+        3
+    } else if name.contains("weathered") {
+        2
+    } else if name.contains("exposed") {
+        1
+    } else {
+        0
+    }
+}
+
+/// `CarvedPumpkinBlock.trySpawnGolem` for the copper golem: the pumpkin and the copper block go
+/// (level event 2001, as for the others), the golem stands where the pumpkin was, the copper
+/// block comes back as a copper chest facing the way the pumpkin did, and the golem has the
+/// block's weathering stage.
+fn build_copper(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, body: BlockPos, spawns: &mut Vec<Spawn>) {
+    let pumpkin = level.block(pos);
+    let copper = level.block(body);
+    // `clearPatternBlocks`.
+    for at in [pos, body] {
+        let s = level.block(at);
+        kiln_blocks::set_block(level, at, d::AIR, flags::CLIENTS);
+        level.effect(Effect::LevelEvent { id: 2001, pos: at, data: s as i32 });
+    }
+    let at = [pos.x as f64 + 0.5, pos.y as f64 + 0.05, pos.z as f64 + 0.5];
+    let mut golem = kiln_entity::mob::new(MobKind::CopperGolem, 0, 0, p.entity_id as i64 ^ level.env.game_time);
+    golem.set_pos(kiln_entity::math::Vec3::new(at[0], at[1], at[2]));
+    golem.y_rot = 0.0;
+    golem.set_old_pos_and_rot();
+    // `spawn(weatherState)`.
+    if let Some(m) = kiln_entity::mob::data_mut(&mut golem) {
+        kiln_entity::mob::kinds::copper_golem::st_mut(m).weather = weather_of(copper);
+    }
+    let seen = kiln_entity::level::Seen::of(&golem);
+    let entity_type = kiln_data::entities::by_name("minecraft:copper_golem").expect("copper golem type");
+    spawns.push(Spawn { kind: entity_type, pos: at, vel: [0.0; 3], body: Body::Ready(Box::new(golem)) });
+    let near = (0..3).all(|k| (p.pos[k] - at[k]).abs() <= 5.0 + if k == 1 { 0.98 } else { 0.245 });
+    if near {
+        let dim = crate::DIMENSIONS[level.env.dim].0;
+        let subject = crate::advancements::triggers::seen_subject(&seen, dim);
+        p.fire_conds("minecraft:summoned_entity", None, |c, ok, _| c.cap("entity").is_none_or(|cap| ok(cap, &subject)));
+    }
+    // `updatePatternBlocks`.
+    for at in [pos, body] {
+        kiln_blocks::update::update_neighbors_at(level, at, kiln_blocks::BlockId::of(d::AIR));
+    }
+    // `replaceCopperBlockWithChest`: facing as the pumpkin, joined to a chest beside it.
+    let facing = state::get_dir(pumpkin, "facing").unwrap_or(kiln_blocks::Direction::North);
+    let chest = copper_chest_of(copper);
+    let chest = kiln_blocks::behaviour::container::chest_placement(level, chest, body, facing.opposite(), kiln_blocks::Direction::Up, false);
+    kiln_blocks::set_block(level, body, chest, flags::CLIENTS);
+    level.effect(Effect::Sound { pos, sound: "minecraft:entity.copper_golem.spawn", volume: 1.0, pitch: 1.0 });
 }
 
 /// `spawnGolemInWorld`: the pattern's blocks go (with their break particles), the golem stands
