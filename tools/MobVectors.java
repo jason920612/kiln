@@ -8676,6 +8676,7 @@ public class MobVectors {
                 MobSpec m = new MobSpec("minecraft:" + kind, 0.5, W, 0.5, 30f, seed++);
                 m.nbt = tame.substring(0, tame.length() - 1) + (c[2].isEmpty() ? "" : "," + c[2]) + "}";
                 Scenario s = eqClick("eq50_" + kind + "_" + c[0], m, c[1], c[3].equals("creative"), false, 60);
+                s.diverges = kind.startsWith("zombie");
                 s.player = new double[] {10.5, BY, 0.5};
                 poolWorld(s, 14, -6, -6, 6, 6, 5);
                 out.add(s);
@@ -8684,6 +8685,7 @@ public class MobVectors {
             MobSpec w = new MobSpec("minecraft:" + kind, 0.5, W, 0.5, 30f, seed++);
             w.nbt = "{PersistenceRequired:1b}";
             Scenario sw = eqClick("eq50_" + kind + "_wild_saddle", w, "minecraft:saddle", false, false, 40);
+            sw.diverges = kind.startsWith("zombie");
             sw.player = new double[] {10.5, BY, 0.5};
             poolWorld(sw, 14, -6, -6, 6, 6, 5);
             out.add(sw);
