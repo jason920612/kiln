@@ -689,7 +689,7 @@ pub trait Plugin {
     fn on_task(_t: TaskEvent) {}
     /// Outcomes of this plugin's atomic operations and effects (with the `op-results`
     /// subscription).
-    fn on_results(_results: Vec<OpResult>) {}
+    fn on_results(_player: Option<Player>, _results: Vec<OpResult>) {}
     /// Tasks that will not run (global instance).
     fn on_cancelled(_tasks: Vec<CancelledTask>) {}
     /// An event another plugin raised (`custom` subscription), in the global instance or in
@@ -730,8 +730,8 @@ macro_rules! export_plugin {
             fn on_task(t: $crate::TaskEvent) {
                 <$t as $crate::Plugin>::on_task(t)
             }
-            fn on_results(r: ::std::vec::Vec<$crate::OpResult>) {
-                <$t as $crate::Plugin>::on_results(r)
+            fn on_results(p: ::std::option::Option<$crate::Player>, r: ::std::vec::Vec<$crate::OpResult>) {
+                <$t as $crate::Plugin>::on_results(p, r)
             }
             fn on_cancelled(t: ::std::vec::Vec<$crate::CancelledTask>) {
                 <$t as $crate::Plugin>::on_cancelled(t)
@@ -777,8 +777,8 @@ macro_rules! export_plugin {
             fn on_task(t: $crate::TaskEvent) {
                 <$t as $crate::Plugin>::on_task(t)
             }
-            fn on_results(r: ::std::vec::Vec<$crate::OpResult>) {
-                <$t as $crate::Plugin>::on_results(r)
+            fn on_results(p: ::std::option::Option<$crate::Player>, r: ::std::vec::Vec<$crate::OpResult>) {
+                <$t as $crate::Plugin>::on_results(p, r)
             }
             fn on_custom(ev: $crate::CustomEvent) -> $crate::Decision {
                 <$t as $crate::Plugin>::on_custom(ev).into_decision()

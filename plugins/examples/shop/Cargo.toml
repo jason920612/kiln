@@ -1,0 +1,11 @@
+[package]
+name = "shop"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+kiln-plugin-sdk.workspace = true

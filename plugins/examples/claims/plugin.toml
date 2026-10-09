@@ -1,0 +1,35 @@
+id = "claims"
+version = "0.1.0"
+api = "1"
+capabilities = ["player.message", "scheduler"]
+
+# Operators are not subject to it: the host lets their events through without calling the plugin.
+# Every subscription is fail-closed: a trap, a timeout or an overrun budget denies.
+[[subscribe]]
+event = "block-break"
+policy = "fail-closed"
+bypass-permission = 4
+
+[[subscribe]]
+event = "block-place"
+policy = "fail-closed"
+bypass-permission = 4
+
+[[subscribe]]
+event = "entity-interact"
+policy = "fail-closed"
+bypass-permission = 4
+
+[[subscribe]]
+event = "entity-attack"
+policy = "fail-closed"
+bypass-permission = 4
+
+[[subscribe]]
+event = "player-damage"
+policy = "fail-closed"
+
+[config]
+radius = 8
+max_claims = 3
+claim_block = "minecraft:gold_block"

@@ -1,0 +1,11 @@
+id = "scoreboard-hud"
+version = "0.1.0"
+api = "1"
+capabilities = ["player.hud", "scheduler"]
+
+[[subscribe]]
+event = "join"
+
+[[subscribe]]
+event = "observe"
+kinds = ["player-died", "player-spawned"]

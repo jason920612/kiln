@@ -1350,7 +1350,7 @@ impl RegionInner {
             kind,
             &[actor],
             info,
-            None,
+            Some(CellKey::of_block(self.dim, block[0], block[2])),
             Some(entity),
             |_, g, store, h| {
                 let ev = wit::EntityEvent {
@@ -1360,6 +1360,7 @@ impl RegionInner {
                     entity_uuid: host::wit_uuid(uuid),
                     kind: ekind,
                     pos: (p[0], p[1], p[2]),
+                    cell: h.cell,
                 };
                 if kind == EventKind::EntityAttack { g.call_on_entity_attack(store, ev) } else { g.call_on_entity_interact(store, ev) }
             },
@@ -1393,7 +1394,7 @@ impl RegionInner {
             EventKind::PlayerDamage,
             &actors[..n],
             info,
-            None,
+            Some(CellKey::of_block(self.dim, pos[0], pos[2])),
             None,
             |_, g, store, h| {
                 let ev = wit::DamageEvent {
@@ -1403,6 +1404,7 @@ impl RegionInner {
                     cause,
                     amount,
                     attacker: attacker.map(|a| wit_player(a, h.players[1])),
+                    cell: h.cell,
                 };
                 g.call_on_player_damage(store, ev)
             },
@@ -1678,7 +1680,7 @@ impl RegionInner {
                 let g = g.expect("region guest");
                 match f {
                     RegionCall::Task(handle, id) => g.call_on_task(store, wit::TaskEvent { handle, id, player: p, cell: cell.map(|_| ch) }),
-                    RegionCall::Results(r) => g.call_on_results(store, &r),
+                    RegionCall::Results(r) => g.call_on_results(store, p, &r),
                 }
             })
         });
@@ -2380,7 +2382,9 @@ impl PluginRuntime {
         if all.is_empty() {
             return;
         }
-        type Groups = BTreeMap<(usize, Option<(u32, u64)>), (Option<PlayerAt>, Vec<wit::OpResult>)>;
+        // One call per plugin, destination and source player, so that the handler gets the
+        // player the operations came from.
+        type Groups = BTreeMap<(usize, Option<(u32, u64)>, u128), (Option<PlayerAt>, Vec<wit::OpResult>)>;
         let mut groups = Groups::new();
         for d in all {
             if d.generation != self.set.plugins[d.plugin].generation {
@@ -2388,14 +2392,17 @@ impl PluginRuntime {
             }
             let at = if d.source != 0 { world.player(d.source) } else { None };
             let region = at.as_ref().filter(|_| self.set.plugins[d.plugin].region.is_some()).map(|p| (p.level, p.region));
-            let e = groups.entry((d.plugin, region)).or_insert_with(|| (at.filter(|_| region.is_some()), Vec::new()));
+            let e = groups.entry((d.plugin, region, d.source)).or_insert_with(|| (at, Vec::new()));
             e.1.push(d.result);
         }
-        for ((plugin, region), (player, results)) in groups {
+        for ((plugin, region, _), (player, results)) in groups {
             let n = results.len() as u64;
             let delivered = match region.and_then(|r| self.regions.get_mut(&r)) {
                 Some(rp) => rp.run_in(plugin, player.as_ref(), None, RegionCall::Results(results)),
-                None => self.global_call(plugin, None, |store, g, _| g.call_on_results(store, &results)),
+                None => {
+                    let actor = player.as_ref().map(|p| Actor { uuid: p.uuid, name: &p.name, operator: p.operator, info: p.info });
+                    self.global_call(plugin, actor.as_ref(), |store, g, p| g.call_on_results(store, p, &results))
+                }
             };
             if delivered {
                 self.shared.stats.results_delivered.fetch_add(n, Ordering::Relaxed);

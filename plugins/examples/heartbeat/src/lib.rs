@@ -104,7 +104,7 @@ impl Plugin for Heartbeat {
         }
     }
 
-    fn on_results(results: Vec<OpResult>) {
+    fn on_results(_player: Option<Player>, results: Vec<OpResult>) {
         for r in results {
             if let (true, Some(GlobalValue::Int(total))) = (r.applied, r.value) {
                 chat::broadcast_spans(&[tag(), text(&format!("{total} pings so far"))]);

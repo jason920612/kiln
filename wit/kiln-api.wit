@@ -123,6 +123,8 @@ interface types {
         entity-uuid: uuid,
         kind: entity-type,
         pos: tuple<f64, f64, f64>,
+        /// The cell the entity stands in.
+        cell: cell-handle,
     }
 
     /// A player is about to take damage.
@@ -134,6 +136,8 @@ interface types {
         amount: f32,
         /// The attacking player, when a player is responsible (melee, arrows).
         attacker: option<player>,
+        /// The cell the victim stands in.
+        cell: cell-handle,
     }
 
     record chat-event { player: player, message: string }
@@ -503,7 +507,7 @@ interface global-hooks {
     /// A registered command; `args` is the text after the literal. Returns the reply.
     on-command: func(p: option<player>, name: string, args: string) -> list<span>;
     on-task: func(t: task-event);
-    on-results: func(results: list<op-result>);
+    on-results: func(p: option<player>, results: list<op-result>);
     /// Tasks that will not run (reload, the player left).
     on-cancelled: func(tasks: list<cancelled-task>);
     on-custom: func(ev: custom-event) -> decision;
@@ -527,7 +531,7 @@ interface region-hooks {
     on-command: func(ev: command-event) -> decision;
     on-observe: func(events: list<observed>);
     on-task: func(t: task-event);
-    on-results: func(results: list<op-result>);
+    on-results: func(p: option<player>, results: list<op-result>);
     on-custom: func(ev: custom-event) -> decision;
 }
 
