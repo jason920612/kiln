@@ -169,6 +169,11 @@ impl RegionWork<'_> {
                 continue;
             }
             if let PlayIn::Attack { entity_id } = pkt {
+                if let Some(h) = self.plugins.as_mut()
+                    && crate::plugins::deny_attack(h, self.players[i], self.entities, entity_id)
+                {
+                    continue;
+                }
                 if !self.players[i].dead {
                     let mut level = RegionLevel {
                         cells: &mut *self.cells,

@@ -1,0 +1,83 @@
+// The `async-tasks` world (WASI 0.3 component-model async), kept apart from the game's hot path.
+//
+// A plugin may ship a second component, `tasks.wasm`, built for this world. It runs on its
+// own engine (component-model async on, `concurrency_support` on), in one instance per plugin
+// that is not bound to any region or thread, and touches the game only through messages: the
+// plugin's game hooks hand it a job (`jobs.submit`), and the job's outcome comes back as an
+// `op-result` (`applied` true with the bytes in `value`, or false with the failure text) in
+// `on-results`, the first tick after the job finished.
+//
+// What a task may do is what its manifest grants: HTTP to the hosts of its `http:<host>`
+// capabilities (the `fetch` of any other host is `denied`), `timers` (sleeping in server ticks)
+// and `storage` (a small key-value store of its own, kept in the plugin's data directory). It
+// has no access to players, worlds or the plugin's namespaces, and no filesystem or sockets of
+// its own. In strict mode the world is not available (its outcomes depend on wall-clock
+// time): jobs fail at once.
+//
+// This world is the one part of `kiln:api` that is not in the 1.0 compatibility promise until
+// WASI 0.3 is stable (see `docs/plugin-api.md`).
+
+interface http {
+    record request {
+        /// `GET`, `POST`, `PUT`, `DELETE` or `PATCH`.
+        method: string,
+        /// `http://` or `https://`, to a host the plugin has a `http:<host>` capability for.
+        url: string,
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+    }
+
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        /// At most 1 MiB; a longer body fails the request.
+        body: list<u8>,
+    }
+
+    variant http-error {
+        /// The host is not one the plugin may reach (or the URL is not acceptable).
+        denied(string),
+        /// No answer within ten seconds.
+        timeout,
+        failed(string),
+    }
+
+    fetch: async func(req: request) -> result<response, http-error>;
+}
+
+interface timers {
+    /// Resumes after `ticks` server ticks (at least one).
+    sleep: async func(ticks: u32);
+}
+
+interface storage {
+    get: async func(key: string) -> option<list<u8>>;
+    /// Keys up to 256 bytes, values up to 1 MiB, 4096 keys.
+    put: async func(key: string, val: list<u8>) -> bool;
+    delete: async func(key: string);
+}
+
+interface job-hooks {
+    record job {
+        /// The plugin's own number for the job (`jobs.submit`'s first argument).
+        id: u64,
+        kind: string,
+        payload: list<u8>,
+    }
+
+    variant job-result {
+        ok(list<u8>),
+        failed(string),
+    }
+
+    /// Runs one job; many jobs may be in flight at once.
+    run: async func(j: job) -> job-result;
+}
+
+world async-tasks {
+    import http;
+    import timers;
+    import storage;
+    import log;
+    export job-hooks;
+}

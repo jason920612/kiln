@@ -90,7 +90,7 @@ impl Plugin for Heartbeat {
             (PING, Some(p)) => {
                 let n = state::get_i64(Scope::Player(p.handle), "pings") + 1;
                 state::put_i64(Scope::Player(p.handle), "pings", n);
-                chat::send(p.handle, &[tag(), text(&format!("ping {n}"))]);
+                chat::send_spans(p.handle, &[tag(), text(&format!("ping {n}"))]);
                 state::add("pings-total", 1);
             }
             (WELCOME, Some(p)) => {
@@ -98,16 +98,16 @@ impl Plugin for Heartbeat {
                 state::put_i64(Scope::Player(p.handle), "roll", roll as i64);
                 state::put_i64(Scope::Player(p.handle), "seen-at", env::now_millis() as i64);
                 let name = event::player_name(p.handle);
-                chat::send(p.handle, &[tag(), text(&format!("welcome, {name}! Your roll: {roll}"))]);
+                chat::send_spans(p.handle, &[tag(), text(&format!("welcome, {name}! Your roll: {roll}"))]);
             }
             _ => {}
         }
     }
 
-    fn on_results(results: Vec<OpResult>) {
+    fn on_results(_player: Option<Player>, results: Vec<OpResult>) {
         for r in results {
             if let (true, Some(GlobalValue::Int(total))) = (r.applied, r.value) {
-                chat::broadcast(&[tag(), text(&format!("{total} pings so far"))]);
+                chat::broadcast_spans(&[tag(), text(&format!("{total} pings so far"))]);
             }
         }
     }

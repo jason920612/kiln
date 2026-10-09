@@ -1,0 +1,20 @@
+id = "shop"
+version = "0.1.0"
+api = "1"
+capabilities = ["command.register", "player.message", "inventory"]
+
+[[subscribe]]
+event = "join"
+
+# Clicks in the plugin's own menu arrive (it is locked: nothing moves whatever the answer).
+[[subscribe]]
+event = "container-click"
+
+# The answers of the money operations and of the items handed out.
+[[subscribe]]
+event = "op-results"
+
+# Right-clicks with an item tagged by this plugin.
+[[subscribe]]
+event = "item-use"
+policy = "fail-open"

@@ -704,6 +704,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
 
 [[package]]
+name = "futures-macro"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -724,6 +735,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-io",
+ "futures-macro",
  "futures-sink",
  "futures-task",
  "memchr",
@@ -1114,6 +1126,7 @@ name = "kiln-entity"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "kiln-command",
  "kiln-data",
  "kiln-inventory",
  "kiln-item",
@@ -1215,11 +1228,15 @@ name = "kiln-plugin-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures",
  "proptest",
  "serde",
+ "sha2",
+ "tokio",
  "toml",
  "tracing",
  "tracing-subscriber",
+ "ureq",
  "uuid",
  "wasmtime",
  "wasmtime-wasi",

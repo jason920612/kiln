@@ -1,0 +1,6 @@
+id = "arena"
+version = "0.1.0"
+api = "1"
+capabilities = ["command.register", "scheduler", "events.raise", "world.write", "player.control", "inventory"]
+
+# Optional config: level (default minecraft:overworld), x, y, z (default 1000, 80, 1000).

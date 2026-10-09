@@ -26,7 +26,7 @@ fn item_count(sim: &Sim) -> usize {
 
 fn config(dir: &Path) -> SimConfig {
     let mut c = SimConfig::new(8, 4, Some(dir.to_owned()));
-    c.plugins = Some(kiln_sim::PluginSettings::new(kiln_plugin_host::examples::build().expect("example plugins")));
+    c.plugins = Some(kiln_sim::PluginSettings::new(kiln_plugin_host::examples::custom_dir("native-world", &["chat-format", "counter", "spawn-protection"], &[]).expect("example plugins")));
     c
 }
 

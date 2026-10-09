@@ -1,0 +1,7 @@
+id = "noop"
+version = "0.1.0"
+capabilities = []
+
+[[subscribe]]
+event = "block-break"
+policy = "fail-open"

@@ -1,0 +1,10 @@
+id = "webhook"
+version = "0.1.0"
+api = "1"
+# The tasks component sits next to plugin.wasm; its capabilities are what its jobs may do.
+tasks = "tasks.wasm"
+capabilities = ["command.register", "player.message", "http:127.0.0.1", "timers", "storage"]
+
+# The answers of the jobs.
+[[subscribe]]
+event = "op-results"

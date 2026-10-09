@@ -1,0 +1,10 @@
+id = "npc"
+version = "0.1.0"
+api = "1"
+capabilities = ["command.register", "player.message", "entity.control"]
+
+# Only armor stands reach the plugin: the host filters by entity type.
+[[subscribe]]
+event = "entity-interact"
+entities = ["minecraft:armor_stand"]
+policy = "fail-open"

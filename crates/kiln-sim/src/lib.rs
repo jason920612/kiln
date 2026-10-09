@@ -491,6 +491,9 @@ struct Player {
     brush_ticks: Option<i32>,
     /// The operator permission level (`/op`), kept by the server for the regions' sake (game master blocks).
     permission: u8,
+    /// The plugin instances of the region the player is in, when some plugin hears of player
+    /// damage (set when the region works, see `plugins::gate`).
+    plugin_gate: Option<kiln_plugin_host::RegionPlugins>,
     /// `LivingEntity.recentKineticEnemies`: the entities a charging weapon touched and when.
     recent_stabs: Vec<(i32, i64)>,
     /// Latest tab-completion request, answered once per tick.
@@ -2349,7 +2352,7 @@ impl Sim {
                 kiln_inventory::Source::Player => p.inv.items.get(s.index).cloned(),
                 kiln_inventory::Source::Block => match &p.containers.open {
                     Some(container::open::OpenBlock::EnderChest { .. }) => p.containers.ender.items.get(s.index).cloned(),
-                    Some(container::open::OpenBlock::Cart { .. }) => p.containers.cart.items.get(s.index).cloned(),
+                    Some(container::open::OpenBlock::Cart { .. } | container::open::OpenBlock::Plugin(_)) => p.containers.cart.items.get(s.index).cloned(),
                     Some(container::open::OpenBlock::Containers { first, second }) => {
                         let region = self.dims[p.dim].regions.at(ChunkPos::of_block(first.0.x, first.0.z).cell());
                         region.and_then(|r| {
@@ -2571,6 +2574,14 @@ impl Sim {
                 let packets = packets.remove(&key).unwrap_or_default();
                 let (cells, (entities, blocks)) = r.cells_and_part_mut();
                 let plugins = hooks.remove(&key);
+                let mut players = players;
+                if let Some(h) = plugins.as_ref() {
+                    // Damage the players take asks the plugins of the region they are in.
+                    let gate = h.damage_gate();
+                    for p in players.iter_mut() {
+                        p.plugin_gate = gate.clone();
+                    }
+                }
                 let delay = inject.map_or(Duration::ZERO, |i| i.delay_for(dim, cells));
                 let unlit = unlit.remove(&key).unwrap_or_default();
                 RegionWork { dim, region: key.1, cells, entities, blocks, players, conns, packets, plugins, delay, unlit, out: RegionOut::default() }
@@ -3006,6 +3017,7 @@ impl Sim {
 
     /// Death messages to everyone (`show_death_messages`), in the order the deaths happened.
     fn announce_deaths(&mut self, deaths: Vec<health::Death>) {
+        self.plugin_deaths(&deaths);
         for d in &deaths {
             self.award_kill_score(d);
         }
@@ -3158,6 +3170,7 @@ impl Sim {
         p.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
         self.dims[dim].spawns.extend(spawns);
         self.place_player(conn);
+        self.plugin_spawned(conn, plugins::SpawnReason::Respawn);
     }
 
     /// Loads the chunk a player (just moved to another level) stands in and puts it in the
@@ -3549,6 +3562,7 @@ impl Sim {
             kinetic_ticks: None,
             brush_ticks: None,
             permission: 0,
+            plugin_gate: None,
             recent_stabs: Vec::new(),
             pending_suggestion: None,
             teleport_id: 1,

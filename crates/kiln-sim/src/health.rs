@@ -102,6 +102,8 @@ pub(crate) struct Attacker {
     pub view: crate::enchant::EntityView,
     /// The attacker's entity type when it is a mob (a player otherwise).
     pub mob: Option<&'static str>,
+    /// A player attacker's uuid (0 for mobs), for the plugin damage event.
+    pub uuid: u128,
 }
 
 impl Attacker {
@@ -124,6 +126,7 @@ impl Attacker {
             weapon: None,
             view: crate::enchant::EntityView { type_id, pos, on_ground: true, ..Default::default() },
             mob: Some(type_name),
+            uuid: 0,
         }
     }
 }
@@ -536,6 +539,8 @@ pub(crate) struct Death {
     pub message: Tag,
     /// The player credited with the kill (`awardKillScore` in the serial phase).
     pub killer: Option<String>,
+    /// Network id of the damage type that killed.
+    pub cause: i32,
 }
 
 impl Player {
@@ -589,6 +594,10 @@ impl Player {
             return false;
         }
         if self.dead {
+            return false;
+        }
+        // Plugins hear of damage that would land, and may cancel it.
+        if self.plugin_gate.is_some() && !self.plugin_allows_damage(amount, source) {
             return false;
         }
         // `Player.hurtServer`: what sits on the shoulders flies off first.
@@ -702,7 +711,8 @@ impl Player {
                 self.voice_sound("minecraft:entity.player.death");
                 self.secondary_hurt_sound(source);
             }
-            let death = self.die(ctx);
+            let mut death = self.die(ctx);
+            death.cause = source.type_id();
             ctx.deaths.push(death);
             // `KilledTrigger` for the killer's side (`entity_killed_player`).
             if let Some(k) = &killer {
@@ -906,7 +916,7 @@ impl Player {
         self.died = true;
         // `broadcastEntityEvent(DEATH)` reaches the player too.
         self.send(entity::entity_event(self.entity_id, 3));
-        Death { conn: self.conn, message, killer: credit }
+        Death { conn: self.conn, message, killer: credit, cause: 0 }
     }
 
     /// Per-tick damage bookkeeping (`ServerPlayer.tick`'s cooldown, `LivingEntity.baseTick`'s

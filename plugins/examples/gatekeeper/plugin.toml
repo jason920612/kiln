@@ -1,0 +1,11 @@
+id = "gatekeeper"
+version = "0.1.0"
+api = "1"
+capabilities = []
+
+# Which events it hears: the host filters by name before calling. The config key `deny` lists
+# the names to veto (comma-separated).
+[[subscribe]]
+event = "custom"
+names = ["arena:join", "arena:reset"]
+policy = "fail-open"

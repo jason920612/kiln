@@ -26,7 +26,7 @@ fn contains(hay: &[u8], needle: &str) -> bool {
 impl World {
     fn new() -> Self {
         let mut config = SimConfig::new(4, 4, None);
-        config.plugins = Some(settings(kiln_plugin_host::examples::build().expect("example plugins")));
+        config.plugins = Some(settings(kiln_plugin_host::examples::custom_dir("sim-plugins", &["chat-format", "counter", "petting", "spawn-protection"], &[]).expect("example plugins")));
         let mut sim = Sim::new(config);
         let (msg, stats) = join(1, "Builder", 2);
         *stats.log.lock().unwrap() = Some(Vec::new());

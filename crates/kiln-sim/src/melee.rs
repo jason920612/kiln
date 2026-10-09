@@ -667,7 +667,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
             Victim::Player(o) => Some(self.players[o].as_attacker()),
             Victim::Entity(id, _) => {
                 let f = self.facts(owner)?;
-                Some(Attacker { id, name: String::new(), pos: f.pos, creative: false, weapon: None, view: f.view, mob: Some(f.type_name) })
+                Some(Attacker { id, name: String::new(), pos: f.pos, creative: false, weapon: None, view: f.view, mob: Some(f.type_name), uuid: 0 })
             }
         }
     }
