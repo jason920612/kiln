@@ -65,7 +65,20 @@ pub mod timers {
 
 /// The task's own small key-value store.
 pub mod storage {
-    pub use crate::bindings::kiln::api::storage::{delete, get, put};
+    use crate::bindings::kiln::api::storage as raw;
+
+    pub async fn get(key: &str) -> Option<Vec<u8>> {
+        raw::get(key.to_owned()).await
+    }
+
+    /// Stores a value; false when the key or value is too large or the store is full.
+    pub async fn put(key: &str, val: Vec<u8>) -> bool {
+        raw::put(key.to_owned(), val).await
+    }
+
+    pub async fn delete(key: &str) {
+        raw::delete(key.to_owned()).await
+    }
 }
 
 /// Console logging.
