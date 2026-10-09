@@ -3,11 +3,8 @@ version = "0.1.0"
 api = "1"
 capabilities = ["command.register", "player.message", "scheduler", "player.control"]
 
-# Taking damage disarms a pending /home.
+# Taking damage disarms a pending /home. The config key `warmup` (ticks the player must stand
+# still after /home, default 60) is optional.
 [[subscribe]]
 event = "player-damage"
 policy = "fail-open"
-
-[config]
-# Ticks the player must stand still after /home.
-warmup = 60

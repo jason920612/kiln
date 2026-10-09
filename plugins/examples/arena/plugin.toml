@@ -3,8 +3,4 @@ version = "0.1.0"
 api = "1"
 capabilities = ["command.register", "scheduler", "events.raise", "world.write", "player.control", "inventory"]
 
-[config]
-level = "minecraft:overworld"
-x = 1000
-y = 80
-z = 1000
+# Optional config: level (default minecraft:overworld), x, y, z (default 1000, 80, 1000).
