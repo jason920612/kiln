@@ -3250,10 +3250,10 @@ public class MobVectors {
     }
 
     /// An iron golem offers its poppy to a copper golem next to it (the offer is a one in 8000 roll when the goal is
-    /// polled, so the seeds that roll early are looked for: `MOB_GIFT_PROBE=1` records candidates to search).
+    /// polled, so the seeds that roll early were looked for with a probe).
     static void scenariosIronGift(List<Scenario> out) {
-        boolean probe = System.getenv("MOB_GIFT_PROBE") != null;
-        long[] seeds = probe ? java.util.stream.LongStream.rangeClosed(1, 300).map(i -> 52000L + i).toArray() : new long[] {};
+        // (seeds found with a probe over 52001 to 52300: the goal starts at tick 41, 99, 207, 281 and 301)
+        long[] seeds = {52052L, 52168L, 52181L, 52220L, 52253L};
         for (long seed : seeds) {
             Scenario s = new Scenario("iron_gift_" + seed);
             floor(s, 30, "minecraft:stone");
@@ -3265,7 +3265,7 @@ public class MobVectors {
             s.player = new double[] {24.5, BY, 0.5};
             s.playerCreative = true;
             s.levelSeed = 800 + seed % 50;
-            s.ticks = 600;
+            s.ticks = 700;
             out.add(s);
         }
     }
