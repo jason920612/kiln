@@ -3320,7 +3320,7 @@ public class MobVectors {
         }
         // Shearing the item out; the cube leaves the item alone for a while after.
         {
-            Scenario s = sulfurWorld("sulfur_shear", 43600L, 970, 220);
+            Scenario s = sulfurWorld("sulfur_shear", 43600L, 970, 100);
             s.mobs.get(0).nbt = sulfurNbt("minecraft:dirt");
             s.player = new double[] {1.5, BY, 0.5};
             s.playerCreative = false;
