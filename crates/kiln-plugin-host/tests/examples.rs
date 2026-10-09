@@ -294,7 +294,7 @@ struct OneRegion(Vec<u128>);
 
 impl World for OneRegion {
     fn player(&self, uuid: u128) -> Option<PlayerAt> {
-        self.0.contains(&uuid).then(|| PlayerAt { uuid, level: 0, region: 1, name: "Alice".into(), operator: false })
+        self.0.contains(&uuid).then(|| PlayerAt { uuid, level: 0, region: 1, name: "Alice".into(), operator: false, info: Default::default() })
     }
     fn owner(&self, _: u32, _: i32, _: i32) -> Option<u64> {
         Some(1)
