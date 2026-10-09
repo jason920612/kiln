@@ -297,9 +297,9 @@ impl Kind for HappyGhast {
         false
     }
 
-    /// `HappyGhast.sanitizeScale`: never bigger than 1.
-    fn can_breathe_underwater(&self, m: &MobData) -> bool {
-        m.baby()
+    /// `HappyGhast.canBreatheUnderwater`: a ghastling does.
+    fn breathes_under_water_now(&self, m: &MobData) -> Option<bool> {
+        Some(m.baby())
     }
 
     fn is_food(&self, item: i32) -> bool {

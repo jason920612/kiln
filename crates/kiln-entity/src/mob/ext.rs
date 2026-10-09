@@ -626,7 +626,12 @@ pub trait Kind: Sync + Send {
         let _ = (m, partner);
         true
     }
-    /// `increaseAirSupply(current)` (4 more a tick, up to the maximum; a dolphin takes a full breath at once).
+    /// `canBreatheUnderwater` when it depends on the state (`None`: the type's `EntityTypeTags.CAN_BREATHE_UNDER_WATER`).
+    fn breathes_under_water_now(&self, m: &MobData) -> Option<bool> {
+        let _ = m;
+        None
+    }
+    /// `increaseAirSupply(current)`(4 more a tick, up to the maximum; a dolphin takes a full breath at once).
     fn increase_air_supply(&self, current: i32, max: i32) -> i32 {
         (current + 4).min(max)
     }
