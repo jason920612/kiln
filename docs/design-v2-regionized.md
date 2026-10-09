@@ -944,7 +944,7 @@ enum Scope { Global, PerDimension, PerCell,
 
 ### 11.1 Runtime 與 WIT 版本化
 - wasmtime 49.x component model、WIT 套件 `kiln:api`、guest 為 wasm32-wasip2/p3。熱路徑同步、關閉 `concurrency_support`（約 187 ns／次，開啟約 684 ns）；WASI 0.3 async 只在獨立的 `async-tasks` world（HTTP、計時器、DB），只以訊息接觸遊戲；pooling allocator、快取 `.cwasm`。
-- **版本**：M7 之前 WIT 只是內部草稿，不對外發佈；**1.0 於 M7 凍結**，前提是 §11.3 與 §11.4 的測試通過；之後 semver，major 需兩次改版的淘汰期。WIT 與 SDK 的授權隨 Q2 一起決定（v1 的建議是寬鬆授權，與核心授權無關）。原生層只有第一方 Rust crate（cargo feature），不支援 Rust-ABI dylib。
+- **版本**：M7 之前 WIT 只是內部草稿，不對外發佈；**1.0 於 M7 凍結**（wp51 已凍結，形狀雜湊測試與政策見 `docs/plugin-api.md` §5），前提是 §11.3 與 §11.4 的測試通過；之後 semver，major 需兩次改版的淘汰期。WIT 與 SDK 的授權隨 Q2 一起決定（v1 的建議是寬鬆授權，與核心授權無關）。原生層只有第一方 Rust crate（cargo feature），不支援 Rust-ABI dylib。
 
 ### 11.2 執行緒契約
 ```rust
@@ -1028,7 +1028,16 @@ trait PluginHost {
 - **實體範圍**存在實體 NBT 的 `kiln:plugin`（插件 id → 鍵 → 位元組），隨實體跨 region 與存檔；原版開啟世界時保留在未知欄位中。
 - **host 端過濾**（方塊鍵與 `#tag`、實體類型、方形區域、`bypass-permission`）、每位玩家 token bucket（預設 64 容量、每秒 80）、每實例每 tick 預算：超出時套用失敗政策，不計 strike；strike 視窗以 tick 計（1,200）。
 - **呼叫成本**（release，同機前後量測，20 批取最佳）：立即返回的處理器 123 ns（strict 131 ns）；spawn-protection 允許（讀一次 cell）539 ns（slice 1 為 1,600 ns）；拒絕（cell 讀寫加訊息）2.6 µs（4.2 µs）；host 端過濾掉的事件 13 ns。手段：事件紀錄扁平（玩家名改為 `event.player-name`）、決策為扁平 enum（拒絕訊息走 `event.deny-message`，免 post-return）、`get-int`/`put-int`、每 region 計數、分片 bucket、frame 重用。
-- **缺口**：WASI 0.3 `async-tasks` world 與進行中 HTTP 完成的重載測試；插件引發的可取消事件；玩家傷害、物品欄、死亡與生成的事件；UseItem 只有水桶類走放置檢查（Kiln 尚未模擬玩家倒水）。
+- **wp51（2026-10-09）：插件 API 1.0**。先做用途分析（`docs/plugin-api.md` §2–§3：十二種用途、刪掉的東西與理由），再蓋最小的 API；WIT `kiln:api@1.0.0` 凍結（去掉註解與空白後的形狀雜湊在 `tests/wit_freeze.rs`，改形狀必須同時改雜湊與版本，政策見該文件 §5）。
+  - **動作（effect）**：所有「寫入遊戲」的呼叫（訊息、HUD、傳送、物品、選單、實體、方塊）都在處理器正常返回時才提交到 host 的 outbox，以（tick、來源玩家、呼叫順序）排序後，在序列點（P 之後、指令之後、B0 的工作之後）由 sim 以原版指令使用的同一批 `Host` 方法套用（`teleport`、`give`、`place_block`…），每個回傳 `ticket`，結果以 `op-result`（`applied`）在下一個 B0 送回來源玩家所在的 region（`on-results` 現在帶著來源玩家）。排序與 region／執行緒數量無關，所以不破壞決定性。
+  - **新事件**：`entity-attack`（`Attack` 封包，非玩家實體）、`player-damage`（`Player::hurt` 在確定會打中之後、動任何狀態之前；玩家身上帶著所在 region 的 `RegionPlugins` 控制代碼，所以傷害碼路徑上的同步詢問不需要把插件 host 傳進 40 幾個傷害呼叫點）、`item-use`（只送給物品標籤屬於該插件的、或訂閱 `items` 過濾符合的）、`container-click`（插件選單走 `OpenBlock::Plugin`，格子放在玩家身上的虛擬容器，一律鎖定並重送畫面；一般容器需 `vanilla = true`）、`custom`（插件發的）；觀察批次多了 `player-died`、`player-spawned`（依 manifest `kinds`）。
+  - **新呼叫**：`hud`（私有側欄用客戶端自己的 `kiln_sb` objective 與 boss event 封包，不動伺服器計分板）、`players`（teleport／game mode／heal／kill／kick）、`inventory`（give／take／clear／選單）、`entities`（spawn 回傳由種子、插件與呼叫導出的 uuid，實體 NBT 帶 `kiln:owner` 標記，remove 只認自己的）、`blocks.set-blocks`（必須帶呼叫的 cell-handle，座標必須在那個 cell 內，違反回 `edit-error` 不 trap）、`event.info`／`event.online`、`chat.tell`、原子操作 `try-add`（不得低於下限）。
+  - **插件引發的可取消事件**：`events.raise` 在同一情境內同步呼叫其他插件；實作上發出者呼叫期間，host 把訂閱 `custom` 的同情境實例從槽位借進它的 store（`Peers`），所以重入呼叫堆疊上的實例不可能、從 `on-custom` 再發出的事件找不到對象（深度 1），沒有 Pumpkin #2056／#3593 那類重入問題，也不延後。
+  - **`async-tasks` world**（`wit/async-tasks.wit`、`crates/kiln-plugin-host/src/async_tasks.rs`）：插件的第二個元件 `tasks.wasm`，另一個引擎（component-model async、concurrency 開）、另一條 tokio current-thread 工作執行緒；提供 `http.fetch`（只到 manifest 的 `http:<host>`，十秒逾時、1 MiB 上限）、`timers.sleep`（數伺服器 tick）、`storage`（每個插件自己的 KV 檔）。遊戲只以 `jobs.submit` 送工作、以 `op-result` 收結果。熱重載丟棄實例與在飛的工作，被打斷的工作以 `on-cancelled`（`reload`）通知新世代重送；strict 模式不可用（工作立刻失敗）。cargo feature `async-tasks`（預設開）：component-model async 使每次進入插件的呼叫貴約 13 ns，要精簡熱路徑的建置可關掉（有 `tasks` 的插件就不載入）。邊界：Rust 沒有 `wasm32-wasip3` target，guest 以 wasip2 建置、用 wit-bindgen 的 async ABI；world 不匯入 `wasi:*@0.3` 介面。
+  - **SDK 與範例**：`kiln-plugin-sdk`（`Plugin` trait、文字／物品／選單建構器、`codec`、各介面薄封裝）、`kiln-tasks-sdk`；範例 `claims`（fail-closed 領地，跨 cell 以 `at-position` 工作複寫）、`scoreboard-hud`、`homes`、`shop`（鎖定選單＋`try-add`）、`npc`、`arena`＋`gatekeeper`、`webhook`＋`webhook-tasks`、`noop`。
+  - **測試**：`kiln-plugin-host/tests/api.rs`（10＋1，含呼叫成本）、`api_property.rs`（領地決策與玩家購買在隨機 region 切分／合併下與簡單模型一致、錢守恆且不為負；各 24 組）、`async_tasks.rs`（HTTP／POST／拒絕／計時器／儲存與重啟、重載後重送、strict）、`wit_freeze.rs`；`kiln-sim/tests/plugin_api.rs`（七個玩家端到端：HUD 封包、鎖定選單與購買、領地與 PvP 與動物、家、NPC、死亡重生、競技場）、`plugin_api_determinism.rs`（strict 模式六名玩家三組，一個 region／一個 worker 對每組一個 region／四個 worker＋chaos，fuel 2,000,000 與 2,000 兩種預算：每 tick 的 state hash、插件造成的封包流、插件狀態與 calls／traps／timeouts 都相同，2,000 fuel 時 8 次逾時也相同）。
+  - **量測**：⟦見下⟧
+  - **缺口**：沒有 `get-block`（要借 region 的 cell 指標或每次預取，兩者都不值得，見 `docs/plugin-api.md` §3）；沒有權限節點與每次移動的 hook；`player-damage` 的 `amount` 是進 `hurt` 時的原始值；選單只有 `generic_9xN`；動作在序列點套用而不在 region 內並行；`take` 不分標籤；`async-tasks` 沒有逐工作 CPU 上限、不支援 `wasi:*@0.3` 介面、strict 不可用；UseItem 只有水桶類走放置檢查（Kiln 尚未模擬玩家倒水）。
 
 ---
 
