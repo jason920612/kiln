@@ -2743,6 +2743,18 @@ public class InteractVectors {
     @SuppressWarnings({"unchecked", "rawtypes"})
     static ServerPlayer tickPlayer;
 
+    /** The previous tick's rotations are the current ones (a player who has stood still: `getViewVector(0)` reads them). */
+    static void settleRotation(ServerPlayer p) {
+        try {
+            p.setOldPosAndRot();
+            var headO = net.minecraft.world.entity.LivingEntity.class.getDeclaredField("yHeadRotO");
+            headO.setAccessible(true);
+            headO.setFloat(p, p.getYHeadRot());
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     static void levelTick(Case c) {
         ServerLevel level = server.overworld();
         var data = (net.minecraft.world.level.storage.ServerLevelData) level.getLevelData();
@@ -2761,6 +2773,8 @@ public class InteractVectors {
                     }
                 });
                 if (tickPlayer != null) {
+                    // (`Entity.baseTick` and `LivingEntity.tick` keep the previous tick's rotations, which `getViewVector(0)` reads.)
+                    settleRotation(tickPlayer);
                     Method using = net.minecraft.world.entity.LivingEntity.class.getDeclaredMethod("updatingUsingItem");
                     using.setAccessible(true);
                     using.invoke(tickPlayer);
