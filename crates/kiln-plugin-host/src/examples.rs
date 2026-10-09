@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 /// Example crate directory names and their component file stems.
-pub const EXAMPLES: [(&str, &str); 14] = [
+pub const EXAMPLES: [(&str, &str); 15] = [
     ("arena", "arena"),
     ("chat-format", "chat_format"),
     ("claims", "claims"),
@@ -24,6 +24,7 @@ pub const EXAMPLES: [(&str, &str); 14] = [
     ("scoreboard-hud", "scoreboard_hud"),
     ("shop", "shop"),
     ("spawn-protection", "spawn_protection"),
+    ("webhook", "webhook"),
 ];
 
 fn plugins_root() -> PathBuf {
@@ -62,6 +63,11 @@ fn build_now() -> Result<PathBuf> {
         std::fs::write(dest.join("plugin.toml"), manifest)?;
         let wasm = root.join("target").join("wasm32-wasip2").join("release").join(format!("{stem}.wasm"));
         std::fs::copy(&wasm, dest.join("plugin.wasm")).with_context(|| format!("{}", wasm.display()))?;
+        // A plugin with an async-tasks component: `<stem>_tasks.wasm` is its `tasks` file.
+        if let Some(name) = Manifest::parse(&manifest)?.tasks {
+            let tasks = root.join("target").join("wasm32-wasip2").join("release").join(format!("{stem}_tasks.wasm"));
+            std::fs::copy(&tasks, dest.join(name)).with_context(|| format!("{}", tasks.display()))?;
+        }
     }
     Ok(out)
 }
@@ -78,7 +84,11 @@ pub fn load(id: &str, extra_config: &str) -> Result<(Manifest, Vec<u8>)> {
         text.push('\n');
         text.push_str(extra_config);
     }
-    Ok((Manifest::parse(&text)?, std::fs::read(dir.join("plugin.wasm"))?))
+    let mut manifest = Manifest::parse(&text)?;
+    if let Some(name) = &manifest.tasks {
+        manifest.tasks_wasm = Some(std::fs::read(dir.join(name))?);
+    }
+    Ok((manifest, std::fs::read(dir.join("plugin.wasm"))?))
 }
 
 /// A plugin directory named `name` (under the examples' build directory) with the examples
@@ -109,6 +119,9 @@ pub fn custom_dir(name: &str, ids: &[&str], extra: &[(&str, &str)]) -> Result<Pa
         debug_assert_eq!(Manifest::parse(&text)?.id, manifest.id);
         std::fs::write(dest.join("plugin.toml"), text)?;
         std::fs::write(dest.join("plugin.wasm"), wasm)?;
+        if let Some(name) = &manifest.tasks {
+            std::fs::copy(built.join(&id).join(name), dest.join(name))?;
+        }
     }
     Ok(out)
 }
