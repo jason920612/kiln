@@ -73,6 +73,8 @@ pub(crate) enum BeKind {
     Crafter,
     /// The item buried in suspicious sand or gravel, and how far it is brushed (`BrushableBlockEntity`).
     Brushable,
+    /// A command block (`CommandBlockEntity`): the command and what it did.
+    CommandBlock,
 }
 
 impl BeKind {
@@ -103,6 +105,7 @@ impl BeKind {
             "vault" => BeKind::Vault,
             "crafter" => BeKind::Crafter,
             "brushable_block" => BeKind::Brushable,
+            "command_block" => BeKind::CommandBlock,
             _ => return None,
         })
     }
@@ -119,7 +122,7 @@ impl BeKind {
             BeKind::Campfire => 4,
             BeKind::ChiseledBookshelf => 6,
             BeKind::DecoratedPot | BeKind::Lectern | BeKind::Brushable => 1,
-            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault => 0,
+            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::CommandBlock => 0,
         }
     }
 
@@ -127,13 +130,13 @@ impl BeKind {
     pub fn randomizable(self) -> bool {
         !matches!(
             self,
-            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault
+            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::CommandBlock
         )
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::Brushable)
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::Brushable | BeKind::CommandBlock)
     }
 
     /// `getDefaultName` translation key.
@@ -162,12 +165,22 @@ impl BeKind {
             BeKind::Vault => "block.minecraft.vault",
             BeKind::Crafter => "container.crafter",
             BeKind::Brushable => "block.minecraft.suspicious_sand",
+            BeKind::CommandBlock => "block.minecraft.command_block",
         }
     }
 }
 
 /// Saved fields a container block entity models; the rest of its NBT is kept as is.
-const MODELED: [&str; 40] = [
+const MODELED: [&str; 49] = [
+    "Command",
+    "SuccessCount",
+    "TrackOutput",
+    "LastOutput",
+    "UpdateLastExecution",
+    "LastExecution",
+    "powered",
+    "conditionMet",
+    "auto",
     "crafting_ticks_remaining",
     "disabled_slots",
     "triggered",
@@ -302,6 +315,8 @@ pub(crate) struct ContainerBe {
     pub crafter: Option<Box<crafter::Crafter>>,
     /// How far a suspicious block has been brushed.
     pub brushable: Option<Box<crate::brush::Brushable>>,
+    /// A command block's command and flags.
+    pub command: Option<Box<crate::command_block::Data>>,
     /// Changed since its NBT was last written into the chunk.
     pub dirty: bool,
     /// Saved fields not modeled here (`components`, ...).
@@ -392,6 +407,7 @@ impl ContainerBe {
             vault: (kind == BeKind::Vault).then(|| Box::new(crate::vault::Vault::load(nbt))),
             crafter: (kind == BeKind::Crafter).then(|| Box::new(crafter::Crafter::load(nbt))),
             brushable: (kind == BeKind::Brushable).then(Default::default),
+            command: (kind == BeKind::CommandBlock).then(|| Box::new(crate::command_block::Data::load(nbt))),
             dirty: false,
             extra,
         };
@@ -407,11 +423,17 @@ impl ContainerBe {
         if let Some(lock) = &self.lock {
             out.push(("lock".into(), lock.clone()));
         }
-        if let Some(name) = &self.custom_name {
+        // (A command block keeps its name with its command.)
+        if let Some(name) = self.custom_name.as_ref().filter(|_| self.kind != BeKind::CommandBlock) {
             out.push(("CustomName".into(), name.clone()));
         }
         match self.kind {
             BeKind::EnderChest | BeKind::Bell | BeKind::DaylightDetector => {}
+            BeKind::CommandBlock => {
+                if let Some(d) = &self.command {
+                    d.save(&mut out);
+                }
+            }
             BeKind::Beehive => {
                 if let Some(h) = &self.hive {
                     h.save(&mut out);
@@ -879,6 +901,10 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32, old:
         if let Some(cr) = level.blocks.containers.get_mut(pos).and_then(|c| c.crafter.as_mut()) {
             cr.triggered = triggered;
         }
+        // `CommandBlock.newBlockEntity`: "always active" as its block is.
+        if level.blocks.containers.get(pos).is_some_and(|c| c.kind == BeKind::CommandBlock) {
+            crate::command_block::created(level, pos);
+        }
     }
     let Some(mut removed) = removed else { return };
     level.out.removed_components.push((pos, removed.components()));
@@ -938,6 +964,10 @@ pub(crate) fn analog(level: &RegionLevel, pos: BlockPos, s: u16) -> i32 {
     if c.kind == BeKind::Crafter {
         return crafter::analog(c);
     }
+    // `CommandBlock.getAnalogOutputSignal`: the success count.
+    if c.kind == BeKind::CommandBlock {
+        return c.command.as_ref().map_or(0, |d| d.success_count);
+    }
     if kiln_blocks::behaviour::container::is_chest(s) {
         let blocked = |p: BlockPos| kiln_data::block_logic::is_redstone_conductor(level.block(p.above()));
         if blocked(pos) {
@@ -965,6 +995,8 @@ pub(crate) fn scheduled_tick(level: &mut RegionLevel, pos: BlockPos, s: u16) {
         C::DispenserBlock | C::DropperBlock => dispense::dispense_from(level, pos, s),
         C::CrafterBlock => crafter::dispense_from(level, pos, s),
         C::BrushableBlock => crate::brush::check_reset(level, pos, s),
+        // The command runs in the serial phase after the regions' tick (it may change anything).
+        C::CommandBlock => level.blocks.command_ticks.push(pos),
         _ => level.out.rechecks.push(pos),
     }
 }

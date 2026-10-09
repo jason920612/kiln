@@ -66,6 +66,10 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::HopperBlock => container::hopper_check_powered(level, s, pos),
         C::DispenserBlock | C::DropperBlock => container::dispenser_neighbor_changed(level, s, pos),
         C::CrafterBlock => container::crafter_neighbor_changed(level, s, pos),
+        C::CommandBlock => {
+            let powered = crate::redstone::has_neighbor_signal(level, pos);
+            level.command_block_powered(pos, s, powered);
+        }
         _ if logic::is_instance(s, C::CopperBulbBlock) => misc3::bulb_check_and_flip(level, s, pos),
         _ if logic::is_instance(s, C::TrapDoorBlock) => misc::powered_open_neighbor_changed(level, s, pos),
         _ if logic::is_instance(s, C::DoorBlock) => components::door_neighbor_changed(level, s, pos, source),
@@ -342,7 +346,7 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::PointedDripstoneBlock | C::SulfurSpikeBlock => speleothem::tick(level, s, pos),
         // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)
         // and `DispenserBlock.tick` (dispense): the block entity's.
-        C::BarrelBlock | C::EnderChestBlock | C::DispenserBlock | C::DropperBlock | C::CrafterBlock => level.block_entity_tick(pos, s),
+        C::BarrelBlock | C::EnderChestBlock | C::DispenserBlock | C::DropperBlock | C::CrafterBlock | C::CommandBlock => level.block_entity_tick(pos, s),
         _ if container::is_chest(s) => level.block_entity_tick(pos, s),
         _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_tick(level, s, pos),
         _ if logic::is_instance(s, C::LeavesBlock) => misc::leaves_tick(level, s, pos),

@@ -62,6 +62,8 @@ pub(crate) struct RegionBlocks {
     pub spawners: crate::mob_spawner::Spawners,
     /// New chunks of generation that still want their animals.
     pub initial_mobs: Vec<ChunkPos>,
+    /// Command blocks whose scheduled tick came this tick (the serial phase runs their commands).
+    pub command_ticks: Vec<BlockPos>,
 }
 
 impl Default for RegionBlocks {
@@ -81,6 +83,7 @@ impl Default for RegionBlocks {
             sign_editors: Default::default(),
             spawners: Default::default(),
             initial_mobs: Vec::new(),
+            command_ticks: Vec::new(),
         }
     }
 }
@@ -211,6 +214,7 @@ impl RegionPart for RegionBlocks {
         into.sign_editors.merge(std::mem::take(&mut from.sign_editors));
         into.spawners.merge(std::mem::take(&mut from.spawners));
         into.initial_mobs.append(&mut from.initial_mobs);
+        into.command_ticks.append(&mut from.command_ticks);
     }
 
     fn split(mut self, owner_of: &dyn Fn(CellPos) -> usize, n: usize) -> SmallVec<[Self; 4]> {
@@ -268,6 +272,9 @@ impl RegionPart for RegionBlocks {
         for c in self.initial_mobs.drain(..) {
             parts[owner((c.x, c.z))].initial_mobs.push(c);
         }
+        for p in self.command_ticks.drain(..) {
+            parts[owner((p.x >> 4, p.z >> 4))].command_ticks.push(p);
+        }
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
         parts
@@ -317,6 +324,8 @@ pub(crate) struct BlockEnv {
     pub weather: crate::weather::WeatherEnv,
     /// `minecraft:fire_spread_radius_around_player` (-1: everywhere).
     pub fire_spread_radius: i32,
+    /// `minecraft:send_command_feedback` (a new command block tracks its output by it).
+    pub send_command_feedback: bool,
     /// Where the level's non-spectator players stood when the tick began (fire spreads near
     /// them; the same in every region).
     pub fire_watchers: std::sync::Arc<Vec<[f64; 3]>>,
@@ -613,6 +622,10 @@ impl Level for RegionLevel<'_> {
 
     fn container_openers(&self, pos: BlockPos) -> i32 {
         self.blocks.containers.get(pos).map_or(0, |c| c.openers)
+    }
+
+    fn command_block_powered(&mut self, pos: BlockPos, state: u16, powered: bool) {
+        crate::command_block::powered_changed(self, pos, state, powered);
     }
 
     fn crafter_triggered(&mut self, pos: BlockPos, triggered: bool) {
@@ -1677,6 +1690,7 @@ mod tests {
             trial_configs: Default::default(),
             weather: Default::default(),
             fire_spread_radius: 128,
+            send_command_feedback: true,
             fire_watchers: Default::default(),
             players: Default::default(),
             raids: Default::default(),

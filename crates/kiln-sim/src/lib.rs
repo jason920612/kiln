@@ -30,6 +30,7 @@ mod consume;
 mod buckets;
 mod beehive;
 mod brush;
+mod command_block;
 mod vault;
 mod decorated_pot;
 mod lectern;
@@ -194,6 +195,8 @@ pub struct SimConfig {
     pub max_players: usize,
     pub view_distance: u8,
     pub simulation_distance: u8,
+    /// `enable-command-block` of server.properties: command blocks run their commands (off by default, as in vanilla).
+    pub enable_command_block: bool,
     /// A vanilla world save to load; a superflat world is used when `None`.
     pub world: Option<std::path::PathBuf>,
     /// Whether players were authenticated with Mojang (sent to clients in Login).
@@ -298,6 +301,7 @@ impl SimConfig {
             max_players,
             view_distance,
             simulation_distance: view_distance,
+            enable_command_block: false,
             world,
             online_mode: false,
             pool: {
@@ -481,6 +485,8 @@ struct Player {
     kinetic_ticks: Option<i32>,
     /// Ticks of use of a brush this tick, for [`brush::use_tick`] (the level's part of `BrushItem.onUseTick`).
     brush_ticks: Option<i32>,
+    /// The operator permission level (`/op`), kept by the server for the regions' sake (game master blocks).
+    permission: u8,
     /// `LivingEntity.recentKineticEnemies`: the entities a charging weapon touched and when.
     recent_stabs: Vec<(i32, i64)>,
     /// Latest tab-completion request, answered once per tick.
@@ -1793,6 +1799,8 @@ impl Sim {
                 diag::add(name, d);
             }
         }
+        // The command blocks whose tick came run their commands (they may change anything).
+        self.run_command_blocks();
         // Entities from here on have newer ids.
         let first_new = self.next_entity_id;
         self.materialize_spawns();
@@ -1965,6 +1973,11 @@ impl Sim {
     /// Block state at a position in the overworld, if its chunk is loaded.
     pub fn block_at(&self, x: i32, y: i32, z: i32) -> Option<u16> {
         self.dims[OVERWORLD_ID].regions.get_block(x, y, z)
+    }
+
+    /// The block at a position of a level, if its chunk is loaded.
+    pub(crate) fn block_at_in(&self, dim: DimId, pos: [i32; 3]) -> Option<u16> {
+        self.dims[dim].regions.get_block(pos[0], pos[1], pos[2])
     }
 
     /// Ticks players spent near the loaded overworld chunk holding `x`, `z` (`InhabitedTime`).
@@ -2453,6 +2466,7 @@ impl Sim {
                 sea_level: SEA_LEVELS[dim],
             },
             fire_spread_radius: self.rule_int("minecraft:fire_spread_radius_around_player"),
+            send_command_feedback: self.rule_bool("minecraft:send_command_feedback"),
             dragon_fight: self.fight_env(dim),
             pipeline: self.world.pipelines.get(dim).cloned().flatten(),
             // Only asked whether any is near (in no order).
@@ -3111,6 +3125,7 @@ impl Sim {
                 }
             }
             PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
+            PlayIn::SetCommandBlock(update) => self.set_command_block(conn, &update),
             PlayIn::ResourcePack { id, action } => self.resource_pack_response(conn, id, action),
             PlayIn::CookieResponse(response) => self.cookie_response(conn, response),
             PlayIn::Chat { message } => {
@@ -3472,6 +3487,7 @@ impl Sim {
             swing_wire_duration: kiln_proto::packets::entity::swing::DEFAULT_DURATION,
             kinetic_ticks: None,
             brush_ticks: None,
+            permission: 0,
             recent_stabs: Vec::new(),
             pending_suggestion: None,
             teleport_id: 1,
@@ -3637,6 +3653,7 @@ impl Sim {
         }
         self.sleep_status[player.dim].dirty = true;
         self.players.insert(j.conn, player);
+        self.refresh_permissions();
         self.send_command_tree(j.conn);
         self.announce_join(j.conn);
         self.broadcast_system(msg);

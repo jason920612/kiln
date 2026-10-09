@@ -521,7 +521,7 @@ impl Sim {
                     p.send(pkt);
                 }
             }
-            crate::commands::CommandSource::Console => info!("{}", plain(spans)),
+            crate::commands::CommandSource::Console | crate::commands::CommandSource::Block { .. } => info!("{}", plain(spans)),
         }
     }
 
@@ -534,7 +534,7 @@ impl Sim {
         };
         let player = match source {
             crate::commands::CommandSource::Player(conn) => self.players.get(&conn),
-            crate::commands::CommandSource::Console => None,
+            crate::commands::CommandSource::Console | crate::commands::CommandSource::Block { .. } => None,
         };
         let a = player.map(|p| actor(p, &pl.ops));
         let reply = pl.rt.run_command(plugin, a.as_ref(), name, args);
@@ -565,7 +565,7 @@ impl Sim {
     fn kiln_plugins_reload(&mut self, id: &str) -> i32 {
         let requester = match self.commands.source {
             crate::commands::CommandSource::Player(conn) => self.players.get(&conn).map(|p| p.uuid.as_u128()),
-            crate::commands::CommandSource::Console => None,
+            crate::commands::CommandSource::Console | crate::commands::CommandSource::Block { .. } => None,
         };
         let Some(pl) = self.plugins.as_mut() else { return 0 };
         match pl.rt.request_reload(id, requester) {

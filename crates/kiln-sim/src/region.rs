@@ -841,6 +841,7 @@ pub(crate) fn is_exclusive(pkt: &PlayIn) -> bool {
         pkt,
         PlayIn::ChatCommand { .. }
             | PlayIn::CommandSuggestion { .. }
+            | PlayIn::SetCommandBlock(_)
             | PlayIn::Chat { .. }
             // Disconnects and per-player protocol state.
             | PlayIn::ResourcePack { .. }
@@ -1413,6 +1414,14 @@ fn use_on_block(
     if !actor.may_build {
         return;
     }
+    // `GameMasterBlockItem.getPlacementState`: command blocks, jigsaws and structure blocks only for game masters.
+    if matches!(
+        item_name,
+        Some("minecraft:command_block" | "minecraft:chain_command_block" | "minecraft:repeating_command_block" | "minecraft:jigsaw" | "minecraft:structure_block" | "minecraft:test_block" | "minecraft:test_instance_block")
+    ) && !p.can_use_gamemaster_blocks()
+    {
+        return;
+    }
     let click = [pos[0] as f64 + cursor[0] as f64, pos[1] as f64 + cursor[1] as f64, pos[2] as f64 + cursor[2] as f64];
     let ctx = PlaceContext { hit: bp, face: dir, click, yaw: p.rot[0], pitch: p.rot[1], sneaking: p.sneaking };
     let Some((at, state)) = placement::placement(level, &item, &ctx) else { return };
@@ -1422,6 +1431,12 @@ fn use_on_block(
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
     let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
+    // `CommandBlock.setPlacedBy` (after the item's block entity data, which only a game master may set).
+    if kiln_data::block_logic::is_instance(level.block(placed_at), kiln_data::block_logic::BlockClass::CommandBlock) {
+        let entity_data = placed_from.get(kiln_item::keys::BLOCK_ENTITY_DATA).map(|d| &d.tag).filter(|_| p.can_use_gamemaster_blocks());
+        let powered = kiln_blocks::redstone::has_neighbor_signal(level, placed_at);
+        crate::command_block::placed_by(level, placed_at, powered, placed_from.has(kiln_item::component::ids::BLOCK_ENTITY_DATA), entity_data);
+    }
     // `SignBlock.setPlacedBy`: the placer edits the new sign.
     crate::signs::placed_by(p, level, placed_at);
     crate::golems::try_spawn_golem(p, level, placed_at, spawns);

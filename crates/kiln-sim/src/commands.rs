@@ -52,6 +52,8 @@ pub(crate) fn has_illegal_chars(s: &str) -> bool {
 pub(crate) enum CommandSource {
     Console,
     Player(ConnId),
+    /// A command block (`BaseCommandBlock.createCommandSourceStack`): in level `dim`, at `pos`.
+    Block { dim: usize, pos: [i32; 3] },
 }
 
 /// A player as seen by selectors (a snapshot, so selectors can hold it while the host mutates).
@@ -249,6 +251,8 @@ pub(crate) struct CommandState {
     pub next_profile_request: u64,
     /// Answers known already, delivered on the next tick.
     pub profile_results: Vec<(u64, Option<kiln_link::LookedUpProfile>)>,
+    /// The command a command block is running (see [`crate::command_block`]).
+    pub block_run: Option<crate::command_block::Run>,
 }
 
 impl CommandState {
@@ -292,6 +296,7 @@ impl CommandState {
             profile_requests: HashMap::new(),
             next_profile_request: 1,
             profile_results: Vec::new(),
+            block_run: None,
         }
     }
 }
@@ -450,6 +455,15 @@ impl Sim {
             CommandSource::Console => {
                 SourceStack::new(Text::literal("Server"), OVERWORLD, self.spawn.map(|v| v as f64))
             }
+            // `CommandBlockEntity$1.createCommandSourceStack`: the block's name, the middle of the block, facing
+            // the way the block does, without an entity, at permission level 2.
+            CommandSource::Block { dim, pos } => {
+                let name = crate::command_block::name_of(self, dim, pos);
+                let mut stack = SourceStack::new(name, crate::DIMENSIONS[dim].0, [pos[0] as f64 + 0.5, pos[1] as f64 + 0.5, pos[2] as f64 + 0.5]);
+                stack.rotation = [crate::command_block::facing_yaw(self, dim, pos), 0.0];
+                stack.max_permission = 2;
+                stack
+            }
         }
     }
 
@@ -510,6 +524,8 @@ impl Sim {
     fn reply(&mut self, text: Text) {
         match self.commands.source {
             CommandSource::Console => self.reply_console(&text),
+            // `CloseableCommandBlockSource.sendSystemMessage`: the last output, with the time.
+            CommandSource::Block { .. } => crate::command_block::output(self, text),
             CommandSource::Player(conn) => {
                 if let Some(p) = self.players.get_mut(&conn) {
                     p.send(packets::system_chat(text.to_nbt(), false));
@@ -532,6 +548,7 @@ impl Source for Sim {
         match self.commands.source {
             CommandSource::Console => 4,
             CommandSource::Player(conn) => self.permission_level_of(conn),
+            CommandSource::Block { .. } => 2,
         }
     }
 
@@ -670,10 +687,14 @@ impl Host for Sim {
         if self.commands.stack.silent {
             return;
         }
+        if matches!(self.commands.source, CommandSource::Block { .. }) {
+            crate::command_block::success(self, text, broadcast);
+            return;
+        }
         let feedback = self.rule_bool("minecraft:send_command_feedback");
         let me = match self.commands.source {
             CommandSource::Player(c) => Some(c),
-            CommandSource::Console => None,
+            CommandSource::Console | CommandSource::Block { .. } => None,
         };
         if broadcast {
             // Other operators see a gray, italic "[Source: message]" (chat.type.admin).
@@ -715,7 +736,7 @@ impl Host for Sim {
     fn send_chat_to_source(&mut self, message: ChatMessage) {
         match self.commands.source {
             CommandSource::Player(conn) => self.send_to(conn, chat_disguised(&message)),
-            CommandSource::Console => info!("{}", console_text(&message.to_text())),
+            CommandSource::Console | CommandSource::Block { .. } => info!("{}", console_text(&message.to_text())),
         }
     }
 
@@ -1783,6 +1804,7 @@ impl Host for Sim {
         if self.commands.stack.silent {
             return;
         }
+        // (A command block keeps failures when it tracks its output, whatever `send_command_feedback` says.)
         self.reply(text.color("red"));
     }
 
@@ -1903,6 +1925,17 @@ impl Sim {
     pub(crate) fn sync_ops(&mut self) {
         let ops = self.commands.ops.clone();
         self.config.access.write().unwrap_or_else(std::sync::PoisonError::into_inner).ops = ops;
+        self.refresh_permissions();
+    }
+
+    /// Tells every player his operator level (the regions cannot ask the server: game master blocks need it).
+    pub(crate) fn refresh_permissions(&mut self) {
+        let levels: Vec<(ConnId, u8)> = self.players.keys().map(|&c| (c, self.permission_level_of(c))).collect();
+        for (c, level) in levels {
+            if let Some(p) = self.players.get_mut(&c) {
+                p.permission = level;
+            }
+        }
     }
 
     /// `ServerPlayer.resetLastActionTime` on what the player does, and the idle kick

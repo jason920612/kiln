@@ -423,7 +423,7 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         // `LecternBlock.getMenuProvider`: only with a book.
         BeKind::Lectern if state::get_bool(s, "has_book") => single(Menu::lectern),
         BeKind::Lectern => return None,
-        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable => return None,
+        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock => return None,
     })
 }
 
@@ -471,6 +471,10 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
         }
         return Some(true);
     }
+    // `CommandBlock.useWithoutItem`: a game master's click opens the block's screen.
+    if logic::block_class(s) == C::CommandBlock {
+        return crate::command_block::use_without_item(p, level, pos);
+    }
     // `LecternBlock.useWithoutItem`: a lectern with a book opens its menu; without one the click is consumed.
     if logic::block_class(s) == C::LecternBlock {
         if state::get_bool(s, "has_book")
@@ -482,7 +486,7 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
         return Some(true);
     }
     // (A jukebox has no menu: its own `useWithoutItem` takes the disc out.)
-    if matches!(level.blocks.containers.get(pos)?.kind, BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable) {
+    if matches!(level.blocks.containers.get(pos)?.kind, BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock) {
         return None;
     }
     if let Some(provider) = container_provider(level, pos, s) {
