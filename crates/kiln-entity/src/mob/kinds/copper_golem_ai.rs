@@ -172,6 +172,18 @@ impl TransportItemsBetweenContainers {
         let pos = Self::position_to_reach_from(cx, &path);
         let within = Self::within_distance(cx, Self::interaction_range(cx), t, pos);
         let no_path_and_not_within = path.is_none() && !within;
+        if std::env::var_os("KILN_CG_DEBUG").is_some() {
+            eprintln!(
+                "cg tick {} target {:?} path {:?} pos {:?} within {} range {} see {}",
+                cx.time,
+                t.pos,
+                path.as_ref().map(|p| (p.next, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())),
+                pos,
+                within,
+                Self::interaction_range(cx),
+                within && Self::can_see_any_side(cx, t, pos)
+            );
+        }
         no_path_and_not_within || (within && Self::can_see_any_side(cx, t, pos))
     }
 
