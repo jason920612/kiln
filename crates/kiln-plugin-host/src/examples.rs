@@ -60,7 +60,7 @@ fn build_now() -> Result<PathBuf> {
         let id = Manifest::parse(&manifest)?.id;
         let dest = out.join(&id);
         std::fs::create_dir_all(&dest)?;
-        std::fs::write(dest.join("plugin.toml"), manifest)?;
+        std::fs::write(dest.join("plugin.toml"), &manifest)?;
         let wasm = root.join("target").join("wasm32-wasip2").join("release").join(format!("{stem}.wasm"));
         std::fs::copy(&wasm, dest.join("plugin.wasm")).with_context(|| format!("{}", wasm.display()))?;
         // A plugin with an async-tasks component: `<stem>_tasks.wasm` is its `tasks` file.
