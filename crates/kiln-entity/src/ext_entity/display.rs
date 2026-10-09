@@ -132,7 +132,7 @@ fn quaternion(tag: &Tag) -> Option<[f32; 4]> {
     let axis = floats::<3>(tag.get("axis")?)?;
     let angle = tag.get("angle")?.as_f64()? as f32;
     let half = angle / 2.0;
-    let sin = (half as f64).sin() as f32;
+    let sin = kiln_javamath::trig::sin(half as f64) as f32;
     let inv = 1.0 / (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
     // (`Math.cosFromSin`: the cosine from the sine, with the sign of the cosine of the angle.)
     let cos = cos_from_sin(sin, half);
