@@ -315,6 +315,7 @@ public class ContainerVectors {
         dispenserScenarios(out);
         dispenserScenarios2(out);
         windScenarios(out);
+        cropProbes(out);
         crafterScenarios(out);
         commandBlockScenarios(out);
         return out;
@@ -581,6 +582,15 @@ public class ContainerVectors {
         out.add(mob(dispense("swallow_by_baby", "oak_planks", 2).block(1, -1, 0, "minecraft:stone"), "sulfur_cube", 1.5, 0, 0.5, "Size:1,Age:-24000"));
         out.add(mob(dispense("swallow_dirt_when_full", "dirt", 2).block(1, -1, 0, "minecraft:stone"), "sulfur_cube", 1.5, 0, 0.5,
                 "Size:1,equipment:{body:{id:\"minecraft:oak_planks\",count:1}}"));
+    }
+
+    static void cropProbes(List<Scenario> out) {
+        out.add(new Scenario("probe_crop_on_dispenser", 8).container(0, 0, 0, "minecraft:dispenser[facing=up]").block(0, 1, 0, "minecraft:torchflower_crop[age=0]").state(0, 1, 0).drops());
+        out.add(new Scenario("probe_crop_on_stone", 8).block(0, 0, 0, "minecraft:stone").block(0, 1, 0, "minecraft:torchflower_crop[age=0]").state(0, 1, 0).drops());
+        out.add(new Scenario("probe_crop_on_dispenser_power", 8).container(0, 0, 0, "minecraft:dispenser[facing=up]").block(0, 1, 0, "minecraft:torchflower_crop[age=0]").state(0, 1, 0).drops()
+                .at(2, "setblock ~1 ~0 ~0 minecraft:redstone_block"));
+        out.add(new Scenario("probe_crop_on_stone_power", 8).block(0, 0, 0, "minecraft:stone").block(0, 1, 0, "minecraft:torchflower_crop[age=0]").state(0, 1, 0).drops()
+                .at(2, "setblock ~1 ~0 ~0 minecraft:redstone_block"));
     }
 
     /** wp49: a wind charge (summoned, since a dispensed one is spread by its own random) meets a wall, a mob and a cart. */
