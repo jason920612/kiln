@@ -135,9 +135,11 @@ fn the_hud_reaches_the_player_as_vanilla_packets() {
 #[test]
 fn the_shop_menu_is_locked_and_sells() {
     let mut g = Game::new("api-shop", &["shop"], &[], &["Cara"]);
-    g.console("gamemode survival Cara");
+    g.console("gamemode creative Cara");
     g.ticks(2);
     g.send(0, PlayIn::SetCreativeSlot { slot: 36, item: Some(stack("minecraft:stone", 10)) });
+    g.ticks(1);
+    g.console("gamemode survival Cara");
     g.ticks(1);
     g.received(0);
     g.command(0, "shop");
@@ -191,13 +193,14 @@ fn the_shop_menu_is_locked_and_sells() {
 #[test]
 fn claims_protect_land_and_players() {
     let mut g = Game::new("api-claims", &["claims"], &[], &["Dora", "Eli"]);
-    for who in ["Dora", "Eli"] {
-        g.console(&format!("gamemode survival {who}"));
-    }
+    g.console("gamemode creative Dora");
+    g.console("gamemode survival Eli");
     g.console("tp Dora 300 -60 300");
     g.console("tp Eli 305 -60 300");
     g.ticks(12);
     g.send(0, PlayIn::SetCreativeSlot { slot: 36, item: Some(stack("minecraft:gold_block", 3)) });
+    g.ticks(1);
+    g.console("gamemode survival Dora");
     g.ticks(1);
     let d = g.ground(0);
     // Dora places the gold block on the ground in front of her.
