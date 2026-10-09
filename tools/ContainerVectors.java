@@ -590,25 +590,25 @@ public class ContainerVectors {
         out.add(new Scenario("wind_wall", 14).block(4, 0, 0, "minecraft:stone").block(4, 1, 0, "minecraft:stone").block(4, -1, 0, "minecraft:stone").track()
                 .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 0.5, bz + 0.5, 1.0, 0.0, 0.0, ""))
                 .at(1, String.format(Locale.ROOT, "summon minecraft:chest_minecart %s %s %s {NoGravity:1b}", bx + 3.0, by + 0.5, bz + 1.0)));
-        out.add(mob(new Scenario("wind_zombie", 14).track(), "zombie", 4.5, 0, 0.5, "")
+        out.add(mob(new Scenario("wind_zombie", 14).track(), "husk", 4.5, 0, 0.5, "")
                 .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 1.0, bz + 0.5, 1.0, 0.0, 0.0, "")));
-        out.add(mob(new Scenario("wind_zombie_near_miss", 14).track(), "zombie", 4.5, 0, 1.2, "")
+        out.add(mob(new Scenario("wind_zombie_near_miss", 14).track(), "husk", 4.5, 0, 1.2, "")
                 .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 1.0, bz + 0.5, 1.0, 0.0, 0.0, "")));
         out.add(new Scenario("wind_floor", 14).block(0, -1, 0, "minecraft:stone").block(1, -1, 0, "minecraft:stone").block(2, -1, 0, "minecraft:stone").track()
                 .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 1.5, bz + 0.5, 0.3, -0.5, 0.0, ""))
                 .at(1, String.format(Locale.ROOT, "summon minecraft:chest_minecart %s %s %s {NoGravity:1b}", bx + 1.5, by + 0.2, bz + 0.5)));
-        out.add(mob(new Scenario("wind_probe_snowball", 14).track(), "zombie", 4.5, 0, 0.5, "")
+        out.add(mob(new Scenario("wind_probe_snowball", 14).track(), "husk", 4.5, 0, 0.5, "")
                 .at(1, "summon minecraft:snowball " + (bx + 0.5) + " " + (by + 1.0) + " " + (bz + 0.5) + " {NoGravity:1b,Motion:[1.0d,0.0d,0.0d]}"));
-        out.add(mob(new Scenario("wind_probe_low", 14).track(), "zombie", 4.5, 0, 0.5, "")
+        out.add(mob(new Scenario("wind_probe_low", 14).track(), "husk", 4.5, 0, 0.5, "")
                 .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 0.5, bz + 0.5, 1.0, 0.0, 0.0, "")));
         out.add(new Scenario("wind_probe_cart", 14).track().at(1, String.format(Locale.ROOT, "summon minecraft:chest_minecart %s %s %s {NoGravity:1b}", bx + 4.5, by + 0.5, bz + 0.5))
                 .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 0.9, bz + 0.5, 1.0, 0.0, 0.0, "")));
-        for (String t : new String[] {"pig", "cow", "armor_stand", "creeper", "villager", "skeleton", "sheep", "chicken", "wolf", "spider", "enderman", "husk", "iron_golem", "wandering_trader", "horse", "bat", "slime"}) {
+        for (String t : new String[] {"pig", "cow", "armor_stand", "creeper", "villager", "sheep", "chicken", "wolf", "spider", "enderman", "husk", "iron_golem", "wandering_trader", "horse", "bat"}) {
             out.add(mob(new Scenario("wind_probe_" + t, 8).track(), t, 4.5, 0, 0.5, "")
                     .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 0.5, bz + 0.5, 1.0, 0.0, 0.0, "")));
         }
         for (double zx : new double[] {2.0, 3.0, 5.0, 6.0, 8.0}) {
-            out.add(mob(new Scenario("wind_probe_zombie_at_" + (int) zx, 8).track(), "zombie", zx, 0, 0.5, "")
+            out.add(mob(new Scenario("wind_probe_zombie_at_" + (int) zx, 8).track(), "husk", zx, 0, 0.5, "")
                     .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 0.5, bz + 0.5, 1.0, 0.0, 0.0, "")));
         }
         out.add(new Scenario("wind_open_air", 40).track().at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 5.0, bz + 0.5, 0.0, 0.3, 0.0, "")));
