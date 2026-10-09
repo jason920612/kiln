@@ -603,6 +603,10 @@ public class ContainerVectors {
                 .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 0.5, bz + 0.5, 1.0, 0.0, 0.0, "")));
         out.add(new Scenario("wind_probe_cart", 14).track().at(1, String.format(Locale.ROOT, "summon minecraft:chest_minecart %s %s %s {NoGravity:1b}", bx + 4.5, by + 0.5, bz + 0.5))
                 .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 0.9, bz + 0.5, 1.0, 0.0, 0.0, "")));
+        for (String t : new String[] {"pig", "cow", "armor_stand", "creeper", "villager", "skeleton"}) {
+            out.add(mob(new Scenario("wind_probe_" + t, 8).track(), t, 4.5, 0, 0.5, "")
+                    .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 0.5, bz + 0.5, 1.0, 0.0, 0.0, "")));
+        }
         out.add(new Scenario("wind_open_air", 40).track().at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 5.0, bz + 0.5, 0.0, 0.3, 0.0, "")));
     }
 
