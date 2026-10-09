@@ -231,6 +231,14 @@ fn claims_protect_land_and_players() {
     g.send(1, PlayIn::Attack { entity_id: dora });
     g.ticks(2);
     assert_eq!(g.sim.health(1).unwrap().0, hp, "no fighting on claimed land");
+    // Nor can Eli hit an animal standing on Dora's land (the entity-attack event).
+    g.console("summon minecraft:cow 306 -60 300 {NoAI:1b}");
+    g.ticks(2);
+    let cow = g.sim.mobs().into_iter().find(|m| m.1 == "minecraft:cow").expect("a cow");
+    g.send(1, PlayIn::Attack { entity_id: cow.0 });
+    g.ticks(2);
+    let after = g.sim.mobs().into_iter().find(|m| m.0 == cow.0).expect("still there");
+    assert_eq!(after.3, cow.3, "the cow on claimed land is not hurt");
     // Away from the claim the same hit lands.
     g.console("tp Dora 400 -60 400");
     g.console("tp Eli 402 -60 400");
