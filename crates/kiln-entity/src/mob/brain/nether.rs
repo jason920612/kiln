@@ -964,20 +964,13 @@ pub fn block_prop(state: u16, name: &str) -> Option<&'static str> {
     kiln_data::blocks_types::block_of(state).property(state, name)
 }
 
-/// `DoorBlock.setOpen`: both halves of the door at `pos`.
-fn set_door_open(level: &mut dyn EntityLevel, pos: BlockPos, open: bool) -> bool {
-    let s = level.block(pos);
-    let info = kiln_data::blocks_types::block_of(s);
-    let v = if open { "true" } else { "false" };
-    let Some(ns) = info.with_property(s, "open", v) else { return false };
-    let other = if block_prop(s, "half") == Some("lower") { pos.above() } else { pos.below() };
-    level.set_block(pos, ns, 10);
-    let os = level.block(other);
-    if kiln_data::blocks_types::block_of(os).name == info.name
-        && let Some(nos) = kiln_data::blocks_types::block_of(os).with_property(os, "open", v)
-    {
-        level.set_block(other, nos, 10);
+/// `DoorBlock.setOpen`: both halves of the door at `pos`, the sound (its pitch a draw from the level's
+/// random) and the game event. False for a block that is not a door.
+fn set_door_open(cx: &mut Cx, pos: BlockPos, open: bool) -> bool {
+    if super::village::stroll::door_open(cx.level.block(pos)).is_none() {
+        return false;
     }
+    super::village::stroll::set_door_open(cx, pos, open);
     true
 }
 
@@ -1009,7 +1002,7 @@ impl ShotBehavior for InteractWithDoor {
         for p in [prev, nxt].into_iter().flatten() {
             if is_door(&*cx.level, p) {
                 let s = cx.level.block(p);
-                if block_prop(s, "open") != Some("true") && set_door_open(cx.level, p, true) {
+                if block_prop(s, "open") != Some("true") && set_door_open(cx, p, true) {
                     opened.push(p);
                 }
             }
@@ -1059,7 +1052,7 @@ impl ShotBehavior for InteractWithDoor {
                             })
                         });
                     if !coming {
-                        set_door_open(cx.level, g.pos, false);
+                        set_door_open(cx, g.pos, false);
                     } else {
                         keep.push(g);
                     }
