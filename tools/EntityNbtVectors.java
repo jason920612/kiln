@@ -154,7 +154,8 @@ public class EntityNbtVectors {
         net.minecraft.nbt.CompoundTag saved = out.buildResult();
         saved.remove("UUID");
         StringBuilder meta = new StringBuilder();
-        for (var v : e.getEntityData().getNonDefaultValues()) {
+        var nonDefault = e.getEntityData().getNonDefaultValues();
+        for (var v : nonDefault == null ? List.<net.minecraft.network.syncher.SynchedEntityData.DataValue<?>>of() : nonDefault) {
             RegistryFriendlyByteBuf buf = new RegistryFriendlyByteBuf(Unpooled.buffer(), level.registryAccess());
             v.write(buf);
             if (meta.length() > 0) meta.append(',');
