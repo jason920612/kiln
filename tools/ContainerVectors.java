@@ -574,6 +574,12 @@ public class ContainerVectors {
         out.add(mob(dispense("chest_on_horse", "chest", 2).block(1, -1, 0, "minecraft:stone"), "horse", 1.5, 0, 0.5, "Tame:1b"));
         out.add(mob(dispense("chest_on_untamed_donkey", "chest", 2).block(1, -1, 0, "minecraft:stone"), "donkey", 1.5, 0, 0.5, ""));
         out.add(mob(dispense("chest_on_llama", "chest", 2).block(1, -1, 0, "minecraft:stone"), "llama", 1.5, 0, 0.5, "Tame:1b"));
+        // Shears on what can be sheared (the loot of a sheep is random, so its drops are left out).
+        out.add(mob(dispense("shears_snow_golem", "shears", 1).block(1, -1, 0, "minecraft:stone"), "snow_golem", 1.5, 0, 0.5, ""));
+        out.add(mob(dispense("shears_mooshroom", "shears", 1).block(1, -1, 0, "minecraft:stone"), "mooshroom", 1.5, 0, 0.5, ""));
+        out.add(mob(dispense("shears_baby_mooshroom", "shears", 1).block(1, -1, 0, "minecraft:stone"), "mooshroom", 1.5, 0, 0.5, "Age:-24000"));
+        out.add(mob(dispense("shears_cow", "shears", 1).block(1, -1, 0, "minecraft:stone"), "cow", 1.5, 0, 0.5, ""));
+        out.add(mob(dispense("shears_pumpkinless_snow_golem", "shears", 1).block(1, -1, 0, "minecraft:stone"), "snow_golem", 1.5, 0, 0.5, "Pumpkin:0b"));
         // Brush on suspicious sand.
         out.add(dispense("brush_sand", "brush", 1).block(1, 0, 0, "minecraft:suspicious_sand[dusted=0]"));
         out.add(dispense("brush_stone", "brush", 1).block(1, 0, 0, "minecraft:stone"));

@@ -92,6 +92,19 @@ pub fn equip(e: &mut Entity, slot: EquipmentSlot, stack: ItemStack) -> bool {
     done
 }
 
+/// `Shearable.readyForShearing` for a living mob: a sheep with its wool, a grown mooshroom, a snow golem with its
+/// pumpkin, a bogged with its mushrooms.
+pub fn shearable(e: &Entity) -> bool {
+    let Some(m) = data(e) else { return false };
+    if !super::is_alive(e, m) {
+        return false;
+    }
+    match m.kind {
+        MobKind::Sheep => matches!(m.species, super::Species::Sheep { sheared: false, .. }) && !m.baby(),
+        k => k.ext().is_some_and(|x| x.ready_for_shearing(m)),
+    }
+}
+
 /// A chest onto a tame pack animal (`DispenseItemBehavior$2`): whether it took it.
 pub fn put_chest(e: &mut Entity) -> bool {
     let Some(m) = data_mut(e) else { return false };

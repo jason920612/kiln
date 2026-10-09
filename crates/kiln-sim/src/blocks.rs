@@ -383,6 +383,8 @@ pub(crate) struct Wear {
     pub accepts: u8,
     /// A mob's facts.
     pub mob: Option<kiln_entity::mob::dispense::Facts>,
+    /// `Shearable.readyForShearing`.
+    pub shearable: bool,
 }
 
 /// What a dispenser did to a living thing, to be carried out once the entities can be changed.
@@ -390,6 +392,8 @@ pub(crate) enum DispenseOp {
     Equip { id: i32, slot: kiln_item::component::EquipmentSlot, stack: kiln_item::ItemStack },
     Chest { id: i32 },
     Swallow { id: i32, stack: kiln_item::ItemStack },
+    /// Shears on a sheep, a mooshroom, a snow golem or a bogged.
+    Shear { id: i32, tool: kiln_item::ItemStack },
 }
 
 impl EntityBox {

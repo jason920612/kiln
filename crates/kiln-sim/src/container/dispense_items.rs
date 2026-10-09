@@ -79,7 +79,7 @@ pub(super) fn behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Bl
         "minecraft:glass_bottle" => glass_bottle(level, rng, pos, facing, target, stack),
         "minecraft:potion" => potion(level, rng, pos, facing, target, stack),
         "minecraft:tnt" => tnt(level, pos, target, stack),
-        "minecraft:shears" => shears(level, rng, target, stack),
+        "minecraft:shears" => shears(level, rng, pos, facing, target, stack),
         n if n.ends_with("shulker_box") => shulker_box(level, pos, facing, stack),
         n if is_boat(n) => boat(level, pos, facing, stack),
         "minecraft:armor_stand" => armor_stand(level, target, facing, stack),
@@ -335,13 +335,18 @@ fn tnt(level: &mut RegionLevel, pos: BlockPos, target: BlockPos, mut stack: Item
 }
 
 /// `ShearsDispenseItemBehavior`: a full hive in front gives its honeycombs (entities are not sheared yet).
-fn shears(level: &mut RegionLevel, rng: &mut LegacyRandom, target: BlockPos, mut stack: ItemStack) -> Done {
+fn shears(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, target: BlockPos, mut stack: ItemStack) -> Done {
     let s = level.block(target);
     if logic::is_instance(s, C::BeehiveBlock) && state::get_int(s, "honey_level") >= 5 {
         level.effect(Effect::Sound { pos: target, sound: "minecraft:block.beehive.shear", volume: 1.0, pitch: 1.0 });
         crate::beehive::drop_honeycombs(level, target);
         crate::beehive::release_after_harvest(level, target, s);
         level.effect(Effect::GameEvent { pos: target, event: "minecraft:shear" });
+        hurt(level, &mut stack, rng);
+        return ok(stack);
+    }
+    // `tryShearEntity`.
+    if super::equip::dispense_shear(level, pos, facing, &stack) {
         hurt(level, &mut stack, rng);
         return ok(stack);
     }

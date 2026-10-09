@@ -605,7 +605,10 @@ impl RegionWork<'_> {
                 }
                 let ops = std::mem::take(&mut level.out.dispenses);
                 if !ops.is_empty() {
-                    crate::container::equip::apply(ops, self.entities, &mut self.players, &mut level.out.spawns);
+                    let shears = crate::container::equip::apply(ops, self.entities, &mut self.players, &mut level.out.spawns);
+                    for (id, tool) in shears {
+                        crate::container::equip::shear(self.entities, &mut level, &mut self.players, id, &tool, &mut self.out.spawns, &mut self.out.deaths);
+                    }
                 }
                 blocks::tick_pistons(&mut level, &ticking);
                 crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
@@ -695,7 +698,10 @@ impl RegionWork<'_> {
             crate::container::tick_block_entities(&mut level, &mut items, &ticking);
             let ops = std::mem::take(&mut level.out.dispenses);
             if !ops.is_empty() {
-                crate::container::equip::apply(ops, items.entities_mut(), &mut self.players, &mut level.out.spawns);
+                let shears = crate::container::equip::apply(ops, items.entities_mut(), &mut self.players, &mut level.out.spawns);
+                for (id, tool) in shears {
+                    crate::container::equip::shear(items.entities_mut(), &mut level, &mut self.players, id, &tool, &mut self.out.spawns, &mut self.out.deaths);
+                }
             }
             crate::bell::requests(&mut level, items.entities_mut());
             crate::beehive::anger_requests(&mut level, items.entities_mut(), &self.players);

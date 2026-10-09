@@ -33,7 +33,7 @@ pub(crate) fn wear_of_player(p: &Player) -> Wear {
             accepts |= 1 << i;
         }
     }
-    Wear { id: p.entity_id, type_name: "minecraft:player", open: !p.dead && p.game_mode != 3, accepts, mob: None }
+    Wear { id: p.entity_id, type_name: "minecraft:player", open: !p.dead && p.game_mode != 3, accepts, mob: None, shearable: false }
 }
 
 /// An armor stand or a mob as a dispenser sees it.
@@ -45,7 +45,7 @@ pub(crate) fn wear_of(e: &kiln_entity::Entity) -> Option<Wear> {
                 accepts |= 1 << i;
             }
         }
-        return Some(Wear { id: e.id, type_name: e.type_name, open: e.is_alive(), accepts, mob: None });
+        return Some(Wear { id: e.id, type_name: e.type_name, open: e.is_alive(), accepts, mob: None, shearable: false });
     }
     let facts = rules::facts(e)?;
     let mut accepts = 0u8;
@@ -55,7 +55,7 @@ pub(crate) fn wear_of(e: &kiln_entity::Entity) -> Option<Wear> {
         }
     }
     let alive = rules::mob(e).is_some_and(|m| kiln_entity::mob::is_alive(e, m));
-    Some(Wear { id: e.id, type_name: e.type_name, open: alive, accepts, mob: Some(facts) })
+    Some(Wear { id: e.id, type_name: e.type_name, open: alive, accepts, mob: Some(facts), shearable: rules::shearable(e) })
 }
 
 /// The living things whose box meets the block `target`, in id order.
@@ -127,10 +127,22 @@ pub(super) fn dispense_swallow(level: &mut RegionLevel, pos: BlockPos, facing: D
     true
 }
 
-/// Carries out what the dispensers decided.
-pub(crate) fn apply(ops: Vec<DispenseOp>, entities: &mut Entities, players: &mut [&mut Player], spawns: &mut Vec<Spawn>) {
+/// `ShearsDispenseItemBehavior.tryShearEntity`: the first shearable thing in front is sheared. Whether one was.
+pub(super) fn dispense_shear(level: &mut RegionLevel, pos: BlockPos, facing: Direction, tool: &ItemStack) -> bool {
+    let target = pos.relative(facing);
+    let found = in_front(level, target).into_iter().find(|w| w.open && w.shearable);
+    let Some(w) = found else { return false };
+    let id = w.id;
+    level.out.dispenses.push(DispenseOp::Shear { id, tool: tool.clone() });
+    true
+}
+
+/// Carries out what the dispensers decided; the shears (which need the level) are returned for the caller.
+pub(crate) fn apply(ops: Vec<DispenseOp>, entities: &mut Entities, players: &mut [&mut Player], spawns: &mut Vec<Spawn>) -> Vec<(i32, ItemStack)> {
+    let mut shears = Vec::new();
     for op in ops {
         match op {
+            DispenseOp::Shear { id, tool } => shears.push((id, tool)),
             DispenseOp::Equip { id, slot, stack } => {
                 if let Some(p) = players.iter_mut().find(|p| p.entity_id == id) {
                     let at = kiln_inventory::inventory::equipment_index(slot, p.inv.selected);
@@ -172,6 +184,29 @@ pub(crate) fn apply(ops: Vec<DispenseOp>, entities: &mut Entities, players: &mut
             }
         }
     }
+    shears
+}
+
+/// `Shearable.shear(level, BLOCKS, tool)` of the thing a dispenser's shears found.
+pub(crate) fn shear(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    id: i32,
+    tool: &ItemStack,
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<crate::health::Death>,
+) {
+    use kiln_entity::mob::interact::{Interactor, interact};
+    let who = Interactor { id: -1, creative: false, sneaking: false, spectator: false, hit: kiln_entity::math::Vec3::ZERO };
+    crate::entities::with_entity(entities, level, players, id, spawns, deaths, 0x7368_6172, |e, lv| {
+        let out = interact(e, lv, &who, tool);
+        // A sheep's wool: the loot table comes back with the outcome (a snow golem's and the others' drop through events).
+        if let Some(table) = out.shear {
+            let p = e.position();
+            lv.emit(kiln_entity::level::Event::ShearLoot { entity: e.id, table, pos: kiln_entity::math::Vec3::new(p.x, p.y + 1.0, p.z) });
+        }
+    });
 }
 
 fn entity_mut(entities: &mut Entities, id: i32) -> Option<&mut kiln_entity::Entity> {

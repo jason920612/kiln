@@ -71,6 +71,10 @@ impl Kind for Bogged {
     }
 
     /// Shears take the mushrooms (dropped at the top of the head).
+    fn ready_for_shearing(&self, m: &MobData) -> bool {
+        !st(m).sheared
+    }
+
     fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
         if stack.is_empty() || mob::item_name(stack) != "minecraft:shears" || st(m).sheared {
             return None;

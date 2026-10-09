@@ -669,6 +669,11 @@ pub trait Kind: Sync + Send {
     }
     /// Equipment beyond the six hand and armor slots, as (`EquipmentSlot` ordinal, stack): a
     /// horse's saddle (7).
+    /// `Shearable.readyForShearing` of an alive mob of the type (a dispenser's shears look at it).
+    fn ready_for_shearing(&self, m: &MobData) -> bool {
+        let _ = m;
+        false
+    }
     /// `setItemSlot` and `setGuaranteedDrop` for the slots past the six (`BODY` is 6, `SADDLE` 7) when a
     /// dispenser puts a piece on: whether the type has the slot.
     fn set_extra_equipment(&self, m: &mut MobData, slot: u8, stack: ItemStack) -> bool {

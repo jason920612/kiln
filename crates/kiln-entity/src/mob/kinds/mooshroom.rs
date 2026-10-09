@@ -136,6 +136,10 @@ impl Kind for Mooshroom {
         true
     }
 
+    fn ready_for_shearing(&self, m: &MobData) -> bool {
+        !m.baby()
+    }
+
     fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
         let item = if stack.is_empty() { "minecraft:air" } else { mob::item_name(stack) };
         let sound = |e: &Entity, level: &mut dyn EntityLevel, sound: &'static str, volume: f32| {
