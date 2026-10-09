@@ -420,7 +420,7 @@ fn raised_events_are_answered_by_the_other_plugins() {
     assert!(rt.take_effects().is_empty(), "a vetoed join does nothing");
     // Events nobody subscribed to are not delivered: an unrelated name passes.
     let calls = rt.stat("calls");
-    assert_eq!(text(&rt.run_command(0, Some(&a), "arena", "other")), "/arena join | reset");
+    assert_eq!(text(&rt.run_command(0, Some(&a), "arena", "other")), "/arena join | out | reset");
     assert_eq!(rt.stat("calls"), calls + 1, "the command only");
 }
 

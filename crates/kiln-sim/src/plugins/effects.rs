@@ -260,6 +260,16 @@ impl Sim {
                 p.sync_health();
                 true
             }
+            EffectKind::Kill { who } => {
+                let Some(c) = conn(who) else { return false };
+                let Some(p) = self.players.get(&c) else { return false };
+                if p.dead {
+                    return false;
+                }
+                let target = crate::commands::PlayerRef::of(c, p, &self.commands.scoreboard);
+                Host::kill(self, &target);
+                true
+            }
             EffectKind::Kick { who, reason } => {
                 let Some(c) = conn(who) else { return false };
                 let Some(p) = self.players.get(&c) else { return false };

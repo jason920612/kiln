@@ -366,6 +366,11 @@ pub mod players {
         raw::heal(who)
     }
 
+    /// Kills the player as `/kill` does.
+    pub fn kill(who: Uuid) -> Ticket {
+        raw::kill(who)
+    }
+
     pub fn kick(who: Uuid, reason: impl IntoSpans) -> Ticket {
         raw::kick(who, &reason.into_spans())
     }

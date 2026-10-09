@@ -613,6 +613,10 @@ impl kiln::api::players::Host for HostState {
         self.effect(EffectKind::Heal { who: from_wit_uuid(who) })
     }
 
+    fn kill(&mut self, who: wit::Uuid) -> wasmtime::Result<u64> {
+        self.effect(EffectKind::Kill { who: from_wit_uuid(who) })
+    }
+
     fn kick(&mut self, who: wit::Uuid, reason: Vec<wit::Span>) -> wasmtime::Result<u64> {
         self.effect(EffectKind::Kick { who: from_wit_uuid(who), reason: spans(reason) })
     }

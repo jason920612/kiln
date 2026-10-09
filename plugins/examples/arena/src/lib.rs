@@ -73,11 +73,15 @@ impl Plugin for ArenaPlugin {
                 players::teleport(p.uuid, a.level, (a.x as f64 + 0.5, a.y as f64 + 1.0, a.z as f64 + 0.5), (0.0, 0.0));
                 say("green", "Welcome to the arena.")
             }
+            ("out", Some(p)) => {
+                players::kill(p.uuid);
+                say("red", "Eliminated.")
+            }
             ("reset", _) => {
                 scheduler::at_position(a.level, a.x, a.z, 1, RESET);
                 say("yellow", "Rebuilding the arena floor.")
             }
-            _ => say("gray", "/arena join | reset"),
+            _ => say("gray", "/arena join | out | reset"),
         }
     }
 

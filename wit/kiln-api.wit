@@ -436,6 +436,8 @@ interface players {
     set-game-mode: func(who: uuid, mode: game-mode) -> ticket;
     /// Full health, food and saturation; puts out fire.
     heal: func(who: uuid) -> ticket;
+    /// Kills the player as `/kill` does (the death is announced and observed like any other).
+    kill: func(who: uuid) -> ticket;
     kick: func(who: uuid, reason: list<span>) -> ticket;
 }
 

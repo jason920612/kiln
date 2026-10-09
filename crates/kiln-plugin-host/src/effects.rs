@@ -101,6 +101,7 @@ pub enum EffectKind {
     Teleport { who: u128, level: u32, pos: [f64; 3], rot: [f32; 2] },
     GameMode { who: u128, mode: u8 },
     Heal { who: u128 },
+    Kill { who: u128 },
     Kick { who: u128, reason: Vec<Span> },
     Give { who: u128, item: ItemSpec },
     Take { who: u128, item: String, count: u32 },
