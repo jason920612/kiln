@@ -129,9 +129,8 @@ impl Kind for Dolphin {
     }
 
     fn register_goals(&self, m: &mut MobData) {
+        m.targets.add(1, Goal::Custom(Box::new(HurtByNotGuardians { inner: common_a::hurt_by(true) })));
         let g = &mut m.goals;
-        // (The target selector runs before the goal selector: its goals come first.)
-        g.add(1, Goal::Custom(Box::new(HurtByNotGuardians { inner: common_a::hurt_by(true) })));
         g.add(0, Goal::Custom(Box::new(BreathAirGoal)));
         g.add(0, Goal::Custom(Box::new(TryFindWaterGoal)));
         g.add(1, Goal::Custom(Box::new(SwimToTreasureGoal { stuck: false })));

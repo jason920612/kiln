@@ -67,6 +67,8 @@ pub mod panda;
 // -- slice 3: common mobs B
 pub mod squid;
 pub mod dolphin;
+pub mod happy_ghast;
+pub mod happy_ghast_goals;
 pub mod fish;
 pub mod mooshroom;
 pub mod ocelot;
@@ -164,6 +166,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Squid => &squid::KIND,
         MobKind::GlowSquid => &squid::GLOW,
         MobKind::Dolphin => &dolphin::KIND,
+        MobKind::HappyGhast => &happy_ghast::KIND,
         MobKind::Cod => &fish::COD,
         MobKind::Salmon => &fish::SALMON,
         MobKind::TropicalFish => &fish::TROPICAL_FISH,
