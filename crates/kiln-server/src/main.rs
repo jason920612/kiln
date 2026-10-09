@@ -101,6 +101,8 @@ fn main() -> Result<()> {
         }
         sim_config.plugins = Some(plugins);
     }
+    // KILN_ENABLE_COMMAND_BLOCK=true: server.properties' enable-command-block (off by default, as in vanilla).
+    sim_config.enable_command_block = std::env::var("KILN_ENABLE_COMMAND_BLOCK").is_ok_and(|v| v == "true");
     // KILN_DIFFICULTY=peaceful|easy|normal|hard (or 0..3): the server's difficulty, applied over
     // the world's saved one at every start (vanilla's `difficulty` property).
     sim_config.difficulty = std::env::var("KILN_DIFFICULTY").ok().and_then(|v| {
