@@ -126,9 +126,8 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
         d.set(data::ageable_mob::BABY, &DataValue::Boolean(true));
     }
     match &m.species {
-        Species::Pig | Species::Cow | Species::Chicken { .. } => {
+        Species::Cow | Species::Chicken { .. } => {
             let (variant, sound) = match m.kind {
-                MobKind::Pig => (data::pig::VARIANT, data::pig::SOUND_VARIANT),
                 MobKind::Cow => (data::cow::VARIANT, data::cow::SOUND_VARIANT),
                 _ => (data::chicken::VARIANT, data::chicken::SOUND_VARIANT),
             };

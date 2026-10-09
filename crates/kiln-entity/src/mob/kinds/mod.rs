@@ -31,6 +31,8 @@ pub mod donkey;
 pub mod skeleton_horse;
 pub mod mule;
 pub mod strider;
+pub mod steering;
+pub mod pig;
 pub mod iron_golem;
 pub mod villager;
 pub mod piglin;
@@ -135,6 +137,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Mule => &mule::KIND,
         MobKind::SkeletonHorse => &skeleton_horse::KIND,
         MobKind::Strider => &strider::KIND,
+        MobKind::Pig => &pig::KIND,
         MobKind::IronGolem => &iron_golem::KIND,
         MobKind::Villager => &villager::KIND,
         MobKind::Piglin => &piglin::KIND,

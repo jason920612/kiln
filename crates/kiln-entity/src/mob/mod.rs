@@ -546,7 +546,6 @@ impl DamageSource {
 /// Type-specific state.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Species {
-    Pig,
     Cow,
     Sheep { color: u8, sheared: bool },
     Chicken { egg_time: i32 },
@@ -691,7 +690,6 @@ impl MobData {
         let attrs = kind.attributes();
         let health = attrs.value(Attr::MaxHealth) as f32;
         let species = match kind {
-            MobKind::Pig => Species::Pig,
             MobKind::Cow => Species::Cow,
             MobKind::Sheep => Species::Sheep { color: 0, sheared: false },
             MobKind::Chicken => Species::Chicken { egg_time: 0 },
@@ -1016,17 +1014,6 @@ fn register_goals(m: &mut MobData) {
     let hurt_by = |alert: bool| Goal::HurtByTarget { timestamp: 0, alert_others: alert, target_mob: None, unseen: 0, unseen_memory: 60 };
     match m.kind {
         _ if m.kind.ext().is_some() => {}
-        MobKind::Pig => {
-            g.add(0, Goal::Float);
-            g.add(1, panic(1.25));
-            g.add(3, breed(1.0));
-            g.add(4, tempt(1.2));
-            g.add(4, tempt(1.2));
-            g.add(5, follow_parent(1.1));
-            g.add(6, stroll(1.0));
-            g.add(7, look(6.0));
-            g.add(8, around());
-        }
         MobKind::Cow => {
             g.add(0, Goal::Float);
             g.add(1, panic(2.0));

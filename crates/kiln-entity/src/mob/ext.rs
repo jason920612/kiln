@@ -663,6 +663,16 @@ pub trait Kind: Sync + Send {
         let first = level.player(*e.passengers.first()?)?;
         self.steerable_by(m, &first).then_some(first.id)
     }
+    /// `FoodOnAStickItem`: the stick that steers the type (its item and the durability one boost
+    /// costs), for the types that are `ItemSteerable`.
+    fn stick(&self) -> Option<(&'static str, i32)> {
+        None
+    }
+    /// `ItemSteerable.boost`: whether a boost began (the stick is used up then).
+    fn boost(&self, e: &mut Entity, m: &mut MobData) -> bool {
+        let _ = (e, m);
+        false
+    }
     /// `tickRidden` with the controlling player (rotations follow the rider).
     fn tick_ridden(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, rider: &crate::level::PlayerView) {
         let _ = (e, m, level, rider);
