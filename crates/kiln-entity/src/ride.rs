@@ -61,6 +61,8 @@ pub fn vehicle_attachment_of_age(type_name: &str, baby: bool, scale: f32) -> Vec
 fn passenger_point(type_name: &str) -> Option<(f64, f64)> {
     Some(match type_name {
         "minecraft:chicken" => (0.7, -0.1),
+        // (`passengerAttachments(0.86875F)`.)
+        "minecraft:pig" => (0.86875, 0.0),
         "minecraft:ravager" => (2.2625, -0.0625),
         "minecraft:fox" => (0.6375, -0.25),
         "minecraft:frog" => (0.375, -0.25),
