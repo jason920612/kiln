@@ -95,9 +95,19 @@ impl TransportItemsBetweenContainers {
         }
     }
 
+    /// `ChestBlockEntity.getEntitiesWithContainerOpen` for the chest at `pos`: the level's, and the
+    /// golem itself (its data is out of its entity while it thinks).
+    fn users(cx: &Cx, pos: BlockPos) -> Vec<i32> {
+        let mut v = cx.level.container_users(pos);
+        if super::copper_golem::has_container_open(cx.m, &*cx.level, pos) && !v.contains(&cx.e.id) {
+            v.push(cx.e.id);
+        }
+        v
+    }
+
     /// `isAnotherMobInteractingWithTarget`: a chest of the target has something open.
     fn another_mob_interacting(cx: &Cx, t: &Target) -> bool {
-        Self::connected(cx, t).iter().any(|c| !cx.level.container_users(c.pos).is_empty())
+        Self::connected(cx, t).iter().any(|c| !Self::users(cx, c.pos).is_empty())
     }
 
     /// `getCenterPos`.
@@ -405,7 +415,7 @@ impl TransportItemsBetweenContainers {
         if ticks == 60 {
             // `container.getEntitiesWithContainerOpen().contains(golem)`: only a single chest answers
             // (a `CompoundContainer` always says none, and so is never closed here).
-            if t.halves.len() == 1 && cx.level.container_users(t.pos).contains(&id) {
+            if t.halves.len() == 1 && Self::users(cx, t.pos).contains(&id) {
                 cx.level.container_stop_open(t.pos, id);
             }
             st_mut(cx.m).opened_chest = None;
