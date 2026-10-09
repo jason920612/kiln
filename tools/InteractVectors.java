@@ -3014,6 +3014,7 @@ public class InteractVectors {
         for (String n : c.customStats) customBefore.put(n, p.getStats().getValue(net.minecraft.stats.Stats.CUSTOM.get(BuiltInRegistries.CUSTOM_STAT.getValue(Identifier.parse(n)))));
         java.util.Set<UUID> seenBees = new java.util.HashSet<>();
         recordMenus = c.watchMenus;
+        long startClock = server.overworld().getGameTime();
         mobCase = c.watchMobs;
         recordMaps = c.watchMaps;
         if (c.watchMaps) resetMaps();
@@ -3107,6 +3108,7 @@ public class InteractVectors {
         line.put("maps", c.watchMaps);
         line.put("ticking", c.tickLevel);
         line.put("op", c.op);
+        if (c.fullTicks) line.put("clock", startClock);
         line.put("mobs", c.watchMobs);
         line.put("player_uuid", p.getUUID().toString());
         line.put("custom_stats", c.customStats);

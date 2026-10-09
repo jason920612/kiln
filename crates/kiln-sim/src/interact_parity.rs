@@ -514,7 +514,9 @@ fn run_case(line: &Value) -> Vec<String> {
     // The settling step: the player's own packets of setup are not part of the scenario.
     assert!(sim.step([]));
     // The recorded level's clock stands at 100 as each scenario begins.
-    while sim.game_time() < 100 {
+    // (A level that ticks whole has made the tick of its setup by then.)
+    let start = line["clock"].as_u64().unwrap_or(100);
+    while sim.game_time() < start {
         assert!(sim.step([]));
     }
     *stats.log.lock().unwrap() = Some(Vec::new());

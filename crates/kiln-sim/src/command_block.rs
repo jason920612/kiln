@@ -533,6 +533,11 @@ impl Sim {
             if let Some(c) = l.blocks.containers.get_mut(bp) {
                 c.mark_changed();
             }
+            // `onUpdated`: `sendBlockUpdated` (the clients see the block again with its data).
+            if enabled {
+                crate::container::open::sync_chunk_copy(l, bp);
+                l.out.changed.push([bp.x, bp.y, bp.z]);
+            }
         });
         let _ = bp;
         if !update.command.is_empty() {
