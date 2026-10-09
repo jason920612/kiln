@@ -605,7 +605,7 @@ fn run_case(line: &Value) -> Vec<String> {
                 use kiln_proto::packets::serverbound::{CommandBlockMode, CommandBlockUpdate};
                 inbox.push(ToSim::Packet(
                     1,
-                    PlayIn::SetCommandBlock(CommandBlockUpdate {
+                    PlayIn::SetCommandBlock(Box::new(CommandBlockUpdate {
                         pos: arr3(&step["pos"]),
                         command: step["command"].as_str().unwrap().to_owned(),
                         mode: match step["mode"].as_str().unwrap() {
@@ -616,7 +616,7 @@ fn run_case(line: &Value) -> Vec<String> {
                         track_output: step["track"].as_bool().unwrap(),
                         conditional: step["conditional"].as_bool().unwrap(),
                         automatic: step["auto"].as_bool().unwrap(),
-                    }),
+                    })),
                 ));
             }
             "menu_slot_state" => {
