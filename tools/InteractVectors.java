@@ -2944,6 +2944,10 @@ public class InteractVectors {
         }
         server.getPlayerList().remove(p);
         command("fill -4 90 -8 15 110 15 minecraft:air");
+        // (Scheduled ticks that were still due when the case ended would block the next case's: the game time goes back.)
+        if (c.fullTicks) {
+            ((net.minecraft.world.ticks.LevelTicks<net.minecraft.world.level.block.Block>) server.overworld().getBlockTicks()).clearArea(new net.minecraft.world.level.levelgen.structure.BoundingBox(-8, 80, -8, 16, 120, 16));
+        }
         command("kill @e[type=minecraft:item]");
         command("kill @e[type=minecraft:item_frame]");
         command("kill @e[type=minecraft:glow_item_frame]");
