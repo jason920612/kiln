@@ -182,11 +182,11 @@ fn the_shop_menu_is_locked_and_sells() {
     g.send(0, PlayIn::ContainerClose { container_id: 2 });
     g.ticks(1);
     let slot = g.sim.inventory(1).unwrap().iter().position(|s| s.is_some_and(|(i, _)| i == item("minecraft:stick"))).expect("the wand's slot");
-    // Inventory list index to hotbar index: the first nine are the hotbar.
-    g.send(0, PlayIn::SetCarriedItem { slot: slot as i16 });
+    // The list is in inventory-menu order: slots 36 to 44 are the hotbar.
+    assert!((36..45).contains(&slot), "in the hotbar ({slot})");
+    g.send(0, PlayIn::SetCarriedItem { slot: (slot - 36) as i16 });
     g.ticks(1);
     g.received(0);
-    eprintln!("slot {slot}, selected {:?}, inventory {:?}", g.sim.selected_slot(1), g.sim.inventory(1).unwrap().iter().take(12).collect::<Vec<_>>());
     g.send(0, PlayIn::UseItem { hand: kiln_proto::packets::serverbound::Hand::Main, sequence: 9, yaw: 0.0, pitch: 0.0 });
     g.ticks(1);
     let texts: Vec<String> = g.received(0).iter().map(|p| String::from_utf8_lossy(p).chars().filter(|c| c.is_ascii_graphic() || *c == ' ').collect()).collect();
