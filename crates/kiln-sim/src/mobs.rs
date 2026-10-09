@@ -96,6 +96,19 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
     if e.air_supply != 300 {
         d.set(data::entity::AIR_SUPPLY, &DataValue::Int(e.air_supply));
     }
+    // `DATA_CUSTOM_NAME`, `DATA_CUSTOM_NAME_VISIBLE`, `DATA_SILENT`, `DATA_NO_GRAVITY` (name tags, `/summon`).
+    if let Some((_, name)) = e.extra.iter().find(|(k, _)| k == "CustomName") {
+        d.set(data::entity::CUSTOM_NAME, &DataValue::OptionalComponent(Some(name.clone())));
+    }
+    if e.extra.iter().any(|(k, v)| k == "CustomNameVisible" && v.as_i64().is_some_and(|b| b != 0)) {
+        d.set(data::entity::CUSTOM_NAME_VISIBLE, &DataValue::Boolean(true));
+    }
+    if e.silent {
+        d.set(data::entity::SILENT, &DataValue::Boolean(true));
+    }
+    if e.no_gravity {
+        d.set(data::entity::NO_GRAVITY, &DataValue::Boolean(true));
+    }
     if m.is_dead_or_dying() {
         d.set(data::entity::POSE, &DataValue::Pose(kiln_data::entities::pose::DYING));
     }
