@@ -325,7 +325,9 @@ public class ContainerVectors {
         // The result goes into the container in front.
         out.add(craft("into_chest", items(slot(4, "oak_log", 1))).container(1, 0, 0, "minecraft:chest"));
         out.add(craft("into_full_chest", items(slot(4, "oak_log", 1))).container(1, 0, 0, "minecraft:chest" + items(fullChest("stone", 64, 27, 0))));
-        out.add(craft("into_nearly_full_chest", items(slot(4, "oak_log", 1))).container(1, 0, 0, "minecraft:chest" + items(fullChest("stone", 64, 26, 0), slot(26, "oak_planks", 62))));
+        String[] nearly = java.util.Arrays.copyOf(fullChest("stone", 64, 26, 0), 27);
+        nearly[26] = slot(26, "oak_planks", 62);
+        out.add(craft("into_nearly_full_chest", items(slot(4, "oak_log", 1))).container(1, 0, 0, "minecraft:chest" + items(nearly)));
         out.add(craft("into_hopper", items(slot(4, "oak_log", 1))).container(1, 0, 0, "minecraft:hopper[facing=east]"));
         out.add(craft("cake_into_chest", items(slot(0, "milk_bucket", 1), slot(1, "milk_bucket", 1), slot(2, "milk_bucket", 1), slot(3, "sugar", 1), slot(4, "egg", 1),
                 slot(5, "sugar", 1), slot(6, "wheat", 1), slot(7, "wheat", 1), slot(8, "wheat", 1))).container(1, 0, 0, "minecraft:chest"));
