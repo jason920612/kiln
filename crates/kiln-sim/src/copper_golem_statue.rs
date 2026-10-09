@@ -10,6 +10,8 @@ use crate::tools::hand_slot;
 use kiln_blocks::{BlockPos, Effect, Level, flags, state};
 use kiln_data::block_logic::{self as logic, BlockClass as C};
 use kiln_data::blocks::default_state as d;
+use kiln_inventory::stack::StackExt as _;
+use kiln_world::Blocks as _;
 use kiln_entity::mob::MobKind;
 
 /// The poses in order (`CopperGolemStatueBlock.Pose`).
