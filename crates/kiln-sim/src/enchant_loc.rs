@@ -10,7 +10,8 @@
 use crate::Player;
 use crate::blocks::RegionLevel;
 use crate::hazards::BlockAt;
-use kiln_blocks::{BlockPos, Effect, Level};
+use kiln_blocks::{Effect, Level};
+use kiln_entity::math::BlockPos;
 use kiln_data::blocks::default_state as d;
 use kiln_item::ItemStack;
 use kiln_item::component::EquipmentSlot;
@@ -126,7 +127,7 @@ impl Player {
                 override_limiter: false,
                 always_show: false,
                 pos: [x, self.pos[1] + 0.1, z],
-                offset: [self.vel[0] * -0.2, 0.1, self.vel[2] * -0.2],
+                offset: [(self.vel[0] * -0.2) as f32, 0.1, (self.vel[2] * -0.2) as f32],
                 max_speed: [1.0, 1.0, 1.0],
                 count: 0,
                 randomization: world_fx::ParticleRandomization::Alternative,
@@ -144,6 +145,7 @@ impl Player {
 /// `ReplaceDisk` of frost walker: the water source blocks under open air within `radius` of `pos` (on the layer
 /// of `origin`) turn into frosted ice, unless something solid stands in the block.
 pub(crate) fn frost_walker_disk(level: &mut RegionLevel, origin: BlockPos, radius: i32, pos: [f64; 3]) {
+    let origin = kiln_blocks::BlockPos::new(origin.x, origin.y, origin.z);
     let r2 = (radius * radius) as f64;
     for z in -radius..=radius {
         for x in -radius..=radius {
