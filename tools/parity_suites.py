@@ -68,6 +68,7 @@ SUITES = {
     # wp49 suites: recorded by the tools/*Vectors.java harnesses into <work>/wp49 (docs/parity-coverage.md). The
     # interact and container directories hold one file per harness case group; each file is its own run
     # (`interact49:<file>`), the mobs are folded into m6-mobs2/vectors.jsonl (the mob_parity suite).
+    "effects49": (["-p", "kiln-sim", "--lib", "effect_parity"], {"KILN_EFFECT_VECTORS": vec("wp49/effects/ench.jsonl")}),
     "entity_nbt": (["-p", "kiln-entity", "--test", "entity_nbt"], {"KILN_ENTITY_NBT_VECTORS": vec("wp49/entities/nbt.jsonl")}),
     "bubble": (["-p", "kiln-blocks", "--lib", "block_parity"], {"KILN_BLOCK_VECTORS": vec("wp49/block/bubble.jsonl")}),
     "explore_maps": (["-p", "kiln-sim", "--lib", "exploration_map_parity"], {"KILN_EXPLORE_VECTORS": vec("wp49/explore/maps.jsonl")}),
