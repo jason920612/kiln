@@ -476,6 +476,30 @@ fn ids_made_up_by_plugins_are_prefixed_with_their_owner() {
 fn call_costs_of_the_new_events() {
     use std::time::Instant;
     for mode in [kiln_plugin_host::ExecMode::Ordered, kiln_plugin_host::ExecMode::Strict] {
+        // The cost of the boundary itself: a handler that returns at once.
+        {
+            let cfg = RuntimeConfig {
+                mode,
+                registries: registries(),
+                call_budget: Duration::from_millis(200),
+                tick_budget: Duration::from_secs(3600),
+                tick_fuel: u64::MAX,
+                player_events_per_second: 0,
+                ..RuntimeConfig::default()
+            };
+            let mut rt = PluginRuntime::new(vec![examples::load("noop", "").unwrap()], cfg).unwrap();
+            rt.sync_regions(0, [1]);
+            let a = alice();
+            let mut per = Duration::MAX;
+            for _ in 0..30 {
+                let start = std::time::Instant::now();
+                for _ in 0..2000 {
+                    rt.region_mut(0, 1).unwrap().block_break(&a, [90, 64, 90], 1);
+                }
+                per = per.min(start.elapsed() / 2000);
+            }
+            println!("{mode:?} trivial handler (noop): {} ns per call", per.as_nanos());
+        }
         let loaded = ["noop", "claims", "shop", "homes", "arena", "gatekeeper"].iter().map(|id| examples::load(id, "").unwrap()).collect();
         let cfg = RuntimeConfig {
             mode,
