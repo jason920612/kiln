@@ -69,6 +69,8 @@ pub mod squid;
 pub mod chest_access;
 pub mod copper_golem;
 pub mod copper_golem_ai;
+pub mod sulfur_archetype;
+pub mod sulfur_cube;
 pub mod dolphin;
 pub mod happy_ghast;
 pub mod happy_ghast_goals;
@@ -170,6 +172,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::GlowSquid => &squid::GLOW,
         MobKind::Dolphin => &dolphin::KIND,
         MobKind::CopperGolem => &copper_golem::KIND,
+        MobKind::SulfurCube => &sulfur_cube::KIND,
         MobKind::HappyGhast => &happy_ghast::KIND,
         MobKind::Cod => &fish::COD,
         MobKind::Salmon => &fish::SALMON,

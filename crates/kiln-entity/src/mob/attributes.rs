@@ -23,6 +23,7 @@ pub enum Attr {
     AttackKnockback,
     AirDragModifier,
     FrictionModifier,
+    Bounciness,
     FollowRange,
     AttackDamage,
     TemptRange,
@@ -37,7 +38,7 @@ impl Attr {
         use Attr::*;
         match self {
             MaxHealth => ("minecraft:max_health", 20.0, 1.0, 1024.0),
-            KnockbackResistance => ("minecraft:knockback_resistance", 0.0, 0.0, 1.0),
+            KnockbackResistance => ("minecraft:knockback_resistance", 0.0, -2.0, 1.0),
             MovementSpeed => ("minecraft:movement_speed", 0.7, 0.0, 1024.0),
             Armor => ("minecraft:armor", 0.0, 0.0, 30.0),
             ArmorToughness => ("minecraft:armor_toughness", 0.0, 0.0, 20.0),
@@ -56,6 +57,7 @@ impl Attr {
             AttackKnockback => ("minecraft:attack_knockback", 0.0, 0.0, 5.0),
             AirDragModifier => ("minecraft:air_drag_modifier", 1.0, 0.0, 2048.0),
             FrictionModifier => ("minecraft:friction_modifier", 1.0, 0.0, 2048.0),
+            Bounciness => ("minecraft:bounciness", 0.0, 0.0, 1.0),
             FollowRange => ("minecraft:follow_range", 32.0, 0.0, 2048.0),
             AttackDamage => ("minecraft:attack_damage", 2.0, 0.0, 2048.0),
             TemptRange => ("minecraft:tempt_range", 10.0, 0.0, 2048.0),
@@ -74,7 +76,7 @@ impl Attr {
     }
 }
 
-pub const ALL: [Attr; 26] = {
+pub const ALL: [Attr; 27] = {
     use Attr::*;
     [
         MaxHealth,
@@ -97,6 +99,7 @@ pub const ALL: [Attr; 26] = {
         AttackKnockback,
         AirDragModifier,
         FrictionModifier,
+        Bounciness,
         FollowRange,
         AttackDamage,
         TemptRange,
@@ -182,6 +185,7 @@ impl Attributes {
             AttackKnockback,
             AirDragModifier,
             FrictionModifier,
+            Bounciness,
         ]
         .into_iter()
         .map(|a| Instance { attr: a, base: a.info().1, modifiers: Vec::new() })

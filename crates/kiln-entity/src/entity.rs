@@ -116,6 +116,10 @@ pub struct Entity {
     /// Set when the velocity changed enough that trackers must resend it (`hasImpulse`/`needsSync`).
     pub needs_sync: bool,
     pub max_up_step: f32,
+    /// `LivingEntity.getEntityBounciness` (the `bounciness` attribute: sulfur cubes with a swallowed item bounce).
+    pub bounciness: f64,
+    /// `LivingEntity.getAirDrag` where it is not the plain 0.98 (a sulfur cube with an item in it).
+    pub air_drag_override: Option<f32>,
     /// `moveDist`, `flyDist`, `nextStep`: step and swim sound pacing (`applyMovementEmissionAndPlaySound`).
     pub move_dist: f32,
     pub fly_dist: f32,
@@ -195,6 +199,8 @@ impl Entity {
             invulnerable_time: 0,
             needs_sync: false,
             max_up_step: 0.0,
+            bounciness: 0.0,
+            air_drag_override: None,
             move_dist: 0.0,
             fly_dist: 0.0,
             next_step: 1.0,
@@ -323,7 +329,7 @@ impl Entity {
     }
 
     pub fn air_drag(&self) -> f32 {
-        0.98
+        self.air_drag_override.unwrap_or(0.98)
     }
 
     fn is_living(&self) -> bool {
@@ -358,7 +364,7 @@ impl Entity {
     }
 
     fn entity_bounciness(&self) -> f64 {
-        0.0
+        self.bounciness
     }
 
     /// `canFreeze` (the `freeze_immune_entity_types` tag).

@@ -1362,6 +1362,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         crate::container::hopper::take_into_cart(self.level.region()?, kb(pos), dest)
     }
 
+    fn best_own_or_neighbour_signal(&self, pos: BlockPos) -> i32 {
+        self.level.region_ref().map_or(0, |l| kiln_blocks::redstone::best_neighbor_signal(l, kb(pos), true))
+    }
+
     fn chest_block_entities(&self, cx: i32, cz: i32) -> Option<Vec<BlockPos>> {
         use crate::container::BeKind;
         let l = self.level.region_ref()?;

@@ -936,6 +936,12 @@ pub trait EntityLevel {
         false
     }
 
+    /// `SignalGetter.getBestOwnOrNeighbourSignal`: the redstone signal at `pos` (powered blocks around it).
+    fn best_own_or_neighbour_signal(&self, pos: BlockPos) -> i32 {
+        let _ = pos;
+        0
+    }
+
     /// `Level.isThundering` (channeling).
     fn is_thundering(&self) -> bool {
         false

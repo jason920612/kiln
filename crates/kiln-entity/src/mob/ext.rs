@@ -773,6 +773,27 @@ pub trait Kind: Sync + Send {
     fn omnidirectional_air_mover(&self) -> bool {
         false
     }
+    /// [`Kind::omnidirectional_air_mover`] for types that decide by their state (a sulfur cube with an
+    /// item in it).
+    fn omnidirectional_air_mover_now(&self, m: &MobData) -> bool {
+        let _ = m;
+        self.omnidirectional_air_mover()
+    }
+    /// `detectEquipmentUpdates` past the attribute modifiers of the six slots: the type's own slots
+    /// (a sulfur cube's body) noticed a tick after they changed.
+    fn detect_equipment_updates(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let _ = (e, m, level);
+    }
+    /// `knockback(strength, dx, dz, source, amount)` of a full hit, when the type has its own
+    /// (a sulfur cube with an item in it): true when it moved the mob.
+    fn hit_knockback(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, strength: f64, dx: f64, dz: f64, source: &DamageSource, amount: f32) -> bool {
+        let _ = (e, m, level, strength, dx, dz, source, amount);
+        false
+    }
+    /// What `travelInFluid` of the type adds after the shared movement (a floating sulfur cube bobs up).
+    fn after_travel_in_fluid(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let _ = (e, m, level);
+    }
     /// `doPush(player)` overridden to nothing (parrots): neither side moves.
     fn do_push_skips_players(&self) -> bool {
         false

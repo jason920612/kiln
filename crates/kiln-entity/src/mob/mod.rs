@@ -120,6 +120,7 @@ pub enum MobKind {
     Dolphin,
     HappyGhast,
     CopperGolem,
+    SulfurCube,
     Cod,
     Salmon,
     TropicalFish,
@@ -300,6 +301,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Dolphin,
     MobKind::HappyGhast,
     MobKind::CopperGolem,
+    MobKind::SulfurCube,
     MobKind::Cod,
     MobKind::Salmon,
     MobKind::TropicalFish,
@@ -1489,6 +1491,9 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         *t += 1;
     }
     sync_equipment_modifiers(m);
+    if let Some(k) = m.kind.ext() {
+        k.detect_equipment_updates(e, m, level);
+    }
     if !e.is_removed() {
         crate::prof!("mob", "ai_step");
         ai_step(e, m, level);
@@ -2054,7 +2059,7 @@ pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
     let drag = m.attrs.value(Attr::AirDragModifier) as f32;
     let h = friction * modified_friction(0.91, drag);
     // `omnidirectionalAirMover` (wp32: parrots): the vertical drag is the horizontal one.
-    let vy = if m.kind.ext().is_some_and(|k| k.omnidirectional_air_mover()) { modified_friction(0.91, drag) } else { modified_friction(0.98, drag) };
+    let vy = if m.kind.ext().is_some_and(|k| k.omnidirectional_air_mover_now(m)) { modified_friction(0.91, drag) } else { modified_friction(0.98, drag) };
     e.delta = Vec3::new(v.x * h as f64, y * vy as f64, v.z * h as f64);
 }
 
@@ -2164,6 +2169,9 @@ fn travel_in_fluid(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
         if crate::collision::no_collision(level, &ctx, e.id, &b) && !contains_any_liquid(level, &b) {
             e.delta = Vec3::new(v.x, 0.30000001192092896, v.z);
         }
+    }
+    if let Some(k) = m.kind.ext() {
+        k.after_travel_in_fluid(e, m, level);
     }
 }
 
@@ -2577,15 +2585,7 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
             e.needs_sync = true;
         }
         if !kind.is_tag("minecraft:no_knockback") {
-            let (mut dx, mut dz) = (0.0, 0.0);
-            if let Some((x, z)) = m.knock_override {
-                dx = x;
-                dz = z;
-            } else if let Some(p) = source.pos {
-                dx = p.x - e.x();
-                dz = p.z - e.z();
-            }
-            knockback(e, m, 0.4000000059604645, dx, dz);
+            deal_default_knockback(e, m, level, &source, amount);
         }
     }
     if m.is_dead_or_dying() {
@@ -2606,6 +2606,24 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
         kinds::zombie::reinforcements(e, m, level, &source);
     }
     true
+}
+
+/// `LivingEntity.dealDefaultKnockback` (without the damage indicator): away from where the blow came
+/// from (a projectile's direction of flight, else the source's position), by the type's own knockback
+/// where it has one.
+pub fn deal_default_knockback(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) {
+    let (mut dx, mut dz) = (0.0, 0.0);
+    if let Some((x, z)) = m.knock_override {
+        dx = x;
+        dz = z;
+    } else if let Some(p) = source.pos {
+        dx = p.x - e.x();
+        dz = p.z - e.z();
+    }
+    if m.kind.ext().is_some_and(|k| k.hit_knockback(e, m, level, 0.4000000059604645, dx, dz, source, amount)) {
+        return;
+    }
+    knockback(e, m, 0.4000000059604645, dx, dz);
 }
 
 /// `Guardian.getHurtSound` / `getDeathSound`: out of water the `_land` sounds.
