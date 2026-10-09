@@ -158,7 +158,9 @@ public class EffectVectors {
             m.put("main_hand", mainHand);
             m.put("armor", armor);
             m.put("armor_enchantments", armorEnch);
-            m.put("watch", watch);
+            List<Object> watched = new ArrayList<>();
+            for (int[] w : watch) watched.add(List.of(w[0], w[1], w[2]));
+            m.put("watch", watched);
             m.put("watch_boots", watchBoots);
             List<Object> bl = new ArrayList<>();
             for (Object[] b : blocks) {
