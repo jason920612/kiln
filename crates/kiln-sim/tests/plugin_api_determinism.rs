@@ -62,7 +62,8 @@ fn run(workers: usize, unified: bool, chaos: Option<u64>, fuel: u64) -> Outcome 
         let conn = |i: usize| i as u64 + 1;
         let pkt = |inbox: &mut Vec<ToSim>, i: usize, p: PlayIn| inbox.push(ToSim::Packet(conn(i), p));
         let cmd = |inbox: &mut Vec<ToSim>, i: usize, c: &str| inbox.push(ToSim::Packet(conn(i), PlayIn::ChatCommand { command: c.into() }));
-        match tick {
+        let skip = std::env::var("API_SKIP").unwrap_or_default();
+        match if skip.split(',').any(|s| s.parse() == Ok(tick)) { 9999 } else { tick } {
             // Gold blocks for the claim makers, then everyone survives.
             15 => {
                 for i in [0, 2, 4] {
