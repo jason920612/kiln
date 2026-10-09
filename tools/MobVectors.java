@@ -3352,6 +3352,38 @@ public class MobVectors {
             chestAt(s, -3, 3, "minecraft:chest[facing=east]", "");
             out.add(s);
         }
+        // Two golems at the same chests: one waits while the other has them open.
+        {
+            Scenario s = golemWorld("copper_golem_two", 41320L, 732, 1800);
+            MobSpec second = new MobSpec("minecraft:copper_golem", 2.5, BY, 0.5, 200f, 41321L);
+            s.mobs.add(second);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            out.add(s);
+        }
+        // The chests in odd places: a pit, a pillar, a double copper chest as the source.
+        {
+            Scenario s = golemWorld("copper_golem_pillar", 41330L, 733, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            block(s, -7, BY, 3, "minecraft:stone");
+            block(s, -7, BY + 1, 3, "minecraft:chest[facing=east]");
+            s.chests.put(new BlockPos(-7, BY + 1, 3), "[]");
+            out.add(s);
+        }
+        {
+            Scenario s = golemWorld("copper_golem_pit", 41340L, 734, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            block(s, -6, BY - 1, 0, "minecraft:chest[facing=east]");
+            s.chests.put(new BlockPos(-6, BY - 1, 0), "[]");
+            out.add(s);
+        }
+        {
+            Scenario s = golemWorld("copper_golem_double_source", 41350L, 735, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west,type=right]", IRON);
+            chestAt(s, 7, 1, "minecraft:copper_chest[facing=west,type=left]", "{Slot:4b,id:\"minecraft:gold_ingot\",count:9}");
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            out.add(s);
+        }
         // A player nearby while it works.
         {
             Scenario s = golemWorld("copper_golem_player", 41300L, 730, 1500);
