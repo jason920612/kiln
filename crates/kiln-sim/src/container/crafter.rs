@@ -150,6 +150,8 @@ pub(crate) fn dispense_from(level: &mut RegionLevel, pos: BlockPos, s: u16) {
         }
         c.mark_changed();
     }
+    // `setChanged`: comparators read the slots again.
+    super::hopper::changed(level, pos);
 }
 
 /// `CrafterBlock.dispenseItem`: into the container in front, a crafter taking one item at a time; what does not fit is
