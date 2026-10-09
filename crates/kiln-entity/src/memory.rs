@@ -4,7 +4,7 @@
 use crate::entity::{Entity, EntityKind};
 use crate::level::{EntityFilter, EntityLevel, Event, PlayerView};
 use crate::math::{Aabb, BlockPos};
-use kiln_javamath::random::LegacyRandom;
+use kiln_javamath::random::{LegacyRandom, RandomSource as _};
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 
