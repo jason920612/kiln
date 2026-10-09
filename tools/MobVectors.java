@@ -3249,7 +3249,29 @@ public class MobVectors {
         s.chests.put(new BlockPos(x, BY, z), "[" + items + "]");
     }
 
+    /// An iron golem offers its poppy to a copper golem next to it (the offer is a one in 8000 roll when the goal is
+    /// polled, so the seeds that roll early are looked for: `MOB_GIFT_PROBE=1` records candidates to search).
+    static void scenariosIronGift(List<Scenario> out) {
+        boolean probe = System.getenv("MOB_GIFT_PROBE") != null;
+        long[] seeds = probe ? java.util.stream.LongStream.rangeClosed(1, 300).map(i -> 52000L + i).toArray() : new long[] {};
+        for (long seed : seeds) {
+            Scenario s = new Scenario("iron_gift_" + seed);
+            floor(s, 30, "minecraft:stone");
+            MobSpec iron = new MobSpec("minecraft:iron_golem", 0.5, BY, 0.5, 30f, seed);
+            iron.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(iron);
+            MobSpec copper = new MobSpec("minecraft:copper_golem", 3.5, BY, 0.5, 100f, seed + 7);
+            s.mobs.add(copper);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 800 + seed % 50;
+            s.ticks = 600;
+            out.add(s);
+        }
+    }
+
     static void scenariosCopperGolem(List<Scenario> out) {
+        scenariosIronGift(out);
         // Nothing to carry: strolls and waits.
         for (int seed = 1; seed <= 2; seed++) {
             Scenario s = golemWorld("copper_golem_idle_" + seed, 41000L + seed, 700 + seed, 700);
