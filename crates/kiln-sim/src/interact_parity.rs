@@ -477,6 +477,12 @@ fn run_case(line: &Value) -> Vec<String> {
     // The recorded level's clock stands at 100 as each scenario begins: the setup commands come just before
     // (a block they place that would not last, a kelp plant without support, is ticked as little as in the
     // vectors' frozen level).
+    // (The vectors' server spawns no monsters: `spawn-monsters=false`.)
+    {
+        let mut rule = vec![ToSim::Console("gamerule minecraft:spawn_monsters false".into())];
+        client.tick(None, &mut rule);
+        assert!(sim.step(rule));
+    }
     while sim.game_time() < 98 {
         let mut idle = Vec::new();
         client.tick(None, &mut idle);
