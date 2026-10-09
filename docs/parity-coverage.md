@@ -1,6 +1,6 @@
-# Kiln 與原版 26.3 的一致性涵蓋矩陣（wp44 稽核，wp45 整合後的最終狀態）
+# Kiln 與原版 26.3 的一致性涵蓋矩陣（wp44 稽核，wp45 整合後的狀態，wp49 補 D 項後更新）
 
-基準：`main` 的 e5dd225 加上 wp41、wp44 及其十條子分支（wp45 整合成 `wp45-integrate`）。第 1～5 節是整合後的最終狀態（每個區域的 A/B/C/D 都已重算，數字是 wp45 在 VM 上重錄並重放的結果），第 6 節記錄 wp44／wp45 做了什麼、完成了什麼、放棄了什麼。
+基準：`main` 的 e5dd225 加上 wp41、wp44 及其十條子分支（wp45 整合成 `wp45-integrate`），再加 wp49（`wp49-d-gaps`，接在 wp48 之後）。第 1～5 節是整合後的狀態（每個區域的 A/B/C/D 在 wp45 時重算，數字是 wp45 在 VM 上重錄並重放的結果；wp49 補完的 D 項已在各表的對應列改成現況，第 1 節的總計欄沒有重算），第 6 節記錄 wp44／wp45／wp49 做了什麼、完成了什麼、放棄了什麼。
 稽核範圍是玩家能觀察到的行為。方法：先問「完整驗證」要涵蓋什麼，刪掉不可觀察的工作，不另建新框架；只有稽核指出的洞才補。
 
 ## 0. 「完整驗證」要涵蓋什麼
@@ -34,13 +34,13 @@
 | 區域 | 項目數 | A | A\* | B | C | D | 備註 |
 |---|---|---|---|---|---|---|---|
 | 方塊（有行為的 vanilla 方塊類別，`AuditBlockBehaviour.java` 盤點） | 218 類 | 136 | – | 2 | 58 | **22** | 隨機 tick 與排程 tick 已有向量（第 3.1 節）；剩下的 D 是只存 NBT 的方塊實體、指令方塊、氣泡柱等 |
-| 方塊實體、容器、選單 | 48 | 18 | – | 0 | 16 | 14 | 告示牌、書、刷怪磚、中鍵挑選已是 A |
+| 方塊實體、容器、選單 | 48 | 18（本欄是 wp45 的數字；wp49 把營火、蜂巢、鐘、講台、陶罐、書架、合成器、製圖台、試煉刷怪磚、寶庫、指令方塊、日光感測器、發射器、蛋糕升為 A，逐項見 3.1、3.2 與 6.3，未重算本列） | – | 0 | 16 | 14 | 告示牌、書、刷怪磚、中鍵挑選已是 A；wp49 之後 D 剩結構／拼圖方塊 |
 | 合成與配方 | 14 | 10 | – | 1 | 3 | 0 | |
 | 物品欄點擊與同步 | 16 | 12 | – | 0 | 1 | 3 | |
 | 戰利品 | 17 | 14 | – | 0 | 2 | 1 | |
 | datapack、function、tag、predicate | 15 | 0 | – | 9 | 5 | 1 | |
 | 物品元件 | 9 | 6 | – | 0 | 2 | 1 | |
-| 生物（26.3 的 Mob 子類 90 種） | 90 | 84（其中 57 另有真 client 渲染檢查） | – | – | 0 | **6 種未實作** | 洞穴蜘蛛已實作；另有約 20 類已實作但有功能缺口 |
+| 生物（26.3 的 Mob 子類 90 種） | 90 | **90**（wp49 補上蜜蜂、海豚、快樂恐懼魔、銅傀儡、巨人、硫磺方塊，各有原版向量；其中 57 另有真 client 渲染檢查） | – | – | 0 | **0 種未實作** | 洞穴蜘蛛已實作；另有約 20 類已實作但有功能缺口（豬鞍等，見 6.3） |
 | 非生物實體 | 32 | 14 | 8 | 1 | 7 | 2 | 末影之眼實體為 A |
 | 戰鬥與傷害 | 25 | 18 | 1 | 0 | 5 | 1 | 玩家打生物、橫掃、重錘、摔落、環境傷害都有向量 |
 | 效果與藥水 | 8 | 5 | 0 | 0 | 2 | 1 | |
@@ -214,22 +214,17 @@
 | 飢餓、飽和、自然回血 | A\* | 隨效果向量 | `health.rs` | 自然回血無專屬向量 |
 | 經驗與等級、死亡重生、睡眠、出生點 | C／A\* | – | `xp.rs`、`sleep.rs`、`weather_parity.rs` | 等級公式無向量 |
 | 進度（1,866 個）、統計、配方書解鎖 | B | 0 | `advancement_check.py`、`advancements_view.py` | 54 種 trigger 中約 9 種不會觸發 |
-| 姿勢（游泳、爬行）、衝刺 | C | 0 | `players.rs` | 游泳與爬行姿勢未追蹤 |
+| 姿勢（游泳、爬行、強迫蹲）、衝刺 | A\* | `effect_parity` 的 `haz_wall_ceiling_slab_top` 等（wp49 `Player.updatePlayerPose`） | `pose.rs`、`players.rs` | 衝刺本身無向量 |
 
-`effect_parity` 663 個 scenario 中 651 個逐項相符（39,645 tick），另 12 個列在 `effect_parity.rs` 的 `KNOWN_GAPS`（測試對這份清單雙向把關：清單外的差異會失敗，清單上的轉為相符也會失敗，要求移出清單）：
+`effect_parity` 663 個 scenario 中（wp49 之後）**662 個逐項相符（40,133 tick）**，另 1 個列在 `effect_parity.rs` 的 `KNOWN_GAPS`（測試對這份清單雙向把關：清單外的差異會失敗，清單上的轉為相符也會失敗，要求移出清單）。wp45 的 12 個差異中，粉雪落下、氣泡柱飢餓、床彈起、只有頭卡住、低天花板強迫蹲姿共 11 個在 wp49 補了：玩家姿勢（游泳、爬行、強迫蹲）、`aiStep` 的 0.003 速度歸零、氣泡柱推玩家（含一次 level 亂數）、封包移動走伺服器身體（`player::server_move`）：
 
 | 已知差異 | 內容 |
 |---|---|
-| `fall_powder_snow_4`、`fall_powder_snow_40` | 落下接觸粉雪的那一 tick，Kiln 多凍一 tick（該 tick 路徑的兩個 step 都算一次凍結） |
 | `haz_snow_lava_clears` | 燃燒中的玩家在粉雪旁的岩漿：火提早一 tick 熄 |
-| `fall_bubble_6`／`10`／`20`／`40` | 氣泡柱上升頭幾 tick 的飢餓消耗 |
-| `fall_bed_bounce_12` | 床彈起之後的跳躍消耗 |
-| `haz_wall_head_only`、`haz_wall_head_only_sneaking`、`haz_wall_placed_over_player` | 只有頭卡在方塊裡：原版第一下之後不再窒息（身體被推出），Kiln 留在原地繼續受傷 |
-| `haz_wall_ceiling_slab_top` | 低天花板強迫蹲姿（連帶定位列屬性）；姿勢未追蹤 |
 
-### 3.4 生物（90 種 Mob 子類，實作 84 種）
+### 3.4 生物（90 種 Mob 子類，wp49 之後全部實作）
 
-A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉、health、目標、運行中的 goal／brain）：`work/m6-mobs2/vectors.jsonl` 在 wp45 併入 wp41（推船與礦車、躲貓狼犰狳、蜘蛛獵鐵傀儡）與 wp44（刷怪磚、洞穴蜘蛛）的向量後共 988 個 scenario、457,518 個狀態相同（原 867 個、400,824 個狀態）；加 `finalize_parity`（自然生成的 `finalizeSpawn`，easy 27,800 筆、hard 4,100 筆）。
+A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉、health、目標、運行中的 goal／brain）：`work/m6-mobs2/vectors.jsonl` 在 wp45 併入 wp41（推船與礦車、躲貓狼犰狳、蜘蛛獵鐵傀儡）與 wp44（刷怪磚、洞穴蜘蛛）的向量後共 988 個 scenario、457,518 個狀態相同（原 867 個、400,824 個狀態）；wp49 再併入蜜蜂、海豚、快樂恐懼魔、銅傀儡、巨人、硫磺方塊的 144 個 scenario，共 **1,132 個 scenario、553,706 個狀態相同**；加 `finalize_parity`（自然生成的 `finalizeSpawn`，easy 27,800 筆、hard 4,100 筆）。
 
 | 家族 | 類型 | 級別 | 向量數（主角 scenario） | 缺口 |
 |---|---|---|---|---|
@@ -241,7 +236,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 終界與頭目 | `ender_dragon` `shulker` `wither` | A | 12／7／6 | 無世界邊界 |
 | 水生 | `squid` `glow_squid` `cod` `salmon` `tropical_fish` `pufferfish` | A | 3–6 | 神殿生怪覆寫缺 |
 | 村民與 NPC | `villager` `wandering_trader` `iron_golem` `snow_golem` `allay` | A | 3–61 | 交易表擲法與原版不同；鐵傀儡不回村、不保衛村；堆肥不模擬 |
-| **未實作（6 種）** | **`bee` `dolphin` `happy_ghast` `copper_golem` `giant` `sulfur_cube`** | **D** | 0 | 存檔內保留原樣但不 tick、不送 client、`/summon` 失敗 |
+| wp49 補上的 6 種 | `bee`（30）`dolphin`（27）`happy_ghast`（20）`copper_golem`（34；含箱子搬運、風化與雕像、蜜蠟與斧、雷擊、鐵傀儡送花）`giant`（4）`sulfur_cube`（29；12 種原型、吞物、剪、餵食、分裂、TNT 球） | A | 144 個 scenario 併入 `m6-mobs2` | 硫磺方塊的玩家推擠、衝刺擊退、接觸傷害對生物沒有向量可比（harness 不 tick 玩家）；快樂恐懼魔騎乘與鞍具只有 C |
 
 能力面向：
 
@@ -250,8 +245,8 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | AI／goal／brain | A | 83 類型全有向量；`diverges` 標記僅 2 個（`cure_zombie_villager_finish` 可能已過期、`nether_piglin_barter` 因 loot 抽籤不同） |
 | 自然生成規則（上限、範圍、洗牌、放置規則） | C | `tests/mobs.rs`；分區後用每 chunk 隨機是設計的 I 類偏差；33 個類型有放置規則，strider 無放置規則 |
 | 生成後初始化（裝備、騎乘者、附魔） | A | `finalize_parity`：13＋10 種 |
-| 刷怪磚、結構生怪覆寫 | A（試煉刷怪磚 D） | 刷怪磚：`spawner_`＋`cavespider_` 49 個 scenario（49,494 個狀態相同）；結構覆寫：`NaturalSpawner.mobsAt` 取樣 23,073 個位置、184,584 張清單相同（要塞、堡壘、沼澤小屋、神殿、哨站、試煉空間、古城…） |
-| **世界產生時的初始動物** | **D** | `pipeline.rs:11`（新區塊沒有初始動物） |
+| 刷怪磚、試煉刷怪磚、結構生怪覆寫 | A（不祥試煉的物品生成實體除外） | 刷怪磚：`spawner_`＋`cavespider_` 49 個 scenario（49,494 個狀態相同）；試煉刷怪磚 14 個 scenario（`interact_parity`）；結構覆寫：`NaturalSpawner.mobsAt` 取樣 23,073 個位置、184,584 張清單相同（要塞、堡壘、沼澤小屋、神殿、哨站、試煉空間、古城…） |
+| 世界產生時的初始動物 | A* | wp49：`InitialMobVectors.java` 7 個世界、101 個區塊，Kiln 在區塊產生時放的動物（含 `isValidSpawn` 逐種放置條件）逐隻相符；原版的結果依區塊產生順序，測試以量測到的容許度比對（`tests/initial_mobs.rs`） |
 | 掉落 | A（表）／C（流程） | loot 114 張實體表 A；死亡流程、looting、熟食、XP 為 C |
 | 繁殖、馴服 | A | 繁殖向量涵蓋 18 種；馴服 4 種 |
 | 轉換 | A／C | 殭屍→溺屍、屍殼→殭屍、骷髏→流浪者、村民→殭屍村民、疣豬→僵屍疣豬、蝌蚪→青蛙為 A；豬布林→殭屍豬布林、雷擊轉換為 C |
@@ -265,7 +260,9 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 物品實體物理、經驗球、點燃 TNT、掉落方塊、箭、雪球、珍珠、閃電以外的投射物、末影之眼 | A | 1,241 個 scenario（`entity_parity`，舊檔 951；末影之眼 40 個） | 磁吸、撿起延遲、爆炸對生物的傷害為 C。玩家的矛與拳頭打偏火球與風彈（wp41，`stab_projectile`、`melee_projectile`）與生物推船與礦車（`push_*` 76 個 scenario）為 A |
 | 船（含箱子船）、礦車（含貨運）、煙火 | A（commit 記 24＋22／72＋84／16） | 存檔缺（`work/wp4-entities` 過期） | 氣泡柱不作用於船 |
 | 閃電、經驗瓶、玩家被噴到的藥水、area effect cloud（龍息） | C／A\* | – | – |
-| 畫、展示框、盔甲座、display、interaction、marker、mannequin | **D** | 0 | 存檔以 NBT 保留但不模擬、client 看不到、`/summon` 失敗 |
+| 畫、展示框、盔甲座、display（方塊／物品／文字）、interaction、marker | A | wp49：`interact_parity` 的 `frames_` 55、`stand_` 142、`mframe_` 2 個 scenario；`entity_nbt` 127 個（`EntityNbtVectors.java`：原版載入並存出的 NBT 與 Kiln 逐欄相同） | 文字顯示的選擇器與分數解析在模擬端做，向量只比存檔欄位 |
+| 風彈（玩家丟出與發射器射出的 `wind_charge`）、被拋射物打中的載具／盔甲座／畫 | A | wp49：`container_parity` 的 `wind_` 27 個 scenario（牆、地板、各種生物、載具、離開載入範圍） | 拋射物對 `#redirectable_projectile` 與 `BlockAttachedEntity` 的撞擊判定補齊（`Entity.canBeHitByProjectile`） |
+| mannequin、cushion、ominous_item_spawner | **D** | 0 | 存檔以 NBT 保留但不模擬、client 看不到、`/summon` 失敗；不祥試煉刷怪磚的物品雨因此缺 |
 | 實體存檔（entities/*.mca） | B | – | `entity_persist_check.py`（原版載入 Kiln 存檔 64/64、35/35） |
 
 ### 3.6 世界生成、世界狀態、維度、規則
@@ -338,12 +335,12 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 5 | 告示牌與書編輯、挖礦經驗、右鍵穿裝備、中鍵挑選 | A | `InteractVectors.java`、loot 的 `block_experience` | 完成（wp44-interact）；創造模式帶資料的中鍵挑選放棄 |
 | 6 | 摔落傷害與落地方塊、玩家環境傷害（仙人掌、甜莓、粉雪、窒息） | A（651／663，12 個已知差異） | `EffectVectors` 加 fall／hazard scenario | 完成（wp44-player）；12 個差異見 3.3 |
 | 7 | 玩家打生物、橫掃、重錘 | A（690／690） | `CombatVectors` 目標改成生物 | 完成（wp44-combat） |
-| 8 | 世界初始動物、蜜蜂與海豚等 6 種缺失生物、畫與展示框與盔甲座 | D | `MobVectors` 照樣板各加 4–8 個 scenario；存檔用 `entity_persist_check` | 未做 |
+| 8 | 世界初始動物、蜜蜂與海豚等 6 種缺失生物、畫與展示框與盔甲座 | A（wp49 之後） | `MobVectors` 照樣板各加 4–8 個 scenario；存檔用 `entity_persist_check` | 完成（wp49，見 6.3）；mannequin、cushion、ominous_item_spawner 三種實體未做 |
 | 9 | 難度、遊戲規則、seed 與 `/op` 持久化；遊戲規則接線 | B（27 項互載；59 條規則 54 條有人讀） | 原版先存、Kiln 載入，反過來再一次 | 完成（wp44-admin） |
 | 10 | 選單點擊向量補鐵砧、砂輪、附魔台、織布機、製圖台、釀造台、信標、商人 | C | `InventoryVectors.java` 選單種類清單擴充 | 未做 |
-| 11 | 發射器全部行為、營火烹飪、蜂巢、鐘、講台、合成器、裝飾陶罐 | D | `ContainerVectors` 場景 | 未做 |
-| 12 | 地圖與製圖台、探索地圖 | D | 需先實作 `MapItemSavedData` | 未做 |
-| 13 | 「moved wrongly」、村莊圍攻、貓生成、選擇器 `level=` | D（`/place` 已由 wp44-end 做完） | 現有向量已存在（`server_move` 120 個）只需接線 | 未做 |
+| 11 | 發射器全部行為、營火烹飪、蜂巢、鐘、講台、合成器、裝飾陶罐 | A（wp49 之後） | `ContainerVectors` 場景 | 完成（wp49，見 6.3）；發射器剩刷子對犰狳、剪斷拴繩、豬鞍等 |
+| 12 | 地圖與製圖台、探索地圖 | A（wp49 之後） | 需先實作 `MapItemSavedData` | 完成（wp49：`maps_`／`carto_`／`mframe_` 與 `explore` 向量） |
+| 13 | 「moved wrongly」、村莊圍攻、貓生成、選擇器 `level=` | 村莊圍攻與貓生成 C（已實作，無原版向量）／「moved wrongly」D | 現有向量已存在（`server_move` 120 個）只需接線 | 圍攻與貓生成在 wp49 寫完；「moved wrongly」未做 |
 | 14 | 讓預設 CI 真的比對（設 `KILN_WORK`、`KILN_PARITY=1`），重錄過期向量 | 流程 | 零成本 | `tools/parity_suites.py` 已含 wp44／wp45 的套件；wp45 重錄了 block、interact、melee、spear、effects、entity、spawn 向量，並把 wp41／wp44 的生物向量併入 `m6-mobs2` |
 
 ## 5. 已知的過期註解（誤導讀者）
@@ -394,6 +391,43 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 - `effect_parity` 的 12 個差異（3.3 表後）：保留在向量裡並以 `KNOWN_GAPS` 把關，沒有為了湊綠而刪掉。
 - 超平坦世界的特徵宿主（樹苗與草的骨粉在 `KILN_GENERATOR=noise` 才長）。
 
+### 6.3 wp49（`wp49-d-gaps`）：補 D 項
+
+目標：把第 4 節仍是 D 的項目做到與原版 26.3 一致，並用原版錄製的向量驗證。做法同 wp44／wp45：先用 `javap -c -p` 讀原版的反編譯碼，用最簡單而精確的版本實作，再由 `tools/*Vectors.java` 在原版伺服器內跑場景、Kiln 重播逐項比對。新向量放在 `work/wp49/`（`mobs`、`interact`、`container`、`block`、`entities`、`explore`、`initial`），重放入口都寫進 `tools/parity_suites.py`（`container49`、`interact49` 對目錄下每個檔各跑一次；生物併入 `m6-mobs2`）。
+
+| 項目 | 內容 | 原版向量 | 驗證端 |
+|---|---|---|---|
+| 蜜蜂與蜂巢 | `Bee` 全部 goal（授粉、回巢、憤怒與攻擊、嬰兒）、蜂巢方塊實體（蜂蜜、蜜蜂進出、煙燻、剪取）、蜂巢互動 | 蜜蜂 30、蜂巢互動 22、蜂巢容器 6 | `mob_parity`、`interact_parity`、`container_parity` |
+| 海豚、巨人、快樂恐懼魔 | `Dolphin`（全部 goal 與換氣、躍出）、`Giant`、`HappyGhast`（成長、harness、呼吸、跟隨）；`ForNonPathfinders` goal 與年齡邊界掛鉤 | 27／4／20 | `mob_parity` |
+| 銅傀儡 | 在箱子之間搬運（`TransportItemsBetweenContainers`：來源銅箱、目的普通箱、開關音效與開啟者計數）、風化與雕像、蠟與斧、雷擊、與鐵傀儡的送花（`OfferFlowerGoal`）、銅塊＋南瓜建造；雕像方塊的姿勢切換與斧 | 34＋雕像互動 14 | `mob_parity`、`interact_parity` |
+| 硫磺方塊 | 12 種原型（彈性、摩擦、空氣阻力、爆炸擊退抗性、接觸傷害、是否浮在液體上）、吞物與吐出、餵食與分裂、TNT 原型的引信與爆炸、水中的行為；新屬性 `bounciness`、`explosion_knockback_resistance` | 29 | `mob_parity` |
+| 資料實體 | `block_display`、`item_display`、`text_display`（含選擇器與分數解析）、`interaction`、`marker`、畫、展示框與發光展示框、盔甲座 | `entity_nbt` 127、展示框 55、盔甲座 142 | `entity_nbt.rs`、`interact_parity` |
+| 方塊實體與方塊 | 營火烹飪、蜂巢、鐘、講台、裝飾陶罐、雕紋書架、合成器、製圖台與地圖（`MapItemSavedData`、探索地圖、旗幟、展示框地圖）、試煉刷怪磚、寶庫、指令方塊（普通、連鎖、重複、條件式、礦車）、日光感測器、蛋糕與蠟燭蛋糕、刷子與可刷方塊、氣泡柱 | interact 799（`interact49` 18 檔）、container 247（`container49` 12 檔）、bubble 6、explore 11 | `interact_parity`、`container_parity`、`block_parity`、`exploration_map_parity` |
+| 發射器 | 骨粉、打火石、蜂蜜與玻璃瓶、發光石、TNT、潛影盒、船、礦車、盔甲座、全部拋射物（箭、藥水箭、光靈箭、雪球、蛋、藥水、經驗瓶、煙火、火焰彈、風彈）、水／岩漿／粉雪桶與生物桶（魚、蠑螈、蝌蚪、硫磺方塊）、生怪蛋、南瓜與凋零頭顱的傀儡建造、穿裝備（盔甲座、玩家、拾取戰利品的生物、馬鞍與馬鎧、熾足獸鞍）、箱子上驢羊駝、硫磺方塊吞物、剪雪人／哞菇／羊／bogged | 100 | `container_parity`（`dispenser`） |
+| 玩家風彈 | `minecraft:wind_charge` 實體（半徑 1.2、擊退乘 1.22、5 tick 內不可被偏轉）、`WindChargeItem.use`、發射器射出；爆炸的 `explosion_knockback_resistance`；拋射物能打中礦車、船、盔甲座、畫與展示框、火球與風彈（`Entity.canBeHitByProjectile`） | `wind_` 27 | `container_parity`（`track`：每 tick 比對所有實體的位置、速度、血量） |
+| 村莊圍攻、貓生成 | `Siege`、`CatSpawner`（沼澤小屋的黑貓） | 無（原版錄製不可行） | 單元測試（C） |
+| 玩家姿勢、氣泡柱、封包移動 | `Player.updatePlayerPose`（游泳、爬行、強迫蹲）、`aiStep` 的 0.003 速度歸零、氣泡柱推玩家、封包移動走伺服器身體（`player::server_move`） | `effect_parity` 662／663 | `effect_parity`（已知差異剩 1，見 3.3） |
+| 初始動物 | 區塊產生時的動物（群組大小、`isValidSpawn` 逐種條件） | 7 個世界、101 個區塊 | `tests/initial_mobs.rs` |
+| 命名牌 | 命名牌命名生物；自訂名稱、靜音、無重力送給觀看者的實體資料 | `tests/` 單元測試 | C |
+
+這一輪找到並修掉的 Kiln 錯誤（皆由向量或新測試抓到）：
+
+- **只有旁觀者的 region 會把非持久的怪物立刻清掉**：`Level.getNearestPlayer` 不計旁觀者（沒有玩家 → 不清），Kiln 的 `any_player` 把旁觀者也算成「有玩家但很遠」，剛生成的怪物當場被當成過遠而 `discard`。這個錯誤蓋住了另一個（試煉刷怪磚的 `trial_spectator_player` 向量的重放端在設好遊戲模式前先讓生存模式玩家站了一個 tick）；兩個一起改了。
+- 發射器、投擲器、觀察者、活塞、木桶、指令方塊與合成器放置時朝向玩家看的方向（`getNearestLookingDirection`），不是被點的面。
+- 箭、光靈箭、藥水箭從發射器射出時可被撿起（`pickup = ALLOWED`）；之前是不可撿。
+- 盔甲座落下的阻力用 `0.98f`（float）；之前用 double。
+- 容器向量的重放依賴 datapack（方塊被更新打掉時的戰利品表）與語言檔（`KILN_LANG`：指令方塊的最後輸出是原版的英文句子）；`parity_suites.py` 兩者都設了，單獨跑 `cargo test` 要自己設。
+
+仍是 D 或 C 的（以及原因）：
+
+- **實體**：`mannequin`、`cushion`、`ominous_item_spawner` 三種沒有實作（存檔保留、不 tick、`/summon` 失敗）。不祥試煉刷怪磚的物品雨因缺 `ominous_item_spawner` 而不下。
+- **豬鞍與胡蘿蔔釣竿**：豬沒有鞍欄位，也不能騎；發射器與右鍵放鞍在豬身上都不作用。鸚鵡螺（nautilus）的鞍與護甲同樣沒接。
+- **發射器**：刷子對犰狳（掉鱗甲）、剪斷拴繩（`shearOffAllLeashConnections`）沒做；穿裝備時的裝備音效與遊戲事件、拾取戰利品的生物的 `canPickUpLoot` 隨機性只靠生物自己的值。
+- **附魔**：`frost_walker`（霜行者）、`soul_speed`（靈魂疾行者）仍是 D（附魔效果的 `location_changed`／`tick` 組件沒有解譯器）。
+- **無法用原版向量驗證的**：貓生成與村莊圍攻（原版的亂數與計時不可重播，只有 Kiln 單元測試）；硫磺方塊的玩家推擠、衝刺擊退與接觸傷害對生物（harness 不 tick 玩家）；初始動物的順序相依（原版的結果依區塊產生順序，以量測到的容許度比對）。
+- **已知差異**：`effect_parity` 的 `haz_snow_lava_clears`（燃燒中的玩家在粉雪旁的岩漿，火提早一 tick 熄）。
+- 與 wp45 相同、這一輪沒碰的：「moved wrongly」、結構方塊與拼圖方塊、旗幟圖樣、配方書封包位元組、釀造台運作向量、選單點擊向量補鐵砧等。
+
 ## 7. 重跑
 
 ```sh
@@ -409,6 +443,14 @@ python tools/effect_vectors.py                                              # �
 python tools/entity_parity.py --out work/wp45/entity/vectors.jsonl          # 實體（含末影之眼）
 python tools/mob_vectors.py --filter "spawner_|cavespider_|push_|avoid_|spider_golem"
 python tools/spawn_vectors.py --out work/wp45/spawn/structure_spawns.jsonl  # 結構生怪覆寫（JVM 結束時可能 OOM，檔案已寫完）
+# wp49 的向量（直接用 java 單檔執行，cwd 是 <輸出目錄>/server；篩選字串是 scenario 名稱的一部分）
+java --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED -cp <server jar 與 libraries> tools/ContainerVectors.java work/wp49/container/dispenser.jsonl dispenser_
+java ... tools/ContainerVectors.java work/wp49/container/wind.jsonl wind_      # 另有 campfire／hive／lectern／pot／crafter／cmdblock／daylight／target／projectile
+java ... tools/InteractVectors.java work/wp49/interact/stand.jsonl stand       # 另有 b49／bell／brush／cake／carto／frames／fulltick／maps／trial／vault／statue…
+java ... tools/MobVectors.java work/wp49/mobs/sulfur_cube.jsonl sulfur         # 併入 work/m6-mobs2/vectors.jsonl 時依 name 去重
+java ... tools/EntityNbtVectors.java work/wp49/entities/nbt.jsonl
+java ... tools/ExploreMapVectors.java work/wp49/explore/maps.jsonl 12345       # 第二個參數是 seed
+java ... tools/InitialMobVectors.java work/wp49/initial/mobs2.jsonl 2 20      # seed 與半徑；一個世界一個檔，測試用 : 串接
 # 與原版互載、指令對跑
 python tools/admin_check.py --kiln-exe target/release/kiln
 python tools/command_diff.py --kiln-exe target/release/kiln --bot-exe target/release/kiln-bot
