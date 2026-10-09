@@ -11,6 +11,9 @@ use std::fmt::Debug;
 pub mod boat;
 pub mod area_effect_cloud;
 pub mod armor_stand;
+pub mod display;
+pub mod interaction;
+pub mod marker;
 pub mod evoker_fangs;
 pub mod dragon_fireball;
 pub mod end_crystal;
@@ -148,6 +151,12 @@ pub const TYPES: &[&str] = &[
     "minecraft:glow_item_frame",
     "minecraft:painting",
     "minecraft:armor_stand",
+    // -- wp49: data entities
+    "minecraft:block_display",
+    "minecraft:item_display",
+    "minecraft:text_display",
+    "minecraft:interaction",
+    "minecraft:marker",
 ];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
@@ -172,6 +181,9 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:glow_item_frame" => item_frame::load(true, r),
         "minecraft:painting" => painting::load(r),
         "minecraft:armor_stand" => armor_stand::load(r),
+        n if display::is_display(n) => display::load(n, r),
+        "minecraft:interaction" => interaction::load(r),
+        "minecraft:marker" => marker::load(r),
         _ => None,
     }
 }

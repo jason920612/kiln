@@ -230,6 +230,9 @@ pub fn load(tag: &Tag, id: i32, seed: i64) -> Result<Entity, LoadError> {
         "minecraft:item_frame" | "minecraft:glow_item_frame" => crate::ext_entity::item_frame::after_load(&mut e, block_pos),
         "minecraft:painting" => crate::ext_entity::painting::after_load(&mut e, block_pos),
         "minecraft:armor_stand" => crate::ext_entity::armor_stand::after_load(&mut e),
+        "minecraft:interaction" => crate::ext_entity::interaction::after_load(&mut e),
+        n if crate::ext_entity::display::is_display(n) => crate::ext_entity::display::prepare(&mut e),
+        "minecraft:marker" => e.no_physics = true,
         _ => {}
     }
     // (`Passengers` is `EntityType.loadEntityRecursive`'s: see [`load_stack`].)
@@ -724,7 +727,7 @@ mod tests {
         assert_eq!(e.uuid, 0);
         let pig = Tag::Compound(vec![("id".into(), Tag::String("minecraft:pig".into()))]);
         assert!(matches!(load(&pig, 1, 0).map(|e| e.kind), Ok(EntityKind::Mob(_))));
-        let display = Tag::Compound(vec![("id".into(), Tag::String("minecraft:interaction".into()))]);
+        let display = Tag::Compound(vec![("id".into(), Tag::String("minecraft:cushion".into()))]);
         assert_eq!(load(&display, 1, 0).err(), Some(LoadError::NotSimulated));
         let nan = Tag::Compound(vec![
             ("id".into(), Tag::String("minecraft:snowball".into())),

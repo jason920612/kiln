@@ -3548,7 +3548,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
         let range = (e.kind.tracking_range as f64 * 16.0).min(p.view as f64 * 16.0);
         let (dx, dz) = (p.pos[0] - e.pos[0], p.pos[2] - e.pos[2]);
         let (pc, ec) = (chunk_of(p.pos), chunk_of(e.pos));
-        !e.removed && dx * dx + dz * dz <= range * range && (pc.x - ec.x).abs() <= p.view && (pc.z - ec.z).abs() <= p.view
+        e.kind.tracking_range != 0 && !e.removed && dx * dx + dz * dz <= range * range && (pc.x - ec.x).abs() <= p.view && (pc.z - ec.z).abs() <= p.view
     };
     let mut t = Tracked::default();
     let section = e.pos.map(|c| c.floor() as i32 >> 4);
