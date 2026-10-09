@@ -63,7 +63,7 @@ impl World {
 #[test]
 fn a_named_tag_names_the_mob() {
     let mut w = World::new();
-    w.run("give User minecraft:name_tag[custom_name='\"Bessie\"']");
+    w.run("give User minecraft:name_tag[custom_name=\"Bessie\"]");
     w.ticks(1);
     assert_eq!(w.tags(), 1);
     let cow = w.summon("minecraft:cow");
@@ -93,7 +93,7 @@ fn a_tag_without_a_name_does_nothing() {
 fn creative_players_keep_their_tags() {
     let mut w = World::new();
     w.run("gamemode creative User");
-    w.run("give User minecraft:name_tag[custom_name='\"Rex\"']");
+    w.run("give User minecraft:name_tag[custom_name=\"Rex\"]");
     w.ticks(1);
     let wolf = w.summon("minecraft:wolf");
     w.interact(wolf);
