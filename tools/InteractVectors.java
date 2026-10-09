@@ -2694,6 +2694,10 @@ public class InteractVectors {
             }
             default -> throw new IllegalArgumentException("unknown op " + s.get("op"));
         }
+        if (System.getenv("BRUSH_DEBUG") != null) {
+            System.out.println("BDEBUG " + c.name + " op " + s.get("op") + " time " + level.getGameTime() + " using " + p.isUsingItem() + " remaining " + p.getUseItemRemainingTicks() + " pos " + p.position()
+                    + " rot " + p.getYRot() + "/" + p.getXRot() + " eye " + p.getEyePosition() + " held " + p.getMainHandItem());
+        }
         if (System.getenv("VAULT_DEBUG") != null && c.tickLevel) {
             for (int[] w : c.watch) {
                 if (level.getBlockEntity(new BlockPos(w[0], w[1], w[2])) instanceof net.minecraft.world.level.block.entity.vault.VaultBlockEntity vbe)
