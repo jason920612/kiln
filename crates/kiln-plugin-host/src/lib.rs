@@ -51,12 +51,14 @@
 //! Not here: the WASI 0.3 `async-tasks` world.
 
 mod cache;
+mod effects;
 pub mod examples;
 mod host;
 pub mod manifest;
 mod ns;
 
-pub use manifest::{Area, Capability, EventKind, FailPolicy, Filter, Manifest};
+pub use effects::{BlockChange, Effect, EffectKind, ItemSpec, MenuSpec, OnlinePlayer, PlayerInfo, SpawnSpec};
+pub use manifest::{Area, Capability, EventKind, FailPolicy, Filter, Manifest, ObserveKinds};
 pub use ns::{CellKey, CellSidecars, EntityData, GlobalValue};
 
 use anyhow::{Context, Result, bail};
@@ -91,9 +93,20 @@ pub struct Actor<'a> {
     pub uuid: u128,
     pub name: &'a str,
     pub operator: bool,
+    /// What `event.player-info` answers for this player.
+    pub info: PlayerInfo,
 }
 
-impl Actor<'_> {
+impl<'a> Actor<'a> {
+    pub fn new(uuid: u128, name: &'a str, operator: bool) -> Self {
+        Actor { uuid, name, operator, info: PlayerInfo::default() }
+    }
+
+    pub fn with_info(mut self, info: PlayerInfo) -> Self {
+        self.info = info;
+        self
+    }
+
     fn permission(&self) -> u8 {
         if self.operator { 4 } else { 0 }
     }
@@ -136,6 +149,7 @@ pub enum RegistryKind {
     Block,
     Item,
     EntityType,
+    DamageType,
 }
 
 /// Members (ids) of a tag, e.g. `(Block, "minecraft:logs")`.
@@ -147,8 +161,9 @@ pub struct Registries {
     pub blocks: Vec<String>,
     pub items: Vec<String>,
     pub entity_types: Vec<String>,
+    pub damage_types: Vec<String>,
     pub tags: Option<Arc<TagResolver>>,
-    index: OnceLock<[HashMap<String, u32>; 4]>,
+    index: OnceLock<[HashMap<String, u32>; 5]>,
 }
 
 impl Default for Registries {
@@ -160,11 +175,16 @@ impl Default for Registries {
 
 impl Registries {
     pub fn new(levels: Vec<String>, blocks: Vec<String>, items: Vec<String>, entity_types: Vec<String>) -> Self {
-        Registries { levels, blocks, items, entity_types, tags: None, index: OnceLock::new() }
+        Registries { levels, blocks, items, entity_types, damage_types: Vec::new(), tags: None, index: OnceLock::new() }
     }
 
     pub fn with_tags(mut self, tags: Arc<TagResolver>) -> Self {
         self.tags = Some(tags);
+        self
+    }
+
+    pub fn with_damage_types(mut self, damage_types: Vec<String>) -> Self {
+        self.damage_types = damage_types;
         self
     }
 
@@ -174,12 +194,13 @@ impl Registries {
             RegistryKind::Block => &self.blocks,
             RegistryKind::Item => &self.items,
             RegistryKind::EntityType => &self.entity_types,
+            RegistryKind::DamageType => &self.damage_types,
         }
     }
 
     pub fn id(&self, k: RegistryKind, key: &str) -> Option<u32> {
         let index = self.index.get_or_init(|| {
-            [RegistryKind::Level, RegistryKind::Block, RegistryKind::Item, RegistryKind::EntityType]
+            [RegistryKind::Level, RegistryKind::Block, RegistryKind::Item, RegistryKind::EntityType, RegistryKind::DamageType]
                 .map(|k| self.list(k).iter().enumerate().map(|(i, s)| (s.clone(), i as u32)).collect())
         });
         let key = if key.contains(':') { std::borrow::Cow::Borrowed(key) } else { std::borrow::Cow::Owned(format!("minecraft:{key}")) };
@@ -389,7 +410,10 @@ pub(crate) struct Shared {
     pending: Mutex<Vec<Pending>>,
     deliveries: Mutex<Vec<Delivery>>,
     tasks: Mutex<Tasks>,
-    outbox: Mutex<Vec<(u64, u128, Outgoing)>>,
+    /// Committed effects (tick, acting player, effect), in commit order.
+    outbox: Mutex<Vec<(u64, u128, Effect)>>,
+    /// The players online at the start of the tick (`event.online`).
+    pub(crate) online: Mutex<Arc<Vec<OnlinePlayer>>>,
     health: Vec<Health>,
     /// Plugins subscribed to op-results (by index; updated by reloads).
     wants_results: Vec<AtomicBool>,
@@ -434,7 +458,7 @@ impl Shared {
 
     /// Makes a call's buffered effects real (the call returned normally). Entity writes go
     /// into the frame's entities, which the caller hands back.
-    fn commit(&self, plugin: usize, generation: u32, id: &str, f: &mut Frame) {
+    fn commit(&self, plugin: usize, generation: u32, id: &Arc<str>, f: &mut Frame) {
         if !f.writes.is_empty() {
             let mut players = None;
             let mut cells = None;
@@ -452,12 +476,12 @@ impl Shared {
                     host::Target::Entity(i) => {
                         let data = &mut f.entities[i].1;
                         match val {
-                            Some(v) => drop(data.entry(id.to_owned()).or_default().insert(key, v)),
+                            Some(v) => drop(data.entry(id.to_string()).or_default().insert(key, v)),
                             None => {
-                                if let Some(kv) = data.get_mut(id) {
+                                if let Some(kv) = data.get_mut(&**id) {
                                     kv.remove(&key);
                                     if kv.is_empty() {
-                                        data.remove(id);
+                                        data.remove(&**id);
                                     }
                                 }
                             }
@@ -495,9 +519,12 @@ impl Shared {
             }
             t.cancels.extend(f.cancels.drain(..).map(|h| (plugin, h)));
         }
-        if !f.messages.is_empty() {
+        if !f.effects.is_empty() {
             let mut out = self.outbox.lock().unwrap();
-            out.extend(f.messages.drain(..).map(|(to, text)| (tick, f.source, Outgoing { to, text })));
+            let source = f.source;
+            out.extend(f.effects.drain(..).map(|(ticket, kind)| {
+                (tick, source, Effect { plugin, plugin_id: id.clone(), generation, source, ticket, kind })
+            }));
         }
     }
 
@@ -590,6 +617,10 @@ fn apply_op(ns: &mut BTreeMap<String, GlobalValue>, ticket: u64, op: wit::Atomic
 struct Compiled {
     blocks: Option<Vec<bool>>,
     entities: Option<Vec<bool>>,
+    items: Option<Vec<bool>>,
+    all_items: bool,
+    names: Vec<String>,
+    vanilla: bool,
     /// Level id (any when `None`), centre, radius.
     area: Option<(Option<u32>, i32, i32, i32)>,
     bypass: Option<u8>,
@@ -597,13 +628,20 @@ struct Compiled {
 
 /// What a filter sees of an event.
 #[derive(Clone, Copy, Default)]
-struct EvInfo {
+struct EvInfo<'a> {
     permission: u8,
     level: u32,
     /// Block column of the event, if it has a position.
     xz: Option<(i32, i32)>,
     block: Option<u32>,
     entity_type: Option<u32>,
+    item: Option<u32>,
+    /// item-use: the plugin id in the held item's tag.
+    tag_owner: Option<&'a str>,
+    /// container-click: the plugin id of the menu, none for a vanilla container.
+    menu_owner: Option<&'a str>,
+    /// custom: the full event name.
+    custom_name: Option<&'a str>,
 }
 
 impl Compiled {
@@ -611,6 +649,13 @@ impl Compiled {
         Compiled {
             blocks: (!f.blocks.is_empty()).then(|| reg.resolve(RegistryKind::Block, &f.blocks, plugin)),
             entities: (!f.entities.is_empty()).then(|| reg.resolve(RegistryKind::EntityType, &f.entities, plugin)),
+            all_items: f.items.iter().any(|i| i == "*"),
+            items: {
+                let names: Vec<String> = f.items.iter().filter(|i| *i != "*").cloned().collect();
+                (!names.is_empty()).then(|| reg.resolve(RegistryKind::Item, &names, plugin))
+            },
+            names: f.names.clone(),
+            vanilla: f.vanilla,
             area: f.area.as_ref().map(|a| {
                 let level = a.level.as_ref().map(|l| {
                     reg.id(RegistryKind::Level, l).unwrap_or_else(|| {
@@ -625,7 +670,7 @@ impl Compiled {
         }
     }
 
-    fn passes(&self, ev: &EvInfo) -> bool {
+    fn passes(&self, kind: EventKind, ev: &EvInfo, plugin: &str) -> bool {
         if self.bypass.is_some_and(|p| ev.permission >= p) {
             return false;
         }
@@ -635,6 +680,28 @@ impl Compiled {
         };
         if !member(&self.blocks, ev.block) || !member(&self.entities, ev.entity_type) {
             return false;
+        }
+        match kind {
+            // The plugin's own tagged items; `items` adds others (`*`: all).
+            EventKind::ItemUse => {
+                let own = ev.tag_owner == Some(plugin);
+                if !own && !self.all_items && !(self.items.is_some() && member(&self.items, ev.item)) {
+                    return false;
+                }
+            }
+            // The plugin's own menus; `vanilla` adds the others.
+            EventKind::ContainerClick => match ev.menu_owner {
+                Some(owner) if owner != plugin => return false,
+                Some(_) => {}
+                None if !self.vanilla => return false,
+                None => {}
+            },
+            EventKind::Custom if !self.names.is_empty() => {
+                if !ev.custom_name.is_some_and(|n| self.names.iter().any(|x| x == n)) {
+                    return false;
+                }
+            }
+            _ => {}
         }
         match (self.area, ev.xz) {
             (None, _) => true,
@@ -660,6 +727,8 @@ struct PluginDef {
     generation: u32,
     /// Filters by event kind (subscribed events only).
     filters: Vec<Option<Compiled>>,
+    /// May raise events to other plugins (`events.raise`).
+    raises: bool,
 }
 
 impl PluginDef {
@@ -852,14 +921,165 @@ fn spans(v: Vec<wit::Span>) -> Vec<Span> {
     v.into_iter().map(host::from_wit_span).collect()
 }
 
-/// A block change a region saw, for the next observe batch.
+/// An event another plugin raised (`events.raise`), as `dispatch_custom` passes it on.
+pub(crate) struct CustomEvent {
+    /// `<raising plugin id>:<name>`.
+    pub name: String,
+    pub source: Arc<str>,
+    pub payload: Vec<u8>,
+    /// The raising plugin (never called for its own event).
+    pub source_index: usize,
+}
+
+/// The other plugins' instances, lent to a plugin that may raise events for the length of
+/// one call: the instances are out of their slots meanwhile, so a raised event can only reach
+/// instances that are not on the call stack (re-entering one is not possible), and events
+/// raised from inside it find no peers (depth one).
+pub(crate) struct Peers {
+    set: Arc<PluginSet>,
+    region: bool,
+    insts: Vec<(usize, Inst)>,
+}
+
+/// Takes the instances of the plugins subscribed to `custom` (other than `me`) out of their
+/// slots; none when `me` cannot raise events or nobody is subscribed.
+fn lend_peers(set: &Arc<PluginSet>, insts: &mut [Option<Inst>], me: usize, region: bool) -> Option<Box<Peers>> {
+    let mut lent = Vec::new();
+    for j in 0..insts.len() {
+        let def = &set.plugins[j];
+        if j != me && def.manifest.subscription(EventKind::Custom).is_some() && (!region || def.region.is_some()) {
+            if let Some(inst) = insts[j].take() {
+                lent.push((j, inst));
+            }
+        }
+    }
+    if lent.is_empty() { None } else { Some(Box::new(Peers { set: set.clone(), region, insts: lent })) }
+}
+
+/// Runs `body` on instance `i`; a plugin that may raise events gets its peers for the call.
+fn with_peers<R>(set: &Arc<PluginSet>, insts: &mut [Option<Inst>], i: usize, region: bool, body: impl FnOnce(&mut Inst) -> R) -> R {
+    if !set.plugins[i].raises {
+        return body(insts[i].as_mut().expect("instance"));
+    }
+    let mut inst = insts[i].take().expect("instance");
+    inst.store.data_mut().peers = lend_peers(set, insts, i, region);
+    let r = body(&mut inst);
+    if let Some(p) = inst.store.data_mut().peers.take() {
+        for (j, pi) in p.insts {
+            insts[j] = Some(pi);
+        }
+    }
+    insts[i] = Some(inst);
+    r
+}
+
+/// Calls the lent instances that subscribed to the event, in load order, until one denies
+/// (`events.raise`). A peer that traps or runs out of budget is dropped (its slot is filled
+/// again later); a fail-closed subscription then denies.
+pub(crate) fn dispatch_custom(
+    peers: &mut Peers,
+    shared: &Arc<Shared>,
+    ev: &CustomEvent,
+    actor: Option<(u128, bool, &str, &PlayerInfo)>,
+    source: u128,
+) -> Verdict {
+    let set = peers.set.clone();
+    let mut k = 0;
+    while k < peers.insts.len() {
+        let j = peers.insts[k].0;
+        let def = &set.plugins[j];
+        let policy = def.manifest.subscription(EventKind::Custom).map_or(FailPolicy::Open, |s| s.policy);
+        let fail = if policy == FailPolicy::Closed { Verdict::Deny(None) } else { Verdict::Allow };
+        let info = EvInfo { permission: actor.map_or(0, |a| if a.1 { 4 } else { 0 }), custom_name: Some(&ev.name), ..EvInfo::default() };
+        if !def.filter(EventKind::Custom).is_none_or(|c| c.passes(EventKind::Custom, &info, &def.id)) {
+            k += 1;
+            continue;
+        }
+        if shared.demoted(j) || peers.insts[k].1.over_budget(shared, set.tick_budget) {
+            if fail != Verdict::Allow {
+                return fail;
+            }
+            k += 1;
+            continue;
+        }
+        let region = peers.region;
+        let inst = &mut peers.insts[k].1;
+        let generation = inst.generation();
+        let frame = inst.frame();
+        frame.reset(!region, source);
+        if let Some((uuid, operator, name, info)) = actor {
+            frame.push_player(uuid, name, operator, Some(info));
+        }
+        let player = actor.map(|(uuid, operator, _, _)| wit::Player { handle: frame.player_handle(generation, 0), uuid: host::wit_uuid(uuid), operator });
+        let wev = wit::CustomEvent { name: ev.name.clone(), source: ev.source.to_string(), payload: ev.payload.clone(), actor: player };
+        shared.stats.calls.fetch_add(1, Ordering::Relaxed);
+        let outcome = inst.call(shared, set.call, |store, g, r| {
+            if region { r.expect("region guest").call_on_custom(store, &wev) } else { g.expect("global guest").call_on_custom(store, &wev) }
+        });
+        match outcome {
+            Outcome::Ok(wit::Decision::Deny) => return Verdict::Deny(inst.frame().deny_msg.take()),
+            Outcome::Ok(wit::Decision::Allow) => k += 1,
+            failed => {
+                let id = &def.id;
+                match failed {
+                    Outcome::Timeout => {
+                        warn!("plugin {id}: custom event handler exceeded its budget");
+                        shared.strike(j, id);
+                    }
+                    Outcome::Trap(e) => warn!("plugin {id} trapped: {e:#}"),
+                    Outcome::Ok(_) => {}
+                }
+                peers.insts.remove(k);
+                if fail != Verdict::Allow {
+                    return fail;
+                }
+            }
+        }
+    }
+    Verdict::Allow
+}
+
+/// Why a player appeared in a level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpawnReason {
+    Join,
+    Respawn,
+    LevelChange,
+}
+
+/// What a region saw, for the next observe batch.
+enum Seen {
+    Broken(u32),
+    Placed(u32),
+    Died { cause: u32, killer: Option<u128> },
+    Spawned(SpawnReason),
+}
+
 struct Observation {
-    broken: bool,
+    what: Seen,
     uuid: u128,
     name: String,
     operator: bool,
+    info: PlayerInfo,
     pos: [i32; 3],
-    block: u32,
+}
+
+impl Observation {
+    fn bit(&self) -> u8 {
+        match self.what {
+            Seen::Broken(_) => ObserveKinds::BLOCK_BROKEN,
+            Seen::Placed(_) => ObserveKinds::BLOCK_PLACED,
+            Seen::Died { .. } => ObserveKinds::PLAYER_DIED,
+            Seen::Spawned(_) => ObserveKinds::PLAYER_SPAWNED,
+        }
+    }
+
+    fn block(&self) -> Option<u32> {
+        match self.what {
+            Seen::Broken(b) | Seen::Placed(b) => Some(b),
+            _ => None,
+        }
+    }
 }
 
 /// An entity an event is about, with its plugin data (read and written by the handlers).
@@ -869,6 +1089,56 @@ pub struct EntityRef<'a> {
     pub kind: u32,
     pub pos: [f64; 3],
     pub data: &'a mut EntityData,
+}
+
+/// An item as an event reports it.
+#[derive(Clone, Copy, Debug)]
+pub struct ItemRef<'a> {
+    /// Item id (`Registries::items`).
+    pub item: u32,
+    pub count: u32,
+    /// The plugin tag stored in the stack, `<plugin id>:<tag>`.
+    pub tag: Option<&'a str>,
+}
+
+/// How a container was clicked (`ClickType` and button of the vanilla packet, flattened).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClickKind {
+    Left,
+    Right,
+    ShiftLeft,
+    ShiftRight,
+    Middle,
+    Drop,
+    Double,
+    Swap,
+    Drag,
+    Other,
+}
+
+/// A click in a container screen.
+#[derive(Clone, Copy, Debug)]
+pub struct ContainerClick<'a> {
+    /// The plugin menu open, `<plugin id>:<menu id>`; none for a vanilla container.
+    pub menu: Option<&'a str>,
+    /// The menu type key (`minecraft:generic_9x3`).
+    pub container: &'a str,
+    pub slot: i32,
+    pub button: u8,
+    pub kind: ClickKind,
+    pub clicked: Option<ItemRef<'a>>,
+}
+
+fn split_owned(full: &str) -> (&str, &str) {
+    full.split_once(':').unwrap_or(("", full))
+}
+
+/// What a handler is handed besides the event record: handles of its call.
+#[derive(Clone, Copy, Default)]
+struct Handles {
+    players: [u64; 2],
+    cell: u64,
+    entity: u64,
 }
 
 /// A region's instances, one per plugin that exports `region-hooks`.
@@ -918,26 +1188,27 @@ impl RegionPlugins {
     }
 
     /// Calls every subscriber of a cancellable event in load order until one denies.
-    /// `f` gets the guest, the store, the event's player record and the handles of the cell
-    /// and the entity; `decide` the result and the denial message the handler left.
+    /// `actors` are the players of the event (the first is the acting one: its bucket and its
+    /// ordering key); `f` gets the plugin's index, the guest, the store and the handles of the
+    /// call; `decide` the result and the denial message the handler left.
     #[allow(clippy::too_many_arguments)]
-    fn cancellable<R>(
+    fn cancellable<'e, R>(
         &mut self,
         kind: EventKind,
-        actor: &Actor,
-        info: EvInfo,
+        actors: &[&Actor],
+        info: EvInfo<'e>,
         cell: Option<CellKey>,
         mut entity: Option<&mut EntityRef>,
-        mut f: impl FnMut(&RegionGuest, &mut Store<HostState>, wit::Player, u64, u64) -> wasmtime::Result<R>,
+        mut f: impl FnMut(usize, &RegionGuest, &mut Store<HostState>, Handles) -> wasmtime::Result<R>,
         mut decide: impl FnMut(R, Option<Vec<Span>>) -> Option<Verdict>,
     ) -> Verdict {
         let RegionPlugins { set, shared, insts, calls, .. } = self;
-        let set: &PluginSet = set;
         let subs = set.subscribers(kind);
         if subs.is_empty() {
             return Verdict::Allow;
         }
-        let called = |i: usize| set.plugins[i].filter(kind).is_none_or(|c| c.passes(&info));
+        let actor = actors[0];
+        let called = |i: usize| set.plugins[i].filter(kind).is_none_or(|c| c.passes(kind, &info, &set.plugins[i].id));
         if !subs.iter().any(|&i| called(i)) {
             return Verdict::Allow;
         }
@@ -948,7 +1219,8 @@ impl RegionPlugins {
             let closed = subs.iter().any(|&i| called(i) && policy(i) == FailPolicy::Closed);
             return if closed { Verdict::Deny(None) } else { Verdict::Allow };
         }
-        for &i in subs {
+        let subs: Vec<usize> = subs.to_vec();
+        for i in subs {
             if !called(i) {
                 continue;
             }
@@ -959,32 +1231,42 @@ impl RegionPlugins {
                     None => continue,
                 }
             }
-            let inst = insts[i].as_mut().expect("instance");
-            if inst.over_budget(shared, set.tick_budget) {
+            if insts[i].as_ref().expect("instance").over_budget(shared, set.tick_budget) {
                 shared.stats.budget_exhausted.fetch_add(1, Ordering::Relaxed);
                 match fail {
                     Some(v) => return v,
                     None => continue,
                 }
             }
-            let generation = inst.generation();
-            let frame = inst.frame();
-            frame.reset(false, actor.uuid);
-            frame.push_player(actor.uuid, actor.name);
-            frame.cells.extend(cell);
-            if let Some(e) = entity.as_deref_mut() {
-                frame.entities.push((e.uuid, std::mem::take(e.data)));
-            }
-            let (ph, ch, eh) = (frame.player_handle(generation, 0), frame.cell_handle(generation, 0), frame.entity_handle(generation, 0));
-            let player = wit_player(actor, ph);
             *calls += 1;
-            let outcome = inst.call(shared, set.call, |store, _, region| f(region.expect("region guest"), store, player, ch, eh));
-            if let Some(e) = entity.as_deref_mut() {
-                *e.data = std::mem::take(&mut inst.frame().entities[0].1);
-            }
+            let shared_ref: &Arc<Shared> = shared;
+            let call_budget = set.call;
+            let set_ref: &Arc<PluginSet> = set;
+            let (outcome, msg) = with_peers(set_ref, insts, i, true, |inst| {
+                let generation = inst.generation();
+                let frame = inst.frame();
+                frame.reset(false, actor.uuid);
+                for a in actors {
+                    frame.push_player(a.uuid, a.name, a.operator, Some(&a.info));
+                }
+                frame.cells.extend(cell);
+                if let Some(e) = entity.as_deref_mut() {
+                    frame.entities.push((e.uuid, std::mem::take(e.data)));
+                }
+                let handles = Handles {
+                    players: [frame.player_handle(generation, 0), frame.player_handle(generation, 1)],
+                    cell: frame.cell_handle(generation, 0),
+                    entity: frame.entity_handle(generation, 0),
+                };
+                let outcome = inst.call(shared_ref, call_budget, |store, _, region| f(i, region.expect("region guest"), store, handles));
+                if let Some(e) = entity.as_deref_mut() {
+                    *e.data = std::mem::take(&mut inst.frame().entities[0].1);
+                }
+                let msg = if matches!(outcome, Outcome::Ok(_)) { inst.frame().deny_msg.take() } else { None };
+                (outcome, msg)
+            });
             match outcome {
                 Outcome::Ok(r) => {
-                    let msg = inst.frame().deny_msg.take();
                     if let Some(v) = decide(r, msg) {
                         return v;
                     }
@@ -1000,8 +1282,8 @@ impl RegionPlugins {
         Verdict::Allow
     }
 
-    fn info(&self, actor: &Actor, pos: Option<[i32; 3]>) -> EvInfo {
-        EvInfo { permission: actor.permission(), level: self.dim, xz: pos.map(|p| (p[0], p[2])), block: None, entity_type: None }
+    fn info(&self, actor: &Actor, pos: Option<[i32; 3]>) -> EvInfo<'static> {
+        EvInfo { permission: actor.permission(), level: self.dim, xz: pos.map(|p| (p[0], p[2])), ..EvInfo::default() }
     }
 
     /// A player breaks (starts or finishes breaking) `block` at `pos` in this region's level.
@@ -1011,12 +1293,14 @@ impl RegionPlugins {
         let level = self.dim;
         self.cancellable(
             EventKind::BlockBreak,
-            actor,
+            &[actor],
             info,
             Some(cell),
             None,
             // A flat record: it crosses as plain arguments, nothing is allocated in the guest.
-            |g, store, player, ch, _| g.call_on_block_break(store, wit::BlockEvent { player, level, pos: wit_pos(pos), block, cell: ch }),
+            |_, g, store, h| {
+                g.call_on_block_break(store, wit::BlockEvent { player: wit_player(actor, h.players[0]), level, pos: wit_pos(pos), block, cell: h.cell })
+            },
             decision,
         )
     }
@@ -1029,12 +1313,41 @@ impl RegionPlugins {
         let level = self.dim;
         self.cancellable(
             EventKind::BlockPlace,
-            actor,
+            &[actor],
             info,
             Some(cell),
             None,
-            |g, store, player, ch, _| {
-                g.call_on_block_place(store, wit::PlaceEvent { player, level, pos: wit_pos(pos), against: wit_pos(against), item, cell: ch })
+            |_, g, store, h| {
+                g.call_on_block_place(
+                    store,
+                    wit::PlaceEvent { player: wit_player(actor, h.players[0]), level, pos: wit_pos(pos), against: wit_pos(against), item, cell: h.cell },
+                )
+            },
+            decision,
+        )
+    }
+
+    fn entity_event(&mut self, kind: EventKind, actor: &Actor, entity: &mut EntityRef) -> Verdict {
+        let p = entity.pos;
+        let block = [p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32];
+        let info = EvInfo { entity_type: Some(entity.kind), ..self.info(actor, Some(block)) };
+        let (level, uuid, ekind) = (self.dim, entity.uuid, entity.kind);
+        self.cancellable(
+            kind,
+            &[actor],
+            info,
+            None,
+            Some(entity),
+            |_, g, store, h| {
+                let ev = wit::EntityEvent {
+                    player: wit_player(actor, h.players[0]),
+                    level,
+                    entity: h.entity,
+                    entity_uuid: host::wit_uuid(uuid),
+                    kind: ekind,
+                    pos: (p[0], p[1], p[2]),
+                };
+                if kind == EventKind::EntityAttack { g.call_on_entity_attack(store, ev) } else { g.call_on_entity_interact(store, ev) }
             },
             decision,
         )
@@ -1042,19 +1355,127 @@ impl RegionPlugins {
 
     /// A player right-clicks an entity. Handlers may read and write the entity's data.
     pub fn entity_interact(&mut self, actor: &Actor, entity: &mut EntityRef) -> Verdict {
-        let p = entity.pos;
-        let block = [p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32];
-        let info = EvInfo { entity_type: Some(entity.kind), ..self.info(actor, Some(block)) };
-        let (level, uuid, kind) = (self.dim, entity.uuid, entity.kind);
+        self.entity_event(EventKind::EntityInteract, actor, entity)
+    }
+
+    /// A player hits an entity. Handlers may read and write the entity's data.
+    pub fn entity_attack(&mut self, actor: &Actor, entity: &mut EntityRef) -> Verdict {
+        self.entity_event(EventKind::EntityAttack, actor, entity)
+    }
+
+    /// A player is about to take `amount` damage of damage type `cause` at `pos`; `attacker`
+    /// is the player responsible, if any.
+    pub fn player_damage(&mut self, victim: &Actor, attacker: Option<&Actor>, pos: [i32; 3], cause: u32, amount: f32) -> Verdict {
+        let info = self.info(victim, Some(pos));
+        let level = self.dim;
+        let mut actors = [victim, victim];
+        let n = if let Some(a) = attacker {
+            actors[1] = a;
+            2
+        } else {
+            1
+        };
         self.cancellable(
-            EventKind::EntityInteract,
-            actor,
+            EventKind::PlayerDamage,
+            &actors[..n],
             info,
             None,
-            Some(entity),
-            |g, store, player, _, eh| {
-                let ev = wit::EntityEvent { player, level, entity: eh, entity_uuid: host::wit_uuid(uuid), kind, pos: (p[0], p[1], p[2]) };
-                g.call_on_entity_interact(store, ev)
+            None,
+            |_, g, store, h| {
+                let ev = wit::DamageEvent {
+                    victim: wit_player(victim, h.players[0]),
+                    level,
+                    pos: wit_pos(pos),
+                    cause,
+                    amount,
+                    attacker: attacker.map(|a| wit_player(a, h.players[1])),
+                };
+                g.call_on_player_damage(store, ev)
+            },
+            decision,
+        )
+    }
+
+    /// The held item is used: on the block at `target`, or in the air. Only the plugin whose
+    /// tag the item carries hears of it, and plugins that subscribed to other items.
+    pub fn item_use(&mut self, actor: &Actor, item: ItemRef, off_hand: bool, target: Option<[i32; 3]>) -> Verdict {
+        let level = self.dim;
+        let (owner, rest) = match item.tag {
+            Some(t) => {
+                let (o, r) = split_owned(t);
+                (Some(o), Some(r))
+            }
+            None => (None, None),
+        };
+        let info = EvInfo { item: Some(item.item), tag_owner: owner, ..self.info(actor, target) };
+        let set = self.set.clone();
+        self.cancellable(
+            EventKind::ItemUse,
+            &[actor],
+            info,
+            None,
+            None,
+            |i, g, store, h| {
+                // Only the owner sees the tag.
+                let tag = if owner == Some(&*set.plugins[i].id) { rest.map(str::to_owned) } else { None };
+                let ev = wit::ItemUseEvent {
+                    player: wit_player(actor, h.players[0]),
+                    level,
+                    item: wit::ItemView { item: item.item, count: item.count, tag },
+                    off_hand,
+                    target: target.map(wit_pos),
+                };
+                g.call_on_item_use(store, &ev)
+            },
+            decision,
+        )
+    }
+
+    /// A click in a container screen. A click in a plugin's menu is delivered to that plugin
+    /// only, and the embedder cancels it whatever the answer; vanilla containers go to
+    /// plugins subscribed with `vanilla`.
+    pub fn container_click(&mut self, actor: &Actor, click: &ContainerClick) -> Verdict {
+        let (owner, menu) = match click.menu {
+            Some(m) => {
+                let (o, r) = split_owned(m);
+                (Some(o), Some(r))
+            }
+            None => (None, None),
+        };
+        let info = EvInfo { menu_owner: owner, ..self.info(actor, None) };
+        self.cancellable(
+            EventKind::ContainerClick,
+            &[actor],
+            info,
+            None,
+            None,
+            |_, g, store, h| {
+                let clicked = click.clicked.map(|c| wit::ItemView {
+                    item: c.item,
+                    count: c.count,
+                    tag: c.tag.and_then(|t| t.split_once(':')).filter(|(o, _)| Some(*o) == owner).map(|(_, r)| r.to_owned()),
+                });
+                let ev = wit::ContainerClickEvent {
+                    player: wit_player(actor, h.players[0]),
+                    menu: menu.map(str::to_owned),
+                    container: click.container.to_owned(),
+                    slot: click.slot,
+                    button: click.button,
+                    kind: match click.kind {
+                        ClickKind::Left => wit::ClickKind::Left,
+                        ClickKind::Right => wit::ClickKind::Right,
+                        ClickKind::ShiftLeft => wit::ClickKind::ShiftLeft,
+                        ClickKind::ShiftRight => wit::ClickKind::ShiftRight,
+                        ClickKind::Middle => wit::ClickKind::Middle,
+                        ClickKind::Drop => wit::ClickKind::Drop,
+                        ClickKind::Double => wit::ClickKind::Double,
+                        ClickKind::Swap => wit::ClickKind::Swap,
+                        ClickKind::Drag => wit::ClickKind::Drag,
+                        ClickKind::Other => wit::ClickKind::Other,
+                    },
+                    clicked,
+                };
+                g.call_on_container_click(store, &ev)
             },
             decision,
         )
@@ -1065,11 +1486,11 @@ impl RegionPlugins {
         let info = self.info(actor, None);
         self.cancellable(
             EventKind::Command,
-            actor,
+            &[actor],
             info,
             None,
             None,
-            |g, store, player, _, _| g.call_on_command(store, &wit::CommandEvent { player, command: command.to_owned() }),
+            |_, g, store, h| g.call_on_command(store, &wit::CommandEvent { player: wit_player(actor, h.players[0]), command: command.to_owned() }),
             decision,
         )
     }
@@ -1080,11 +1501,11 @@ impl RegionPlugins {
         let info = self.info(actor, None);
         let v = self.cancellable(
             EventKind::Chat,
-            actor,
+            &[actor],
             info,
             None,
             None,
-            |g, store, player, _, _| g.call_on_chat(store, &wit::ChatEvent { player, message: message.to_owned() }),
+            |_, g, store, h| g.call_on_chat(store, &wit::ChatEvent { player: wit_player(actor, h.players[0]), message: message.to_owned() }),
             |r, _| match r {
                 wit::ChatVerdict::Pass => None,
                 wit::ChatVerdict::Cancel => Some(Verdict::Deny(None)),
@@ -1106,57 +1527,113 @@ impl RegionPlugins {
         !self.set.subscribers(EventKind::Observe).is_empty()
     }
 
+    /// Whether any plugin wants observed events of `kind` (an [`ObserveKinds`] bit).
+    pub fn observing_kind(&self, bit: u8) -> bool {
+        self.set.subscribers(EventKind::Observe).iter().any(|&i| self.set.plugins[i].manifest.subscription(EventKind::Observe).is_some_and(|s| s.observe.has(bit)))
+    }
+
+    fn push_observation(&mut self, what: Seen, actor: &Actor, pos: [i32; 3]) {
+        self.observed.push(Observation { what, uuid: actor.uuid, name: actor.name.to_owned(), operator: actor.operator, info: actor.info, pos });
+    }
+
     /// Notes a block broken (`broken`) or placed by `actor`, for the next observe batch.
     pub fn observe_block(&mut self, broken: bool, actor: &Actor, pos: [i32; 3], block: u32) {
         if self.observing() {
-            self.observed.push(Observation { broken, uuid: actor.uuid, name: actor.name.to_owned(), operator: actor.operator, pos, block });
+            self.push_observation(if broken { Seen::Broken(block) } else { Seen::Placed(block) }, actor, pos);
+        }
+    }
+
+    /// Notes a player's death for the next observe batch.
+    pub fn observe_death(&mut self, actor: &Actor, pos: [i32; 3], cause: u32, killer: Option<u128>) {
+        if self.observing_kind(ObserveKinds::PLAYER_DIED) {
+            self.push_observation(Seen::Died { cause, killer }, actor, pos);
+        }
+    }
+
+    /// Notes a player appearing in this region's level.
+    pub fn observe_spawn(&mut self, actor: &Actor, pos: [i32; 3], reason: SpawnReason) {
+        if self.observing_kind(ObserveKinds::PLAYER_SPAWNED) {
+            self.push_observation(Seen::Spawned(reason), actor, pos);
         }
     }
 
     /// Sends the observations of this phase to observe subscribers, one batch per plugin
-    /// (only what its filter lets through). Demoted plugins still observe; failures only
-    /// replace the instance (and strike).
+    /// (only what its subscription and filter let through). Demoted plugins still observe;
+    /// failures only replace the instance (and strike).
     pub fn flush_observed(&mut self) {
         if self.observed.is_empty() {
             return;
         }
         let observed = std::mem::take(&mut self.observed);
         let RegionPlugins { set, shared, insts, calls, dim, .. } = self;
-        let set: &PluginSet = set;
-        for &i in set.subscribers(EventKind::Observe) {
+        let subs: Vec<usize> = set.subscribers(EventKind::Observe).to_vec();
+        for i in subs {
+            let sub = set.plugins[i].manifest.subscription(EventKind::Observe).expect("subscription");
+            let mask = sub.observe;
             let filter = set.plugins[i].filter(EventKind::Observe);
             let mine: Vec<&Observation> = observed
                 .iter()
                 .filter(|o| {
-                    filter.is_none_or(|c| {
-                        let info = EvInfo { permission: if o.operator { 4 } else { 0 }, level: *dim, xz: Some((o.pos[0], o.pos[2])), block: Some(o.block), entity_type: None };
-                        c.passes(&info)
-                    })
+                    mask.has(o.bit())
+                        && filter.is_none_or(|c| {
+                            let info = EvInfo {
+                                permission: if o.operator { 4 } else { 0 },
+                                level: *dim,
+                                xz: Some((o.pos[0], o.pos[2])),
+                                block: o.block(),
+                                ..EvInfo::default()
+                            };
+                            c.passes(EventKind::Observe, &info, &set.plugins[i].id)
+                        })
                 })
                 .collect();
             if mine.is_empty() || !ensure(set, shared, insts, i) {
                 continue;
             }
-            let inst = insts[i].as_mut().expect("instance");
-            let generation = inst.generation();
-            let frame = inst.frame();
-            frame.reset(false, mine[0].uuid);
-            for o in &mine {
-                if !frame.players.contains(&o.uuid) {
-                    frame.push_player(o.uuid, &o.name);
-                }
-            }
-            let batch: Vec<wit::Observed> = mine
-                .iter()
-                .map(|o| {
-                    let h = frame.player_handle(generation, frame.players.iter().position(|p| *p == o.uuid).unwrap());
-                    let player = wit::Player { handle: h, uuid: host::wit_uuid(o.uuid), operator: o.operator };
-                    let b = wit::ObservedBlock { player, level: *dim, pos: wit_pos(o.pos), block: o.block };
-                    if o.broken { wit::Observed::BlockBroken(b) } else { wit::Observed::BlockPlaced(b) }
-                })
-                .collect();
             *calls += 1;
-            let outcome = inst.call(shared, set.serial, |store, _, g| g.expect("region guest").call_on_observe(store, &batch));
+            let (set_ref, shared_ref, dim_v) = (&*set, &*shared, *dim);
+            let serial = set.serial;
+            let outcome = with_peers(set, insts, i, true, |inst| {
+                let generation = inst.generation();
+                let frame = inst.frame();
+                frame.reset(false, mine[0].uuid);
+                for o in &mine {
+                    if !frame.players.contains(&o.uuid) {
+                        frame.push_player(o.uuid, &o.name, o.operator, Some(&o.info));
+                    }
+                }
+                let batch: Vec<wit::Observed> = mine
+                    .iter()
+                    .map(|o| {
+                        let h = frame.player_handle(generation, frame.players.iter().position(|p| *p == o.uuid).unwrap());
+                        let player = wit::Player { handle: h, uuid: host::wit_uuid(o.uuid), operator: o.operator };
+                        let block = |b| wit::ObservedBlock { player, level: dim_v, pos: wit_pos(o.pos), block: b };
+                        match o.what {
+                            Seen::Broken(b) => wit::Observed::BlockBroken(block(b)),
+                            Seen::Placed(b) => wit::Observed::BlockPlaced(block(b)),
+                            Seen::Died { cause, killer } => wit::Observed::PlayerDied(wit::DeathEvent {
+                                player,
+                                level: dim_v,
+                                pos: wit_pos(o.pos),
+                                cause,
+                                killer: killer.map(host::wit_uuid),
+                            }),
+                            Seen::Spawned(reason) => wit::Observed::PlayerSpawned(wit::SpawnEvent {
+                                player,
+                                level: dim_v,
+                                pos: wit_pos(o.pos),
+                                reason: match reason {
+                                    SpawnReason::Join => wit::SpawnReason::Join,
+                                    SpawnReason::Respawn => wit::SpawnReason::Respawn,
+                                    SpawnReason::LevelChange => wit::SpawnReason::LevelChange,
+                                },
+                            }),
+                        }
+                    })
+                    .collect();
+                inst.call(shared_ref, serial, |store, _, g| g.expect("region guest").call_on_observe(store, &batch))
+            });
+            let _ = set_ref;
             if !matches!(outcome, Outcome::Ok(())) {
                 region_failed(set, shared, insts, i, outcome);
             }
@@ -1166,28 +1643,30 @@ impl RegionPlugins {
     /// A task or results delivery in this region's instance of plugin `i` (B0).
     fn run_in(&mut self, i: usize, player: Option<&PlayerAt>, cell: Option<CellKey>, f: RegionCall) -> bool {
         let RegionPlugins { set, shared, insts, calls, .. } = self;
-        let set: &PluginSet = set;
         if !ensure(set, shared, insts, i) {
             return false;
         }
-        let inst = insts[i].as_mut().expect("instance");
-        let generation = inst.generation();
-        let frame = inst.frame();
-        frame.reset(false, player.map_or(0, |p| p.uuid));
-        if let Some(p) = player {
-            frame.push_player(p.uuid, &p.name);
-        }
-        frame.cells.extend(cell);
-        let ph = frame.player_handle(generation, 0);
-        let ch = frame.cell_handle(generation, 0);
-        let p = player.map(|p| wit::Player { handle: ph, uuid: host::wit_uuid(p.uuid), operator: p.operator });
         *calls += 1;
-        let outcome = inst.call(shared, set.serial, |store, _, g| {
-            let g = g.expect("region guest");
-            match f {
-                RegionCall::Task(handle, id) => g.call_on_task(store, wit::TaskEvent { handle, id, player: p, cell: cell.map(|_| ch) }),
-                RegionCall::Results(r) => g.call_on_results(store, &r),
+        let serial = set.serial;
+        let shared_ref: &Arc<Shared> = shared;
+        let outcome = with_peers(set, insts, i, true, |inst| {
+            let generation = inst.generation();
+            let frame = inst.frame();
+            frame.reset(false, player.map_or(0, |p| p.uuid));
+            if let Some(p) = player {
+                frame.push_player(p.uuid, &p.name, p.operator, Some(&p.info));
             }
+            frame.cells.extend(cell);
+            let ph = frame.player_handle(generation, 0);
+            let ch = frame.cell_handle(generation, 0);
+            let p = player.map(|p| wit::Player { handle: ph, uuid: host::wit_uuid(p.uuid), operator: p.operator });
+            inst.call(shared_ref, serial, |store, _, g| {
+                let g = g.expect("region guest");
+                match f {
+                    RegionCall::Task(handle, id) => g.call_on_task(store, wit::TaskEvent { handle, id, player: p, cell: cell.map(|_| ch) }),
+                    RegionCall::Results(r) => g.call_on_results(store, &r),
+                }
+            })
         });
         let ok = matches!(outcome, Outcome::Ok(()));
         if !ok {
@@ -1230,6 +1709,7 @@ pub struct PlayerAt {
     pub region: u64,
     pub name: String,
     pub operator: bool,
+    pub info: PlayerInfo,
 }
 
 /// What B0 needs to know about the world to route tasks and results.
@@ -1370,7 +1850,7 @@ fn prepare(
     if hit && let Some(s) = stats {
         s.cache_hits.fetch_add(1, Ordering::Relaxed);
     }
-    let linker = host::linker(engine, manifest.has(Capability::PlayerMessage), manifest.has(Capability::Scheduler))?;
+    let linker = host::linker(engine, &manifest)?;
     let pre = linker
         .instantiate_pre(&component)
         .map_err(|e| e.context("an import is not linked: is a capability missing from the manifest?"))?;
@@ -1384,9 +1864,15 @@ fn prepare(
     let init = wit::InitInfo { id: manifest.id.clone(), config, spawn: wit_pos(spawn), levels: registries.levels.clone(), generation };
     let filters = EventKind::ALL
         .iter()
-        .map(|k| manifest.subscription(*k).filter(|s| !s.filter.is_empty()).map(|s| Compiled::new(&s.filter, registries, spawn, &manifest.id)))
+        .map(|k| {
+            // Item uses and container clicks always have their default rule (own items and
+            // menus only).
+            let always = matches!(k, EventKind::ItemUse | EventKind::ContainerClick);
+            manifest.subscription(*k).filter(|s| always || !s.filter.is_empty()).map(|s| Compiled::new(&s.filter, registries, spawn, &manifest.id))
+        })
         .collect();
-    Ok(PluginDef { id: manifest.id.as_str().into(), manifest, pre, global, region, data_dir, source, init, generation, filters })
+    let raises = manifest.has(Capability::EventsRaise);
+    Ok(PluginDef { id: manifest.id.as_str().into(), manifest, pre, global, region, data_dir, source, init, generation, filters, raises })
 }
 
 fn read_plugin(dir: &Path) -> Result<(Manifest, Vec<u8>)> {
@@ -1482,6 +1968,7 @@ impl PluginRuntime {
             deliveries: Mutex::new(Vec::new()),
             tasks: Mutex::new(Tasks::default()),
             outbox: Mutex::new(Vec::new()),
+            online: Mutex::new(Arc::new(Vec::new())),
             health: defs.iter().map(|_| Health { strikes: Mutex::new(VecDeque::new()), demoted: AtomicBool::new(false) }).collect(),
             wants_results: defs.iter().map(|d| AtomicBool::new(d.manifest.subscription(EventKind::OpResults).is_some())).collect(),
             seqs: Mutex::new(FastMap::default()),
@@ -1670,7 +2157,15 @@ impl PluginRuntime {
             };
             if let Some(to) = s.requester {
                 let color = if r.is_ok() { "green" } else { "red" };
-                self.shared.outbox.lock().unwrap().push((tick, to, Outgoing { to: Some(to), text: vec![Span::colored(text, color)] }));
+                let effect = Effect {
+                    plugin: s.plugin,
+                    plugin_id: id.clone(),
+                    generation: self.set.plugins[s.plugin].generation,
+                    source: to,
+                    ticket: 0,
+                    kind: EffectKind::Message { to: Some(to), text: vec![Span::colored(text, color)] },
+                };
+                self.shared.outbox.lock().unwrap().push((tick, to, effect));
             }
             if let Ok(r) = r {
                 self.reloaded.push(r);
@@ -1824,26 +2319,77 @@ impl PluginRuntime {
         actor: Option<&Actor>,
         f: impl FnOnce(&mut Store<HostState>, &GlobalGuest, Option<wit::Player>) -> wasmtime::Result<()>,
     ) -> bool {
-        let Some(inst) = self.globals[i].as_mut() else { return false };
-        let generation = inst.generation();
-        let frame = inst.frame();
-        frame.reset(true, actor.map_or(0, |a| a.uuid));
-        if let Some(a) = actor {
-            frame.push_player(a.uuid, a.name);
-        }
-        let p = actor.map(|a| wit_player(a, frame.player_handle(generation, 0)));
-        self.shared.stats.calls.fetch_add(1, Ordering::Relaxed);
-        let outcome = inst.call(&self.shared, self.set.serial, |store, g, _| f(store, g.expect("global guest"), p));
+        let Some(outcome) = self.global_run(i, actor, f) else { return false };
         let ok = matches!(outcome, Outcome::Ok(()));
         self.global_failed(i, outcome);
         ok
     }
 
-    /// Messages plugins sent, in a deterministic order.
+    /// One call in plugin `i`'s global instance (none if it is not running), with the
+    /// instance's peers lent when the plugin may raise events.
+    fn global_run<R>(
+        &mut self,
+        i: usize,
+        actor: Option<&Actor>,
+        f: impl FnOnce(&mut Store<HostState>, &GlobalGuest, Option<wit::Player>) -> wasmtime::Result<R>,
+    ) -> Option<Outcome<R>> {
+        self.globals[i].as_ref()?;
+        self.shared.stats.calls.fetch_add(1, Ordering::Relaxed);
+        let (shared, budget) = (&self.shared, self.set.serial);
+        Some(with_peers(&self.set, &mut self.globals, i, false, |inst| {
+            let generation = inst.generation();
+            let frame = inst.frame();
+            frame.reset(true, actor.map_or(0, |a| a.uuid));
+            if let Some(a) = actor {
+                frame.push_player(a.uuid, a.name, a.operator, Some(&a.info));
+            }
+            let p = actor.map(|a| wit_player(a, frame.player_handle(generation, 0)));
+            inst.call(shared, budget, |store, g, _| f(store, g.expect("global guest"), p))
+        }))
+    }
+
+    /// Plugin messages, in a deterministic order (the other effects stay queued).
     pub fn take_messages(&mut self) -> Vec<Outgoing> {
+        let mut out = self.shared.outbox.lock().unwrap();
+        let (messages, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut *out).into_iter().partition(|(_, _, e)| matches!(e.kind, EffectKind::Message { .. }));
+        *out = rest;
+        drop(out);
+        let mut messages = messages;
+        messages.sort_by_key(|(tick, source, _)| (*tick, *source));
+        messages
+            .into_iter()
+            .filter_map(|(_, _, e)| match e.kind {
+                EffectKind::Message { to, text } => Some(Outgoing { to, text }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every effect plugins committed (messages included), in a deterministic order: by tick
+    /// and acting player, then by commit order, which does not depend on thread count or
+    /// region layout. The embedder applies them at a serial point and reports each outcome
+    /// with [`effect_done`](Self::effect_done).
+    pub fn take_effects(&mut self) -> Vec<Effect> {
         let mut out = std::mem::take(&mut *self.shared.outbox.lock().unwrap());
         out.sort_by_key(|(tick, source, _)| (*tick, *source));
-        out.into_iter().map(|(_, _, m)| m).collect()
+        out.into_iter().map(|(_, _, e)| e).collect()
+    }
+
+    /// The outcome of an effect taken with [`take_effects`](Self::take_effects): `applied` is
+    /// false when it did nothing (the player left, they lacked the items, the entity was not
+    /// the plugin's). A plugin subscribed to `op-results` hears of it the next tick.
+    pub fn effect_done(&mut self, effect: &Effect, applied: bool) {
+        if effect.ticket == 0 || !self.shared.wants_results[effect.plugin].load(Ordering::Relaxed) {
+            return;
+        }
+        let result = wit::OpResult { ticket: effect.ticket, applied, value: None };
+        self.shared.deliveries.lock().unwrap().push(Delivery { plugin: effect.plugin, generation: effect.generation, source: effect.source, result });
+    }
+
+    /// The players online (`event.online`): set when the set of players or their levels
+    /// changes; plugins see it from the next call on.
+    pub fn set_online(&mut self, players: Vec<OnlinePlayer>) {
+        *self.shared.online.lock().unwrap() = Arc::new(players);
     }
 
     /// Reloads finished since the last call (the embedder re-registers commands).
@@ -1857,18 +2403,13 @@ impl PluginRuntime {
             if self.set.plugins[i].manifest.subscription(kind).is_none() {
                 continue;
             }
-            let Some(inst) = self.globals[i].as_mut() else { continue };
-            let generation = inst.generation();
-            let frame = inst.frame();
-            frame.reset(true, actor.uuid);
-            frame.push_player(actor.uuid, actor.name);
-            let p = wit_player(actor, frame.player_handle(generation, 0));
-            self.shared.stats.calls.fetch_add(1, Ordering::Relaxed);
-            let outcome = inst.call(&self.shared, self.set.serial, |store, g, _| {
-                let g = g.expect("global guest");
+            let outcome = self.global_run(i, Some(actor), |store, g, p| {
+                let p = p.expect("player");
                 if kind == EventKind::Join { g.call_on_join(store, p) } else { g.call_on_leave(store, p) }
             });
-            self.global_failed(i, outcome);
+            if let Some(outcome) = outcome {
+                self.global_failed(i, outcome);
+            }
         }
     }
 
@@ -1911,18 +2452,12 @@ impl PluginRuntime {
 
     /// Runs a registered command in its plugin's global instance; returns the reply.
     pub fn run_command(&mut self, plugin: usize, actor: Option<&Actor>, name: &str, args: &str) -> Vec<Span> {
-        let Some(inst) = self.globals.get_mut(plugin).and_then(Option::as_mut) else {
+        if plugin >= self.globals.len() {
+            return vec![Span::colored("This plugin is not running.", "red")];
+        }
+        let Some(outcome) = self.global_run(plugin, actor, |store, g, p| g.call_on_command(store, p, name, args)) else {
             return vec![Span::colored("This plugin is not running.", "red")];
         };
-        let generation = inst.generation();
-        let frame = inst.frame();
-        frame.reset(true, actor.map_or(0, |a| a.uuid));
-        if let Some(a) = actor {
-            frame.push_player(a.uuid, a.name);
-        }
-        let p = actor.map(|a| wit_player(a, frame.player_handle(generation, 0)));
-        self.shared.stats.calls.fetch_add(1, Ordering::Relaxed);
-        let outcome = inst.call(&self.shared, self.set.serial, |store, g, _| g.expect("global guest").call_on_command(store, p, name, args));
         match outcome {
             Outcome::Ok(reply) => spans(reply),
             failed => {

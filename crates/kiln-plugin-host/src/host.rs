@@ -4,6 +4,8 @@
 //! The frame lives in the store and is reused call after call (its vectors keep their
 //! capacity): starting a call is a few stores, not allocations.
 
+use crate::effects::{BlockChange, EffectKind, ItemSpec, MenuSpec, PlayerInfo, SpawnSpec};
+use crate::manifest::{Capability, Manifest};
 use crate::ns::{CellKey, EntityData, GlobalValue, Globals};
 use crate::{Shared, Span, TaskTarget};
 use std::sync::Arc;
@@ -24,6 +26,11 @@ pub(crate) use kiln::api::types as wit;
 
 /// Guest linear memory limit per instance (design §11.5).
 pub(crate) const MEMORY_LIMIT: usize = 64 << 20;
+
+/// Effects, operations and tasks one call may queue.
+const MAX_EFFECTS: usize = 1024;
+/// Changes in one `set-blocks`.
+const MAX_BLOCK_CHANGES: usize = 4096;
 
 /// Where a buffered write goes.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -57,17 +64,21 @@ pub(crate) struct Frame {
     pub serial: u64,
     /// The global instance: reads the live global namespace, its operations apply at commit.
     pub global_ctx: bool,
-    /// Ordering key of the call's operations, tasks and messages (the acting player).
+    /// Ordering key of the call's operations, tasks and effects (the acting player).
     pub source: u128,
     pub players: Vec<u128>,
     /// Names of `players` (by index; the strings keep their capacity across calls).
     names: Vec<String>,
+    operators: Vec<bool>,
+    /// What the host knew of each of `players` when the call started.
+    pub infos: Vec<PlayerInfo>,
     pub cells: Vec<CellKey>,
     /// Entities of the event with their plugin data (moved in for the call, moved back out).
     pub entities: Vec<(u128, EntityData)>,
     pub writes: Vec<(Target, String, Option<Vec<u8>>)>,
     pub ops: Vec<(u64, wit::AtomicOp)>,
-    pub messages: Vec<(Option<u128>, Vec<Span>)>,
+    /// Effects with their tickets (0 for messages).
+    pub effects: Vec<(u64, EffectKind)>,
     pub tasks: Vec<NewTask>,
     pub cancels: Vec<u64>,
     /// The message for the acting player if the handler denies (`event.deny-message`).
@@ -104,6 +115,14 @@ impl Frame {
         let i = self.resolve(generation, KIND_PLAYER, h)?;
         self.players.get(i).copied().ok_or_else(|| wasmtime::format_err!("bad player handle"))
     }
+    /// The index of a player handle of this call.
+    pub fn player_index(&self, generation: u32, h: u64) -> wasmtime::Result<usize> {
+        let i = self.resolve(generation, KIND_PLAYER, h)?;
+        if i >= self.players.len() {
+            wasmtime::bail!("bad player handle");
+        }
+        Ok(i)
+    }
     fn resolve_cell(&self, generation: u32, h: u64) -> wasmtime::Result<CellKey> {
         let i = self.resolve(generation, KIND_CELL, h)?;
         self.cells.get(i).copied().ok_or_else(|| wasmtime::format_err!("bad cell handle"))
@@ -116,8 +135,9 @@ impl Frame {
         Ok(i)
     }
 
-    /// A player of the call (handle index = position), with their name.
-    pub fn push_player(&mut self, uuid: u128, name: &str) {
+    /// A player of the call (handle index = position), with their name and what the host
+    /// knows of them.
+    pub fn push_player(&mut self, uuid: u128, name: &str, operator: bool, info: Option<&PlayerInfo>) {
         let i = self.players.len();
         self.players.push(uuid);
         if self.names.len() <= i {
@@ -126,10 +146,12 @@ impl Frame {
         let n = &mut self.names[i];
         n.clear();
         n.push_str(name);
+        self.operators.push(operator);
+        self.infos.push(info.copied().unwrap_or_default());
     }
 
     pub fn is_clean(&self) -> bool {
-        self.writes.is_empty() && self.ops.is_empty() && self.messages.is_empty() && self.tasks.is_empty() && self.cancels.is_empty()
+        self.writes.is_empty() && self.ops.is_empty() && self.effects.is_empty() && self.tasks.is_empty() && self.cancels.is_empty()
     }
 
     /// Forgets the last call (keeping the capacity) and starts the next one.
@@ -138,11 +160,13 @@ impl Frame {
         self.global_ctx = global_ctx;
         self.source = source;
         self.players.clear();
+        self.operators.clear();
+        self.infos.clear();
         self.cells.clear();
         self.entities.clear();
         self.writes.clear();
         self.ops.clear();
-        self.messages.clear();
+        self.effects.clear();
         self.tasks.clear();
         self.cancels.clear();
         self.deny_msg = None;
@@ -150,6 +174,10 @@ impl Frame {
         self.n = 0;
         self.rng = None;
         self.snapshot = None;
+    }
+
+    pub fn player_name(&self, i: usize) -> &str {
+        &self.names[i]
     }
 }
 
@@ -173,6 +201,9 @@ pub(crate) struct HostState {
     pub frame: Frame,
     /// A call is running (host calls outside one trap).
     pub active: bool,
+    /// The other plugins' instances lent for this call, when the plugin may raise events
+    /// (`events.raise`) and others subscribed to `custom`.
+    pub peers: Option<Box<crate::Peers>>,
 }
 
 impl WasiView for HostState {
@@ -216,6 +247,46 @@ impl HostState {
         let (v, order) = self.derive();
         (((self.generation as u64 & 0xff) << 56) | (v & ((1 << 56) - 1)), order)
     }
+
+    /// Queues an effect and returns its ticket.
+    fn effect(&mut self, kind: EffectKind) -> wasmtime::Result<u64> {
+        if self.frame()?.effects.len() >= MAX_EFFECTS {
+            wasmtime::bail!("too many effects in one call");
+        }
+        let (ticket, _) = self.new_id();
+        self.frame.effects.push((ticket, kind));
+        Ok(ticket)
+    }
+
+    /// `<plugin id>:<name>`: the namespace of ids a plugin makes up (menus, tags, boss bars).
+    fn owned(&self, name: &str) -> String {
+        format!("{}:{name}", self.id)
+    }
+
+    fn item_spec(&self, s: wit::ItemStack) -> wasmtime::Result<ItemSpec> {
+        if s.count == 0 || s.count > 99 {
+            wasmtime::bail!("an item stack has 1 to 99 items");
+        }
+        if s.item.len() > 128 || s.lore.len() > 64 || s.name.as_ref().is_some_and(|n| n.len() > 64) {
+            wasmtime::bail!("item stack too large");
+        }
+        if s.tag.as_ref().is_some_and(|t| t.len() > 128 || t.is_empty()) {
+            wasmtime::bail!("an item tag is 1 to 128 bytes");
+        }
+        Ok(ItemSpec {
+            item: s.item,
+            count: s.count,
+            name: s.name.map(spans),
+            lore: s.lore.into_iter().map(spans).collect(),
+            tag: s.tag.map(|t| self.owned(&t)),
+            model: s.model,
+            glint: s.glint,
+        })
+    }
+}
+
+fn spans(v: Vec<wit::Span>) -> Vec<Span> {
+    v.into_iter().map(from_wit_span).collect()
 }
 
 impl wit::Host for HostState {}
@@ -288,7 +359,7 @@ impl kiln::api::state::Host for HostState {
     }
 
     fn submit(&mut self, op: wit::AtomicOp) -> wasmtime::Result<u64> {
-        if self.frame()?.ops.len() >= 1024 {
+        if self.frame()?.ops.len() >= MAX_EFFECTS {
             wasmtime::bail!("too many atomic operations in one call");
         }
         let (ticket, _) = self.new_id();
@@ -301,13 +372,45 @@ impl kiln::api::event::Host for HostState {
     fn player_name(&mut self, p: u64) -> wasmtime::Result<String> {
         let generation = self.generation;
         let f = self.frame()?;
-        let i = f.resolve(generation, KIND_PLAYER, p)?;
-        f.names.get(i).filter(|_| i < f.players.len()).cloned().ok_or_else(|| wasmtime::format_err!("bad player handle"))
+        let i = f.player_index(generation, p)?;
+        Ok(f.player_name(i).to_owned())
     }
 
     fn deny_message(&mut self, text: Vec<wit::Span>) -> wasmtime::Result<()> {
         self.frame()?.deny_msg = Some(text.into_iter().map(from_wit_span).collect());
         Ok(())
+    }
+
+    fn player_info(&mut self, p: u64) -> wasmtime::Result<wit::PlayerInfo> {
+        let generation = self.generation;
+        let f = self.frame()?;
+        let i = f.player_index(generation, p)?;
+        let v = f.infos[i];
+        Ok(wit::PlayerInfo {
+            level: v.level,
+            pos: (v.pos[0], v.pos[1], v.pos[2]),
+            rot: (v.rot[0], v.rot[1]),
+            health: v.health,
+            food: v.food,
+            game_mode: match v.game_mode {
+                1 => wit::GameMode::Creative,
+                2 => wit::GameMode::Adventure,
+                3 => wit::GameMode::Spectator,
+                _ => wit::GameMode::Survival,
+            },
+            on_ground: v.on_ground,
+            sneaking: v.sneaking,
+            sprinting: v.sprinting,
+            flying: v.flying,
+            held: v.held,
+            held_count: v.held_count,
+        })
+    }
+
+    fn online(&mut self) -> wasmtime::Result<Vec<wit::OnlinePlayer>> {
+        self.frame()?;
+        let list = self.shared.online.lock().unwrap().clone();
+        Ok(list.iter().map(|p| wit::OnlinePlayer { uuid: wit_uuid(p.uuid), name: p.name.clone(), level: p.level }).collect())
     }
 }
 
@@ -350,6 +453,7 @@ impl From<kiln::api::registry::Kind> for crate::RegistryKind {
             Kind::Block => crate::RegistryKind::Block,
             Kind::Item => crate::RegistryKind::Item,
             Kind::EntityType => crate::RegistryKind::EntityType,
+            Kind::DamageType => crate::RegistryKind::DamageType,
         }
     }
 }
@@ -407,14 +511,225 @@ impl kiln::api::chat::Host for HostState {
     fn send(&mut self, to: u64, text: Vec<wit::Span>) -> wasmtime::Result<()> {
         let generation = self.generation;
         let uuid = self.frame()?.resolve_player(generation, to)?;
-        self.frame.messages.push((Some(uuid), text.into_iter().map(from_wit_span).collect()));
+        if self.frame.effects.len() >= MAX_EFFECTS {
+            wasmtime::bail!("too many effects in one call");
+        }
+        self.frame.effects.push((0, EffectKind::Message { to: Some(uuid), text: spans(text) }));
         Ok(())
     }
 
     fn broadcast(&mut self, text: Vec<wit::Span>) -> wasmtime::Result<()> {
-        let f = self.frame()?;
-        f.messages.push((None, text.into_iter().map(from_wit_span).collect()));
+        if self.frame()?.effects.len() >= MAX_EFFECTS {
+            wasmtime::bail!("too many effects in one call");
+        }
+        self.frame.effects.push((0, EffectKind::Message { to: None, text: spans(text) }));
         Ok(())
+    }
+}
+
+impl kiln::api::hud::Host for HostState {
+    fn title(&mut self, to: wit::Uuid, title: Vec<wit::Span>, subtitle: Vec<wit::Span>, fade_in: u32, stay: u32, fade_out: u32) -> wasmtime::Result<u64> {
+        self.effect(EffectKind::Title { to: from_wit_uuid(to), title: spans(title), subtitle: spans(subtitle), fade_in, stay, fade_out })
+    }
+
+    fn action_bar(&mut self, to: wit::Uuid, text: Vec<wit::Span>) -> wasmtime::Result<u64> {
+        self.effect(EffectKind::ActionBar { to: from_wit_uuid(to), text: spans(text) })
+    }
+
+    fn sidebar(&mut self, to: wit::Uuid, title: Vec<wit::Span>, lines: Vec<Vec<wit::Span>>) -> wasmtime::Result<u64> {
+        if lines.len() > 15 {
+            wasmtime::bail!("a sidebar has at most 15 lines");
+        }
+        self.effect(EffectKind::Sidebar { to: from_wit_uuid(to), title: spans(title), lines: lines.into_iter().map(spans).collect() })
+    }
+
+    fn clear_sidebar(&mut self, to: wit::Uuid) -> wasmtime::Result<u64> {
+        self.effect(EffectKind::ClearSidebar { to: from_wit_uuid(to) })
+    }
+
+    fn bossbar(
+        &mut self,
+        to: wit::Uuid,
+        id: String,
+        text: Vec<wit::Span>,
+        progress: f32,
+        color: wit::BossColor,
+        style: wit::BossStyle,
+    ) -> wasmtime::Result<u64> {
+        if id.is_empty() || id.len() > 64 {
+            wasmtime::bail!("a boss bar id is 1 to 64 bytes");
+        }
+        let id = self.owned(&id);
+        self.effect(EffectKind::Bossbar {
+            to: from_wit_uuid(to),
+            id,
+            text: spans(text),
+            progress: if progress.is_finite() { progress.clamp(0.0, 1.0) } else { 0.0 },
+            color: color as u8,
+            style: style as u8,
+        })
+    }
+
+    fn clear_bossbar(&mut self, to: wit::Uuid, id: String) -> wasmtime::Result<u64> {
+        let id = self.owned(&id);
+        self.effect(EffectKind::ClearBossbar { to: from_wit_uuid(to), id })
+    }
+}
+
+impl kiln::api::players::Host for HostState {
+    fn teleport(&mut self, who: wit::Uuid, level: u32, x: f64, y: f64, z: f64, yaw: f32, pitch: f32) -> wasmtime::Result<u64> {
+        if level as usize >= self.shared.registries.levels.len() {
+            wasmtime::bail!("unknown level {level}");
+        }
+        if ![x, y, z, yaw as f64, pitch as f64].iter().all(|v| v.is_finite()) || x.abs() > 3.0e7 || z.abs() > 3.0e7 || y.abs() > 2.0e7 {
+            wasmtime::bail!("teleport target out of range");
+        }
+        self.effect(EffectKind::Teleport { who: from_wit_uuid(who), level, pos: [x, y, z], rot: [yaw, pitch] })
+    }
+
+    fn set_game_mode(&mut self, who: wit::Uuid, mode: wit::GameMode) -> wasmtime::Result<u64> {
+        self.effect(EffectKind::GameMode { who: from_wit_uuid(who), mode: mode as u8 })
+    }
+
+    fn heal(&mut self, who: wit::Uuid) -> wasmtime::Result<u64> {
+        self.effect(EffectKind::Heal { who: from_wit_uuid(who) })
+    }
+
+    fn kick(&mut self, who: wit::Uuid, reason: Vec<wit::Span>) -> wasmtime::Result<u64> {
+        self.effect(EffectKind::Kick { who: from_wit_uuid(who), reason: spans(reason) })
+    }
+}
+
+impl kiln::api::inventory::Host for HostState {
+    fn give(&mut self, who: wit::Uuid, stack: wit::ItemStack) -> wasmtime::Result<u64> {
+        let item = self.item_spec(stack)?;
+        self.effect(EffectKind::Give { who: from_wit_uuid(who), item })
+    }
+
+    fn take(&mut self, who: wit::Uuid, item: String, count: u32) -> wasmtime::Result<u64> {
+        if count == 0 || count > 36 * 64 || item.len() > 128 {
+            wasmtime::bail!("bad item count or key");
+        }
+        self.effect(EffectKind::Take { who: from_wit_uuid(who), item, count })
+    }
+
+    fn clear(&mut self, who: wit::Uuid) -> wasmtime::Result<u64> {
+        self.effect(EffectKind::Clear { who: from_wit_uuid(who) })
+    }
+
+    fn open_menu(&mut self, who: wit::Uuid, spec: wit::MenuSpec) -> wasmtime::Result<u64> {
+        if spec.rows == 0 || spec.rows > 6 || spec.id.is_empty() || spec.id.len() > 64 {
+            wasmtime::bail!("a menu has 1 to 6 rows and an id of 1 to 64 bytes");
+        }
+        let mut items = Vec::with_capacity(spec.items.len());
+        for it in spec.items {
+            if it.slot as usize >= spec.rows as usize * 9 {
+                wasmtime::bail!("menu slot {} is outside {} rows", it.slot, spec.rows);
+            }
+            items.push((it.slot, self.item_spec(it.stack)?));
+        }
+        let menu = MenuSpec { id: self.owned(&spec.id), title: spans(spec.title), rows: spec.rows, items };
+        self.effect(EffectKind::OpenMenu { who: from_wit_uuid(who), menu })
+    }
+
+    fn set_slot(&mut self, who: wit::Uuid, menu: String, slot: u8, stack: Option<wit::ItemStack>) -> wasmtime::Result<u64> {
+        let item = stack.map(|s| self.item_spec(s)).transpose()?;
+        let menu = self.owned(&menu);
+        self.effect(EffectKind::SetSlot { who: from_wit_uuid(who), menu, slot, item })
+    }
+
+    fn close_menu(&mut self, who: wit::Uuid) -> wasmtime::Result<u64> {
+        self.effect(EffectKind::CloseMenu { who: from_wit_uuid(who) })
+    }
+}
+
+impl kiln::api::entities::Host for HostState {
+    fn spawn(&mut self, spec: wit::SpawnSpec) -> wasmtime::Result<wit::Uuid> {
+        if spec.level as usize >= self.shared.registries.levels.len() {
+            wasmtime::bail!("unknown level {}", spec.level);
+        }
+        let (x, y, z) = spec.pos;
+        if ![x, y, z, spec.yaw as f64].iter().all(|v| v.is_finite()) || x.abs() > 3.0e7 || z.abs() > 3.0e7 || y.abs() > 2.0e7 || spec.kind.len() > 128 {
+            wasmtime::bail!("spawn position out of range");
+        }
+        if self.frame()?.effects.len() >= MAX_EFFECTS {
+            wasmtime::bail!("too many effects in one call");
+        }
+        // A version-4 uuid derived from the call: known to the plugin at once, the same on
+        // every run.
+        let (hi, _) = self.derive();
+        let (lo, _) = self.derive();
+        let uuid = (((mix(hi) & !0xf000) | 0x4000) as u128) << 64 | ((mix(lo) & 0x3fff_ffff_ffff_ffff) | 0x8000_0000_0000_0000) as u128;
+        let (ticket, _) = self.new_id();
+        let spec = SpawnSpec {
+            kind: spec.kind,
+            level: spec.level,
+            pos: [x, y, z],
+            yaw: spec.yaw,
+            name: spec.name.map(spans),
+            no_ai: spec.no_ai,
+            invulnerable: spec.invulnerable,
+            silent: spec.silent,
+            no_gravity: spec.no_gravity,
+            uuid,
+        };
+        self.frame.effects.push((ticket, EffectKind::Spawn(spec)));
+        Ok(wit_uuid(uuid))
+    }
+
+    fn remove(&mut self, level: u32, id: wit::Uuid) -> wasmtime::Result<u64> {
+        self.effect(EffectKind::Remove { level, uuid: from_wit_uuid(id) })
+    }
+}
+
+impl kiln::api::blocks::Host for HostState {
+    fn set_blocks(&mut self, cell: u64, level: u32, changes: Vec<wit::BlockChange>) -> wasmtime::Result<Result<u64, wit::EditError>> {
+        let generation = self.generation;
+        let cell = self.frame()?.resolve_cell(generation, cell)?;
+        if level as usize >= self.shared.registries.levels.len() || level != cell.dim {
+            return Ok(Err(wit::EditError::UnknownLevel));
+        }
+        if changes.len() > MAX_BLOCK_CHANGES {
+            return Ok(Err(wit::EditError::TooMany));
+        }
+        let mut out = Vec::with_capacity(changes.len());
+        for c in changes {
+            if c.x >> 7 != cell.x || c.z >> 7 != cell.z {
+                return Ok(Err(wit::EditError::OutsideCell));
+            }
+            if c.state.is_empty() || c.state.len() > 256 {
+                return Ok(Err(wit::EditError::BadState));
+            }
+            out.push(BlockChange { pos: [c.x, c.y, c.z], state: c.state });
+        }
+        self.effect(EffectKind::SetBlocks { level, changes: out }).map(Ok)
+    }
+}
+
+impl kiln::api::events::Host for HostState {
+    fn raise(&mut self, name: String, payload: Vec<u8>, actor: Option<u64>) -> wasmtime::Result<wit::Decision> {
+        let generation = self.generation;
+        let f = self.frame()?;
+        if name.is_empty() || name.len() > 64 || payload.len() > 1 << 16 {
+            wasmtime::bail!("an event name is 1 to 64 bytes, a payload at most 64 KiB");
+        }
+        let actor = match actor {
+            Some(h) => {
+                let i = f.player_index(generation, h)?;
+                Some((f.players[i], f.operators[i], f.player_name(i).to_owned(), f.infos[i]))
+            }
+            None => None,
+        };
+        // Depth one: a handler of a raised event has no peers lent, so it raises into nothing.
+        let Some(mut peers) = self.peers.take() else { return Ok(wit::Decision::Allow) };
+        let ev = crate::CustomEvent { name: self.owned(&name), source: self.id.clone(), payload, source_index: self.plugin };
+        let source = self.frame.source;
+        let verdict = crate::dispatch_custom(&mut peers, &self.shared, &ev, actor.as_ref().map(|(u, o, n, i)| (*u, *o, n.as_str(), i)), source);
+        self.peers = Some(peers);
+        Ok(match verdict {
+            crate::Verdict::Allow => wit::Decision::Allow,
+            crate::Verdict::Deny(_) => wit::Decision::Deny,
+        })
     }
 }
 
@@ -425,6 +740,10 @@ impl kiln::api::log::Host for HostState {
     }
     fn warn(&mut self, msg: String) -> wasmtime::Result<()> {
         tracing::warn!("[{}] {msg}", self.id);
+        Ok(())
+    }
+    fn error(&mut self, msg: String) -> wasmtime::Result<()> {
+        tracing::error!("[{}] {msg}", self.id);
         Ok(())
     }
 }
@@ -455,10 +774,10 @@ pub(crate) fn from_wit_uuid(u: wit::Uuid) -> u128 {
     ((u.hi as u128) << 64) | u.lo as u128
 }
 
-/// Links what the manifest grants: `state`, `env`, `registry` and `log` always, `chat` with
-/// `player.message`, `scheduler` with `scheduler`, and WASI (no environment, no preopens
+/// Links what the manifest grants: `state`, `event`, `env`, `registry` and `log` always,
+/// the effect interfaces with their capabilities, and WASI (no environment, no preopens
 /// unless `fs.data`, no sockets).
-pub(crate) fn linker(engine: &wasmtime::Engine, chat: bool, scheduler: bool) -> anyhow::Result<Linker<HostState>> {
+pub(crate) fn linker(engine: &wasmtime::Engine, manifest: &Manifest) -> anyhow::Result<Linker<HostState>> {
     let mut linker = Linker::new(engine);
     wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
     kiln::api::state::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
@@ -466,11 +785,29 @@ pub(crate) fn linker(engine: &wasmtime::Engine, chat: bool, scheduler: bool) -> 
     kiln::api::env::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
     kiln::api::registry::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
     kiln::api::log::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
-    if chat {
+    if manifest.has(Capability::PlayerMessage) {
         kiln::api::chat::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
     }
-    if scheduler {
+    if manifest.has(Capability::Scheduler) {
         kiln::api::scheduler::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
+    }
+    if manifest.has(Capability::PlayerHud) {
+        kiln::api::hud::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
+    }
+    if manifest.has(Capability::PlayerControl) {
+        kiln::api::players::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
+    }
+    if manifest.has(Capability::Inventory) {
+        kiln::api::inventory::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
+    }
+    if manifest.has(Capability::EntityControl) {
+        kiln::api::entities::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
+    }
+    if manifest.has(Capability::WorldWrite) {
+        kiln::api::blocks::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
+    }
+    if manifest.has(Capability::EventsRaise) {
+        kiln::api::events::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
     }
     Ok(linker)
 }
@@ -534,6 +871,7 @@ pub(crate) fn new_store(
         shared,
         frame: Frame::default(),
         active: false,
+        peers: None,
     };
     let mut store = Store::new(engine, state);
     store.limiter(|s| &mut s.limits);
