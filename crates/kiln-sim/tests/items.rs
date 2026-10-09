@@ -737,3 +737,36 @@ fn the_riptide_spin_ends_against_a_wall_unless_something_else_is_touched() {
     w.ticks(1);
     assert!(w.sim.spin_ticks(1).is_some_and(|t| t > 10), "an item in the way keeps the spin going: {:?}", w.sim.spin_ticks(1));
 }
+
+#[test]
+fn a_dispenser_puts_armor_on_the_player_in_front_of_it() {
+    let mut w = World::new("survival");
+    // The player's block, the dispenser east of it facing it, and a redstone block on top.
+    let feet = [w.ground[0], w.ground[1] + 1, w.ground[2]];
+    w.run(&format!("tp User {} {} {}", feet[0] as f64 + 0.5, feet[1], feet[2] as f64 + 0.5));
+    w.ticks(2);
+    w.set([feet[0] + 1, feet[1], feet[2]], "minecraft:dispenser[facing=west]{Items:[{Slot:0b,id:\"minecraft:iron_helmet\",count:2}]}");
+    w.set([feet[0] + 1, feet[1] + 1, feet[2]], "minecraft:redstone_block");
+    w.ticks(8);
+    let inv = w.sim.inventory(1).unwrap();
+    let helmet = kiln_data::builtin_id("minecraft:item", "minecraft:iron_helmet").unwrap();
+    assert_eq!(inv[5], Some((helmet, 1)), "worn on the head");
+}
+
+#[test]
+fn a_dispenser_shears_the_sheep_in_front_of_it() {
+    if !have_datapack() {
+        eprintln!("skipped: no vanilla datapack (set KILN_DATAPACK)");
+        return;
+    }
+    let mut w = World::new("survival");
+    let at = [w.ground[0] + 4, w.ground[1] + 1, w.ground[2]];
+    w.set([at[0] + 1, at[1], at[2]], "minecraft:dispenser[facing=west]{Items:[{Slot:0b,id:\"minecraft:shears\",count:1}]}");
+    w.run(&format!("summon minecraft:sheep {} {} {} {{NoAI:1b,Color:0b,PersistenceRequired:1b}}", at[0] as f64 + 0.5, at[1], at[2] as f64 + 0.5));
+    w.set([at[0] + 1, at[1] + 1, at[2]], "minecraft:redstone_block");
+    w.ticks(10);
+    let wool = w.sim.entity_nbt().into_iter().filter(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some("minecraft:item")).count();
+    assert!(wool >= 1, "wool dropped");
+    let sheep = w.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some("minecraft:sheep")).expect("the sheep");
+    assert_eq!(sheep.get("Sheared").and_then(kiln_proto::nbt::Tag::as_i64), Some(1), "sheared");
+}
