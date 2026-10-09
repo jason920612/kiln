@@ -111,6 +111,7 @@ mod trading;
 mod leash;
 mod trader;
 mod village;
+mod display_text;
 mod waypoints;
 mod weather;
 mod world_state;
@@ -3748,6 +3749,7 @@ impl Sim {
         self.tick_waypoints();
         lap(&mut self.stats, "g.waypoints");
         self.tick_raids();
+        self.resolve_display_texts();
         self.tick_dragon_fight();
         lap(&mut self.stats, "g.raids_dragon");
         // `save-all` asks for a save; `save-off` stops the autosave.

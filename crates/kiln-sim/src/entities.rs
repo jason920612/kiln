@@ -3146,6 +3146,7 @@ fn carry_out(
         // (pressure plates are pressed through the entity boxes) are not simulated yet.
         Event::GameEvent { .. } | Event::EntityInsideBlock { .. } | Event::ProjectileHit { .. } => {}
         Event::Raid(ev) => level.blocks.raid_events.push(ev),
+        Event::ResolveText { uuid, text, .. } => level.blocks.text_requests.push((uuid, text)),
         // `ServerLevel.globalLevelEvent`: with `global_sound_events` every player (here: of the
         // region) hears it, from where it is heard best within 32 blocks of them; without, only
         // the players within 64 blocks of it, as an ordinary level event.

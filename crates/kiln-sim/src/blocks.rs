@@ -49,6 +49,8 @@ pub(crate) struct RegionBlocks {
     pub containers: crate::container::Containers,
     /// Raider news for the level's raids, until the next raid tick takes them.
     pub raid_events: Vec<kiln_entity::level::RaidEvent>,
+    /// Texts of display entities that wait to be resolved: (entity uuid, text).
+    pub text_requests: Vec<(u128, kiln_proto::nbt::Tag)>,
     /// Hives whose nearby bees take a player as their target (`BeehiveBlock.angerNearbyBees`),
     /// for the region, which has the entities.
     pub bee_anger: Vec<BlockPos>,
@@ -77,6 +79,7 @@ impl Default for RegionBlocks {
             generated: Vec::new(),
             containers: Default::default(),
             raid_events: Vec::new(),
+            text_requests: Vec::new(),
             bee_anger: Vec::new(),
             sculk: Default::default(),
             hearts: Default::default(),
@@ -208,6 +211,7 @@ impl RegionPart for RegionBlocks {
         into.sub_tick = into.sub_tick.max(from.sub_tick);
         into.containers.merge(std::mem::take(&mut from.containers));
         into.raid_events.append(&mut from.raid_events);
+        into.text_requests.append(&mut from.text_requests);
         into.bee_anger.append(&mut from.bee_anger);
         into.sculk.merge(std::mem::take(&mut from.sculk));
         into.hearts.merge(std::mem::take(&mut from.hearts));
@@ -252,6 +256,7 @@ impl RegionPart for RegionBlocks {
             self.containers.split_into(&mut containers, |c| owner((c.x, c.z)));
         }
         parts[0].raid_events = std::mem::take(&mut self.raid_events);
+        parts[0].text_requests = std::mem::take(&mut self.text_requests);
         parts[0].bee_anger = std::mem::take(&mut self.bee_anger);
         {
             let mut sculk: SmallVec<[&mut crate::sculk::Sculk; 4]> = parts.iter_mut().map(|p| &mut p.sculk).collect();

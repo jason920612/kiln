@@ -75,6 +75,35 @@ pub enum Content {
 pub struct DisplayEntity {
     pub common: Common,
     pub content: Content,
+    /// A text with selectors or scores in it, as read, until the simulation has resolved it (the text shown is empty
+    /// meanwhile, and what is saved is this).
+    pub unresolved: Option<Tag>,
+    /// The request for its resolution has been made.
+    asked: bool,
+}
+
+/// Whether a text component has contents that need the level to be turned into text.
+fn needs_resolving(text: &Tag) -> bool {
+    use kiln_command::component::{Component, Contents, TranslateArg};
+    fn walk(c: &Component) -> bool {
+        let own = match &c.content {
+            Contents::Selector { .. } | Contents::Score { .. } | Contents::Nbt(_) => true,
+            Contents::Translate { with, .. } => with.iter().any(|a| matches!(a, TranslateArg::Component(c) if walk(c))),
+            _ => false,
+        };
+        own || c.extra.iter().any(walk)
+    }
+    kiln_command::component::decode(text).is_ok_and(|c| walk(&c))
+}
+
+/// The text of display `e` is `text` (the simulation resolved it).
+pub fn set_text(e: &mut Entity, text: Tag) {
+    if let Some(d) = crate::ext_entity::get_mut::<DisplayEntity>(e) {
+        if let Content::Text { text: t, .. } = &mut d.content {
+            *t = text;
+        }
+        d.unresolved = None;
+    }
 }
 
 /// Whether `name` is a display entity type.
@@ -248,15 +277,29 @@ pub fn load(name: &str, r: &mut Input) -> Option<Box<dyn EntityExt>> {
             Content::Text { text, line_width, background, opacity, flags }
         }
     };
-    Some(Box::new(DisplayEntity { common: c, content }))
+    // `ComponentUtils.resolve` at load: a text that needs the level to be resolved waits for the simulation.
+    let mut content = content;
+    let mut unresolved = None;
+    if let Content::Text { text, .. } = &mut content
+        && needs_resolving(text)
+    {
+        unresolved = Some(std::mem::replace(text, Tag::String(String::new())));
+    }
+    Some(Box::new(DisplayEntity { common: c, content, unresolved, asked: false }))
 }
 
 impl EntityExt for DisplayEntity {
     crate::entity_ext_boilerplate!();
 
     /// `Display.tick`: a display leaves a vehicle that is gone.
-    fn tick(&mut self, e: &mut Entity, _level: &mut dyn EntityLevel) {
-        let _ = e;
+    fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {
+        // A text waiting to be resolved asks for it once.
+        if !self.asked
+            && let Some(text) = &self.unresolved
+        {
+            self.asked = true;
+            level.emit(crate::level::Event::ResolveText { entity: e.id, uuid: e.uuid, text: text.clone() });
+        }
     }
 
     fn save(&self, _e: &Entity, o: &mut Output) {
@@ -291,7 +334,7 @@ impl EntityExt for DisplayEntity {
                 o.put("item_display", Tag::String(CONTEXTS[*context as usize % 10].into()));
             }
             Content::Text { text, line_width, background, opacity, flags } => {
-                o.put("text", text.clone());
+                o.put("text", self.unresolved.clone().unwrap_or_else(|| text.clone()));
                 o.put("line_width", Tag::Int(*line_width));
                 o.put("background", Tag::Int(*background));
                 o.put("text_opacity", Tag::Byte(*opacity));

@@ -104,7 +104,7 @@ fn data_entities_match_vanilla() {
         return;
     };
     let filter = std::env::var("KILN_PARITY_FILTER").ok();
-    let (mut ok, mut failed) = (0, Vec::new());
+    let (mut ok, mut failed, mut skipped) = (0, Vec::new(), 0);
     for line in text.lines() {
         let v: Value = serde_json::from_str(line).unwrap();
         let name = v["name"].as_str().unwrap();
@@ -122,6 +122,11 @@ fn data_entities_match_vanilla() {
             failed.push((name.to_owned(), errors));
             continue;
         };
+        // A text that needs the level (selectors, scores) is resolved by the simulation: `kiln-sim`'s display_text test.
+        if kiln_entity::ext_entity::display::get(&e).is_some_and(|d| d.unresolved.is_some()) {
+            skipped += 1;
+            continue;
+        }
         let mut saved = kiln_entity::persist::save(&e, &no_owner);
         if let Tag::Compound(f) = &mut saved {
             f.retain(|(k, _)| k != "UUID");
@@ -166,6 +171,6 @@ fn data_entities_match_vanilla() {
             eprintln!("  {e}");
         }
     }
-    eprintln!("entity nbt: {ok} passed, {} failed", failed.len());
+    eprintln!("entity nbt: {ok} passed, {} failed, {skipped} left to the simulation", failed.len());
     assert!(failed.is_empty(), "{} cases differ from vanilla", failed.len());
 }

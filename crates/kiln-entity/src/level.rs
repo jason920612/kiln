@@ -341,6 +341,9 @@ pub enum Event {
     Criterion { player: i32, criterion: Criterion },
     /// A raider's news for its raid.
     Raid(RaidEvent),
+    /// A text display whose text holds selectors or scores wants them resolved (`ComponentUtils.resolve` with the
+    /// display as the source, which the simulation answers with `display::set_text`).
+    ResolveText { entity: i32, uuid: u128, text: kiln_proto::nbt::Tag },
     /// What the ender dragon and end crystals tell the level's dragon fight.
     DragonFight(DragonFightEvent),
     /// `Level.globalLevelEvent` (the wither's spawn sound heard everywhere).

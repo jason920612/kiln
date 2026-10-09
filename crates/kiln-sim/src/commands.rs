@@ -111,7 +111,7 @@ impl PlayerRef {
     }
 
     /// A non-player entity in level `dim`.
-    fn of_entity(dim: usize, e: &crate::entities::Entity, scoreboard: &Scoreboard) -> Self {
+    pub(crate) fn of_entity(dim: usize, e: &crate::entities::Entity, scoreboard: &Scoreboard) -> Self {
         let key = e.uuid.to_string();
         let path = e.kind.name.strip_prefix("minecraft:").unwrap_or(e.kind.name);
         let (rot, eye, alive) = match &e.phys {
