@@ -120,15 +120,13 @@ pub fn passenger_attachment(vehicle: &Entity, index: usize) -> Vec3 {
 }
 
 /// `EntityAttachments.getAverage(PASSENGER)` of `vehicle`: where its passenger point is, before it turns with the vehicle.
-pub fn passenger_attachment_unrotated(vehicle: &Entity) -> Vec3 {
-    if let EntityKind::Mob(m) = &vehicle.kind {
-        if let Some(v) = m.kind.ext().and_then(|k| k.passenger_offset_at(vehicle, m, 0)) {
-            return v;
-        }
-        let s = age_scale(vehicle) as f64;
-        if let Some((y, z)) = passenger_point(vehicle.type_name) {
-            return Vec3::new(0.0, y * s, z * s);
-        }
+pub fn passenger_attachment_unrotated(vehicle: &Entity, m: &crate::mob::MobData) -> Vec3 {
+    if let Some(v) = m.kind.ext().and_then(|k| k.passenger_offset_at(vehicle, m, 0)) {
+        return v;
+    }
+    let s = if m.baby() && !crate::mob::kinds::horse::is_equine(m.kind) { 0.5 } else { 1.0 };
+    if let Some((y, z)) = passenger_point(vehicle.type_name) {
+        return Vec3::new(0.0, y * s, z * s);
     }
     Vec3::new(0.0, vehicle.height as f64, 0.0)
 }

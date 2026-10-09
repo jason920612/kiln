@@ -257,7 +257,7 @@ fn shear_equipment(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
         }
         level.emit(Event::GameEvent { event: "minecraft:unequip", pos: e.position(), entity: Some(e.id) });
         level.emit(Event::GameEvent { event: "minecraft:shear", pos: e.position(), entity: Some(who.id) });
-        super::spawn_at(e.position() + crate::ride::passenger_attachment_unrotated(e), level, worn.clone(), 0.0);
+        super::spawn_at(e.position() + crate::ride::passenger_attachment_unrotated(e, m), level, worn.clone(), 0.0);
         if let Some(sound) = sound
             && !e.silent
         {
