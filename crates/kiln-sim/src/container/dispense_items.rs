@@ -131,7 +131,6 @@ fn spawn_egg(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, fac
     let off = if facing != Direction::Up { crate::mobs::align_offset(level, target, width) } else { 0.0 };
     let yaw = kiln_entity::mob::mth::wrap_degrees(rng.next_float() * 360.0);
     let env = level.env;
-    eprintln!("DBG egg difficulty {} monsters {} mobs {}", env.mobs.difficulty, env.mobs.spawn_monsters, env.mobs.spawn_mobs);
     let finalize = crate::mobs::Finalize::command(
         crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, 1.0),
         crate::mobs::loot_seed(env.seed, env.game_time, 0, (target.x as u64) << 32 ^ target.z as u64 ^ (target.y as u64) << 16),

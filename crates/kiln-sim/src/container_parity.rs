@@ -291,9 +291,6 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                 errors.push(format!("tick {tick} new entities: kiln {got}, vanilla {expected}"));
             }
         }
-        if std::env::var_os("KILN_DBG_ENTITIES").is_some() {
-            eprintln!("DBG tick {tick}: {:?}", sim.entity_nbt().iter().map(|t| t.get("id").and_then(Tag::as_str).unwrap_or("?").to_owned()).collect::<Vec<_>>());
-        }
         if line["track"].as_bool() == Some(true) {
             // `ContainerVectors`: every entity but items and players: type, position, motion and health (-1: not living).
             let mut got: Vec<(String, [f64; 3], [f64; 3], f64)> = Vec::new();

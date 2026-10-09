@@ -663,7 +663,7 @@ impl RegionWork<'_> {
                 bodies: &bodies,
                 actor: None,
             };
-            let any_player = !self.players.is_empty();
+            let any_player = self.players.iter().any(|p| p.game_mode != 3);
             let spawning = Instant::now();
             crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns, ctx);
             self.out.times[9] += spawning.elapsed();
