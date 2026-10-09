@@ -516,7 +516,7 @@ public class ContainerVectors {
                 .state(1, 0, 0).drops().entities().at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
         // Facing up and down, and a stack that runs out.
         out.add(new Scenario("dispenser_up_bone_meal_hits_nothing", 14).container(0, 0, 0, "minecraft:dispenser[facing=up]" + items(slot(0, "bone_meal", 1)))
-                .block(0, 1, 0, "minecraft:torchflower_crop[age=0]").state(0, 1, 0).drops().entities().at(2, "setblock ~1 ~0 ~0 minecraft:redstone_block"));
+                .block(0, 1, 0, "minecraft:stone").state(0, 1, 0).drops().entities().at(2, "setblock ~1 ~0 ~0 minecraft:redstone_block"));
         out.add(new Scenario("dispenser_last_flint_and_steel", 14).container(0, 0, 0, "minecraft:dispenser[facing=east]" + items(slot(0, "flint_and_steel", 1)))
                 .block(1, -1, 0, "minecraft:stone").state(1, 0, 0).drops().entities().at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
     }
