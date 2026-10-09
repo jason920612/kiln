@@ -2761,6 +2761,14 @@ public class InteractVectors {
         var data = (net.minecraft.world.level.storage.ServerLevelData) level.getLevelData();
         data.setGameTime(data.getGameTime() + 1);
         if (c.fullTicks) {
+            if (System.getenv("BRUSH_DEBUG") != null && level.getBlockEntity(new BlockPos(2, 99, 0)) instanceof net.minecraft.world.level.block.entity.BrushableBlockEntity bbe) {
+                try {
+                    System.out.println("BTICK " + c.name + " t " + level.getGameTime() + " count " + get(bbe, "brushCount") + " resets " + get(bbe, "brushCountResetsAtTick") + " cool " + get(bbe, "coolDownEndsAtTick")
+                            + " using " + (tickPlayer != null && tickPlayer.isUsingItem()) + " block " + level.getBlockState(new BlockPos(2, 99, 0)));
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            }
             try {
                 // `ServerLevel.tick`: the scheduled block ticks first, then the entities (the player's use of his item), then the block entities.
                 var blockTicks = (net.minecraft.world.ticks.LevelTicks<net.minecraft.world.level.block.Block>) level.getBlockTicks();
