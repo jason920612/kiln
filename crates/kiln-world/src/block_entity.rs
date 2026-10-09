@@ -39,7 +39,7 @@ fn update_rule(type_name: &str) -> UpdateTag {
         "mob_spawner" => UpdateTag::CustomWithout(&["SpawnPotentials"]),
         "campfire" => UpdateTag::Fields(&[("Items", true)]),
         "shelf" => UpdateTag::Fields(&[("Items", true), ("align_items_to_bottom", false)]),
-        "brushable_block" => UpdateTag::Fields(&[("item", false)]),
+        "brushable_block" => UpdateTag::Fields(&[("hit_direction", false), ("item", false)]),
         "vault" => UpdateTag::Fields(&[("shared_data", false)]),
         "trial_spawner" => UpdateTag::TrialSpawner,
         _ => UpdateTag::Empty,
@@ -121,6 +121,10 @@ impl BlockEntity {
             _ => Vec::new(),
         };
         fields.retain(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z"));
+        // (A suspicious block's `hit_direction` is for the clients' update tag only.)
+        if type_name(self.kind) == "minecraft:brushable_block" {
+            fields.retain(|(k, _)| k != "hit_direction");
+        }
         let mut out = Vec::with_capacity(fields.len() + 4);
         out.push(("id".to_owned(), Tag::String(type_name(self.kind).to_owned())));
         out.push(("x".to_owned(), Tag::Int(pos[0])));

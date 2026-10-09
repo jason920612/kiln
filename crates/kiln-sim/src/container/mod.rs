@@ -508,6 +508,16 @@ impl ContainerBe {
         Tag::Compound(out)
     }
 
+    /// The chunk's copy of the block entity: the saved form, and what only clients are told (a suspicious block's
+    /// `hit_direction`, which the chunk's saved form leaves out).
+    pub fn chunk_tag(&self) -> Tag {
+        let mut tag = self.save();
+        if let (Tag::Compound(fields), Some(hit)) = (&mut tag, self.brushable.as_ref().and_then(|b| b.hit)) {
+            fields.push(("hit_direction".into(), Tag::Byte(hit as i8)));
+        }
+        tag
+    }
+
     fn item_list(&self) -> ItemList {
         ItemList { stacks: self.items.clone(), undecoded: self.undecoded.clone() }
     }
@@ -779,7 +789,7 @@ impl Containers {
                 continue;
             }
             let mut be = BlockEntity::new(c.type_id);
-            if let (Tag::Compound(out), Tag::Compound(fields)) = (&mut be.nbt, c.save()) {
+            if let (Tag::Compound(out), Tag::Compound(fields)) = (&mut be.nbt, c.chunk_tag()) {
                 out.extend(fields);
             }
             chunk.set_block_entity(x, p.y, z, be);

@@ -105,6 +105,8 @@ fn brush(level: &mut RegionLevel, pos: BlockPos, face: Direction, p: &mut Player
     let before = completion(b.count);
     b.count += 1;
     let count = b.count;
+    // (The chunk's copy is what clients are sent with the block update.)
+    crate::container::open::sync_chunk_copy(level, pos);
     if count >= REQUIRED_BRUSHES {
         completed(level, pos, spawns);
         return true;
@@ -222,15 +224,19 @@ pub(crate) fn check_reset(level: &mut RegionLevel, pos: BlockPos, s: u16) {
         b.resets_at = now + 4;
     }
     let again = b.count != 0;
-    if b.count == 0 {
-        b.hit = None;
-        b.resets_at = 0;
-        b.cooldown_ends = 0;
-    }
+    let cleared = b.count == 0;
     let mut s = s;
     if let Some(d) = set_dusted {
         s = state::set_int(s, "dusted", d);
+        // (The update that shows it still carries the direction.)
+        crate::container::open::sync_chunk_copy(level, pos);
         kiln_blocks::set_block_and_update(level, pos, s);
+    }
+    if cleared && let Some(b) = level.blocks.containers.get_mut(pos).and_then(|c| c.brushable.as_mut()) {
+        b.hit = None;
+        b.resets_at = 0;
+        b.cooldown_ends = 0;
+        crate::container::open::sync_chunk_copy(level, pos);
     }
     if again {
         schedule_block_tick(level, pos, BlockId::of(s), 2, TickPriority::Normal);

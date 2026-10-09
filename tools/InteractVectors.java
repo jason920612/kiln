@@ -2377,6 +2377,7 @@ public class InteractVectors {
         p.setGameMode(GameType.byName(c.gameMode));
         call(p.connection, "markClientLoaded");
         p.snapTo(c.pos[0], c.pos[1], c.pos[2], c.yaw, c.pitch);
+        if (c.fullTicks) settleRotation(p);
         p.setDeltaMovement(Vec3.ZERO);
         p.setOnGround(true);
         p.fallDistance = 0.0;

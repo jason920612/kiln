@@ -357,7 +357,7 @@ impl RegionWork<'_> {
             }
             let bodies = Vec::new();
             let mut out = BlockOut::default();
-            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: Some(self.players[i].conn) };
             crate::brush::use_tick(&mut *self.players[i], &mut level, ticks, &mut self.out.spawns);
             blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
         }
