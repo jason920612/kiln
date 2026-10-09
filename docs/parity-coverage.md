@@ -147,7 +147,7 @@
 | 銅氧化與其他風化銅 | A | 14 | `misc` 的 13 個銅 scenario（`ChangeOverTimeBlock` 掃描與機率、門的下半、箱與大箱的兩半互相跟隨） |  |
 | 海龜蛋、紅石礦、紫水晶、滴水石、乾燥的哈氣、硫磺 | A | 9 | `misc` 44 個 scenario（生長、掉落、滴水、鍋釜、泥） | 模擬端讓身體壓到絆線與海龜蛋 |
 | 珊瑚、海綿、鷹架、絆線與鉤、目標方塊、大型垂葉 | A | 13 | `wet` 7＋`misc` 的絆線、目標、垂葉、銅燈 scenario | 鷹架塌落的實體部分為 C |
-| 刷怪磚、試煉刷怪磚、寶庫 | A | 3 | 刷怪磚：mob_parity 的 `spawner_` 49 個 scenario（延遲、潛在生成物與權重、範圍、上限、光線與自訂規則、生怪蛋、`spawner_blocks_work`、亂數與存檔）；試煉刷怪磚 `interact_parity` `trial_` 14 個、寶庫 `vault_` 19 個 scenario（wp49，見 6.3） | 試煉刷怪磚的怪物由 level 亂數決定的部分（出現位置）靠給定位置避開；不祥試煉的 mob 組合只用 datapack 設定檢查 |
+| 刷怪磚、試煉刷怪磚、寶庫 | A | 3 | 刷怪磚：mob_parity 的 `spawner_` 49 個 scenario（延遲、潛在生成物與權重、範圍、上限、光線與自訂規則、生怪蛋、`spawner_blocks_work`、亂數與存檔）；試煉刷怪磚 `interact_parity` `trial_` 14 個、寶庫 `vault_` 19 個 scenario（wp49，見 6.3） | 試煉刷怪磚的怪物位置由 level 亂數決定，向量用給定位置避開；不祥試煉的物品實體（`ominous_item_spawner`）沒做 |
 | 告示牌、懸掛式告示牌 | A | 4 | `interact_parity` 的 sign／equip／book／pick 共 409 個 scenario（編輯與編輯鎖、染色、上蠟、螢光墨囊、點擊事件、牆上與懸掛式放置） | 懸掛告示牌的存活（支撐消失會掉）未模擬 |
 | 營火、蜂巢、鐘、講台、裝飾陶罐、書架（雕紋）、合成器、製圖台 | A | 8 | wp49：`interact_parity` 的營火＋陶罐＋書架 `b49` 67、鐘 76、蜂巢 22、講台 22、合成器 99、陶罐 44、製圖台與地圖 21；`container_parity` 的營火 6、蜂巢 6、講台 10、陶罐 14、合成器 26（見 6.3） | 原清單中的擱板（shelf）與潛影導管沒有獨立向量（未驗證，沿用 C） |
 | 指令方塊（普通、連鎖、重複；條件式）、結構方塊、拼圖方塊 | 指令方塊 A／結構與拼圖方塊 D | 3 | wp49：`interact_parity` 的指令方塊 46 個＋`container_parity` 的 `cmdblock` 24 個 scenario（執行、條件、連鎖、重複、紅石、自動、`command_block_output`、礦車指令方塊） | 結構方塊、拼圖方塊只存 NBT；封包被丟棄 |
@@ -246,7 +246,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 自然生成規則（上限、範圍、洗牌、放置規則） | C | `tests/mobs.rs`；分區後用每 chunk 隨機是設計的 I 類偏差；33 個類型有放置規則，strider 無放置規則 |
 | 生成後初始化（裝備、騎乘者、附魔） | A | `finalize_parity`：13＋10 種 |
 | 刷怪磚、試煉刷怪磚、結構生怪覆寫 | A（不祥試煉的物品生成實體除外） | 刷怪磚：`spawner_`＋`cavespider_` 49 個 scenario（49,494 個狀態相同）；試煉刷怪磚 14 個 scenario（`interact_parity`）；結構覆寫：`NaturalSpawner.mobsAt` 取樣 23,073 個位置、184,584 張清單相同（要塞、堡壘、沼澤小屋、神殿、哨站、試煉空間、古城…） |
-| 世界產生時的初始動物 | A* | wp49：`InitialMobVectors.java` 7 個世界、101 個區塊，Kiln 在區塊產生時放的動物（含 `isValidSpawn` 逐種放置條件）逐隻相符；原版的結果依區塊產生順序，測試以量測到的容許度比對（`tests/initial_mobs.rs`） |
+| 世界產生時的初始動物 | A\* | wp49：`InitialMobVectors.java` 7 個世界（每個 169 個區塊的窗口）；Kiln 在區塊產生時放的動物（含 `isValidSpawn` 逐種放置條件）有 161 隻原版的動物中 114 隻位置與朝向逐位元相同，其餘落在原版自己的順序相依範圍內（原版的結果取決於區塊產生的順序，測試以重跑原版量到的容許度比對，`tests/initial_mobs.rs`） |
 | 掉落 | A（表）／C（流程） | loot 114 張實體表 A；死亡流程、looting、熟食、XP 為 C |
 | 繁殖、馴服 | A | 繁殖向量涵蓋 18 種；馴服 4 種 |
 | 轉換 | A／C | 殭屍→溺屍、屍殼→殭屍、骷髏→流浪者、村民→殭屍村民、疣豬→僵屍疣豬、蝌蚪→青蛙為 A；豬布林→殭屍豬布林、雷擊轉換為 C |
@@ -260,7 +260,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 物品實體物理、經驗球、點燃 TNT、掉落方塊、箭、雪球、珍珠、閃電以外的投射物、末影之眼 | A | 1,241 個 scenario（`entity_parity`，舊檔 951；末影之眼 40 個） | 磁吸、撿起延遲、爆炸對生物的傷害為 C。玩家的矛與拳頭打偏火球與風彈（wp41，`stab_projectile`、`melee_projectile`）與生物推船與礦車（`push_*` 76 個 scenario）為 A |
 | 船（含箱子船）、礦車（含貨運）、煙火 | A（commit 記 24＋22／72＋84／16） | 存檔缺（`work/wp4-entities` 過期） | 氣泡柱不作用於船 |
 | 閃電、經驗瓶、玩家被噴到的藥水、area effect cloud（龍息） | C／A\* | – | – |
-| 畫、展示框、盔甲座、display（方塊／物品／文字）、interaction、marker | A | wp49：`interact_parity` 的 `frames_` 55、`stand_` 142、`mframe_` 2 個 scenario；`entity_nbt` 127 個（`EntityNbtVectors.java`：原版載入並存出的 NBT 與 Kiln 逐欄相同） | 文字顯示的選擇器與分數解析在模擬端做，向量只比存檔欄位 |
+| 畫、展示框、盔甲座、display（方塊／物品／文字）、interaction、marker | A | wp49：`interact_parity` 的 `frames_` 55、`stand_` 142、`mframe_` 2 個 scenario；`entity_nbt` 127 個（`EntityNbtVectors.java`：原版載入並存出的 NBT 與 Kiln 逐欄相同的 122 個，5 個留給模擬端） | 文字顯示的選擇器與分數解析在模擬端做，向量只比存檔欄位 |
 | 風彈（玩家丟出與發射器射出的 `wind_charge`）、被拋射物打中的載具／盔甲座／畫 | A | wp49：`container_parity` 的 `wind_` 27 個 scenario（牆、地板、各種生物、載具、離開載入範圍） | 拋射物對 `#redirectable_projectile` 與 `BlockAttachedEntity` 的撞擊判定補齊（`Entity.canBeHitByProjectile`） |
 | mannequin、cushion、ominous_item_spawner | **D** | 0 | 存檔以 NBT 保留但不模擬、client 看不到、`/summon` 失敗；不祥試煉刷怪磚的物品雨因此缺 |
 | 實體存檔（entities/*.mca） | B | – | `entity_persist_check.py`（原版載入 Kiln 存檔 64/64、35/35） |
@@ -401,14 +401,14 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 | 海豚、巨人、快樂恐懼魔 | `Dolphin`（全部 goal 與換氣、躍出）、`Giant`、`HappyGhast`（成長、harness、呼吸、跟隨）；`ForNonPathfinders` goal 與年齡邊界掛鉤 | 27／4／20 | `mob_parity` |
 | 銅傀儡 | 在箱子之間搬運（`TransportItemsBetweenContainers`：來源銅箱、目的普通箱、開關音效與開啟者計數）、風化與雕像、蠟與斧、雷擊、與鐵傀儡的送花（`OfferFlowerGoal`）、銅塊＋南瓜建造；雕像方塊的姿勢切換與斧 | 34＋雕像互動 14 | `mob_parity`、`interact_parity` |
 | 硫磺方塊 | 12 種原型（彈性、摩擦、空氣阻力、爆炸擊退抗性、接觸傷害、是否浮在液體上）、吞物與吐出、餵食與分裂、TNT 原型的引信與爆炸、水中的行為；新屬性 `bounciness`、`explosion_knockback_resistance` | 29 | `mob_parity` |
-| 資料實體 | `block_display`、`item_display`、`text_display`（含選擇器與分數解析）、`interaction`、`marker`、畫、展示框與發光展示框、盔甲座 | `entity_nbt` 127、展示框 55、盔甲座 142 | `entity_nbt.rs`、`interact_parity` |
+| 資料實體 | `block_display`、`item_display`、`text_display`（含選擇器與分數解析）、`interaction`、`marker`、畫、展示框與發光展示框、盔甲座 | `entity_nbt` 127（122 逐欄相同、5 個留給模擬端）、展示框 55、盔甲座 142 | `entity_nbt.rs`、`interact_parity` |
 | 方塊實體與方塊 | 營火烹飪、蜂巢、鐘、講台、裝飾陶罐、雕紋書架、合成器、製圖台與地圖（`MapItemSavedData`、探索地圖、旗幟、展示框地圖）、試煉刷怪磚、寶庫、指令方塊（普通、連鎖、重複、條件式、礦車）、日光感測器、蛋糕與蠟燭蛋糕、刷子與可刷方塊、氣泡柱 | interact 799（`interact49` 18 檔）、container 247（`container49` 12 檔）、bubble 6、explore 11 | `interact_parity`、`container_parity`、`block_parity`、`exploration_map_parity` |
 | 發射器 | 骨粉、打火石、蜂蜜與玻璃瓶、發光石、TNT、潛影盒、船、礦車、盔甲座、全部拋射物（箭、藥水箭、光靈箭、雪球、蛋、藥水、經驗瓶、煙火、火焰彈、風彈）、水／岩漿／粉雪桶與生物桶（魚、蠑螈、蝌蚪、硫磺方塊）、生怪蛋、南瓜與凋零頭顱的傀儡建造、穿裝備（盔甲座、玩家、拾取戰利品的生物、馬鞍與馬鎧、熾足獸鞍）、箱子上驢羊駝、硫磺方塊吞物、剪雪人／哞菇／羊／bogged | 100 | `container_parity`（`dispenser`） |
 | 玩家風彈 | `minecraft:wind_charge` 實體（半徑 1.2、擊退乘 1.22、5 tick 內不可被偏轉）、`WindChargeItem.use`、發射器射出；爆炸的 `explosion_knockback_resistance`；拋射物能打中礦車、船、盔甲座、畫與展示框、火球與風彈（`Entity.canBeHitByProjectile`） | `wind_` 27 | `container_parity`（`track`：每 tick 比對所有實體的位置、速度、血量） |
 | 霜行者、靈魂疾行者 | 附魔的 `location_changed`（換方塊或落地時：靈魂疾行者的速度與移動效率修飾子，疊在靈魂沙／土上，靴子磨損；霜行者在腳下半徑 3＋(等級−1) 的水源上鋪霜冰，不騎乘、在地上才鋪）與 `tick`（靈魂粒子與音效）；霜行者對熱地板的傷害免疫本來就由戰利品引擎處理；新屬性 `movement_efficiency` | `ench_` 17 | `effect_parity`（`effects49`） |
 | 村莊圍攻、貓生成 | `Siege`、`CatSpawner`（沼澤小屋的黑貓） | 無（原版錄製不可行） | 單元測試（C） |
 | 玩家姿勢、氣泡柱、封包移動 | `Player.updatePlayerPose`（游泳、爬行、強迫蹲）、`aiStep` 的 0.003 速度歸零、氣泡柱推玩家、封包移動走伺服器身體（`player::server_move`） | `effect_parity` 662／663 | `effect_parity`（已知差異剩 1，見 3.3） |
-| 初始動物 | 區塊產生時的動物（群組大小、`isValidSpawn` 逐種條件） | 7 個世界、101 個區塊 | `tests/initial_mobs.rs` |
+| 初始動物 | 區塊產生時的動物（群組大小、`isValidSpawn` 逐種條件） | 7 個世界、各 169 個區塊的窗口（161 隻中 114 隻逐位元相同，其餘在原版順序相依的容許度內） | `tests/initial_mobs.rs` |
 | 命名牌 | 命名牌命名生物；自訂名稱、靜音、無重力送給觀看者的實體資料 | `tests/` 單元測試 | C |
 
 這一輪找到並修掉的 Kiln 錯誤（皆由向量或新測試抓到）：
