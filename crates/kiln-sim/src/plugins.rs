@@ -363,7 +363,7 @@ pub(crate) fn deny_packet(
                 }
             }
         }
-        PlayIn::ContainerClick { body } => container_click(hook, p, env, &body, spawns),
+        PlayIn::ContainerClick { ref body } => container_click(hook, p, env, body, spawns),
         _ => false,
     }
 }
