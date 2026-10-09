@@ -1273,6 +1273,10 @@ public class ContainerVectors {
         command(server, "kill @e[type=snowball]");
         // (wp49: boats, armor stands and what else a dispenser put out.)
         command(server, "kill @e[type=!minecraft:player,type=!minecraft:item]");
+        // (A killed mob lingers for its death animation: whatever is left is discarded.)
+        for (var left : level.getEntitiesOfClass(net.minecraft.world.entity.Entity.class, new net.minecraft.world.phys.AABB(-64, -64, -64, 64, 320, 64))) {
+            if (!(left instanceof net.minecraft.world.entity.player.Player)) left.discard();
+        }
         command(server, "kill @e[type=item]");
         Map<String, Object> line = s.json();
         line.put("result", ticks);
