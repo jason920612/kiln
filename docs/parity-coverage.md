@@ -201,7 +201,7 @@
 | 溺水、火、岩漿、岩漿塊、營火、飢餓與餓死 | A | 11＋17＋3 | `effect_parity.rs` | – |
 | 仙人掌、甜莓叢、凋零玫瑰、粉雪凍傷、方塊內窒息（含冷卻、難度、盔甲、保護、抗性） | A | `haz_*` 110 個 scenario（105 個相符，5 個已知差異） | `EffectVectors.java` | 見下方已知差異 |
 | 效果 tick、屬性、堆疊、食物與飲料效果、生物身上的效果 | A | 131＋40＋30 | `effect_parity.rs`、`mob_parity.rs` | 玩家端 weaving／oozing／wind_charged／infested 為 D |
-| 附魔 43 種 | A 29／C 12／D 2 | – | `enchant_parity.rs`、`melee_parity.rs`（density、wind_burst、breach 隨重錘） | D：frost_walker 不結冰、soul_speed 無效果；C：channeling、flame、infinity、loyalty、lure、mending、multishot、piercing、power、punch、quick_charge、vanishing_curse |
+| 附魔 43 種 | A 31／C 12／D 0 | – | `enchant_parity.rs`、`melee_parity.rs`（density、wind_burst、breach 隨重錘）；wp49：霜行者與靈魂疾行者 `effect_parity` 的 `ench_` 17 個 scenario（`enchant_loc.rs`） | 靈魂疾行者的靴子磨損抽的是 level 亂數，與音效、腳步共用一條序列，向量不比對；C：channeling、flame、infinity、loyalty、lure、mending、multishot、piercing、power、punch、quick_charge、vanishing_curse |
 | 吃喝、弓、弩 | A／A\* | 40／400／300 | `consume`、`item_parity.rs` | 拉弓力道、傷害為 C |
 | 工具挖掘速度 | A | 280 helper＋131 | `enchant_parity.rs`、`effect_parity.rs` | 挖掘計時 C |
 | 挖礦經驗（煤、青金石、鑽石、紅石、綠寶石、石英、刷怪磚、sculk 方塊） | A | `kiln-loot` 的 `block_experience` 向量：每個方塊與每種工具的量、經驗球個數與亂數抽取 | `vanilla_parity.rs`（`KILN_PARITY=1`） | 經驗球本身用 26.3 的建構子抽取 |
@@ -405,6 +405,7 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 | 方塊實體與方塊 | 營火烹飪、蜂巢、鐘、講台、裝飾陶罐、雕紋書架、合成器、製圖台與地圖（`MapItemSavedData`、探索地圖、旗幟、展示框地圖）、試煉刷怪磚、寶庫、指令方塊（普通、連鎖、重複、條件式、礦車）、日光感測器、蛋糕與蠟燭蛋糕、刷子與可刷方塊、氣泡柱 | interact 799（`interact49` 18 檔）、container 247（`container49` 12 檔）、bubble 6、explore 11 | `interact_parity`、`container_parity`、`block_parity`、`exploration_map_parity` |
 | 發射器 | 骨粉、打火石、蜂蜜與玻璃瓶、發光石、TNT、潛影盒、船、礦車、盔甲座、全部拋射物（箭、藥水箭、光靈箭、雪球、蛋、藥水、經驗瓶、煙火、火焰彈、風彈）、水／岩漿／粉雪桶與生物桶（魚、蠑螈、蝌蚪、硫磺方塊）、生怪蛋、南瓜與凋零頭顱的傀儡建造、穿裝備（盔甲座、玩家、拾取戰利品的生物、馬鞍與馬鎧、熾足獸鞍）、箱子上驢羊駝、硫磺方塊吞物、剪雪人／哞菇／羊／bogged | 100 | `container_parity`（`dispenser`） |
 | 玩家風彈 | `minecraft:wind_charge` 實體（半徑 1.2、擊退乘 1.22、5 tick 內不可被偏轉）、`WindChargeItem.use`、發射器射出；爆炸的 `explosion_knockback_resistance`；拋射物能打中礦車、船、盔甲座、畫與展示框、火球與風彈（`Entity.canBeHitByProjectile`） | `wind_` 27 | `container_parity`（`track`：每 tick 比對所有實體的位置、速度、血量） |
+| 霜行者、靈魂疾行者 | 附魔的 `location_changed`（換方塊或落地時：靈魂疾行者的速度與移動效率修飾子，疊在靈魂沙／土上，靴子磨損；霜行者在腳下半徑 3＋(等級−1) 的水源上鋪霜冰，不騎乘、在地上才鋪）與 `tick`（靈魂粒子與音效）；霜行者對熱地板的傷害免疫本來就由戰利品引擎處理；新屬性 `movement_efficiency` | `ench_` 17 | `effect_parity`（`effects49`） |
 | 村莊圍攻、貓生成 | `Siege`、`CatSpawner`（沼澤小屋的黑貓） | 無（原版錄製不可行） | 單元測試（C） |
 | 玩家姿勢、氣泡柱、封包移動 | `Player.updatePlayerPose`（游泳、爬行、強迫蹲）、`aiStep` 的 0.003 速度歸零、氣泡柱推玩家、封包移動走伺服器身體（`player::server_move`） | `effect_parity` 662／663 | `effect_parity`（已知差異剩 1，見 3.3） |
 | 初始動物 | 區塊產生時的動物（群組大小、`isValidSpawn` 逐種條件） | 7 個世界、101 個區塊 | `tests/initial_mobs.rs` |
@@ -423,7 +424,6 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 - **實體**：`mannequin`、`cushion`、`ominous_item_spawner` 三種沒有實作（存檔保留、不 tick、`/summon` 失敗）。不祥試煉刷怪磚的物品雨因缺 `ominous_item_spawner` 而不下。
 - **豬鞍與胡蘿蔔釣竿**：豬沒有鞍欄位，也不能騎；發射器與右鍵放鞍在豬身上都不作用。鸚鵡螺（nautilus）的鞍與護甲同樣沒接。
 - **發射器**：刷子對犰狳（掉鱗甲）、剪斷拴繩（`shearOffAllLeashConnections`）沒做；穿裝備時的裝備音效與遊戲事件、拾取戰利品的生物的 `canPickUpLoot` 隨機性只靠生物自己的值。
-- **附魔**：`frost_walker`（霜行者）、`soul_speed`（靈魂疾行者）仍是 D（附魔效果的 `location_changed`／`tick` 組件沒有解譯器）。
 - **無法用原版向量驗證的**：貓生成與村莊圍攻（原版的亂數與計時不可重播，只有 Kiln 單元測試）；硫磺方塊的玩家推擠、衝刺擊退與接觸傷害對生物（harness 不 tick 玩家）；初始動物的順序相依（原版的結果依區塊產生順序，以量測到的容許度比對）。
 - **已知差異**：`effect_parity` 的 `haz_snow_lava_clears`（燃燒中的玩家在粉雪旁的岩漿，火提早一 tick 熄）。
 - 與 wp45 相同、這一輪沒碰的：「moved wrongly」、結構方塊與拼圖方塊、旗幟圖樣、配方書封包位元組、釀造台運作向量、選單點擊向量補鐵砧等。
@@ -448,6 +448,7 @@ java --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.util
 java ... tools/ContainerVectors.java work/wp49/container/wind.jsonl wind_      # 另有 campfire／hive／lectern／pot／crafter／cmdblock／daylight／target／projectile
 java ... tools/InteractVectors.java work/wp49/interact/stand.jsonl stand       # 另有 b49／bell／brush／cake／carto／frames／fulltick／maps／trial／vault／statue…
 java ... tools/MobVectors.java work/wp49/mobs/sulfur_cube.jsonl sulfur         # 併入 work/m6-mobs2/vectors.jsonl 時依 name 去重
+java ... tools/EffectVectors.java work/wp49/effects/ench.jsonl ench_           # 霜行者與靈魂疾行者
 java ... tools/EntityNbtVectors.java work/wp49/entities/nbt.jsonl
 java ... tools/ExploreMapVectors.java work/wp49/explore/maps.jsonl 12345       # 第二個參數是 seed
 java ... tools/InitialMobVectors.java work/wp49/initial/mobs2.jsonl 2 20      # seed 與半徑；一個世界一個檔，測試用 : 串接
