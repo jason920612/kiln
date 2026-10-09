@@ -77,7 +77,7 @@ fn an_ominous_trial_hangs_item_spawners_over_the_player_and_throws_their_items()
         }
         spawners = spawners.max(now);
         if tick % 100 == 0 {
-            eprintln!("tick {tick}: be {:?} mobs {}", w.sim.block_entity_nbt(g[0] + 3, g[1] + 1, g[2]).map(|t| format!("{t:?}").chars().take(300).collect::<String>()), w.sim.mobs().len());
+            eprintln!("tick {tick}: be {:?} mobs {}", w.sim.block_entity_nbt(g[0] + 3, g[1] + 1, g[2]).map(|t| format!("{t:?}").chars().skip(300).take(900).collect::<String>()), w.sim.mobs().len());
         }
         shot = shot.max(w.count("minecraft:arrow") + w.count("minecraft:lingering_potion") + w.count("minecraft:small_fireball") + w.count("minecraft:wind_charge"));
     }
