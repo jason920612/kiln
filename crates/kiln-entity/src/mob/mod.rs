@@ -3251,7 +3251,10 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
         put(e, m);
         return;
     }
-    if let Some(k) = kind.ext() {
+    // (A pig is an extension type for its saddle only: it spawns like the other farm animals.)
+    if kind != MobKind::Pig
+        && let Some(k) = kind.ext()
+    {
         k.finalize_spawn(e, &mut m, r, ctx, group);
         put(e, m);
         return;
