@@ -528,6 +528,14 @@ impl kiln::api::chat::Host for HostState {
         Ok(())
     }
 
+    fn tell(&mut self, who: wit::Uuid, text: Vec<wit::Span>) -> wasmtime::Result<()> {
+        if self.frame()?.effects.len() >= MAX_EFFECTS {
+            wasmtime::bail!("too many effects in one call");
+        }
+        self.frame.effects.push((0, EffectKind::Message { to: Some(from_wit_uuid(who)), text: spans(text) }));
+        Ok(())
+    }
+
     fn broadcast(&mut self, text: Vec<wit::Span>) -> wasmtime::Result<()> {
         if self.frame()?.effects.len() >= MAX_EFFECTS {
             wasmtime::bail!("too many effects in one call");

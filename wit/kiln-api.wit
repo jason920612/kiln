@@ -404,9 +404,11 @@ interface scheduler {
 
 /// `player.message`: chat to players, delivered at the next serial point.
 interface chat {
-    use types.{player-handle, span};
+    use types.{player-handle, span, uuid};
 
     send: func(to: player-handle, text: list<span>);
+    /// To a player by uuid, wherever they are (nothing happens if they are not online).
+    tell: func(who: uuid, text: list<span>);
     broadcast: func(text: list<span>);
 }
 

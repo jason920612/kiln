@@ -300,6 +300,12 @@ pub mod chat {
         send_spans(to.handle, &text.into_spans());
     }
 
+    /// Says something to a player by uuid, wherever they are (nothing happens if they are not
+    /// online): the way for code that holds no player handle, such as a task's answer.
+    pub fn tell(who: crate::Uuid, text: impl IntoSpans) {
+        crate::bindings::kiln::api::chat::tell(who, &text.into_spans());
+    }
+
     pub fn broadcast(text: impl IntoSpans) {
         broadcast_spans(&text.into_spans());
     }

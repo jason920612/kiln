@@ -16,7 +16,23 @@ fn text(b: &[u8]) -> String {
 }
 
 impl Tasks for Webhook {
+    /// Every answer starts with the job's number and a newline, so that the game side can tell
+    /// whose job it was whichever instance hears of it.
     async fn run(job: Job) -> JobResult {
+        let id = job.id;
+        match run_job(job).await {
+            JobResult::Ok(mut b) => {
+                let mut out = format!("{id}\n").into_bytes();
+                out.append(&mut b);
+                JobResult::Ok(out)
+            }
+            JobResult::Failed(why) => JobResult::Failed(format!("{id}\n{why}")),
+        }
+    }
+}
+
+async fn run_job(job: Job) -> JobResult {
+    {
         match job.kind.as_str() {
             "fetch" => match http::get(&text(&job.payload)).await {
                 Ok(r) => {
