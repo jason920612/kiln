@@ -305,7 +305,14 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                         _ => [0.0; 3],
                     }
                 };
-                got.push((id.to_owned(), triple("Pos"), triple("Motion"), t.get("Health").and_then(Tag::as_f64).unwrap_or(-1.0)));
+                let pos = triple("Pos");
+                // (Only what the harness's box, 8 below to 12 above `BASE`, holds: by the entity's bounding box.)
+                let (w, h) = kiln_data::entities::by_name(id).map_or((0.0, 0.0), |k| (k.width as f64, k.height as f64));
+                let inside = |lo: f64, hi: f64, base: i32| lo < (base + 12) as f64 && hi > (base - 8) as f64;
+                if !(inside(pos[0] - w / 2.0, pos[0] + w / 2.0, BASE[0]) && inside(pos[1], pos[1] + h, BASE[1]) && inside(pos[2] - w / 2.0, pos[2] + w / 2.0, BASE[2])) {
+                    continue;
+                }
+                got.push((id.to_owned(), pos, triple("Motion"), t.get("Health").and_then(Tag::as_f64).unwrap_or(-1.0)));
             }
             got.sort_by(|a, b| a.0.cmp(&b.0).then(a.1[0].total_cmp(&b.1[0])).then(a.1[2].total_cmp(&b.1[2])).then(a.1[1].total_cmp(&b.1[1])));
             let got = json!(got.iter().map(|g| json!([g.0, g.1[0], g.1[1], g.1[2], g.2[0], g.2[1], g.2[2], g.3])).collect::<Vec<_>>());

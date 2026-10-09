@@ -402,7 +402,7 @@ impl EntityExt for ArmorStand {
         } else {
             e.do_move(level, crate::entity::MoverType::SelfMove, e.delta);
             let d = e.delta;
-            e.delta = Vec3::new(d.x * friction as f64, (d.y - 0.08) * 0.98, d.z * friction as f64);
+            e.delta = Vec3::new(d.x * friction as f64, (d.y - 0.08) * 0.98f32 as f64, d.z * friction as f64);
         }
         e.apply_effects_from_blocks(level);
     }
