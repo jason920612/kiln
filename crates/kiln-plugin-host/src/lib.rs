@@ -1795,8 +1795,64 @@ impl RegionInner {
     }
 }
 
+/// A lock for data that one thread at a time uses (a region's instances: the thread working
+/// the region, which the player's damage gate runs on too): taking it is one compare-and-swap
+/// and releasing it one store, where a `Mutex` costs several times that on every event. It
+/// spins (and yields) if it is ever contended, which the region discipline does not allow to
+/// last.
+struct RegionLock<T> {
+    locked: AtomicBool,
+    value: std::cell::UnsafeCell<T>,
+}
+
+// SAFETY: `value` is only reached through `lock`, which hands it out to one holder at a time.
+unsafe impl<T: Send> Sync for RegionLock<T> {}
+unsafe impl<T: Send> Send for RegionLock<T> {}
+
+struct RegionGuard<'a, T>(&'a RegionLock<T>);
+
+impl<T> RegionLock<T> {
+    fn new(value: T) -> Self {
+        RegionLock { locked: AtomicBool::new(false), value: std::cell::UnsafeCell::new(value) }
+    }
+
+    fn lock(&self) -> RegionGuard<'_, T> {
+        let mut spins = 0u32;
+        while self.locked.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            spins += 1;
+            if spins < 64 {
+                std::hint::spin_loop();
+            } else {
+                std::thread::yield_now();
+            }
+        }
+        RegionGuard(self)
+    }
+}
+
+impl<T> std::ops::Deref for RegionGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: the guard holds the lock.
+        unsafe { &*self.0.value.get() }
+    }
+}
+
+impl<T> std::ops::DerefMut for RegionGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: the guard holds the lock.
+        unsafe { &mut *self.0.value.get() }
+    }
+}
+
+impl<T> Drop for RegionGuard<'_, T> {
+    fn drop(&mut self) {
+        self.0.locked.store(false, Ordering::Release);
+    }
+}
+
 struct RegionShared {
-    inner: Mutex<RegionInner>,
+    inner: RegionLock<RegionInner>,
     /// Bit `EventKind::index()` set: some plugin has instances here that subscribed to it.
     subs: std::sync::atomic::AtomicU32,
 }
@@ -1816,11 +1872,11 @@ impl RegionPlugins {
     fn new(set: Arc<PluginSet>, shared: Arc<Shared>, dim: u32) -> RegionPlugins {
         let mask = subscription_mask(&set);
         let inner = RegionInner::new(set, shared, dim);
-        RegionPlugins(Arc::new(RegionShared { inner: Mutex::new(inner), subs: std::sync::atomic::AtomicU32::new(mask) }))
+        RegionPlugins(Arc::new(RegionShared { inner: RegionLock::new(inner), subs: std::sync::atomic::AtomicU32::new(mask) }))
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, RegionInner> {
-        self.0.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    fn lock(&self) -> RegionGuard<'_, RegionInner> {
+        self.0.inner.lock()
     }
 
     /// Whether any plugin has handlers here for `kind` (a lock-free check: callers skip the
