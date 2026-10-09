@@ -437,7 +437,7 @@ impl Sim {
 
     /// `Commands.performPrefixedCommand` as the block's source (no entity, permission level 2).
     fn run_block_command(&mut self, dim: DimId, pos: [i32; 3], command: &str, track: bool) -> Run {
-        self.commands.block_run = Some(Run { success: 0, output: None, track });
+        self.commands.block_run = Some(Run { success: 0, output: None, plain: None, track });
         let source = CommandSource::Block { dim, pos };
         let previous = std::mem::replace(&mut self.commands.source, source);
         let mut start = self.source_stack(source);
