@@ -68,6 +68,8 @@ public class ContainerVectors {
         boolean watchEntities;
         /** wp49: the equipment (and chest) of every living thing about is recorded each tick. */
         boolean watchMobs;
+        /** wp49: every entity but items and players is recorded each tick: type, position, motion and health. */
+        boolean track;
 
         Scenario(String name, int ticks) {
             this.name = name;
@@ -136,6 +138,11 @@ public class ContainerVectors {
             return this;
         }
 
+        Scenario track() {
+            track = true;
+            return this;
+        }
+
         Scenario mobs() {
             watchMobs = true;
             return this;
@@ -166,6 +173,7 @@ public class ContainerVectors {
             m.put("bees", watchBees);
             m.put("entities", watchEntities);
             m.put("mobs", watchMobs);
+            m.put("track", track);
             return m;
         }
 
@@ -306,6 +314,7 @@ public class ContainerVectors {
         lecternScenarios(out);
         dispenserScenarios(out);
         dispenserScenarios2(out);
+        windScenarios(out);
         crafterScenarios(out);
         commandBlockScenarios(out);
         return out;
@@ -572,6 +581,23 @@ public class ContainerVectors {
         out.add(mob(dispense("swallow_by_baby", "oak_planks", 2).block(1, -1, 0, "minecraft:stone"), "sulfur_cube", 1.5, 0, 0.5, "Size:1,Age:-24000"));
         out.add(mob(dispense("swallow_dirt_when_full", "dirt", 2).block(1, -1, 0, "minecraft:stone"), "sulfur_cube", 1.5, 0, 0.5,
                 "Size:1,equipment:{body:{id:\"minecraft:oak_planks\",count:1}}"));
+    }
+
+    /** wp49: a wind charge (summoned, since a dispensed one is spread by its own random) meets a wall, a mob and a cart. */
+    static void windScenarios(List<Scenario> out) {
+        double bx = BASE[0], by = BASE[1], bz = BASE[2];
+        String charge = "summon minecraft:wind_charge %s %s %s {Motion:[%sd,%sd,%sd]%s}";
+        out.add(new Scenario("wind_wall", 14).block(4, 0, 0, "minecraft:stone").block(4, 1, 0, "minecraft:stone").block(4, -1, 0, "minecraft:stone").track()
+                .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 0.5, bz + 0.5, 1.0, 0.0, 0.0, ""))
+                .at(1, String.format(Locale.ROOT, "summon minecraft:chest_minecart %s %s %s {NoGravity:1b}", bx + 3.0, by + 0.5, bz + 1.0)));
+        out.add(mob(new Scenario("wind_zombie", 14).track(), "zombie", 4.5, 0, 0.5, "")
+                .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 1.0, bz + 0.5, 1.0, 0.0, 0.0, "")));
+        out.add(mob(new Scenario("wind_zombie_near_miss", 14).track(), "zombie", 4.5, 0, 1.2, "")
+                .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 1.0, bz + 0.5, 1.0, 0.0, 0.0, "")));
+        out.add(new Scenario("wind_floor", 14).block(0, -1, 0, "minecraft:stone").block(1, -1, 0, "minecraft:stone").block(2, -1, 0, "minecraft:stone").track()
+                .at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 1.5, bz + 0.5, 0.3, -0.5, 0.0, ""))
+                .at(1, String.format(Locale.ROOT, "summon minecraft:chest_minecart %s %s %s {NoGravity:1b}", bx + 1.5, by + 0.2, bz + 0.5)));
+        out.add(new Scenario("wind_open_air", 40).track().at(1, String.format(Locale.ROOT, charge, bx + 0.5, by + 5.0, bz + 0.5, 0.0, 0.3, 0.0, "")));
     }
 
     /** wp49: a comparator reads how far into the book a lectern is open. */
@@ -1224,6 +1250,19 @@ public class ContainerVectors {
                             .thenComparingDouble(l -> (Double) l.get(2)).thenComparingDouble(l -> (Double) l.get(3)));
                     tick.put("entities_new", new ArrayList<Object>(fresh));
                 }
+                if (s.track) {
+                    var box = new net.minecraft.world.phys.AABB(BASE[0] - 8, BASE[1] - 8, BASE[2] - 8, BASE[0] + 12, BASE[1] + 12, BASE[2] + 12);
+                    List<List<Object>> all = new ArrayList<>();
+                    for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.Entity.class, box)) {
+                        if (e instanceof net.minecraft.world.entity.item.ItemEntity || e instanceof net.minecraft.world.entity.player.Player) continue;
+                        var d = e.getDeltaMovement();
+                        all.add(List.of(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(), e.getX(), e.getY(), e.getZ(), d.x, d.y, d.z,
+                                e instanceof net.minecraft.world.entity.LivingEntity l ? (double) l.getHealth() : -1.0));
+                    }
+                    all.sort(Comparator.<List<Object>, String>comparing(l -> (String) l.get(0)).thenComparingDouble(l -> (Double) l.get(1))
+                            .thenComparingDouble(l -> (Double) l.get(3)).thenComparingDouble(l -> (Double) l.get(2)));
+                    tick.put("track", new ArrayList<Object>(all));
+                }
                 if (s.watchMobs) {
                     var box = new net.minecraft.world.phys.AABB(BASE[0] - 8, BASE[1] - 8, BASE[2] - 8, BASE[0] + 12, BASE[1] + 12, BASE[2] + 12);
                     List<Object> sigs = new ArrayList<>();
@@ -1272,7 +1311,6 @@ public class ContainerVectors {
         command(server, "kill @e[type=spectral_arrow]");
         command(server, "kill @e[type=snowball]");
         // (wp49: boats, armor stands and what else a dispenser put out.)
-        command(server, "kill @e[type=!minecraft:player,type=!minecraft:item]");
         // (A killed mob lingers for its death animation: whatever is left is discarded.)
         for (var left : level.getEntitiesOfClass(net.minecraft.world.entity.Entity.class, new net.minecraft.world.phys.AABB(-64, -64, -64, 64, 320, 64))) {
             if (!(left instanceof net.minecraft.world.entity.player.Player)) left.discard();
