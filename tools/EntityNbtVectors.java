@@ -60,12 +60,12 @@ public class EntityNbtVectors {
             c.add(new Case(t + "_misc", t, "{Pos:[0.5d,70.0d,0.5d],Rotation:[45.0f,10.0f],CustomName:'\"Hologram\"',Glowing:1b,Invulnerable:1b,Tags:[\"a\",\"b\"],NoGravity:1b}"));
         }
         // ---- block displays
-        c.add(new Case("block_display_stone", "block_display", "{block_state:{Name:\"minecraft:stone\"}}"));
-        c.add(new Case("block_display_stairs", "block_display", "{block_state:{Name:\"minecraft:oak_stairs\",Properties:{facing:\"east\",half:\"top\",shape:\"straight\",waterlogged:\"false\"}}}"));
-        c.add(new Case("block_display_partial_properties", "block_display", "{block_state:{Name:\"minecraft:oak_stairs\",Properties:{half:\"top\"}}}"));
-        c.add(new Case("block_display_bad_property", "block_display", "{block_state:{Name:\"minecraft:oak_stairs\",Properties:{nope:\"x\"}}}"));
-        c.add(new Case("block_display_unknown_block", "block_display", "{block_state:{Name:\"minecraft:nonsense\"}}"));
-        c.add(new Case("block_display_air", "block_display", "{block_state:{Name:\"minecraft:air\"}}"));
+        c.add(new Case("block_display_stone", "block_display", "{block_state:{id:\"minecraft:stone\"}}"));
+        c.add(new Case("block_display_stairs", "block_display", "{block_state:{id:\"minecraft:oak_stairs\",properties:{facing:\"east\",half:\"top\",shape:\"straight\",waterlogged:\"false\"}}}"));
+        c.add(new Case("block_display_partial_properties", "block_display", "{block_state:{id:\"minecraft:oak_stairs\",properties:{half:\"top\"}}}"));
+        c.add(new Case("block_display_bad_property", "block_display", "{block_state:{id:\"minecraft:oak_stairs\",properties:{nope:\"x\"}}}"));
+        c.add(new Case("block_display_unknown_block", "block_display", "{block_state:{id:\"minecraft:nonsense\"}}"));
+        c.add(new Case("block_display_air", "block_display", "{block_state:{id:\"minecraft:air\"}}"));
         c.add(new Case("block_display_string_state", "block_display", "{block_state:\"minecraft:stone\"}"));
         c.add(new Case("block_display_state_stairs", "block_display", "{block_state:\"minecraft:oak_stairs[facing=east,half=top]\"}"));
         c.add(new Case("block_display_state_default_props", "block_display", "{block_state:\"minecraft:oak_stairs\"}"));
@@ -76,7 +76,15 @@ public class EntityNbtVectors {
         c.add(new Case("block_display_state_tag", "block_display", "{block_state:\"#minecraft:logs\"}"));
         c.add(new Case("block_display_state_spaces", "block_display", "{block_state:\" minecraft:stone\"}"));
         c.add(new Case("block_display_state_no_namespace", "block_display", "{block_state:\"stone\"}"));
-        c.add(new Case("block_display_state_chest", "block_display", "{block_state:\"minecraft:chest[facing=west,type=left]\"}"));
+        c.add(new Case("block_display_cmp_bad_value", "block_display", "{block_state:{id:\"minecraft:oak_stairs\",properties:{facing:\"up\"}}}"));
+        c.add(new Case("block_display_cmp_slab", "block_display", "{block_state:{id:\"minecraft:oak_slab\",properties:{type:\"bottom\",waterlogged:\"true\"}}}"));
+        c.add(new Case("block_display_cmp_number_value", "block_display", "{block_state:{id:\"minecraft:oak_slab\",properties:{waterlogged:1b}}}"));
+        c.add(new Case("block_display_cmp_name_key", "block_display", "{block_state:{Name:\"minecraft:stone\"}}"));
+        c.add(new Case("block_display_cmp_default_props", "block_display", "{block_state:{id:\"minecraft:oak_stairs\",properties:{facing:\"north\",half:\"bottom\",shape:\"straight\",waterlogged:\"false\"}}}"));
+        c.add(new Case("block_display_cmp_extra", "block_display", "{block_state:{id:\"minecraft:stone\",extra:1b}}"));
+        c.add(new Case("block_display_cmp_redstone", "block_display", "{block_state:{id:\"minecraft:redstone_wire\",properties:{power:\"7\",east:\"side\"}}}"));
+        c.add(new Case("block_display_cmp_water", "block_display", "{block_state:{id:\"minecraft:water\",properties:{level:\"3\"}}}"));
+        c.add(new Case("block_display_state_chest","block_display", "{block_state:\"minecraft:chest[facing=west,type=left]\"}"));
         // ---- item displays
         c.add(new Case("item_display_diamond", "item_display", "{item:{id:\"minecraft:diamond\",count:1}}"));
         c.add(new Case("item_display_components", "item_display", "{item:{id:\"minecraft:diamond_sword\",count:1,components:{\"minecraft:custom_name\":'\"Excalibur\"',\"minecraft:damage\":5}},item_display:\"fixed\"}"));
