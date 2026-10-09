@@ -511,6 +511,23 @@ fn a_pumpkin_on_snow_blocks_builds_a_snow_golem() {
 }
 
 #[test]
+fn a_pumpkin_on_a_copper_block_builds_a_copper_golem_and_a_chest() {
+    let mut w = World::new("creative");
+    let base = w.at(3, 1, 0);
+    w.set(base, "minecraft:exposed_copper");
+    w.hold("minecraft:carved_pumpkin", 1);
+    w.use_on_top(base);
+    assert_eq!(w.count("minecraft:copper_golem"), 1, "{:?}", w.sim.entities());
+    // The block turns into a copper chest of the same weathering; the pumpkin is used up.
+    let name = kiln_data::blocks_types::block_of(w.block(base)).name;
+    assert_eq!(name, "minecraft:exposed_copper_chest");
+    assert!(state::is(w.block([base[0], base[1] + 1, base[2]]), d::AIR));
+    // It is exposed already.
+    let weather = w.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some("minecraft:copper_golem")).and_then(|t| t.get("weather_state").and_then(kiln_proto::nbt::Tag::as_str).map(str::to_owned));
+    assert_eq!(weather.as_deref(), Some("exposed"));
+}
+
+#[test]
 fn sliding_down_honey_earns_the_advancement() {
     if !have_datapack() {
         return;
