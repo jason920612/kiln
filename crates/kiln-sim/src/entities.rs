@@ -2827,8 +2827,13 @@ pub(crate) fn interact_mob(
     }
     // `startRiding` (`Entity.canRide`: not sneaking), then `ServerPlayer.startRiding`: the
     // rider takes the mount's facing and goes to its seat.
-    if out.ride && sim.players[i].vehicle.is_none() && !sim.players[i].sneaking {
+    if out.ride && sim.players[i].vehicle != Some(target) && !sim.players[i].sneaking {
         let pid = sim.players[i].entity_id;
+        // `Entity.startRiding`: a rider that sits on another vehicle gets off it first.
+        if let Some(old) = sim.players[i].vehicle {
+            let at = sim.index(old);
+            remove_rider(sim, at, pid);
+        }
         let first_is_player = phys.passengers.first().is_some_and(|f| sim.views.iter().any(|v| v.id == *f));
         kiln_entity::ride::add_passenger(&mut phys, pid, true, first_is_player);
         let at = phys.passengers.iter().position(|&x| x == pid).unwrap_or(0);
@@ -2839,6 +2844,10 @@ pub(crate) fn interact_mob(
         p.vehicle_type = Some(phys.type_name);
         p.teleport(arr(seat), [phys.y_rot, phys.x_rot], now);
         p.started_riding();
+        // `Cushion.interact`: the sit sound once the player sits.
+        if kiln_entity::ext_entity::cushion::is_cushion(&phys) {
+            phys.play_sound(&mut *sim, "minecraft:entity.cushion.sit", 1.0, 1.0);
+        }
     }
     let seen = out.success.then(|| kiln_entity::level::Seen::of(&phys));
     let e = &mut sim.list[idx];

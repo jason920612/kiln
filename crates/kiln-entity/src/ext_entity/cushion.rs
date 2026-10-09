@@ -290,11 +290,8 @@ impl EntityExt for Cushion {
         if who.sneaking || !e.passengers.is_empty() {
             return Some(Outcome::PASS);
         }
-        if level.player(who.id).is_some_and(|p| p.vehicle.is_some()) {
-            // `startRiding` fails: the click is taken (`CONSUME`).
-            return Some(Outcome::success(HeldChange::None));
-        }
-        e.play_sound(level, "minecraft:entity.cushion.sit", 1.0, 1.0);
+        // (The player sits down after getting off what it rode, and the sit sound follows: the simulation does that.)
+        let _ = level;
         let mut out = Outcome::success(HeldChange::None);
         out.ride = true;
         Some(out)

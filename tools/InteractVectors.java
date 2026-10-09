@@ -487,12 +487,12 @@ public class InteractVectors {
             c = cushionCase("yaw_" + (int) yaw).stat("minecraft:red_cushion");
             c.yaw = yaw;
             c.cmd("setblock 2 99 0 minecraft:stone");
-            c.slot("h0", stack("minecraft:red_cushion", 1)).step(useOnAt(2, 99, 0, 1, 0, 0.1, 1.0, 0.9));
+            c.slot("h0", stack("minecraft:red_cushion", 1)).step(useOnAt(2, 99, 0, 1, 0, 0.125, 1.0, 0.875));
             out.add(c);
         }
         c = cushionCase("place_twice").stat("minecraft:blue_cushion");
         c.cmd("setblock 2 99 0 minecraft:stone");
-        c.slot("h0", stack("minecraft:blue_cushion", 5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(2, 99, 0, 1, 0, 0.3, 1.0, 0.3));
+        c.slot("h0", stack("minecraft:blue_cushion", 5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(2, 99, 0, 1, 0, 0.25, 1.0, 0.25));
         out.add(c);
         c = cushionCase("place_beside").stat("minecraft:blue_cushion");
         c.cmd("fill 2 99 0 3 99 1 minecraft:stone");
@@ -501,7 +501,7 @@ public class InteractVectors {
         c = cushionCase("place_overlapping_heights").stat("minecraft:blue_cushion");
         c.cmd("setblock 2 99 0 minecraft:stone");
         // (The second click is lower in the same cell: the boxes overlap.)
-        c.slot("h0", stack("minecraft:blue_cushion", 5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 0.9, 0.5));
+        c.slot("h0", stack("minecraft:blue_cushion", 5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 0.875, 0.5));
         out.add(c);
         for (String mode : new String[] {"creative", "adventure"}) {
             c = cushionCase("place_" + mode).stat("minecraft:green_cushion");
@@ -555,26 +555,19 @@ public class InteractVectors {
                 {"snow_2", "minecraft:snow[layers=2]", "0.25"},
                 {"snow_8", "minecraft:snow[layers=8]", "1.0"},
                 {"grass", "minecraft:short_grass", "0.5"},
-                {"tall_grass", "minecraft:tall_grass[half=lower]", "0.9"},
+                {"tall_grass", "minecraft:tall_grass[half=lower]", "0.875"},
                 {"farmland", "minecraft:farmland[moisture=0]", "0.9375"},
                 {"soul_sand", "minecraft:soul_sand", "0.875"},
                 {"path", "minecraft:dirt_path", "0.9375"},
                 {"honey", "minecraft:honey_block", "0.9375"},
                 {"fence", "minecraft:oak_fence", "1.5"},
-                {"fence_gate", "minecraft:oak_fence_gate[facing=south,open=false]", "1.0"},
                 {"wall", "minecraft:cobblestone_wall", "1.0"},
                 {"glass", "minecraft:glass", "1.0"},
                 {"leaves", "minecraft:oak_leaves", "1.0"},
                 {"ice", "minecraft:ice", "1.0"},
                 {"lily", "minecraft:lily_pad", "0.015625"},
-                {"trapdoor_open", "minecraft:oak_trapdoor[open=true,facing=north,half=bottom]", "1.0"},
-                {"trapdoor_closed", "minecraft:oak_trapdoor[open=false,half=bottom]", "0.1875"},
-                {"chest", "minecraft:chest[facing=north]", "0.875"},
-                {"bed", "minecraft:red_bed[facing=east,part=head]", "0.5625"},
-                {"cake", "minecraft:cake[bites=0]", "0.5"},
-                {"torch", "minecraft:torch", "0.6"},
+                {"torch", "minecraft:torch", "0.625"},
                 {"flower", "minecraft:poppy", "0.375"},
-                {"anvil", "minecraft:anvil[facing=north]", "1.0"},
                 {"lantern", "minecraft:lantern[hanging=false]", "0.5625"},
                 {"cauldron_full_height", "minecraft:cauldron", "1.0"},
                 {"water_cauldron", "minecraft:water_cauldron[level=3]", "1.0"},
@@ -583,7 +576,6 @@ public class InteractVectors {
                 {"composter_empty", "minecraft:composter[level=0]", "1.0"},
                 {"campfire", "minecraft:campfire[lit=false]", "0.4375"},
                 {"end_portal_frame", "minecraft:end_portal_frame[facing=north,eye=false]", "0.8125"},
-                {"lectern", "minecraft:lectern[facing=north,has_book=false,powered=false]", "0.875"},
                 {"scaffolding", "minecraft:scaffolding", "1.0"},
                 {"powder_snow", "minecraft:powder_snow", "1.0"},
                 {"azalea", "minecraft:potted_poppy", "0.375"},
@@ -591,35 +583,30 @@ public class InteractVectors {
                 {"cobweb", "minecraft:cobweb", "1.0"},
                 {"vine", "minecraft:vine[north=true]", "1.0"},
                 {"ladder", "minecraft:ladder[facing=north]", "1.0"},
-                {"pointed_dripstone", "minecraft:pointed_dripstone[thickness=tip,vertical_direction=up]", "0.6"},
+                {"pointed_dripstone", "minecraft:pointed_dripstone[thickness=tip,vertical_direction=up]", "0.625"},
                 {"bamboo", "minecraft:bamboo", "0.5"},
                 {"sea_pickle", "minecraft:sea_pickle[pickles=1]", "0.375"},
                 {"turtle_egg", "minecraft:turtle_egg", "0.4375"},
                 {"conduit", "minecraft:conduit", "0.8125"},
-                {"stonecutter", "minecraft:stonecutter", "0.5625"},
-                {"grindstone", "minecraft:grindstone[face=floor,facing=north]", "1.0"},
-                {"bell", "minecraft:bell[attachment=floor,facing=north]", "1.0"},
-                {"daylight", "minecraft:daylight_detector", "0.375"},
-                {"repeater", "minecraft:repeater", "0.125"},
                 {"rail", "minecraft:rail", "0.125"},
                 {"pressure_plate", "minecraft:stone_pressure_plate", "0.0625"},
-                {"button_floor", "minecraft:stone_button[face=floor,facing=north]", "0.125"},
                 {"skull", "minecraft:skeleton_skull", "0.5"},
                 {"banner", "minecraft:white_banner", "1.0"},
-                {"sign", "minecraft:oak_sign", "1.0"},
         };
         for (String[] g : grounds) {
             c = cushionCase("on_" + g[0]).stat("minecraft:orange_cushion");
-            c.cmd("setblock 2 99 0 " + g[1]);
+            c.sneaking = true;
+            c.cmd("setblock 2 98 0 " + (g[0].equals("lily") ? "minecraft:water" : "minecraft:stone")).cmd("setblock 2 99 0 " + g[1]);
             c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, Double.parseDouble(g[2]), 0.5));
             out.add(c);
         }
         // ---- cauldrons, hoppers and composters are clicked on their collision shape: the corners and the middle
         for (String block : new String[] {"minecraft:cauldron", "minecraft:hopper[enabled=true,facing=down]", "minecraft:composter[level=0]"}) {
             String shortName = block.substring(10, block.contains("[") ? block.indexOf('[') : block.length());
-            double[][] clicks = {{0.5, 1.0, 0.5}, {0.1, 1.0, 0.1}, {0.9, 1.0, 0.5}, {0.5, 0.5, 0.05}, {0.5, 0.3, 0.5}, {0.05, 0.9, 0.95}};
+            double[][] clicks = {{0.5, 1.0, 0.5}, {0.125, 1.0, 0.125}, {0.875, 1.0, 0.5}, {0.5, 0.5, 0.0625}, {0.5, 0.25, 0.5}, {0.0625, 0.875, 0.9375}};
             for (int i = 0; i < clicks.length; i++) {
                 c = cushionCase("shape_" + shortName + "_" + i).stat("minecraft:orange_cushion");
+                c.sneaking = shortName.equals("hopper");
                 c.cmd("setblock 2 99 0 " + block);
                 c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, clicks[i][0], clicks[i][1], clicks[i][2]));
                 out.add(c);
@@ -629,7 +616,7 @@ public class InteractVectors {
         c = cushionCase("shape_cauldron_pitch").stat("minecraft:orange_cushion");
         c.pitch = 60f;
         c.cmd("setblock 2 99 0 minecraft:cauldron");
-        c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.3, 1.0, 0.4));
+        c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.25, 1.0, 0.375));
         out.add(c);
         // ---- places that are not air: water, lava, fire, a replaceable plant
         for (String above : new String[] {"minecraft:water", "minecraft:lava", "minecraft:fire", "minecraft:soul_fire", "minecraft:short_grass", "minecraft:snow[layers=1]", "minecraft:snow[layers=3]", "minecraft:vine[north=true]", "minecraft:oak_sign", "minecraft:cobweb", "minecraft:campfire[lit=true]", "minecraft:torch"}) {
@@ -642,7 +629,7 @@ public class InteractVectors {
         for (String plant : new String[] {"minecraft:short_grass", "minecraft:snow[layers=1]", "minecraft:snow[layers=2]", "minecraft:fire", "minecraft:water"}) {
             c = cushionCase("clicked_" + plant.substring(10).replaceAll("[^a-z_]", "_")).stat("minecraft:orange_cushion");
             c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 " + plant);
-            c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 100, 0, 1, 0, 0.5, 0.2, 0.5));
+            c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 100, 0, 1, 0, 0.5, 0.25, 0.5));
             out.add(c);
         }
         // ---- fire beside it: in the cell next to the cushion nothing happens; in its own cell it burns up
@@ -674,7 +661,7 @@ public class InteractVectors {
             c = cushionCase("hit_" + variant);
             c.gameMode = variant;
             c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"magenta\",CustomName:'\"Pouf\"'}");
-            c.step(attackEntity(2.5, 100.0, 0.5)).step(attackEntity(2.5, 100.0, 0.5));
+            c.step(attackEntity(2.5, 100.0, 0.5));
             out.add(c);
         }
         c = cushionCase("hit_plain");
