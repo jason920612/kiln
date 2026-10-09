@@ -52,11 +52,56 @@ pub fn travel_flying(e: &mut Entity, level: &mut dyn EntityLevel, input: Vec3, w
 
 /// `GhastMoveControl.canReach` (not careful): no block collision on the way (blocks the ghast
 /// already overlaps are ignored).
-fn can_reach(e: &Entity, level: &dyn EntityLevel, delta: Vec3) -> bool {
+fn can_reach(e: &Entity, level: &dyn EntityLevel, delta: Vec3, careful: bool) -> bool {
     let bb = e.bounding_box();
     let moved = bb.offset_vec(delta);
     let from = e.position();
     let to = from + delta;
+    let (in_water, in_lava) = (e.is_in_water(), e.is_in_lava());
+    // `blockTraversalPossible` for a careful ghast (a happy one): never into a block it avoids, nor fluid it is not in.
+    let careful_ok = |pos: BlockPos, state: u16| -> Option<bool> {
+        if !careful {
+            return None;
+        }
+        if crate::blocks::has_tag(state, crate::blocks::Tag::HappyGhastAvoids) {
+            return Some(false);
+        }
+        let f = crate::physics::fluid_state(state);
+        if f.kind.is_water() {
+            return Some(in_water);
+        }
+        if f.kind.is_lava() {
+            return Some(in_lava);
+        }
+        let _ = pos;
+        None
+    };
+    if careful {
+        // The box the move ends in, one block bigger all round: all of it must be passable (`betweenClosed(inflate(1))`).
+        let area = moved.inflate(1.0, 1.0, 1.0);
+        let (x0, y0, z0) = (crate::math::floor(area.min_x), crate::math::floor(area.min_y), crate::math::floor(area.min_z));
+        let (x1, y1, z1) = (crate::math::floor(area.max_x), crate::math::floor(area.max_y), crate::math::floor(area.max_z));
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                for z in z0..=z1 {
+                    let p = BlockPos::new(x, y, z);
+                    let state = level.block(p);
+                    if kiln_data::blocks_types::is_air(state) {
+                        continue;
+                    }
+                    // (No positions of travel here: any fluid counts and a shape with a collision is no way through.)
+                    let f = crate::physics::fluid_state(state);
+                    if crate::blocks::has_tag(state, crate::blocks::Tag::HappyGhastAvoids) || f.kind.is_water() || f.kind.is_lava() {
+                        return false;
+                    }
+                    let (shape, _) = crate::collision::collision_shape(state, p, &crate::collision::CollisionContext::EMPTY);
+                    if !shape.is_empty() {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
     crate::inside::for_each_block_intersected_between(from, to, &moved, |pos, _| {
         if bb.intersects_block(pos) {
             return true;
@@ -65,27 +110,40 @@ fn can_reach(e: &Entity, level: &dyn EntityLevel, delta: Vec3) -> bool {
         if kiln_data::blocks_types::is_air(state) {
             return true;
         }
+        if let Some(ok) = careful_ok(pos, state) {
+            return ok;
+        }
         let (shape, _) = crate::collision::collision_shape(state, pos, &crate::collision::CollisionContext::EMPTY);
         let boxes: Vec<_> = shape.boxes().iter().map(|b| b.offset(pos.x as f64, pos.y as f64, pos.z as f64)).collect();
         !e.make_bounding_box(from).collided_along_vector(to - from, &boxes)
     })
 }
 
-/// `GhastMoveControl.tick`.
-fn tick_move(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
+/// `GhastMoveControl.tick` (`float_duration`: its counter; `careful`: a happy ghast avoids what it should; `stopped`:
+/// `shouldBeStopped`, the happy ghast standing still for a rider).
+pub fn tick_ghast_move(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, float_duration: &mut i32, careful: bool, stopped: bool) {
+    if stopped {
+        // `Mob.stopInPlace`.
+        m.mov.operation = Operation::Wait;
+        m.nav.stop();
+        m.xxa = 0.0;
+        m.yya = 0.0;
+        m.zza = 0.0;
+        crate::mob::control::set_speed(m, 0.0);
+        e.delta = Vec3::ZERO;
+    }
     if m.mov.operation != Operation::MoveTo {
         return;
     }
-    let Some(s) = state_mut::<GhastState>(m) else { return };
-    let d = s.float_duration;
-    s.float_duration -= 1;
+    let d = *float_duration;
+    *float_duration -= 1;
     if d > 0 {
         return;
     }
-    s.float_duration += e.random.next_int_bounded(5) + 2;
+    *float_duration += e.random.next_int_bounded(5) + 2;
     let [wx, wy, wz] = m.mov.wanted;
     let delta = Vec3::new(wx - e.x(), wy - e.y(), wz - e.z());
-    if can_reach(e, level, delta) {
+    if can_reach(e, level, delta, careful) {
         let speed = m.attrs.value(Attr::FlyingSpeed) * 5.0 / 3.0;
         e.delta = e.delta + delta.normalize().scale(speed);
     } else {
@@ -93,8 +151,18 @@ fn tick_move(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
     }
 }
 
+/// `GhastMoveControl.tick` of a ghast.
+fn tick_move(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
+    let Some(s) = state_mut::<GhastState>(m) else { return };
+    let mut fd = s.float_duration;
+    tick_ghast_move(e, m, level, &mut fd, false, false);
+    if let Some(s) = state_mut::<GhastState>(m) {
+        s.float_duration = fd;
+    }
+}
+
 /// `Ghast.faceMovementDirection`.
-fn face_movement_direction(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
+pub fn face_movement_direction(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
     match goals::target(m, level) {
         None => {
             let v = e.delta;
@@ -122,7 +190,7 @@ impl Kind for Ghast {
         Some(Box::new(GhastState { charging: false, explosion_power: 1, float_duration: 0 }))
     }
     fn register_goals(&self, m: &mut MobData) {
-        m.goals.add(5, Goal::Custom(Box::new(RandomFloatAround)));
+        m.goals.add(5, Goal::Custom(Box::new(RandomFloatAround { distance_to_blocks: 0 })));
         m.goals.add(7, Goal::Custom(Box::new(GhastLook)));
         m.goals.add(7, Goal::Custom(Box::new(GhastShootFireball { charge_time: 0 })));
         m.targets.add(
@@ -182,9 +250,65 @@ impl Kind for Ghast {
 
 // ---------------------------------------------------------------------- goals
 
-/// `RandomFloatAroundGoal` (no home: the first random point in a 16-block cube).
+/// `RandomFloatAroundGoal(mob, distanceToBlocks)`: a random point in a 16-block cube (within its home, and with a
+/// block or more near it when `distance_to_blocks` is set), brought down below where it is when it would be under
+/// the ground's surface.
 #[derive(Clone, Debug)]
-struct RandomFloatAround;
+pub struct RandomFloatAround {
+    pub distance_to_blocks: i32,
+}
+
+/// `RandomFloatAroundGoal.getSuitableFlyToPosition`.
+pub fn suitable_fly_to_position(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, distance_to_blocks: i32) -> Vec3 {
+    let here = e.position();
+    let mut pos: Option<Vec3> = None;
+    let choose = |e: &mut Entity| {
+        let r = &mut e.random;
+        let x = here.x + ((r.next_float() * 2.0 - 1.0) * 16.0) as f64;
+        let y = here.y + ((r.next_float() * 2.0 - 1.0) * 16.0) as f64;
+        let z = here.z + ((r.next_float() * 2.0 - 1.0) * 16.0) as f64;
+        Vec3::new(x, y, z)
+    };
+    for _ in 0..64 {
+        // `chooseRandomPositionWithRestriction`: outside the home is no position.
+        let p = choose(e);
+        let p = if m.home.is_some() && !crate::mob::random_pos::within_home(m.home, BlockPos::containing(p.x, p.y, p.z)) { None } else { Some(p) };
+        pos = p;
+        if let Some(p) = p
+            && is_good_target(level, p, distance_to_blocks)
+        {
+            return p;
+        }
+    }
+    let mut p = pos.unwrap_or_else(|| choose(e));
+    let b = BlockPos::containing(p.x, p.y, p.z);
+    let height = level.heightmap(b.x, b.z, false);
+    if height < b.y && height > level.min_y() {
+        p = Vec3::new(p.x, e.y() - (e.y() - p.y).abs(), p.z);
+    }
+    p
+}
+
+/// `RandomFloatAroundGoal.isGoodTarget`: an empty block with a solid one within `distance` blocks of it.
+fn is_good_target(level: &dyn EntityLevel, p: Vec3, distance: i32) -> bool {
+    if distance <= 0 {
+        return true;
+    }
+    let at = BlockPos::containing(p.x, p.y, p.z);
+    if !kiln_data::blocks_types::is_air(level.block(at)) {
+        return false;
+    }
+    for d in crate::math::Direction::ALL {
+        let (dx, dy, dz) = d.step();
+        for n in 1..distance {
+            let b = BlockPos::new(at.x + dx * n, at.y + dy * n, at.z + dz * n);
+            if !kiln_data::blocks_types::is_air(level.block(b)) {
+                return true;
+            }
+        }
+    }
+    false
+}
 
 impl CustomGoal for RandomFloatAround {
     crate::custom_goal_boilerplate!();
@@ -206,13 +330,9 @@ impl CustomGoal for RandomFloatAround {
     fn can_continue(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
         false
     }
-    fn start(&mut self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
-        let p = e.position();
-        let r = &mut e.random;
-        let x = p.x + ((r.next_float() * 2.0 - 1.0) * 16.0) as f64;
-        let y = p.y + ((r.next_float() * 2.0 - 1.0) * 16.0) as f64;
-        let z = p.z + ((r.next_float() * 2.0 - 1.0) * 16.0) as f64;
-        m.mov.set_wanted_position(x, y, z, 1.0);
+    fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let p = suitable_fly_to_position(e, m, &*level, self.distance_to_blocks);
+        m.mov.set_wanted_position(p.x, p.y, p.z, 1.0);
     }
 }
 

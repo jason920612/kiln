@@ -33,7 +33,9 @@ fn generate(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, mut next: impl
     let mut best = f64::NEG_INFINITY;
     let mut found = None;
     for _ in 0..10 {
-        let Some(p) = next(e) else { continue };
+        let Some(p) = next(e) else {
+            continue;
+        };
         let v = super::walk_target_value(m, level, p) as f64;
         if v > best {
             best = v;
@@ -135,6 +137,26 @@ pub fn hover_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v
         let above = e.random.next_int_bounded(max_hover - min_hover + 1) + min_hover;
         let p = move_up_to_above_solid(level, p, above);
         if crate::physics::fluid_state(level.block(p)).kind.is_water() || has_malus(m, level, p) {
+            return None;
+        }
+        Some(p)
+    })
+}
+
+/// `AirRandomPos.getPosTowards(mob, h, v, y, target, angle)`: `AirAndWaterRandomPos`' spot toward
+/// `target`, unless it is in water.
+#[allow(clippy::too_many_arguments)]
+pub fn air_pos_towards(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, y: i32, target: Vec3, angle: f64) -> Option<Vec3> {
+    let d = target - e.position();
+    let restrict = mob_restricted(e, m.home, h as f64);
+    generate(e, m, level, |e| {
+        let dir = direction_within_radians(e, 0.0, h as f64, v, y, d.x, d.z, angle)?;
+        let p = toward_home(e, h as f64, dir, m.home);
+        if outside_limits(level, p) || (restrict && !within_home(m.home, p)) {
+            return None;
+        }
+        let p = move_up_out_of_solid_raw(level, p);
+        if has_malus(m, level, p) || crate::physics::fluid_state(level.block(p)).kind.is_water() {
             return None;
         }
         Some(p)

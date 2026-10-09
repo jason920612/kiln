@@ -215,7 +215,7 @@ impl RegionWork<'_> {
                 entities::riding_jump(self.entities, &mut self.players, i, data, &env.blocks);
                 continue;
             }
-            if let PlayIn::Interact { entity_id, hand, sneaking, .. } = pkt {
+            if let PlayIn::Interact { entity_id, hand, sneaking, location, .. } = pkt {
                 if let Some(h) = self.plugins.as_mut()
                     && crate::plugins::deny_interact(h, self.players[i], self.entities, entity_id)
                 {
@@ -228,7 +228,7 @@ impl RegionWork<'_> {
                 }
                 let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
                 let off = hand == kiln_proto::packets::serverbound::Hand::Off;
-                let open = entities::interact_mob(self.entities, &mut level, &mut self.players, i, entity_id, off, &mut self.out.spawns, &mut self.out.deaths);
+                let open = entities::interact_mob(self.entities, &mut level, &mut self.players, i, entity_id, off, location, &mut self.out.spawns, &mut self.out.deaths);
                 if open {
                     crate::carts::open(self.entities, &mut level, self.players[i], entity_id, &mut self.out.spawns);
                 }
@@ -348,6 +348,21 @@ impl RegionWork<'_> {
         }
     }
 
+    /// `BrushItem.onUseTick` for the players brushing this tick: the view must be on a block, every tenth tick it is brushed.
+    fn brushes(&mut self, env: &Env) {
+        for i in 0..self.players.len() {
+            let Some(ticks) = self.players[i].brush_ticks.take() else { continue };
+            if self.players[i].dead {
+                continue;
+            }
+            let bodies = Vec::new();
+            let mut out = BlockOut::default();
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: Some(self.players[i].conn) };
+            crate::brush::use_tick(&mut *self.players[i], &mut level, ticks, &mut self.out.spawns);
+            blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+        }
+    }
+
     /// A Use Item with a fishing rod in that hand, from a living player.
     fn rod_use(&self, conn: ConnId, pkt: &PlayIn) -> bool {
         let PlayIn::UseItem { hand, .. } = pkt else { return false };
@@ -463,6 +478,7 @@ impl RegionWork<'_> {
         }
         self.spin_attacks(env);
         self.kinetic_attacks(env);
+        self.brushes(env);
         mark(&mut self.out.times, 1);
         // Which chunks each player lacks is its own business (a window); sending them needs
         // the chunks' packet caches, so that part runs in connection order here.
@@ -531,7 +547,8 @@ impl RegionWork<'_> {
     /// ticks, random ticks, block events and moving pistons in chunks near players.
     fn tick_blocks(&mut self, env: &Env, ticking: &Ticking) {
         let dt = std::time::Instant::now();
-        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        let spots = self.blocks.containers.dispensers();
+        let bodies = blocks::entity_boxes_wear(self.players.iter().map(|p| &**p), self.entities, &spots);
         let dt = crate::diag::lap("b.bodies", dt);
         let mut out = BlockOut::default();
         if let Some(h) = self.plugins.as_mut() {
@@ -557,6 +574,9 @@ impl RegionWork<'_> {
                             let pos = BlockPos::new(pos.x, pos.y, pos.z);
                             kiln_blocks::destroy_block(&mut level, pos, false, 512);
                         }
+                        crate::fall::BlockEdit::FrostWalker { origin, radius, pos } => {
+                            crate::enchant_loc::frost_walker_disk(&mut level, origin, radius, pos);
+                        }
                         crate::fall::BlockEdit::Dirt(pos) => {
                             let pos = BlockPos::new(pos.x, pos.y, pos.z);
                             // `FarmBlock.turnToDirt`.
@@ -580,8 +600,19 @@ impl RegionWork<'_> {
                 let dt = crate::diag::lap("b.sculk_step", dt);
                 blocks::tick_blocks(&mut level, &ticking);
                 crate::diag::lap("b.tick_blocks", dt);
-                for pos in std::mem::take(&mut level.out.rechecks) {
-                    crate::container::open::recheck_openers(&mut level, &self.players, pos);
+                let rechecks = std::mem::take(&mut level.out.rechecks);
+                if !rechecks.is_empty() {
+                    let golems = crate::container::open::golems_with_open_chest(&self.entities.list);
+                    for pos in rechecks {
+                        crate::container::open::recheck_openers(&mut level, &self.players, &golems, pos);
+                    }
+                }
+                let ops = std::mem::take(&mut level.out.dispenses);
+                if !ops.is_empty() {
+                    let shears = crate::container::equip::apply(ops, self.entities, &mut self.players, &mut level.out.spawns);
+                    for (id, tool) in shears {
+                        crate::container::equip::shear(self.entities, &mut level, &mut self.players, id, &tool, &mut self.out.spawns, &mut self.out.deaths);
+                    }
                 }
                 blocks::tick_pistons(&mut level, &ticking);
                 crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
@@ -596,6 +627,13 @@ impl RegionWork<'_> {
     /// The entity phase: the region's entities tick against its blocks; what they change
     /// goes out like block work.
     fn tick_entities(&mut self, env: &Env, ctx: &Ctx<'_>, ticking_now: &Ticking) {
+        // The animals chunk generation makes for the chunks that came in new.
+        if !self.blocks.initial_mobs.is_empty() {
+            let pending = std::mem::take(&mut self.blocks.initial_mobs);
+            let mut out = BlockOut::default();
+            let level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &[], actor: None };
+            crate::spawner::initial_mobs(&level, &pending, &mut self.out.spawns);
+        }
         // `TickRateManager.isEntityFrozen`: nothing but players ticks while frozen.
         if env.frozen {
             return;
@@ -632,7 +670,7 @@ impl RegionWork<'_> {
                 bodies: &bodies,
                 actor: None,
             };
-            let any_player = !self.players.is_empty();
+            let any_player = self.players.iter().any(|p| p.game_mode != 3);
             let spawning = Instant::now();
             crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns, ctx);
             self.out.times[9] += spawning.elapsed();
@@ -649,7 +687,8 @@ impl RegionWork<'_> {
         if self.blocks.containers.len() == 0 && self.blocks.sculk.len() == 0 {
             return;
         }
-        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        let spots = self.blocks.containers.dispensers();
+        let bodies = blocks::entity_boxes_wear(self.players.iter().map(|p| &**p), self.entities, &spots);
         let mut out = BlockOut::default();
         let mut items = crate::container::hopper::EntityItems::new(self.entities);
         {
@@ -662,6 +701,16 @@ impl RegionWork<'_> {
                 actor: None,
             };
             crate::container::tick_block_entities(&mut level, &mut items, &ticking);
+            let ops = std::mem::take(&mut level.out.dispenses);
+            if !ops.is_empty() {
+                let shears = crate::container::equip::apply(ops, items.entities_mut(), &mut self.players, &mut level.out.spawns);
+                for (id, tool) in shears {
+                    crate::container::equip::shear(items.entities_mut(), &mut level, &mut self.players, id, &tool, &mut self.out.spawns, &mut self.out.deaths);
+                }
+            }
+            crate::bell::requests(&mut level, items.entities_mut());
+            crate::beehive::anger_requests(&mut level, items.entities_mut(), &self.players);
+            crate::bell::tick(&mut level, items.entities_mut(), &ticking);
             crate::sculk::tick_block_entities(&mut level, &ticking);
             crate::sculk::requests(&mut level, &mut self.players, items.entities(), &mut self.out.spawns);
         }
@@ -735,6 +784,12 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env, enti
     let mut t = PlayerTicked::default();
     let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
     tick_connection(p, env);
+    // `Entity.computeSpeed` (in `baseTick`): the change of position since the last tick.
+    {
+        let last = p.speed_pos.unwrap_or(p.pos);
+        p.speed_h = ((p.pos[0] - last[0]).powi(2) + (p.pos[2] - last[2]).powi(2)).sqrt();
+        p.speed_pos = Some(p.pos);
+    }
     p.tick_damage(env.game_time);
     let mut ctx = damage_ctx(env, &mut t.spawns, &mut t.deaths);
     // What bad omen asks of the level (only looked up while the player has it).
@@ -744,7 +799,11 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env, enti
         let bp = kiln_entity::math::BlockPos::new(at[0], at[1], at[2]);
         p.omen_raid_full = crate::raid::raid_at_view(&env.blocks.raids, bp).is_some_and(|r| r.omen_level >= 5);
     }
+    // `LivingEntity.baseTick` starts with the enchantments' `tick` effects.
+    p.tick_enchant_effects(&block);
     p.base_tick(&block, env.min_y, &env.border, &mut ctx);
+    // `LivingEntity.baseTick`: a new block position runs the location-changed enchantments.
+    p.tick_location_changed(&block);
     p.tick_peaceful_regeneration(env.natural_regen, ctx.rules.difficulty);
     p.tick_fall_resets(&block);
     p.tick_glide();
@@ -762,15 +821,24 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env, enti
     }
     p.tick_using(&block, &mut ctx);
     p.tick_cooldowns();
+    // (`ServerPlayer`: new boots start their location effects at once, old ones stop.)
+    let boots_before = p.equipment_seen[2].clone();
     p.tick_combat();
+    if p.equipment_seen[2] != boots_before {
+        p.boots_changed(&block);
+    }
     // The server's body moves on its own (gravity, drag, a ladder's grip) and the blocks it
     // passes through take effect, then the connection puts the position back (`doTick`).
     let snap = p.pos;
     p.phantom_travel(cells, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
+    // (`checkFallDamage` in the move: a landing runs them as well.)
+    p.landed_location_changed(&block);
     let (_, h, _) = p.dimensions();
     let in_rain = crate::weather::in_rain(cells, &env.blocks, p.pos, p.pos[1] + h as f64);
     p.block_effects(&block, env.dim, in_rain, &mut ctx);
     p.tick_freezing(&block, &mut ctx);
+    // `Player.tick`'s last step.
+    p.update_pose(cells, env.game_time, env.min_y);
     p.pos = snap;
     if let Some(travel) = p.pending_travel.take() {
         t.portals.push(travel);
@@ -821,6 +889,7 @@ pub(crate) fn is_exclusive(pkt: &PlayIn) -> bool {
         pkt,
         PlayIn::ChatCommand { .. }
             | PlayIn::CommandSuggestion { .. }
+            | PlayIn::SetCommandBlock(_)
             | PlayIn::Chat { .. }
             // Disconnects and per-player protocol state.
             | PlayIn::ResourcePack { .. }
@@ -935,7 +1004,7 @@ pub(crate) fn player_packet(
                 if was_on_ground && !on_ground && d[1] > 0.0 {
                     p.server_jump(from, cells, env.game_time, env.min_y);
                 }
-                p.record_packet_move(from, d);
+                p.server_packet_move(from, d, was_on_ground, cells, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
                 let mut ctx = damage_ctx(env, spawns, deaths);
                 let blocks = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z);
                 p.after_move_fall(d, on_ground, p.pos[1] - y0 > 0.0, &blocks, &mut ctx);
@@ -1053,6 +1122,22 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 kiln_inventory::click::handle_rename_item(menu, env, &name, true)
             });
         }
+        // `handleContainerSlotStateChanged`: a crafter's slot switched off or on from its screen.
+        PlayIn::ContainerSlotStateChanged { slot, container_id, enabled } => {
+            let crafter = p.open_menu.as_ref().is_some_and(|m| m.container_id == container_id && m.kind == kiln_inventory::MenuKind::Crafter);
+            if p.game_mode != 3
+                && crafter
+                && let Some(crate::container::open::OpenBlock::Containers { first, .. }) = &p.containers.open
+            {
+                let at = first.0;
+                let level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                if let Some(c) = level.blocks.containers.get_mut(at)
+                    && let Ok(slot) = usize::try_from(slot)
+                {
+                    crate::container::crafter::set_slot_state(c, slot, enabled);
+                }
+            }
+        }
         PlayIn::ContainerButtonClick { container_id, button_id } => {
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
             crate::container::open::menu_op(p, &mut level, fx.spawns, |menu, _, env| {
@@ -1108,6 +1193,10 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 crate::firework::use_item(p, &mut level, off, fx.spawns);
             } else if matches!(name, "minecraft:writable_book" | "minecraft:written_book") {
                 p.use_book(off);
+            } else if name == "minecraft:map" {
+                crate::map_items::use_empty_map(p, off, env.dim, fx.spawns);
+                // `ServerPlayerGameMode.useItem`: a changed stack sends the inventory menu whole.
+                p.with_menu(&env.rules, fx.spawns, |menu, _, e| menu.send_all_data_to_remote(e));
             } else if name == crate::end_eye::ITEM {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::end_eye::use_item(p, &mut level, off, fx.spawns);
@@ -1237,9 +1326,16 @@ fn use_on_block(
     }
     let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
     // `BlockState.useItemOn` of blocks that react to the item itself (either hand).
-    if !(p.sneaking && have_something) && !held.is_empty() && actor.may_build {
+    // (`ServerPlayerGameMode.useItemOn` does not ask whether the player may build: pots, campfires and
+    // composters work in adventure mode.)
+    // (A copper golem statue reacts to an empty hand too: `useItemOn` turns its pose.)
+    let statue = matches!(
+        kiln_data::block_logic::block_class(level.block(bp)),
+        kiln_data::block_logic::BlockClass::CopperGolemStatueBlock | kiln_data::block_logic::BlockClass::WeatheringCopperGolemStatueBlock
+    );
+    if !(p.sneaking && have_something) && (!held.is_empty() || statue) {
         let used = held.clone();
-        if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, !main_hand, spawns) {
+        if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, cursor, !main_hand, spawns) {
             let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
             p.used_on_block("minecraft:item_used_on_block", pos, level.block(bp), &used, &probe);
             return;
@@ -1256,7 +1352,7 @@ fn use_on_block(
             if consumed {
                 return;
             }
-        } else if crate::tools::block_use_without_item(level, bp, spawns) || interact::use_without_item(level, bp, &actor) {
+        } else if crate::tools::block_use_without_item(p, level, bp, dir, cursor, spawns) || interact::use_without_item(level, bp, &actor) {
             return;
         }
     }
@@ -1269,6 +1365,12 @@ fn use_on_block(
         return;
     }
     if item_name == Some(crate::end_eye::ITEM) && actor.may_build && crate::end_eye::use_on(p, level, bp, !main_hand) {
+        return;
+    }
+    // `MapItem.useOn`: a banner is put on the map or taken off it.
+    if item_name == Some("minecraft:filled_map")
+        && crate::map_items::use_on_banner(p, !main_hand, &*level.cells, level.env.min_y, crate::map_items::has_ceiling(level.env.dim), pos, level.env.game_time).is_some()
+    {
         return;
     }
     if actor.may_build && crate::tools::item_use_on(p, level, bp, dir, !main_hand, spawns) {
@@ -1320,6 +1422,14 @@ fn use_on_block(
         }
         return;
     }
+    // `ArmorStandItem.useOn`.
+    if item_name == Some("minecraft:armor_stand") && crate::stands::use_on(p, level, bp, dir, !main_hand, spawns) {
+        return;
+    }
+    // `HangingEntityItem.useOn`: item frames and paintings.
+    if item_name.is_some_and(crate::frames::is_hanging_item) && crate::frames::use_on(p, level, bp, dir, !main_hand, spawns) {
+        return;
+    }
     // `EndCrystalItem.useOn`: on obsidian or bedrock with air above and no entity in the two
     // blocks there; the fight looks for its respawn crystals.
     if item_name == Some("minecraft:end_crystal") {
@@ -1357,6 +1467,14 @@ fn use_on_block(
     if !actor.may_build {
         return;
     }
+    // `GameMasterBlockItem.getPlacementState`: command blocks, jigsaws and structure blocks only for game masters.
+    if matches!(
+        item_name,
+        Some("minecraft:command_block" | "minecraft:chain_command_block" | "minecraft:repeating_command_block" | "minecraft:jigsaw" | "minecraft:structure_block" | "minecraft:test_block" | "minecraft:test_instance_block")
+    ) && !p.can_use_gamemaster_blocks()
+    {
+        return;
+    }
     let click = [pos[0] as f64 + cursor[0] as f64, pos[1] as f64 + cursor[1] as f64, pos[2] as f64 + cursor[2] as f64];
     let ctx = PlaceContext { hit: bp, face: dir, click, yaw: p.rot[0], pitch: p.rot[1], sneaking: p.sneaking };
     let Some((at, state)) = placement::placement(level, &item, &ctx) else { return };
@@ -1366,9 +1484,15 @@ fn use_on_block(
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
     let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
+    // `CommandBlock.setPlacedBy` (after the item's block entity data, which only a game master may set).
+    if kiln_data::block_logic::is_instance(level.block(placed_at), kiln_data::block_logic::BlockClass::CommandBlock) {
+        let entity_data = placed_from.get(kiln_item::keys::BLOCK_ENTITY_DATA).map(|d| &d.tag).filter(|_| p.can_use_gamemaster_blocks());
+        let powered = kiln_blocks::redstone::has_neighbor_signal(level, placed_at);
+        crate::command_block::placed_by(level, placed_at, powered, placed_from.has(kiln_item::component::ids::BLOCK_ENTITY_DATA), entity_data);
+    }
     // `SignBlock.setPlacedBy`: the placer edits the new sign.
     crate::signs::placed_by(p, level, placed_at);
-    crate::golems::try_spawn_golem(p, level, placed_at, spawns);
+    crate::golems::try_spawn_golem(Some(&mut *p), level, placed_at, spawns);
     // `WitherSkullBlock.setPlacedBy`.
     crate::wither::check_spawn(level, placed_at, spawns);
     // `ItemStack.useOn`: a successful item interaction counts as a use; `BlockItem.place`
@@ -1427,7 +1551,7 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
     if boxes.is_empty() {
         return false;
     }
-    let h = if p.sneaking { 1.5 } else { 1.8 };
+    let h = p.dimensions().1 as f64;
     let me = EntityBox {
         min: [p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3],
         max: [p.pos[0] + 0.3, p.pos[1] + h, p.pos[2] + 0.3],
@@ -1436,6 +1560,8 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
         conn: Some(p.conn),
         prevents_rest: false,
         player_source: None,
+        hanging: None,
+        wear: None,
     };
     let origin = [at.x as f64, at.y as f64, at.z as f64];
     let others = bodies.iter().filter(|b| b.conn != Some(p.conn));

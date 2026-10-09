@@ -75,6 +75,9 @@ impl Default for Rules {
 pub enum Effect {
     /// `Block.dropResources`: the block at `pos` (in `state`) drops its loot.
     Drop { pos: BlockPos, state: u16 },
+    /// `Block.dropResources` for a block a non-player entity (a projectile) destroyed: the
+    /// loot context has `this_entity` but no tool.
+    EntityDrop { pos: BlockPos, state: u16 },
     /// A block an explosion with drop decay destroyed: its loot rolls with the
     /// `explosion_radius` parameter (`survives_explosion` keeps each drop with a chance of
     /// `1 / radius`).
@@ -215,6 +218,12 @@ pub trait Level {
     /// and ender chests recheck their openers, dispensers and droppers dispense.
     fn block_entity_tick(&mut self, _pos: BlockPos, _state: u16) {}
 
+    /// `CrafterBlockEntity.setTriggered`: the crafter's block entity follows its block's `triggered`.
+    fn crafter_triggered(&mut self, _pos: BlockPos, _triggered: bool) {}
+
+    /// `CommandBlock.neighborChanged` → `setPoweredAndUpdate`: the command block's power, as the block saw it.
+    fn command_block_powered(&mut self, _pos: BlockPos, _state: u16, _powered: bool) {}
+
     /// The analog output of the single item frame at `pos` facing `facing`, if exactly one.
     fn item_frame_analog(&self, _pos: BlockPos, _facing: Direction) -> Option<i32> {
         None
@@ -259,6 +268,32 @@ pub trait Level {
     /// clear weather).
     fn sky_darken(&self) -> i32 {
         0
+    }
+
+    /// `getBrightness(LightLayer.SKY, pos)`: the sky light stored at `pos` (15 above the world).
+    fn sky_light(&self, _pos: BlockPos) -> i32 {
+        0
+    }
+
+    /// The `minecraft:visual/sun_angle` attribute, in degrees (0 at noon).
+    fn sun_angle(&self) -> f32 {
+        0.0
+    }
+
+    /// `BellBlockEntity.onHit`: the bell at `pos` starts shaking toward `dir`; false when the
+    /// level has no bell block entity there.
+    fn bell_hit(&mut self, _pos: BlockPos, _dir: Direction) -> bool {
+        false
+    }
+
+    /// `BeehiveBlock.updateShape` with a fire beside it: the bees come out
+    /// (`emptyAllLivingFromHive(null, state, EMERGENCY)`).
+    fn beehive_fire(&mut self, _pos: BlockPos, _state: u16) {}
+
+    /// `BellBlockEntity.triggerEvent(1, dir)`: the shaking starts and the villagers around hear
+    /// it; whether the event was taken.
+    fn bell_event(&mut self, _pos: BlockPos, _dir: Direction) -> bool {
+        false
     }
 
     /// `LevelReader.getMaxLocalRawBrightness(pos)`.

@@ -48,10 +48,14 @@ pub enum MenuKind {
     CartographyTable,
     /// `EnchantmentMenu`.
     Enchantment,
+    /// `CrafterMenu`: nine slots a recipe is dispensed from, any of which can be disabled, and a result slot that only shows.
+    Crafter,
     /// `BrewingStandMenu`.
     BrewingStand,
     /// `BeaconMenu`.
     Beacon,
+    /// `LecternMenu`: the book alone (no inventory slots), and the page as data.
+    Lectern,
     /// `HorseInventoryMenu`: saddle, body armor, then the chest's `3 * columns` slots.
     Mount { columns: u8 },
 }
@@ -83,6 +87,8 @@ impl MenuKind {
             MenuKind::Enchantment => "minecraft:enchantment",
             MenuKind::BrewingStand => "minecraft:brewing_stand",
             MenuKind::Beacon => "minecraft:beacon",
+            MenuKind::Lectern => "minecraft:lectern",
+            MenuKind::Crafter => "minecraft:crafter_3x3",
             // Opened with its own packet (`ClientboundMountScreenOpenPacket`), not a menu type.
             MenuKind::Mount { .. } => return None,
         })
@@ -108,7 +114,8 @@ impl MenuKind {
             | MenuKind::Beacon
             | MenuKind::Merchant => 0,
             MenuKind::Generic { rows } => rows as usize * 9,
-            MenuKind::Generic3x3 => 9,
+            MenuKind::Generic3x3 | MenuKind::Crafter => 9,
+            MenuKind::Lectern => 1,
             MenuKind::Hopper => 5,
             MenuKind::Mount { columns } => 2 + columns as usize * 3,
             MenuKind::ShulkerBox => 27,
@@ -168,6 +175,15 @@ impl Menu {
     /// `DispenserMenu` (dispenser, dropper).
     pub fn generic_3x3(container_id: i32) -> Menu {
         Self::over_block(MenuKind::Generic3x3, container_id, SlotKind::Normal, 0)
+    }
+
+    /// `CrafterMenu`: the crafter's nine slots, the player's, then the result; ten data values (a flag per disabled slot,
+    /// and whether the crafter is powered).
+    pub fn crafter(container_id: i32) -> Menu {
+        let mut slots = block_slots(9, SlotKind::CrafterInput);
+        player_slots(&mut slots);
+        slots.push(Slot::new(Source::Result, 0, SlotKind::NonInteractiveResult));
+        Menu::with_slots(MenuKind::Crafter, container_id, slots, 10, CraftGrid::default())
     }
 
     /// `HopperMenu`.
@@ -310,6 +326,11 @@ impl Menu {
         menu
     }
 
+    /// `LecternMenu`: the book (slot 0, no player slots) and the page (data 0).
+    pub fn lectern(container_id: i32) -> Menu {
+        Menu::with_slots(MenuKind::Lectern, container_id, vec![Slot::new(Source::Block, 0, SlotKind::Normal)], 1, CraftGrid::default())
+    }
+
     /// `CartographyTableMenu`: map 0, additional 1, result 2, main 3-29, hotbar 30-38.
     pub fn cartography_table(container_id: i32) -> Menu {
         let mut slots = vec![
@@ -356,6 +377,7 @@ impl Menu {
                 self.local_data[3] = self.enchant.seed;
                 return done;
             }
+            MenuKind::Lectern => return self.lectern_click(env, button),
             MenuKind::Stonecutter => {}
             _ => return false,
         }
@@ -367,6 +389,48 @@ impl Menu {
             stonecutter_setup_result(self, env, button);
         }
         true
+    }
+
+    /// `LecternMenu.clickMenuButton`: 1 and 2 turn a page back and on, 100 and more jump to a page, 3 takes the book.
+    fn lectern_click(&mut self, env: &mut Env, button: i32) -> bool {
+        if button >= 100 {
+            self.set_data(env, 0, button - 100);
+            return true;
+        }
+        match button {
+            2 => {
+                let page = self.data(env, 0);
+                self.set_data(env, 0, page + 1);
+                true
+            }
+            1 => {
+                let page = self.data(env, 0);
+                self.set_data(env, 0, page - 1);
+                true
+            }
+            3 => {
+                if !env.player.may_build {
+                    return false;
+                }
+                let Some(block) = env.block.as_deref_mut() else { return false };
+                let mut book = block.remove_item_no_update(0);
+                block.set_changed();
+                let infinite = env.player.infinite_materials;
+                if !env.inventory.add(None, &mut book, infinite) {
+                    env.drop_item(book, false);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `AbstractContainerMenu.setData` on a lectern: the block entity takes the page, the menu tells the client.
+    fn set_data(&mut self, env: &mut Env, index: usize, value: i32) {
+        if let Some(block) = env.block.as_deref_mut() {
+            block.set_data(index, value);
+        }
+        self.broadcast_changes(env);
     }
 
     /// `StonecutterMenu.isValidRecipeIndex`: the recipe at a list position.
@@ -642,6 +706,8 @@ pub(crate) fn quick_move_stack(menu: &mut Menu, env: &mut Env, i: usize) -> Item
             menu.finish_quick_move(env, i, stack, copy, false).0
         }
         MenuKind::Merchant => crate::merchant::quick_move_stack(menu, env, i),
+        // `LecternMenu.quickMoveStack`: nothing moves.
+        MenuKind::Lectern => ItemStack::empty(),
         MenuKind::Grindstone | MenuKind::Anvil => {
             let grindstone = menu.kind == MenuKind::Grindstone;
             let ok = match i {
@@ -719,7 +785,7 @@ pub(crate) fn quick_move_stack(menu: &mut Menu, env: &mut Env, i: usize) -> Item
             }
             menu.finish_quick_move(env, i, stack, copy, false).0
         }
-        MenuKind::Generic3x3 => {
+        MenuKind::Generic3x3 | MenuKind::Crafter => {
             let ok = if i < 9 {
                 menu.move_item_stack_to(env, &mut stack, 9, 45, true)
             } else {
@@ -778,6 +844,16 @@ pub(crate) fn quick_move_stack(menu: &mut Menu, env: &mut Env, i: usize) -> Item
             copy
         }
     }
+}
+
+/// `CrafterMenu.refreshRecipeResult`: the recipe the crafter's nine slots match, its result shown in the last slot.
+pub(crate) fn crafter_refresh_result(menu: &mut Menu, env: &mut Env) {
+    let Some(block) = env.block.as_deref() else { return };
+    let items: Vec<ItemStack> = (0..9).map(|i| block.item(i).clone()).collect();
+    let input = crate::recipe::CraftingInput::new(3, 3, &items);
+    let recipes = &env.rules.recipes;
+    let result = recipes.find_crafting(&input, None, &*env.world).map_or_else(ItemStack::empty, |id| recipes.assemble(id, &input, &*env.world));
+    menu.result.item = result;
 }
 
 fn env_drop(env: &mut Env, stack: ItemStack) {

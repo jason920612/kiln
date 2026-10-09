@@ -5,7 +5,6 @@
 //! Timing against vanilla is checked tick by tick by `sculk_parity` (tools/sculk_vectors.py).
 
 use kiln_blocks::state;
-use kiln_data::blocks::default_state as d;
 use kiln_link::ToSim;
 use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};

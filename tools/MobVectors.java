@@ -192,6 +192,8 @@ public class MobVectors {
         final Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
         double[] player; // x, y, z or null
         boolean playerSneaking;
+        /// wp49: the player swims (the swimming flag of `Entity.setSwimming`).
+        boolean playerSwimming;
         boolean playerCreative;
         String playerMainHand;
         /// The player's look direction (yaw also turns its head) and head item.
@@ -232,6 +234,9 @@ public class MobVectors {
         /// wp44 spawners: mob spawner blocks (position -> the block entity's NBT as SNBT) whose
         /// `BaseSpawner.serverTick` runs every tick (after the entities), and the `spawner_blocks_work` rule.
         final Map<BlockPos, String> spawners = new LinkedHashMap<>();
+        /// wp49 copper golems: chests (position -> the `Items` list as SNBT) whose block entities hold items; their openers and a
+        /// signature of their slots are traced every tick.
+        final Map<BlockPos, String> chests = new LinkedHashMap<>();
         boolean spawnerBlocksWork = true;
         /// wp32 parrots: the level's random is compared at the end (what a scenario draws from it, imitations).
         boolean checkLevelRandom;
@@ -574,6 +579,25 @@ public class MobVectors {
                     }
         }
         if (!s.spawnerBlocksWork) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawner_blocks_work false");
+        // wp49 copper golems: the chests' block entities get their items (`loadCustomOnly`).
+        StringBuilder chestsJson = new StringBuilder();
+        List<net.minecraft.world.level.block.entity.ChestBlockEntity> chestBes = new ArrayList<>();
+        for (var ch : s.chests.entrySet()) {
+            var be = (net.minecraft.world.level.block.entity.ChestBlockEntity) level.getBlockEntity(ch.getKey());
+            net.minecraft.nbt.CompoundTag tag = net.minecraft.nbt.TagParser.parseCompoundFully("{Items:" + ch.getValue() + "}");
+            be.loadCustomOnly(net.minecraft.world.level.storage.TagValueInput.create(net.minecraft.util.ProblemReporter.DISCARDING, level.registryAccess(), tag));
+            chestBes.add(be);
+            StringBuilder items = new StringBuilder();
+            for (int i = 0; i < be.getContainerSize(); i++) {
+                ItemStack st = be.getItem(i);
+                if (st.isEmpty()) continue;
+                if (items.length() > 0) items.append(',');
+                items.append(String.format(Locale.ROOT, "{\"slot\":%d,\"id\":\"%s\",\"count\":%d}", i, BuiltInRegistries.ITEM.getKey(st.getItem()), st.getCount()));
+            }
+            if (chestsJson.length() > 0) chestsJson.append(',');
+            chestsJson.append(String.format(Locale.ROOT, "{\"pos\":[%d,%d,%d],\"items\":[%s]}", ch.getKey().getX(), ch.getKey().getY(), ch.getKey().getZ(), items));
+        }
+        StringBuilder chestTrace = new StringBuilder();
         level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + s.dayTime);
         if (s.noMobDrops) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:mob_drops false");
         level.updateSkyBrightness();
@@ -587,6 +611,7 @@ public class MobVectors {
             // (wp32: the player left standing on the ground by a scenario is in the air again.)
             player.setOnGround(false);
             player.setShiftKeyDown(s.playerSneaking);
+            player.setSwimming(s.playerSwimming);
             player.setPose(s.playerSneaking ? net.minecraft.world.entity.Pose.CROUCHING : net.minecraft.world.entity.Pose.STANDING);
             // wp28: a player who survives what a warden does to him (`playerHealth`, 20 by default).
             player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH).setBaseValue(s.playerHealth);
@@ -663,6 +688,21 @@ public class MobVectors {
             }
             m.getRandom().setSeed(spec.seed);
             pinCubeMoveYaw(m);
+            // wp49 bees: the constructor draws the flower-search cooldown and the validate goals' cooldowns from
+            // the mob's unseeded random: recorded, and set in the replay.
+            String beeJson = "null";
+            if (m instanceof net.minecraft.world.entity.animal.bee.Bee) {
+                int vh = -1, vf = -1;
+                for (WrappedGoal g : ((net.minecraft.world.entity.ai.goal.GoalSelector) get(m, "goalSelector")).getAvailableGoals()) {
+                    String n = g.getGoal().getClass().getSimpleName();
+                    if (n.equals("ValidateHiveGoal")) vh = (Integer) get(g.getGoal(), "VALIDATE_HIVE_COOLDOWN");
+                    if (n.equals("ValidateFlowerGoal")) vf = (Integer) get(g.getGoal(), "validateFlowerCooldown");
+                }
+                beeJson = "[" + get(m, "remainingCooldownBeforeLocatingNewFlower") + "," + vh + "," + vf + "]";
+            }
+            // wp49 copper golems: the constructor draws the first transport cooldown from the mob's unseeded random: recorded.
+            String copperJson = m instanceof net.minecraft.world.entity.animal.golem.CopperGolem cg
+                    ? "[" + cg.getBrain().getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.TRANSPORT_ITEMS_COOLDOWN_TICKS).orElse(-1) + "]" : "null";
             int eggTime = m instanceof net.minecraft.world.entity.animal.chicken.Chicken c ? (Integer) get(c, "eggTime") : 0;
             if (!level.addFreshEntity(m)) throw new IllegalStateException("could not add " + spec.type);
             if (spec.heart != null) {
@@ -675,11 +715,11 @@ public class MobVectors {
             tracked.add(m);
             if (specs.length() > 0) specs.append(',');
             specs.append(String.format(Locale.ROOT,
-                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s,\"heart\":%s,\"vehicle\":%d}",
+                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s,\"heart\":%s,\"vehicle\":%d,\"bee\":%s,\"copper\":%s}",
                     spec.type, m.getId(), spec.seed, d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw),
                     spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\"", eggTime,
                     spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove, nbtJson, effectsJson(spec.effects),
-                    spec.heart == null ? "null" : "[" + spec.heart.getX() + "," + spec.heart.getY() + "," + spec.heart.getZ() + "]", spec.vehicle));
+                    spec.heart == null ? "null" : "[" + spec.heart.getX() + "," + spec.heart.getY() + "," + spec.heart.getZ() + "]", spec.vehicle, beeJson, copperJson));
         }
         // wp29: riders sit on their mounts before the first tick.
         for (int i = 0; i < s.mobs.size(); i++) {
@@ -799,6 +839,9 @@ public class MobVectors {
                         dbg.append("] target=").append(np.getTarget()).append(" reach=").append(np.canReach());
                     }
                     var mc = dm.getMoveControl();
+                    var lc = dm.getLookControl();
+                    dbg.append(" LOOK cd=").append(get(lc, "lookAtCooldown")).append(" want=").append(get(lc, "wantedX")).append(',').append(get(lc, "wantedY")).append(',').append(get(lc, "wantedZ"))
+                            .append(" xmax=").append(get(lc, "xMaxRotAngle")).append(" ymax=").append(get(lc, "yMaxRotSpeed")).append(" xRot=").append(dm.getXRot()).append(" eyeY=").append(dm.getEyeY());
                     dbg.append(" op=").append(get(mc, "operation")).append(" want=").append(get(mc, "wantedX")).append(',').append(get(mc, "wantedY")).append(',').append(get(mc, "wantedZ")).append(" speedMod=").append(get(mc, "speedModifier"));
                     Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
                 }
@@ -839,6 +882,20 @@ public class MobVectors {
                         .append(',').append(d(ov.x)).append(',').append(d(ov.y)).append(',').append(d(ov.z)).append(',').append(oe.isRemoved() ? 1 : 0).append(']');
             }
             othersTrace.append(']');
+            // wp49 copper golems: per chest its openers and a signature of its slots, then what each mob holds.
+            if (!chestBes.isEmpty()) {
+                if (tick > 0) chestTrace.append(',');
+                chestTrace.append('[');
+                for (var be : chestBes) {
+                    Object counter = get(be, "openersCounter");
+                    chestTrace.append(counter.getClass().getMethod("getOpenerCount").invoke(counter)).append(',').append(chestSig(be)).append(',');
+                }
+                for (int i = 0; i < initial; i++) {
+                    if (i > 0) chestTrace.append(',');
+                    chestTrace.append(itemSig(((Mob) tracked.get(i)).getMainHandItem()));
+                }
+                chestTrace.append(']');
+            }
         }
         // wp28 creaking: the blocks around the hearts as the scenario left them (resin), and
         // the hearts' positions.
@@ -888,13 +945,13 @@ public class MobVectors {
             hurts.append(String.format(Locale.ROOT, "[%d,%d,%s]", h.getKey(), (int) h.getValue()[0], d(h.getValue()[1])));
         }
         String playerJson = s.player == null ? "null"
-                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b,\"main_hand\":%s,\"yaw\":%s,\"pitch\":%s,\"head\":%s,\"uuid\":%s,\"tick_count\":%d,\"last_hurt_by_mob_time\":%d}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative,
+                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"swimming\":%b,\"creative\":%b,\"main_hand\":%s,\"yaw\":%s,\"pitch\":%s,\"head\":%s,\"uuid\":%s,\"tick_count\":%d,\"last_hurt_by_mob_time\":%d,\"health\":%s}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerSwimming, s.playerCreative,
                         s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"", Float.toString(s.playerYaw), Float.toString(s.playerPitch),
-                        s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp);
+                        s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp, Float.toString(s.playerHealth));
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
@@ -945,6 +1002,15 @@ public class MobVectors {
                 nm.setYBodyRot(nm.getYRot());
                 nm.yBodyRotO = nm.getYRot();
                 if (nm instanceof net.minecraft.world.entity.animal.chicken.Chicken) set(nm, "eggTime", 6000 + pinned.size());
+                // wp49 bees: the constructor's unseeded draws are pinned (flower search 40, validate goals 25 and 35).
+                if (nm instanceof net.minecraft.world.entity.animal.bee.Bee) {
+                    set(nm, "remainingCooldownBeforeLocatingNewFlower", 40);
+                    for (WrappedGoal g : ((net.minecraft.world.entity.ai.goal.GoalSelector) get(nm, "goalSelector")).getAvailableGoals()) {
+                        String gn = g.getGoal().getClass().getSimpleName();
+                        if (gn.equals("ValidateHiveGoal")) set(g.getGoal(), "VALIDATE_HIVE_COOLDOWN", 25);
+                        if (gn.equals("ValidateFlowerGoal")) set(g.getGoal(), "validateFlowerCooldown", 35);
+                    }
+                }
                 pinCubeMoveYaw(nm);
                 pinned.add(nm);
             }
@@ -1066,7 +1132,7 @@ public class MobVectors {
     /// the mob's current yaw.
     static void pinCubeMoveYaw(Mob m) throws Exception {
         Object mc = m.getMoveControl();
-        if (mc.getClass().getSimpleName().equals("CubeMobMoveControl")) {
+        if (mc.getClass().getSimpleName().equals("CubeMobMoveControl") || mc.getClass().getSimpleName().equals("SulfurCubeMobMoveControl")) {
             set(mc, "yRot", 180.0F * m.getYRot() / 3.1415927F);
         }
         pinCommonB(m);
@@ -1171,6 +1237,17 @@ public class MobVectors {
     }
 
     /** [id, x, y, z, dx, dy, dz, yRot, xRot, yHeadRot, yBodyRot, onGround, health, hurtTime, removed, fire, target, goals...] */
+    /// wp49 copper golems: a stack as one number (the hash of its item's name times 31, plus the count).
+    static long itemSig(ItemStack s) {
+        return s.isEmpty() ? 0 : (long) BuiltInRegistries.ITEM.getKey(s.getItem()).toString().hashCode() * 31 + s.getCount();
+    }
+
+    static long chestSig(net.minecraft.world.level.block.entity.ChestBlockEntity be) {
+        long h = 0;
+        for (int i = 0; i < be.getContainerSize(); i++) h += (long) (i + 1) * itemSig(be.getItem(i));
+        return h;
+    }
+
     static String state(Mob m) throws Exception {
         Vec3 p = m.position();
         Vec3 v = m.getDeltaMovement();
@@ -1762,6 +1839,13 @@ public class MobVectors {
         scenariosTraders(out);
         // -- wp32: parrots
         scenariosParrot(out);
+        // -- wp49: bees
+        scenariosBee(out);
+        scenariosGiant(out);
+        scenariosDolphin(out);
+        scenariosHappyGhast(out);
+        scenariosCopperGolem(out);
+        scenariosSulfurCube(out);
         // -- wp33: mule breeding, jockeys, the undead mounts, projectile deflection
         scenariosWp33(out);
         scenariosSpears(out);
@@ -2891,6 +2975,972 @@ public class MobVectors {
     static String owner() {
         int[] u = net.minecraft.core.UUIDUtil.uuidToIntArray(UUID.nameUUIDFromBytes("KilnMob".getBytes()));
         return String.format(Locale.ROOT, "Owner:[I;%d,%d,%d,%d]", u[0], u[1], u[2], u[3]);
+    }
+
+    // ---------------------------------------------------------- wp49: dolphins
+    static void scenariosDolphin(List<Scenario> out) {
+        double W = BY - 3; // y of a mob in the pool
+        // Swimming about in a big pool, jumping out of it now and then.
+        for (int seed = 1; seed <= 4; seed++) {
+            Scenario s = new Scenario("dolphin_idle_" + seed);
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 40f * seed, 37000L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 400 + seed;
+            s.ticks = 600;
+            out.add(s);
+        }
+        // Near the surface, where the jump goal finds clear water ahead.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("dolphin_jump_" + seed);
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, BY - 1.0, 0.5, 70f * seed, 37100L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 410 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A baby.
+        {
+            Scenario s = new Scenario("dolphin_baby");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 90f, 37200L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 420;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Out of the water it dries out (hurt once its moistness runs out) and flops about.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("dolphin_land_" + seed);
+            floor(s, 20, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, BY, 0.5, 70f * seed, 37300L + seed);
+            m.nbt = "{PersistenceRequired:1b,Moistness:40}";
+            s.mobs.add(m);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 430 + seed;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // On the shore it looks for the water.
+        {
+            Scenario s = new Scenario("dolphin_find_water");
+            poolWorld(s, 18, 3, -4, 9, 4, 4);
+            MobSpec m = new MobSpec("minecraft:dolphin", -1.5, BY, 0.5, 90f, 37400L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 440;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Short of air under a roof with one opening: up to it.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("dolphin_breath_" + seed);
+            poolWorld(s, 18, -6, -6, 6, 6, 5);
+            for (int x = -6; x <= 6; x++)
+                for (int z = -6; z <= 6; z++)
+                    if (!(x == 4 && z == 4)) s.blocks.put(new BlockPos(BX + x, BY, BZ + z), parse("minecraft:stone"));
+            MobSpec m = new MobSpec("minecraft:dolphin", -3.5, BY - 3.0, 0.5, 70f * seed, 37500L + seed);
+            m.nbt = "{PersistenceRequired:1b,Air:120s}";
+            s.mobs.add(m);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 450 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Items in the water: it swims to them, takes one in its mouth and plays with it.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("dolphin_items_" + seed);
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f * seed, 37600L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            MobSpec item = new MobSpec("minecraft:item", 4.5, BY - 3.0, 3.5, 0f, 37610L + seed);
+            item.mainHand = seed == 1 ? "minecraft:cod" : "minecraft:stick";
+            s.others.add(item);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 460 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // With something in its mouth already.
+        {
+            Scenario s = new Scenario("dolphin_holding");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 37700L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.mainHand = "minecraft:cod";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 470;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // A fish: an adult wants to show the way to treasure (there is none in this world), a baby grows up faster.
+        {
+            Scenario s = new Scenario("dolphin_feed_adult");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 37800L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:cod";
+            s.levelSeed = 480;
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:cod";
+            s.actions.add(a);
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("dolphin_feed_baby");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 37810L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:salmon";
+            s.levelSeed = 481;
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:salmon";
+            s.actions.add(a);
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("dolphin_feed_other_item");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 37820L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:stick";
+            s.actions.add(a);
+            s.ticks = 100;
+            out.add(s);
+        }
+        // Already after a fish (the saved flag).
+        {
+            Scenario s = new Scenario("dolphin_got_fish");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 37900L);
+            m.nbt = "{PersistenceRequired:1b,GotFish:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 490;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Hurt by the player (in the water beside the pool): it fights back.
+        {
+            Scenario s = new Scenario("dolphin_hurt");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 38000L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {11.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.levelSeed = 500;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Two dolphins: one hurt, the other alerted.
+        {
+            Scenario s = new Scenario("dolphin_alert_others");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 38100L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            MobSpec m2 = new MobSpec("minecraft:dolphin", 3.5, W, 2.5, 200f, 38101L);
+            m2.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m2);
+            s.player = new double[] {11.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.levelSeed = 510;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A swimming player: the dolphin comes alongside (and gives it dolphin's grace).
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("dolphin_swim_with_player_" + seed);
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 40f * seed, 38300L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, W, 3.5};
+            s.playerSwimming = true;
+            s.levelSeed = 530 + seed;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A player in the water who does not swim.
+        {
+            Scenario s = new Scenario("dolphin_player_floating");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 40f, 38310L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, W, 3.5};
+            s.levelSeed = 540;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // A guardian nearby: it keeps away.
+        {
+            Scenario s = new Scenario("dolphin_flees_guardian");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:dolphin", 0.5, W, 0.5, 20f, 38200L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            MobSpec g = new MobSpec("minecraft:guardian", 5.5, W, 0.5, 90f, 38201L);
+            g.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(g);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 520;
+            s.ticks = 300;
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp49: sulfur cubes
+    static String sulfurNbt(String item) {
+        return "{PersistenceRequired:1b,Size:1,equipment:{body:{id:\"" + item + "\",count:1}},drop_chances:{body:2.0f}}";
+    }
+
+    static Scenario sulfurWorld(String name, long mobSeed, long levelSeed, int ticks) {
+        Scenario s = new Scenario(name);
+        floor(s, 30, "minecraft:stone");
+        MobSpec m = new MobSpec("minecraft:sulfur_cube", 0.5, BY, 0.5, 30f, mobSeed);
+        m.nbt = "{PersistenceRequired:1b,Size:1}";
+        s.mobs.add(m);
+        s.player = new double[] {24.5, BY, 0.5};
+        s.playerCreative = true;
+        s.levelSeed = levelSeed;
+        s.ticks = ticks;
+        return s;
+    }
+
+    static void scenariosSulfurCube(List<Scenario> out) {
+        // Hopping about, grown and as a baby.
+        for (int seed = 1; seed <= 3; seed++) {
+            out.add(sulfurWorld("sulfur_idle_" + seed, 43000L + seed, 900 + seed, 500));
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = sulfurWorld("sulfur_baby_" + seed, 43100L + seed, 910 + seed, 400);
+            s.mobs.get(0).nbt = "{PersistenceRequired:1b,Size:0,Age:-2000}";
+            out.add(s);
+        }
+        // A ball of each kind, hit by a player who looks at it: where it flies, bounces and slides.
+        String[] items = {"minecraft:oak_planks", "minecraft:tnt", "minecraft:tube_coral_block", "minecraft:blue_ice", "minecraft:soul_sand", "minecraft:magma_block", "minecraft:white_wool",
+                "minecraft:dirt", "minecraft:amethyst_block", "minecraft:iron_block", "minecraft:red_mushroom_block", "minecraft:honeycomb_block"};
+        for (int i = 0; i < items.length; i++) {
+            Scenario s = sulfurWorld("sulfur_ball_" + i, 43200L + i, 920 + i, 260);
+            s.mobs.get(0).nbt = sulfurNbt(items[i]);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerCreative = false;
+            s.hurts.put(10, new double[] {0, 4.0});
+            s.hurts.put(120, new double[] {0, 7.0});
+            out.add(s);
+        }
+        // A ball against a wall, looked down on.
+        {
+            Scenario s = sulfurWorld("sulfur_ball_wall", 43300L, 940, 200);
+            s.mobs.get(0).nbt = sulfurNbt("minecraft:oak_planks");
+            for (int y = BY; y <= BY + 3; y++)
+                for (int z = -6; z <= 6; z++) block(s, -5, y, z, "minecraft:stone");
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = 25f;
+            s.playerCreative = false;
+            s.hurts.put(10, new double[] {0, 6.0});
+            out.add(s);
+        }
+        // A ball in a pool: it floats, bobbing.
+        {
+            Scenario s = new Scenario("sulfur_ball_pool");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:sulfur_cube", 0.5, BY - 3, 0.5, 30f, 43400L);
+            m.nbt = sulfurNbt("minecraft:oak_planks");
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 950;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Swallowing: an item thrown down, or one given.
+        {
+            Scenario s = sulfurWorld("sulfur_swallow_item", 43500L, 960, 400);
+            s.actions.add(dropAt(3, "minecraft:dirt", 4.5, BY, 0.5));
+            out.add(s);
+        }
+        {
+            Scenario s = sulfurWorld("sulfur_swallow_given", 43510L, 961, 120);
+            s.player = new double[] {1.5, BY, 0.5};
+            s.playerCreative = false;
+            s.actions.add(interact(5, 0, "minecraft:dirt"));
+            s.actions.add(interact(10, 0, "minecraft:oak_planks"));
+            out.add(s);
+        }
+        {
+            Scenario s = sulfurWorld("sulfur_swallow_baby", 43520L, 962, 200);
+            s.mobs.get(0).nbt = "{PersistenceRequired:1b,Size:0,Age:-24000}";
+            s.actions.add(dropAt(3, "minecraft:dirt", 2.5, BY, 0.5));
+            s.player = new double[] {1.5, BY, 0.5};
+            s.playerCreative = false;
+            s.actions.add(interact(8, 0, "minecraft:dirt"));
+            out.add(s);
+        }
+        // Shearing the item out; the cube leaves the item alone for a while after.
+        {
+            Scenario s = sulfurWorld("sulfur_shear", 43600L, 970, 100);
+            s.mobs.get(0).nbt = sulfurNbt("minecraft:dirt");
+            s.player = new double[] {1.5, BY, 0.5};
+            s.playerCreative = false;
+            s.actions.add(interact(5, 0, "minecraft:shears"));
+            out.add(s);
+        }
+        // Tempted by the item in a player's hand.
+        {
+            Scenario s = sulfurWorld("sulfur_tempt", 43700L, 980, 300);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerMainHand = "minecraft:dirt";
+            out.add(s);
+        }
+        {
+            Scenario s = sulfurWorld("sulfur_tempt_baby", 43710L, 981, 300);
+            s.mobs.get(0).nbt = "{PersistenceRequired:1b,Size:0,Age:-24000}";
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerMainHand = "minecraft:slime_ball";
+            out.add(s);
+        }
+        // Feeding a baby grows it up.
+        {
+            Scenario s = sulfurWorld("sulfur_feed", 43720L, 982, 200);
+            s.mobs.get(0).nbt = "{PersistenceRequired:1b,Size:0,Age:-600}";
+            s.player = new double[] {1.5, BY, 0.5};
+            s.playerCreative = false;
+            s.actions.add(interact(5, 0, "minecraft:slime_ball"));
+            out.add(s);
+        }
+        // Killed: two babies.
+        {
+            Scenario s = sulfurWorld("sulfur_split", 43800L, 990, 80);
+            s.player = new double[] {1.5, BY, 0.5};
+            s.playerCreative = false;
+            s.hurts.put(5, new double[] {0, 20.0});
+            out.add(s);
+        }
+        // Lit with flint and steel: fuse, then the blast.
+        {
+            Scenario s = sulfurWorld("sulfur_tnt_lit", 43900L, 995, 160);
+            s.mobs.get(0).nbt = sulfurNbt("minecraft:tnt");
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = false;
+            s.actions.add(interact(5, 0, "minecraft:flint_and_steel"));
+            out.add(s);
+        }
+        // Set off by a blast: a short fuse (a charged creeper close by).
+        {
+            Scenario s = sulfurWorld("sulfur_tnt_blast", 43910L, 996, 200);
+            s.mobs.get(0).nbt = sulfurNbt("minecraft:tnt");
+            MobSpec c = new MobSpec("minecraft:creeper", 3.5, BY, 0.5, 90f, 43911L);
+            c.nbt = "{PersistenceRequired:1b,Fuse:3,ignited:1b}";
+            s.mobs.add(c);
+            out.add(s);
+        }
+    }
+
+    static Action dropAt(int tick, String item, double x, double y, double z) {
+        Action a = new Action(tick, "drop");
+        a.what = item;
+        a.x = x;
+        a.y = y;
+        a.z = z;
+        return a;
+    }
+
+    // ---------------------------------------------------------- wp49: copper golems
+    static final String IRON ="{Slot:0b,id:\"minecraft:iron_ingot\",count:40}";
+    static final String GOLD = "{Slot:0b,id:\"minecraft:gold_ingot\",count:7}";
+
+    static Scenario golemWorld(String name, long mobSeed, long levelSeed, int ticks) {
+        Scenario s = new Scenario(name);
+        floor(s, 30, "minecraft:stone");
+        MobSpec m = new MobSpec("minecraft:copper_golem", 0.5, BY, 0.5, 30f, mobSeed);
+        s.mobs.add(m);
+        s.player = new double[] {24.5, BY, 0.5};
+        s.playerCreative = true;
+        s.levelSeed = levelSeed;
+        s.ticks = ticks;
+        return s;
+    }
+
+    /// A chest block with items at (x, BY, z): `block` the full block state.
+    static void chestAt(Scenario s, int x, int z, String block, String items) {
+        block(s, x, BY, z, block);
+        s.chests.put(new BlockPos(x, BY, z), "[" + items + "]");
+    }
+
+    /// An iron golem offers its poppy to a copper golem next to it (the offer is a one in 8000 roll when the goal is
+    /// polled, so the seeds that roll early were looked for with a probe).
+    static void scenariosIronGift(List<Scenario> out) {
+        // (seeds found with a probe over 52001 to 52300: the goal starts at tick 41, 99, 207, 281 and 301)
+        long[] seeds = {52052L, 52168L, 52181L, 52220L, 52253L};
+        for (long seed : seeds) {
+            Scenario s = new Scenario("iron_gift_" + seed);
+            floor(s, 30, "minecraft:stone");
+            MobSpec iron = new MobSpec("minecraft:iron_golem", 0.5, BY, 0.5, 30f, seed);
+            iron.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(iron);
+            MobSpec copper = new MobSpec("minecraft:copper_golem", 3.5, BY, 0.5, 100f, seed + 7);
+            s.mobs.add(copper);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 800 + seed % 50;
+            s.ticks = 700;
+            out.add(s);
+        }
+    }
+
+    static void scenariosCopperGolem(List<Scenario> out) {
+        scenariosIronGift(out);
+        // Nothing to carry: strolls and waits.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = golemWorld("copper_golem_idle_" + seed, 41000L + seed, 700 + seed, 700);
+            if (seed == 2) s.player = new double[] {3.5, BY, 0.5};
+            out.add(s);
+        }
+        // Copper chest with items to a chest, back and forth.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = golemWorld("copper_golem_transport_" + seed, 41100L + seed, 710 + seed, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 2 * seed, "minecraft:chest[facing=east]", "");
+            out.add(s);
+        }
+        // Into a double chest.
+        {
+            Scenario s = golemWorld("copper_golem_double", 41200L, 720, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=west,type=right]", "");
+            chestAt(s, -7, 1, "minecraft:chest[facing=west,type=left]", "");
+            out.add(s);
+        }
+        // A trapped chest holding the same item already.
+        {
+            Scenario s = golemWorld("copper_golem_trapped", 41210L, 721, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:trapped_chest[facing=east]", "{Slot:3b,id:\"minecraft:iron_ingot\",count:60}");
+            out.add(s);
+        }
+        // A chest with another item only: the golem keeps its items and looks on.
+        {
+            Scenario s = golemWorld("copper_golem_mismatch", 41220L, 722, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", GOLD);
+            chestAt(s, 0, 9, "minecraft:chest[facing=north]", "{Slot:5b,id:\"minecraft:iron_ingot\",count:64},{Slot:6b,id:\"minecraft:iron_ingot\",count:64}");
+            out.add(s);
+        }
+        // A full chest.
+        {
+            Scenario s = golemWorld("copper_golem_full", 41230L, 723, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            StringBuilder full = new StringBuilder();
+            for (int i = 0; i < 27; i++) full.append(i > 0 ? "," : "").append("{Slot:").append(i).append("b,id:\"minecraft:iron_ingot\",count:64}");
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", full.toString());
+            out.add(s);
+        }
+        // Only an empty copper chest.
+        {
+            Scenario s = golemWorld("copper_golem_empty_source", 41240L, 724, 1200);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", "");
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            out.add(s);
+        }
+        // The destination is covered by a block: not a target.
+        {
+            Scenario s = golemWorld("copper_golem_blocked", 41250L, 725, 900);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            block(s, -7, BY + 1, 0, "minecraft:stone");
+            out.add(s);
+        }
+        // The destination sits in a closed cell.
+        {
+            Scenario s = golemWorld("copper_golem_unreachable", 41260L, 726, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            for (int x = -9; x <= -5; x++)
+                for (int z = -2; z <= 2; z++)
+                    for (int y = BY; y <= BY + 2; y++)
+                        if ((x == -9 || x == -5 || z == -2 || z == 2 || y == BY + 2) && !(x == -7 && z == 0 && y == BY)) block(s, x, y, z, "minecraft:stone");
+            out.add(s);
+        }
+        // Behind a door.
+        {
+            Scenario s = golemWorld("copper_golem_door", 41270L, 727, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -8, 0, "minecraft:chest[facing=east]", "");
+            for (int z = -6; z <= 6; z++)
+                for (int y = BY; y <= BY + 3; y++)
+                    if (!(z == 0 && y <= BY + 1)) block(s, -4, y, z, "minecraft:stone");
+            block(s, -4, BY, 0, "minecraft:oak_door[facing=east,half=lower,hinge=left,open=false]");
+            block(s, -4, BY + 1, 0, "minecraft:oak_door[facing=east,half=upper,hinge=left,open=false]");
+            out.add(s);
+        }
+        // Several of each.
+        {
+            Scenario s = golemWorld("copper_golem_many", 41280L, 728, 2400);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, 7, 5, "minecraft:copper_chest[facing=west]", GOLD);
+            chestAt(s, 7, -5, "minecraft:exposed_copper_chest[facing=west]", "{Slot:2b,id:\"minecraft:iron_ingot\",count:20}");
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            chestAt(s, -7, 5, "minecraft:chest[facing=east]", "{Slot:0b,id:\"minecraft:gold_ingot\",count:3}");
+            chestAt(s, -7, -5, "minecraft:trapped_chest[facing=east]", "");
+            out.add(s);
+        }
+        // A copper chest between chests: first source, then the nearest destination.
+        {
+            Scenario s = golemWorld("copper_golem_near", 41290L, 729, 1500);
+            chestAt(s, 3, 3, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, 3, -3, "minecraft:chest[facing=west]", "");
+            chestAt(s, -3, 3, "minecraft:chest[facing=east]", "");
+            out.add(s);
+        }
+        // Two golems at the same chests: one waits while the other has them open.
+        {
+            Scenario s = golemWorld("copper_golem_two", 41320L, 732, 1800);
+            MobSpec second = new MobSpec("minecraft:copper_golem", 2.5, BY, 0.5, 200f, 41321L);
+            s.mobs.add(second);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            out.add(s);
+        }
+        // The chests in odd places: a pit, a pillar, a double copper chest as the source.
+        {
+            Scenario s = golemWorld("copper_golem_pillar", 41330L, 733, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            block(s, -7, BY, 3, "minecraft:stone");
+            block(s, -7, BY + 1, 3, "minecraft:chest[facing=east]");
+            s.chests.put(new BlockPos(-7, BY + 1, 3), "[]");
+            out.add(s);
+        }
+        {
+            Scenario s = golemWorld("copper_golem_pit", 41340L, 734, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            block(s, -6, BY - 1, 0, "minecraft:chest[facing=east]");
+            s.chests.put(new BlockPos(-6, BY - 1, 0), "[]");
+            out.add(s);
+        }
+        {
+            Scenario s = golemWorld("copper_golem_double_source", 41350L, 735, 1800);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west,type=right]", IRON);
+            chestAt(s, 7, 1, "minecraft:copper_chest[facing=west,type=left]", "{Slot:4b,id:\"minecraft:gold_ingot\",count:9}");
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            out.add(s);
+        }
+        // A player nearby while it works.
+        {
+            Scenario s = golemWorld("copper_golem_player", 41300L, 730, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            s.player = new double[] {0.5, BY, 5.5};
+            out.add(s);
+        }
+        // Hurt on its way: it panics, the work starts again.
+        {
+            Scenario s = golemWorld("copper_golem_hurt", 41310L, 731, 1500);
+            chestAt(s, 7, 0, "minecraft:copper_chest[facing=west]", IRON);
+            chestAt(s, -7, 0, "minecraft:chest[facing=east]", "");
+            s.playerCreative = false;
+            s.hurts.put(250, new double[] {0, 1.0});
+            out.add(s);
+        }
+        // Weathering: a stage every while (the clock set a little ahead), the last stage turning to a statue.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = golemWorld("copper_golem_weather_" + seed, 41400L + seed, 740 + seed, 900);
+            s.mobs.get(0).nbt = "{next_weather_age:" + (1030 + 200 * seed) + "L}";
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = golemWorld("copper_golem_oxidized_" + seed, 41500L + seed, 750 + seed, 900);
+            s.mobs.get(0).nbt = "{next_weather_age:0L,weather_state:\"oxidized\"}";
+            out.add(s);
+        }
+        // Waxed (no weathering), scraped, sheared, and what it holds taken.
+        {
+            Scenario s = golemWorld("copper_golem_wax", 41600L, 760, 300);
+            s.mobs.get(0).nbt = "{next_weather_age:1010L,weather_state:\"weathered\"}";
+            s.playerCreative = false;
+            s.player = new double[] {1.5, BY, 0.5};
+            s.actions.add(interact(3, 0, "minecraft:honeycomb"));
+            s.actions.add(interact(20, 0, "minecraft:iron_axe"));
+            s.actions.add(interact(40, 0, "minecraft:iron_axe"));
+            s.actions.add(interact(60, 0, "minecraft:iron_axe"));
+            s.actions.add(interact(80, 0, "minecraft:iron_axe"));
+            out.add(s);
+        }
+        {
+            Scenario s = golemWorld("copper_golem_shears", 41610L, 761, 120);
+            s.mobs.get(0).nbt = "{equipment:{saddle:{id:\"minecraft:poppy\",count:1}},drop_chances:{saddle:2.0f}}";
+            s.player = new double[] {1.5, BY, 0.5};
+            s.actions.add(interact(5, 0, "minecraft:shears"));
+            s.actions.add(interact(10, 0, "minecraft:shears"));
+            out.add(s);
+        }
+        {
+            Scenario s = golemWorld("copper_golem_take", 41620L, 762, 120);
+            s.mobs.get(0).mainHand = "minecraft:copper_ingot";
+            s.mobs.get(0).nbt = "{PersistenceRequired:1b}";
+            s.player = new double[] {1.5, BY, 0.5};
+            s.actions.add(interact(5, 0, "minecraft:air"));
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp49: happy ghasts
+    static void scenariosHappyGhast(List<Scenario> out) {
+        // Floating about over a floor, grown.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("happy_ghast_idle_" + seed);
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 50f * seed, 39000L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 600 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Low over the floor.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("happy_ghast_low_" + seed);
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 1, 0.5, 70f * seed, 39100L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 610 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Over nothing.
+        {
+            Scenario s = new Scenario("happy_ghast_void");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 20f, 39200L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 620;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A player holding snowballs.
+        {
+            Scenario s = new Scenario("happy_ghast_tempt");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 20f, 39300L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:snowball";
+            s.levelSeed = 630;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A player on its back: it stays still.
+        {
+            Scenario s = new Scenario("happy_ghast_player_above");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 4, 0.5, 20f, 39400L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {0.5, BY + 8.0, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 640;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Hurt.
+        {
+            Scenario s = new Scenario("happy_ghast_hurt");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 20f, 39500L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {10.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.levelSeed = 650;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Healing: a heart a minute.
+        {
+            Scenario s = new Scenario("happy_ghast_heal");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 20f, 39600L);
+            m.nbt = "{PersistenceRequired:1b,Health:10f}";
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 660;
+            s.ticks = 1300;
+            out.add(s);
+        }
+        // With a harness.
+        {
+            Scenario s = new Scenario("happy_ghast_harness");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 20f, 39700L);
+            m.nbt = "{PersistenceRequired:1b,equipment:{body:{id:\"minecraft:white_harness\",count:1}}}";
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 670;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Ghastlings.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("happy_ghast_baby_" + seed);
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f * seed, 39800L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 680 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("happy_ghast_baby_follows_player");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f, 39900L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 690;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("happy_ghast_baby_tempt");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f, 39910L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:snowball";
+            s.levelSeed = 691;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("happy_ghast_baby_follows_adult");
+            floor(s, 30, "minecraft:stone");
+            MobSpec baby = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f, 39920L);
+            baby.nbt = "{PersistenceRequired:1b}";
+            baby.age = -24000;
+            s.mobs.add(baby);
+            MobSpec adult = new MobSpec("minecraft:happy_ghast", 12.5, BY + 8, 3.5, 200f, 39921L);
+            adult.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(adult);
+            s.player = new double[] {30.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 692;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("happy_ghast_baby_hurt");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f, 39930L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.levelSeed = 693;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Fed snowballs, a ghastling grows up faster.
+        {
+            Scenario s = new Scenario("happy_ghast_baby_feed");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 2, 0.5, 60f, 39940L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:snowball";
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:snowball";
+            s.actions.add(a);
+            s.levelSeed = 694;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Grown up (the age runs out): the goals take over from the brain.
+        {
+            Scenario s = new Scenario("happy_ghast_grows_up");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f, 39950L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -100;
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 695;
+            s.ticks = 400;
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp49: giants
+    static void scenariosGiant(List<Scenario> out) {
+        // A giant has no goals: it stands where it is put, with a player near or far, by day and by night.
+        for (int i = 0; i < 3; i++) {
+            Scenario s = new Scenario("giant_idle_" + i);
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:giant", 0.5, BY, 0.5, 70f * i, 36000L + 5 * i));
+            s.player = new double[] {i == 0 ? 6.5 : 12.5, BY, 0.5};
+            s.levelSeed = 120 + i;
+            s.dayTime = i == 2 ? 18000 : 1000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Hit by the player: it takes the knockback and nothing else.
+        {
+            Scenario s = new Scenario("giant_hurt");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:giant", 0.5, BY, 0.5, 0f, 36100L));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.levelSeed = 125;
+            s.hurts.put(10, new double[] {0, 5.0});
+            s.ticks = 120;
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp49: bees
+    static void scenariosBee(List<Scenario> out) {
+        String[] flowers = {"minecraft:poppy", "minecraft:dandelion", "minecraft:cornflower", "minecraft:azure_bluet", "minecraft:oxeye_daisy", "minecraft:allium"};
+        // Flowers about: wandering, pollinating until it carries nectar, then wandering on with it.
+        for (int i = 0; i < 10; i++) {
+            Scenario s = new Scenario("bee_flowers_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            for (int k = 0; k < 7; k++) block(s, -5 + (k * 5 + i * 3) % 11, BY, -4 + (k * 7 + i) % 9, flowers[(k + i) % flowers.length]);
+            s.mobs.add(new MobSpec("minecraft:bee", 0.5, BY + 1, 0.5, 40f * i, 34000L + 7 * i));
+            if (i >= 2) s.mobs.add(new MobSpec("minecraft:bee", -2.5, BY + 2, 1.5, 100f, 34100L + 7 * i));
+            s.player = new double[] {14.5, BY, 14.5};
+            s.playerCreative = true;
+            s.levelSeed = 80 + i;
+            s.ticks = 600;
+            out.add(s);
+        }
+        // A bee nest on a trunk: a bee with nectar goes home (its hive known, or found), one without
+        // goes in at night.
+        for (int i = 0; i < 10; i++) {
+            Scenario s = new Scenario("bee_hive_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            for (int y = 0; y < 3; y++) block(s, 6, BY + y, 0, "minecraft:oak_log[axis=y]");
+            block(s, 6, BY + 3, 0, "minecraft:bee_nest[facing=west,honey_level=0]");
+            for (int k = 0; k < 4; k++) block(s, -5 + 3 * k, BY, -3 + 2 * k, flowers[(k + i) % flowers.length]);
+            int v = i % 4;
+            MobSpec m = new MobSpec("minecraft:bee", 0.5 + (i % 3), BY + 1, 0.5 - (i % 2), 40f * i, 34200L + 7 * i);
+            m.nbt = v == 0 ? "{HasNectar:1b,hive_pos:[I;6,103,0]}" : v == 1 ? "{HasNectar:1b}" : v == 2 ? "{hive_pos:[I;6,103,0]}" : "{}";
+            s.mobs.add(m);
+            s.dayTime = v >= 2 ? 14000 : 1000;
+            s.player = new double[] {14.5, BY, 14.5};
+            s.playerCreative = true;
+            s.levelSeed = 90 + i;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Hurt by the player: it stings once (poison), then loses its stinger.
+        for (int i = 0; i < 4; i++) {
+            Scenario s = new Scenario("bee_sting_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:bee", 0.5, BY + 1, 0.5, 40f * i, 34300L + 7 * i));
+            if (i % 2 == 1) s.mobs.add(new MobSpec("minecraft:bee", 1.5, BY + 1, -1.5, 90f, 34350L));
+            s.player = new double[] {2.5, BY, 0.5};
+            s.levelSeed = 100 + i;
+            s.hurts.put(10, new double[] {0, 1.0});
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Breeding with flowers.
+        {
+            Scenario s = new Scenario("bee_breed");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:bee", 0.5, BY + 1, 0.5, 0f, 34400L));
+            s.mobs.add(new MobSpec("minecraft:bee", 2.5, BY + 1, 0.5, 90f, 34401L));
+            s.player = new double[] {1.5, BY, 3.5};
+            s.playerCreative = true;
+            interact(s, 5, 0, "minecraft:poppy");
+            interact(s, 6, 1, "minecraft:poppy");
+            s.levelSeed = 110;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A bee with nectar over a field: crops grow where it passes.
+        for (int i = 0; i < 5; i++) {
+            Scenario s = new Scenario("bee_crops_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            for (int x = 2; x <= 6; x++)
+                for (int z = -2; z <= 2; z++) {
+                    block(s, x, BY - 1, z, "minecraft:farmland[moisture=7]");
+                    block(s, x, BY, z, i % 2 == 0 ? "minecraft:wheat[age=0]" : "minecraft:carrots[age=1]");
+                }
+            MobSpec m = new MobSpec("minecraft:bee", 4.5, BY + 1, 0.5, 40f * i, 34500L + i);
+            m.nbt = "{HasNectar:1b,TicksSincePollination:0}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 14.5};
+            s.playerCreative = true;
+            s.levelSeed = 120 + i;
+            s.ticks = 500;
+            out.add(s);
+        }
     }
 
     // ---------------------------------------------------------- wp32: parrots

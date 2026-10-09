@@ -201,7 +201,7 @@ fn run_scenario(line: &Value) -> Vec<String> {
         p.first_good = p.pos;
         p.rot = [0.0, 0.0];
         p.on_ground = line["on_ground"].as_bool().unwrap();
-        p.sneaking = line["sneaking"].as_bool().unwrap();
+        p.set_shift_key(line["sneaking"].as_bool().unwrap());
         p.fall_distance = 0.0;
         p.main_supporting_block = None;
         // The body of vanilla's fresh mock player has not moved yet (this one stood on the ground).
@@ -307,8 +307,19 @@ fn run_scenario(line: &Value) -> Vec<String> {
                 "use" => p.use_item(false, &block, &mut ctx),
                 // (`jump` is the shadow client's: its moves arrive as packets.)
                 "jump" | "velocity" => {}
+                // wp49: the boots change.
+                "armor" => {
+                    let mut s = a["item"].as_str().filter(|i| !i.is_empty()).map(stack).unwrap_or_default();
+                    if let Some(e) = a["enchant"].as_str() {
+                        let mut m = serde_json::Map::new();
+                        m.insert(e.to_owned(), a["level"].clone());
+                        enchant(&mut s, &Value::Object(m));
+                    }
+                    p.inv.equipment[0] = s;
+                    p.inv.times_changed += 1;
+                }
                 "attribute" => set_attributes(p, &serde_json::json!([[a["id"], a["value"]]])),
-                "sneak" => p.sneaking = a["on"].as_bool().unwrap(),
+                "sneak" => p.set_shift_key(a["on"].as_bool().unwrap()),
                 "gamerule" => inbox.push(ToSim::Console(format!("gamerule {} {}", a["name"].as_str().unwrap(), a["value"]))),
                 "setblock" => {
                     let at = a["pos"].as_array().unwrap();
@@ -370,6 +381,7 @@ fn run_scenario(line: &Value) -> Vec<String> {
         for (name, value) in want["attributes"].as_object().unwrap() {
             let attr = [
                 crate::combat::MOVEMENT_SPEED,
+                crate::combat::MOVEMENT_EFFICIENCY,
                 crate::combat::ATTACK_DAMAGE,
                 crate::combat::ATTACK_SPEED,
                 crate::combat::MAX_HEALTH,
@@ -386,6 +398,21 @@ fn run_scenario(line: &Value) -> Vec<String> {
             eq(name, format!("{:?}", p.attribute(attr)), format!("{:?}", value.as_f64().unwrap()));
         }
         eq("destroy_speed", format!("{speed:?}"), format!("{:?}", f32_of(&want["destroy_speed"])));
+        // wp49: the watched blocks and the boots' wear.
+        if let Some(watched) = want["blocks"].as_array() {
+            for (w, state) in line["watch"].as_array().unwrap().iter().zip(watched) {
+                let at = |k: usize| w[k].as_i64().unwrap() as i32;
+                // (`EffectVectors.BASE`; the player's own offset is `dy`.)
+                let got = sim.block_at(at(0), 100 + at(1), at(2)).map(kiln_blocks::state::state_string).unwrap_or_default();
+                let want = state.as_str().unwrap().to_owned();
+                // (Flowing water is only looked at for not freezing: Kiln's level ticks and lets it flow or dry, the recorded one stands still.)
+                let both_flowing = want.starts_with("minecraft:water[") && !want.contains("level=0") && !got.contains("frosted_ice");
+                eq(&format!("block {w}"), if both_flowing { want.clone() } else { got }, want);
+            }
+        }
+        if let Some(wear) = want["boots_damage"].as_i64() {
+            eq("boots_damage", p.inv.equipment[0].damage().to_string(), wear.to_string());
+        }
         if let Some(fz) = want["frozen"].as_i64() {
             eq("frozen", p.ticks_frozen.to_string(), fz.to_string());
         }
@@ -454,18 +481,7 @@ fn sort_removal_runs(mut packets: Vec<bytes::Bytes>) -> Vec<bytes::Bytes> {
 /// shows, and so that nothing else slips in: the test fails on any other difference, and on a
 /// listed scenario that now passes).
 const KNOWN_GAPS: &[(&str, &str)] = &[
-    ("fall_powder_snow_4", "entering powder snow in a fall freezes one tick more than vanilla (two steps of the tick's path)"),
-    ("fall_powder_snow_40", "as fall_powder_snow_4"),
     ("haz_snow_lava_clears", "a burning player in powder snow next to lava: the fire is put out one tick early"),
-    ("fall_bubble_6", "bubble column: the drag changes the exhaustion of the first ticks of the rise"),
-    ("fall_bubble_10", "as fall_bubble_6"),
-    ("fall_bubble_20", "as fall_bubble_6"),
-    ("fall_bubble_40", "as fall_bubble_6"),
-    ("fall_bed_bounce_12", "the jump exhaustion after a bed's bounce"),
-    ("haz_wall_head_only", "only the head in a block: vanilla stops suffocating after the first hit (the body moves out), Kiln keeps the player in place"),
-    ("haz_wall_head_only_sneaking", "as haz_wall_head_only"),
-    ("haz_wall_placed_over_player", "as haz_wall_head_only"),
-    ("haz_wall_ceiling_slab_top", "a low ceiling forces the crouching pose (and with it the locator bar attribute); poses are not tracked"),
 ];
 
 #[test]

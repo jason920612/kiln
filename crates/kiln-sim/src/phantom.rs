@@ -183,6 +183,19 @@ impl Player {
         self.phantom_out(e, true);
     }
 
+    /// `Player.updatePlayerPose` where the server's body stands.
+    pub(crate) fn update_pose(&mut self, cells: &CellSet<Cell>, game_time: i64, min_y: i32) {
+        let level = PhantomLevel::new(cells, game_time, min_y, false);
+        let (pos, id, ctx) = (self.pos, self.entity_id, self.collision_context());
+        let fits = |pose: i32| {
+            let (w, h, _) = crate::pose::dimensions_of(pose);
+            let half = (w / 2.0) as f64;
+            let bb = Aabb::new(pos[0] - half, pos[1], pos[2] - half, pos[0] + half, pos[1] + h as f64, pos[2] + half).deflate_all(1.0e-7);
+            kiln_entity::collision::no_collision(&level, &ctx, id, &bb)
+        };
+        self.update_player_pose(&fits);
+    }
+
     /// `ServerPlayer.jumpFromGround`: the server's velocity gets the jump (and a sprinting
     /// player's push) when the client leaves the ground going up.
     pub(crate) fn server_jump(&mut self, from: [f64; 3], cells: &CellSet<Cell>, game_time: i64, min_y: i32) {
@@ -211,17 +224,28 @@ impl Player {
         self.phantom = Some(e);
     }
 
-    /// The server's `player.move(PLAYER, delta)` for a move packet: the movement of the tick the
-    /// blocks it passes through are judged by. A body held by cobwebs, berry bushes or powder
-    /// snow moves a fraction of the request, and its velocity is gone.
-    pub(crate) fn record_packet_move(&mut self, from: [f64; 3], d: [f64; 3]) {
-        let mut movement = vec(d);
-        if vec(self.stuck_speed).length_sqr() > 1.0e-7 {
-            movement = movement.multiply(self.stuck_speed[0], self.stuck_speed[1], self.stuck_speed[2]);
-            self.stuck_speed = [0.0; 3];
-            self.server_delta = [0.0; 3];
+    /// The server's `player.move(PLAYER, delta)` for a move packet (`player::server_move` on the
+    /// server's body, from where the body stood before the packet): collisions clamp the
+    /// request, a body held by cobwebs, berry bushes or powder snow moves a fraction of it and
+    /// its velocity is gone. The path it took is the movement of the tick the blocks are judged
+    /// by; the body's ground state is the client's report (`setOnGroundWithMovement`).
+    pub(crate) fn server_packet_move(&mut self, from: [f64; 3], d: [f64; 3], was_on_ground: bool, cells: &CellSet<Cell>, game_time: i64, min_y: i32, fast_lava: bool) {
+        let mut level = PhantomLevel::new(cells, game_time, min_y, fast_lava);
+        let (to, on_ground) = (self.pos, self.on_ground);
+        self.pos = from;
+        self.on_ground = was_on_ground;
+        let mut e = self.phantom_in(&level);
+        self.pos = to;
+        self.on_ground = on_ground;
+        if self.game_mode == 3 {
+            if let EntityKind::Player(data) = &mut e.kind {
+                data.spectator = true;
+            }
         }
-        let from = vec(from);
-        self.movements.push(Mv { from, to: from + movement, original: Some(movement) });
+        kiln_entity::player::server_move(&mut level, &mut e, vec(d));
+        // Everything but the position and the ground state stays with the body.
+        e.on_ground = on_ground;
+        self.phantom_out(e, false);
+        self.on_ground = on_ground;
     }
 }

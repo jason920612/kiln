@@ -16,6 +16,7 @@ pub mod breed;
 pub mod ext;
 pub mod fly;
 pub mod control;
+pub mod dispense;
 pub mod convert;
 pub mod effects;
 pub mod goals;
@@ -94,6 +95,7 @@ pub enum MobKind {
     Vex,
     Ravager,
     Illusioner,
+    Giant,
 
     // -- slice 3: the end
     EnderDragon,
@@ -116,6 +118,10 @@ pub enum MobKind {
     // -- slice 3: common mobs B
     Squid,
     GlowSquid,
+    Dolphin,
+    HappyGhast,
+    CopperGolem,
+    SulfurCube,
     Cod,
     Salmon,
     TropicalFish,
@@ -157,6 +163,8 @@ pub enum MobKind {
     WanderingTrader,
     // -- wp32: parrots
     Parrot,
+    // -- wp49: bees
+    Bee,
 }
 
 /// `MobCategory`.
@@ -268,6 +276,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Vex,
     MobKind::Ravager,
     MobKind::Illusioner,
+    MobKind::Giant,
 
     // -- slice 3: the end
     MobKind::EnderDragon,
@@ -290,6 +299,10 @@ pub const ALL_KINDS: &[MobKind] = &[
     // -- slice 3: common mobs B
     MobKind::Squid,
     MobKind::GlowSquid,
+    MobKind::Dolphin,
+    MobKind::HappyGhast,
+    MobKind::CopperGolem,
+    MobKind::SulfurCube,
     MobKind::Cod,
     MobKind::Salmon,
     MobKind::TropicalFish,
@@ -331,6 +344,8 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::WanderingTrader,
     // -- wp32: parrots
     MobKind::Parrot,
+    // -- wp49: bees
+    MobKind::Bee,
 ];
 
 impl MobKind {
@@ -1152,11 +1167,22 @@ pub fn new(kind: MobKind, id: i32, uuid: u128, seed: i64) -> Entity {
 
 /// `AgeableMob.setAge`: crossing zero toggles the baby flag and the size.
 pub fn set_age(e: &mut Entity, m: &mut MobData, age: i32) {
+    set_age_in(e, m, age, None);
+}
+
+/// `set_age` with the level at hand, so a baby that grows is moved clear of blocks.
+pub fn set_age_in(e: &mut Entity, m: &mut MobData, age: i32, level: Option<&mut dyn EntityLevel>) {
     let old = m.age;
     m.age = age;
     if (old < 0) != (age < 0) {
-        refresh_dimensions(e, m);
+        match level.as_deref() {
+            Some(l) => refresh_dimensions_in(e, m, l),
+            None => refresh_dimensions(e, m),
+        }
         if let Some(k) = m.kind.ext() {
+            if let Some(l) = level {
+                k.age_boundary_reached_in(e, m, l);
+            }
             k.age_boundary_reached(e, m);
         }
     }
@@ -1466,6 +1492,9 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         *t += 1;
     }
     sync_equipment_modifiers(m);
+    if let Some(k) = m.kind.ext() {
+        k.detect_equipment_updates(e, m, level);
+    }
     if !e.is_removed() {
         crate::prof!("mob", "ai_step");
         ai_step(e, m, level);
@@ -1556,6 +1585,14 @@ pub fn sync_equipment_modifiers(m: &mut MobData) {
     }
 }
 
+/// `increaseAirSupply`.
+fn increase_air(m: &MobData, current: i32) -> i32 {
+    match m.kind.ext() {
+        Some(k) => k.increase_air_supply(current, m.air_supply_max),
+        None => (current + 4).min(m.air_supply_max),
+    }
+}
+
 /// `Mob.baseTick` → `LivingEntity.baseTick` → `Entity.baseTick`.
 fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     let air_before = e.air_supply;
@@ -1601,7 +1638,7 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let eye = BlockPos::containing(e.x(), e.eye_y(), e.z());
         let bubble = crate::blocks::kind(level.block(eye)) == crate::blocks::Kind::BubbleColumn;
         if e.fluid.is_eye_in_water() && !bubble {
-            if !m.kind.breathes_under_water() && !effects::has_water_breathing(m) {
+            if !m.kind.ext().and_then(|k| k.breathes_under_water_now(m)).unwrap_or_else(|| m.kind.breathes_under_water()) && !effects::has_water_breathing(m) {
                 e.air_supply -= 1;
                 if e.air_supply <= -20 {
                     e.air_supply = 0;
@@ -1609,10 +1646,10 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
                     hurt(e, m, level, DamageSource::of(DamageKind::Drown), 2.0);
                 }
             } else if e.air_supply < m.air_supply_max && effects::effects_refill_air(m) {
-                e.air_supply = (e.air_supply + 4).min(m.air_supply_max);
+                e.air_supply = increase_air(m, e.air_supply);
             }
         } else if e.air_supply < m.air_supply_max {
-            e.air_supply = (e.air_supply + 4).min(m.air_supply_max);
+            e.air_supply = increase_air(m, e.air_supply);
         }
     }
     if m.hurt_time > 0 {
@@ -2023,7 +2060,7 @@ pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
     let drag = m.attrs.value(Attr::AirDragModifier) as f32;
     let h = friction * modified_friction(0.91, drag);
     // `omnidirectionalAirMover` (wp32: parrots): the vertical drag is the horizontal one.
-    let vy = if m.kind.ext().is_some_and(|k| k.omnidirectional_air_mover()) { modified_friction(0.91, drag) } else { modified_friction(0.98, drag) };
+    let vy = if m.kind.ext().is_some_and(|k| k.omnidirectional_air_mover_now(m)) { modified_friction(0.91, drag) } else { modified_friction(0.98, drag) };
     e.delta = Vec3::new(v.x * h as f64, y * vy as f64, v.z * h as f64);
 }
 
@@ -2133,6 +2170,9 @@ fn travel_in_fluid(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
         if crate::collision::no_collision(level, &ctx, e.id, &b) && !contains_any_liquid(level, &b) {
             e.delta = Vec3::new(v.x, 0.30000001192092896, v.z);
         }
+    }
+    if let Some(k) = m.kind.ext() {
+        k.after_travel_in_fluid(e, m, level);
     }
 }
 
@@ -2334,7 +2374,10 @@ fn play_sound(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'sta
 
 /// `LivingEntity.makeSound`: volume 1, the voice pitch.
 pub fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'static str) {
-    let mut pitch = if m.baby() {
+    let fixed = m.kind.ext().and_then(|k| k.fixed_voice_pitch());
+    let mut pitch = if let Some(p) = fixed {
+        p
+    } else if m.baby() {
         (e.random.next_float() - e.random.next_float()) * 0.2 + 1.5
     } else {
         (e.random.next_float() - e.random.next_float()) * 0.2 + 1.0
@@ -2361,6 +2404,9 @@ pub fn thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, _bolt: i32) -> b
     if let Some(k) = kind.ext() {
         let mut m = take(e);
         let handled = k.thunder_hit(e, &mut m, level, _bolt);
+        if !handled {
+            k.after_thunder_hit(e, &mut m, level, _bolt);
+        }
         put(e, m);
         if handled {
             return true;
@@ -2428,6 +2474,11 @@ pub fn swim_sound(type_name: &str) -> Option<&'static str> {
         Some(k) => k.swim_sound(),
         None => Some("minecraft:entity.generic.swim"),
     }
+}
+
+/// The splash and swim sounds `doWaterSplashEffect` plays for `e` (the generic ones unless the mob type has its own).
+pub fn splash_sounds_of(e: &Entity) -> (&'static str, &'static str) {
+    data(e).and_then(|m| m.kind.ext()).and_then(|k| k.splash_sounds()).unwrap_or(("minecraft:entity.generic.splash", "minecraft:entity.generic.swim"))
 }
 
 /// The swim sound of mob `e` (a calf's differs for the nautilus).
@@ -2535,15 +2586,7 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
             e.needs_sync = true;
         }
         if !kind.is_tag("minecraft:no_knockback") {
-            let (mut dx, mut dz) = (0.0, 0.0);
-            if let Some((x, z)) = m.knock_override {
-                dx = x;
-                dz = z;
-            } else if let Some(p) = source.pos {
-                dx = p.x - e.x();
-                dz = p.z - e.z();
-            }
-            knockback(e, m, 0.4000000059604645, dx, dz);
+            deal_default_knockback(e, m, level, &source, amount);
         }
     }
     if m.is_dead_or_dying() {
@@ -2564,6 +2607,24 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
         kinds::zombie::reinforcements(e, m, level, &source);
     }
     true
+}
+
+/// `LivingEntity.dealDefaultKnockback` (without the damage indicator): away from where the blow came
+/// from (a projectile's direction of flight, else the source's position), by the type's own knockback
+/// where it has one.
+pub fn deal_default_knockback(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) {
+    let (mut dx, mut dz) = (0.0, 0.0);
+    if let Some((x, z)) = m.knock_override {
+        dx = x;
+        dz = z;
+    } else if let Some(p) = source.pos {
+        dx = p.x - e.x();
+        dz = p.z - e.z();
+    }
+    if m.kind.ext().is_some_and(|k| k.hit_knockback(e, m, level, 0.4000000059604645, dx, dz, source, amount)) {
+        return;
+    }
+    knockback(e, m, 0.4000000059604645, dx, dz);
 }
 
 /// `Guardian.getHurtSound` / `getDeathSound`: out of water the `_land` sounds.
@@ -2943,7 +3004,7 @@ pub fn mob_look_at(e: &mut Entity, t: &Living, max_y: f32, max_x: f32) {
         let w = mth::wrap_degrees(to - from).clamp(-max, max);
         from + w
     };
-    e.x_rot = rot(e.x_rot, pitch, max_x);
+    e.set_x_rot(rot(e.x_rot, pitch, max_x));
     e.y_rot = rot(e.y_rot, yaw, max_y);
 }
 
@@ -3093,6 +3154,9 @@ pub struct GroupData {
     pub patrol: bool,
     pub event: bool,
     pub structure: bool,
+    /// The mob appears inside a piece of a `#minecraft:cats_spawn_as_black` structure (a cat's variant is
+    /// then the all-black one: `VariantUtils.selectVariantToSpawn`'s priority 1 candidate).
+    pub black_cat: bool,
     /// `ZombieGroupData.canSpawnJockey` of the group the first zombie made (its baby chance is
     /// `zombie_baby`): a baby of such a group may ride a chicken.
     pub zombie_can_jockey: bool,

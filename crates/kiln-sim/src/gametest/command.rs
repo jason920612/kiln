@@ -268,7 +268,7 @@ impl Sim {
             return;
         }
         match self.commands.source {
-            CommandSource::Console => self.reply_console(&text),
+            CommandSource::Console | CommandSource::Block { .. } => self.reply_console(&text),
             CommandSource::Player(conn) => {
                 if let Some(p) = self.players.get_mut(&conn) {
                     p.send(kiln_proto::packets::system_chat(text.to_nbt(), false));
@@ -409,7 +409,7 @@ impl Sim {
         self.send_success(tr!("commands.test.relative_position", Text::literal(name), component), false);
         if let Some(conn) = match self.commands.source {
             CommandSource::Player(c) => Some(c),
-            CommandSource::Console => None,
+            CommandSource::Console | CommandSource::Block { .. } => None,
         } {
             let pkt = highlight_packet(hit, rel);
             if let Some(p) = self.players.get_mut(&conn) {

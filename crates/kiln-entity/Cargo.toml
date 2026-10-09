@@ -11,6 +11,7 @@ prof = []
 
 [dependencies]
 bytes.workspace = true
+kiln-command.workspace = true
 kiln-data.workspace = true
 kiln-inventory.workspace = true
 kiln-item.workspace = true

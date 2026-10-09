@@ -15,7 +15,10 @@
 
 pub(crate) mod beacon;
 pub(crate) mod brewing;
+pub(crate) mod crafter;
 pub(crate) mod dispense;
+mod dispense_items;
+pub(crate) mod equip;
 pub(crate) mod furnace;
 pub(crate) mod hopper;
 pub(crate) mod open;
@@ -51,6 +54,28 @@ pub(crate) enum BeKind {
     Beacon,
     /// One slot for a music disc (`JukeboxBlockEntity`); plays the disc's song.
     Jukebox,
+    /// Four spots for food to cook on (`CampfireBlockEntity`; not a `Container`).
+    Campfire,
+    /// Six slots for one book each (`ChiseledBookShelfBlockEntity`).
+    ChiseledBookshelf,
+    /// Holds nothing; works its signal out every 20 ticks (`DaylightDetectorBlockEntity`).
+    DaylightDetector,
+    /// Holds nothing; shakes when hit (`BellBlockEntity`).
+    Bell,
+    /// Holds up to three bees (`BeehiveBlockEntity`).
+    Beehive,
+    /// One slot, and four sherds that decorate the sides (`DecoratedPotBlockEntity`).
+    DecoratedPot,
+    /// One book and the page it is open at (`LecternBlockEntity`; not a `Container` for hoppers).
+    Lectern,
+    /// A trial chamber's reward block (`VaultBlockEntity`; holds no items).
+    Vault,
+    /// Nine slots, some of them switched off, and the recipe they make (`CrafterBlockEntity`).
+    Crafter,
+    /// The item buried in suspicious sand or gravel, and how far it is brushed (`BrushableBlockEntity`).
+    Brushable,
+    /// A command block (`CommandBlockEntity`): the command and what it did.
+    CommandBlock,
 }
 
 impl BeKind {
@@ -71,6 +96,17 @@ impl BeKind {
             "brewing_stand" => BeKind::BrewingStand,
             "beacon" => BeKind::Beacon,
             "jukebox" => BeKind::Jukebox,
+            "campfire" => BeKind::Campfire,
+            "chiseled_bookshelf" => BeKind::ChiseledBookshelf,
+            "daylight_detector" => BeKind::DaylightDetector,
+            "bell" => BeKind::Bell,
+            "beehive" => BeKind::Beehive,
+            "decorated_pot" => BeKind::DecoratedPot,
+            "lectern" => BeKind::Lectern,
+            "vault" => BeKind::Vault,
+            "crafter" => BeKind::Crafter,
+            "brushable_block" => BeKind::Brushable,
+            "command_block" => BeKind::CommandBlock,
             _ => return None,
         })
     }
@@ -80,22 +116,28 @@ impl BeKind {
         match self {
             BeKind::Chest | BeKind::TrappedChest | BeKind::Barrel | BeKind::ShulkerBox => 27,
             BeKind::Hopper => 5,
-            BeKind::Dispenser | BeKind::Dropper => 9,
+            BeKind::Dispenser | BeKind::Dropper | BeKind::Crafter => 9,
             BeKind::Furnace(_) => 3,
             BeKind::BrewingStand => 5,
             BeKind::Jukebox => 1,
-            BeKind::EnderChest | BeKind::Beacon => 0,
+            BeKind::Campfire => 4,
+            BeKind::ChiseledBookshelf => 6,
+            BeKind::DecoratedPot | BeKind::Lectern | BeKind::Brushable => 1,
+            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::CommandBlock => 0,
         }
     }
 
     /// `RandomizableContainerBlockEntity`: can hold an unopened loot table.
     pub fn randomizable(self) -> bool {
-        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox)
+        !matches!(
+            self,
+            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::CommandBlock
+        )
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        !matches!(self, BeKind::EnderChest | BeKind::Beacon)
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::Brushable | BeKind::CommandBlock)
     }
 
     /// `getDefaultName` translation key.
@@ -114,12 +156,46 @@ impl BeKind {
             BeKind::BrewingStand => "container.brewing",
             BeKind::Beacon => "container.beacon",
             BeKind::Jukebox => "container.jukebox",
+            BeKind::Campfire => "container.campfire",
+            BeKind::ChiseledBookshelf => "container.chiseled_bookshelf",
+            BeKind::DaylightDetector => "container.daylight_detector",
+            BeKind::Bell => "block.minecraft.bell",
+            BeKind::Beehive => "block.minecraft.beehive",
+            BeKind::DecoratedPot => "block.minecraft.decorated_pot",
+            BeKind::Lectern => "container.lectern",
+            BeKind::Vault => "block.minecraft.vault",
+            BeKind::Crafter => "container.crafter",
+            BeKind::Brushable => "block.minecraft.suspicious_sand",
+            BeKind::CommandBlock => "block.minecraft.command_block",
         }
     }
 }
 
 /// Saved fields a container block entity models; the rest of its NBT is kept as is.
-const MODELED: [&str; 26] = [
+const MODELED: [&str; 49] = [
+    "Command",
+    "SuccessCount",
+    "TrackOutput",
+    "LastOutput",
+    "UpdateLastExecution",
+    "LastExecution",
+    "powered",
+    "conditionMet",
+    "auto",
+    "crafting_ticks_remaining",
+    "disabled_slots",
+    "triggered",
+    "config",
+    "shared_data",
+    "server_data",
+    "Book",
+    "Page",
+    "item",
+    "bees",
+    "flower_pos",
+    "last_interacted_slot",
+    "CookingTimes",
+    "CookingTotalTimes",
     "RecordItem",
     "ticks_since_song_started",
     "primary_effect",
@@ -147,6 +223,24 @@ const MODELED: [&str; 26] = [
     "z",
     "keepPacked",
 ];
+
+/// `LecternBlockEntity.resolveBook` (`WrittenBookContent.resolveForItem`): the pages are final (marked resolved).
+/// Selectors and scores in the pages are not evaluated (they stay as they are).
+pub(crate) fn resolve_book(book: &mut ItemStack) {
+    if let Some(content) = book.get(kiln_item::keys::WRITTEN_BOOK_CONTENT).filter(|c| !c.resolved) {
+        let mut content = content.clone();
+        content.resolved = true;
+        book.set(kiln_item::component::Component::WrittenBookContent(content));
+    }
+}
+
+/// `LecternBlockEntity.getPageCount`: the pages of a written or writable book (0 for anything else).
+pub(crate) fn page_count(book: &ItemStack) -> i32 {
+    if let Some(w) = book.get(kiln_item::keys::WRITTEN_BOOK_CONTENT) {
+        return w.pages.len() as i32;
+    }
+    book.get(kiln_item::keys::WRITABLE_BOOK_CONTENT).map_or(0, |w| w.pages.len() as i32)
+}
 
 /// A container block entity's live state.
 #[derive(Debug, Clone)]
@@ -199,11 +293,31 @@ pub(crate) struct ContainerBe {
     /// `song` was read from the saved data and has yet to be checked against the song's length
     /// (the data of the songs is the level's, not at hand when the chunk loads).
     pub song_unchecked: bool,
+    /// A campfire's `cookingTimes` and `cookingTotalTimes` per spot.
+    pub cooking: [i32; 4],
+    /// A chiseled bookshelf's `lastInteractedSlot` (-1: none).
+    pub last_slot: i32,
+    pub cooking_total: [i32; 4],
     /// A jukebox's item changed (`setTheItem`): its block state, song and neighbours follow once
     /// the block entity is back in the level.
     pub item_changed: bool,
     /// `setChanged` calls: comparators and the chunk's saved data follow.
     pub changes: u64,
+    /// A bell's shaking.
+    pub bell: Option<Box<crate::bell::BellState>>,
+    /// A lectern's page (`LecternBlockEntity.page`) and whether it was turned and its block is yet to pulse.
+    pub page: i32,
+    pub page_turned: bool,
+    /// A beehive's bees.
+    pub hive: Option<Box<crate::beehive::Hive>>,
+    /// A vault's state.
+    pub vault: Option<Box<crate::vault::Vault>>,
+    /// A crafter's switched-off slots and countdown.
+    pub crafter: Option<Box<crafter::Crafter>>,
+    /// How far a suspicious block has been brushed.
+    pub brushable: Option<Box<crate::brush::Brushable>>,
+    /// A command block's command and flags.
+    pub command: Option<Box<crate::command_block::Data>>,
     /// Changed since its NBT was last written into the chunk.
     pub dirty: bool,
     /// Saved fields not modeled here (`components`, ...).
@@ -239,10 +353,23 @@ impl ContainerBe {
             }
             list.stacks = vec![disc];
         }
+        // `LecternBlockEntity.loadAdditional`: the book and the page it is open at.
+        let mut page = 0;
+        if kind == BeKind::Lectern {
+            let mut book = nbt.get("Book").and_then(|t| ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty()).unwrap_or_else(ItemStack::empty);
+            resolve_book(&mut book);
+            page = int("Page", 0).clamp(0, (page_count(&book) - 1).max(0));
+            list.stacks = vec![book];
+        }
+        // `DecoratedPotBlockEntity.loadAdditional`: its one item is saved as `item`.
+        if kind == BeKind::DecoratedPot || kind == BeKind::Brushable {
+            let item = if loot_table.is_some() { None } else { nbt.get("item").and_then(|t| ItemStack::from_nbt(t).ok()) };
+            list.stacks = vec![item.filter(|s| !s.is_empty()).unwrap_or_else(ItemStack::empty)];
+        }
         // `BrewingStandBlockEntity.loadAdditional`: brewing under way remembers its ingredient.
         let ingredient = (kind == BeKind::BrewingStand && int("BrewTime", 0) > 0).then(|| list.stacks.get(3).map_or(0, ItemStack::item));
         static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        ContainerBe {
+        let mut loaded = ContainerBe {
             kind,
             type_id,
             serial: SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -269,11 +396,26 @@ impl ContainerBe {
             input_changed: false,
             song,
             song_unchecked,
+            cooking: [0; 4],
+            last_slot: if kind == BeKind::ChiseledBookshelf { int("last_interacted_slot", -1) } else { -1 },
+            cooking_total: [0; 4],
             item_changed: false,
             changes: 0,
+            bell: (kind == BeKind::Bell).then(Default::default),
+            page,
+            page_turned: false,
+            hive: (kind == BeKind::Beehive).then(|| Box::new(crate::beehive::Hive::load(nbt))),
+            vault: (kind == BeKind::Vault).then(|| Box::new(crate::vault::Vault::load(nbt))),
+            crafter: (kind == BeKind::Crafter).then(|| Box::new(crafter::Crafter::load(nbt))),
+            brushable: (kind == BeKind::Brushable).then(Default::default),
+            command: (kind == BeKind::CommandBlock).then(|| Box::new(crate::command_block::Data::load(nbt))),
             dirty: false,
             extra,
+        };
+        if kind == BeKind::Campfire {
+            crate::campfire::load_timers(&mut loaded, nbt);
         }
+        loaded
     }
 
     /// `saveAdditional`: the saved NBT (without `id` and position, which kiln-world adds).
@@ -282,11 +424,47 @@ impl ContainerBe {
         if let Some(lock) = &self.lock {
             out.push(("lock".into(), lock.clone()));
         }
-        if let Some(name) = &self.custom_name {
+        // (A command block keeps its name with its command.)
+        if let Some(name) = self.custom_name.as_ref().filter(|_| self.kind != BeKind::CommandBlock) {
             out.push(("CustomName".into(), name.clone()));
         }
         match self.kind {
-            BeKind::EnderChest => {}
+            BeKind::EnderChest | BeKind::Bell | BeKind::DaylightDetector => {}
+            BeKind::CommandBlock => {
+                if let Some(d) = &self.command {
+                    d.save(&mut out);
+                }
+            }
+            BeKind::Beehive => {
+                if let Some(h) = &self.hive {
+                    h.save(&mut out);
+                }
+            }
+            BeKind::Vault => {
+                if let Some(v) = &self.vault {
+                    v.save(&mut out);
+                }
+            }
+            BeKind::Lectern => {
+                if let Some(book) = self.items.first().filter(|s| !s.is_empty()) {
+                    out.push(("Book".into(), book.to_nbt()));
+                    out.push(("Page".into(), Tag::Int(self.page)));
+                }
+            }
+            // `sherds` is kept in `extra`; then the loot table or the item.
+            BeKind::DecoratedPot | BeKind::Brushable => match &self.loot_table {
+                Some(table) => {
+                    out.push(("LootTable".into(), Tag::String(table.clone())));
+                    if self.loot_seed != 0 {
+                        out.push(("LootTableSeed".into(), Tag::Long(self.loot_seed)));
+                    }
+                }
+                None => {
+                    if let Some(item) = self.items.first().filter(|s| !s.is_empty()) {
+                        out.push(("item".into(), item.to_nbt()));
+                    }
+                }
+            },
             BeKind::Jukebox => {
                 if let Some(disc) = self.items.first().filter(|s| !s.is_empty()) {
                     out.push(("RecordItem".into(), disc.to_nbt()));
@@ -299,6 +477,15 @@ impl ContainerBe {
                 if let Some(b) = &self.beacon {
                     b.save(&mut out);
                 }
+            }
+            BeKind::ChiseledBookshelf => {
+                out.push(("Items".into(), self.item_list().save()));
+                out.push(("last_interacted_slot".into(), Tag::Int(self.last_slot)));
+            }
+            BeKind::Campfire => {
+                out.push(("Items".into(), self.item_list().save()));
+                out.push(("CookingTimes".into(), Tag::IntArray(self.cooking.to_vec())));
+                out.push(("CookingTotalTimes".into(), Tag::IntArray(self.cooking_total.to_vec())));
             }
             BeKind::BrewingStand => {
                 out.push(("BrewTime".into(), Tag::Int(self.cook_timer)));
@@ -319,6 +506,9 @@ impl ContainerBe {
                 out.push(("RecipesUsed".into(), Tag::Compound(used)));
             }
             _ => {
+                if let Some(cr) = &self.crafter {
+                    cr.save_head(&mut out);
+                }
                 match &self.loot_table {
                     // `trySaveLootTable`.
                     Some(table) => {
@@ -332,10 +522,23 @@ impl ContainerBe {
                 if self.kind == BeKind::Hopper {
                     out.push(("TransferCooldown".into(), Tag::Int(self.cooldown)));
                 }
+                if let Some(cr) = &self.crafter {
+                    cr.save_tail(&mut out);
+                }
             }
         }
         out.extend(self.extra.iter().cloned());
         Tag::Compound(out)
+    }
+
+    /// The chunk's copy of the block entity: the saved form, and what only clients are told (a suspicious block's
+    /// `hit_direction`, which the chunk's saved form leaves out).
+    pub fn chunk_tag(&self) -> Tag {
+        let mut tag = self.save();
+        if let (Tag::Compound(fields), Some(hit)) = (&mut tag, self.brushable.as_ref().and_then(|b| b.hit)) {
+            fields.push(("hit_direction".into(), Tag::Byte(hit as i8)));
+        }
+        tag
     }
 
     fn item_list(&self) -> ItemList {
@@ -388,6 +591,17 @@ impl ContainerBe {
         }
         if let Some(lock) = self.lock.as_ref().and_then(|t| <LockCode as kiln_item::component::ComponentValue>::from_value(&kiln_item::Value::from_nbt(t)).ok()) {
             out.push(Component::Lock(lock));
+        }
+        if let Some(h) = &self.hive {
+            out.extend(h.components());
+        }
+        // `DecoratedPotBlockEntity.collectImplicitComponents`: the sherds (the container follows below).
+        if self.kind == BeKind::DecoratedPot {
+            let sherds = self.extra.iter().find(|(k, _)| k == "sherds").map(|(_, v)| v.clone());
+            let decorations = sherds
+                .and_then(|t| <kiln_item::component::PotDecorations as kiln_item::component::ComponentValue>::from_value(&kiln_item::Value::from_nbt(&t)).ok())
+                .unwrap_or_default();
+            out.push(Component::PotDecorations(decorations));
         }
         if self.kind.is_container() {
             // `ItemContainerContents.fromItems`: up to the last occupied slot.
@@ -443,6 +657,10 @@ impl kiln_inventory::Container for ContainerBe {
     }
 
     fn set_item(&mut self, slot: usize, mut stack: ItemStack) {
+        // `CrafterBlockEntity.setItem`: an item put into a switched-off slot switches it on.
+        if self.crafter.as_ref().is_some_and(|c| c.disabled.get(slot) == Some(&true)) {
+            crafter::set_slot_state(self, slot, true);
+        }
         if let BeKind::Furnace(_) = self.kind {
             // `AbstractFurnaceBlockEntity.setItem`: another input item restarts the cooking.
             let same = !stack.is_empty() && kiln_inventory::stack::same_item_same_components(&self.items[slot], &stack);
@@ -492,14 +710,37 @@ impl kiln_inventory::Container for ContainerBe {
 
     /// `JukeboxBlockEntity.getMaxStackSize`: one disc.
     fn max_stack_size(&self) -> i32 {
-        if self.kind == BeKind::Jukebox { 1 } else { 99 }
+        if matches!(self.kind, BeKind::Jukebox | BeKind::ChiseledBookshelf) { 1 } else { 99 }
     }
 
     fn set_changed(&mut self) {
         self.mark_changed();
     }
 
+    fn set_data(&mut self, index: usize, value: i32) {
+        // `LecternBlockEntity.dataAccess` / `setPage`: clamped to the book, the pulse follows a change.
+        if self.kind == BeKind::Lectern && index == 0 {
+            let page = value.clamp(0, (page_count(&self.items[0]) - 1).max(0));
+            if page != self.page {
+                self.page = page;
+                self.page_turned = true;
+                self.mark_changed();
+            }
+        }
+    }
+
     fn data(&self, index: usize) -> i32 {
+        // `CrafterBlockEntity.containerData`: a flag per switched-off slot, then whether it is powered.
+        if let Some(c) = &self.crafter {
+            return match index {
+                0..=8 => i32::from(c.disabled[index]),
+                9 => i32::from(c.triggered),
+                _ => 0,
+            };
+        }
+        if self.kind == BeKind::Lectern {
+            return if index == 0 { self.page } else { 0 };
+        }
         if let Some(b) = &self.beacon {
             // `BeaconBlockEntity.dataAccess`.
             return b.data(index);
@@ -545,6 +786,11 @@ fn kind_of(be: &BlockEntity) -> Option<BeKind> {
 }
 
 impl Containers {
+    /// Where the region's dispensers and droppers are.
+    pub fn dispensers(&self) -> Vec<BlockPos> {
+        self.map.iter().filter(|(_, c)| matches!(c.kind, BeKind::Dispenser | BeKind::Dropper)).map(|(p, _)| *p).collect()
+    }
+
     /// A chunk entered the region: its containers are decoded.
     pub fn chunk_loaded(&mut self, pos: ChunkPos, chunk: &Chunk) {
         for ((x, y, z), be) in chunk.block_entities() {
@@ -571,7 +817,7 @@ impl Containers {
                 continue;
             }
             let mut be = BlockEntity::new(c.type_id);
-            if let (Tag::Compound(out), Tag::Compound(fields)) = (&mut be.nbt, c.save()) {
+            if let (Tag::Compound(out), Tag::Compound(fields)) = (&mut be.nbt, c.chunk_tag()) {
                 out.extend(fields);
             }
             chunk.set_block_entity(x, p.y, z, be);
@@ -596,7 +842,14 @@ impl Containers {
     pub fn reload(&mut self, pos: BlockPos, be: Option<&BlockEntity>) {
         match be.and_then(|be| Some((kind_of(be)?, be))) {
             Some((kind, be)) => {
-                self.map.insert(pos, ContainerBe::load(kind, be.kind, &be.nbt));
+                let mut loaded = ContainerBe::load(kind, be.kind, &be.nbt);
+                // (A command block's plain last output is kept for tests while the output itself stays.)
+                if let (Some(new), Some(old)) = (loaded.command.as_deref_mut(), self.map.get(&pos).and_then(|c| c.command.as_deref()))
+                    && new.last_output == old.last_output
+                {
+                    new.last_plain = old.last_plain.clone();
+                }
+                self.map.insert(pos, loaded);
             }
             None => {
                 self.map.remove(&pos);
@@ -650,10 +903,23 @@ impl Containers {
 /// Keeps the region's containers in step with a block change at `pos` (`LevelChunk.
 /// setBlockState`): a container that went away runs `preRemoveSideEffects` (drops its
 /// contents, except shulker boxes; a furnace pops its experience) unless `flags` skip it.
-pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32) {
+pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32, old: u16) {
     let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
     let now = level.cells.chunk(chunk_of(pos)).and_then(|c| c.block_entity(x, pos.y, z));
-    let Some(mut removed) = level.blocks.containers.block_changed(pos, now) else { return };
+    let existed = level.blocks.containers.get(pos).is_some();
+    let removed = level.blocks.containers.block_changed(pos, now);
+    // `CrafterBlock.newBlockEntity`: a new crafter block entity takes its block's `triggered`.
+    if !existed || removed.is_some() {
+        let triggered = kiln_blocks::state::get_bool(level.block(pos), "triggered");
+        if let Some(cr) = level.blocks.containers.get_mut(pos).and_then(|c| c.crafter.as_mut()) {
+            cr.triggered = triggered;
+        }
+        // `CommandBlock.newBlockEntity`: "always active" as its block is.
+        if level.blocks.containers.get(pos).is_some_and(|c| c.kind == BeKind::CommandBlock) {
+            crate::command_block::created(level, pos);
+        }
+    }
+    let Some(mut removed) = removed else { return };
     level.out.removed_components.push((pos, removed.components()));
     // `JukeboxBlockEntity.preRemoveSideEffects`: the disc pops out; a jukebox cleared by a command
     // (`Clearable.tryClear`, no side effects) loses it and the music stops.
@@ -663,6 +929,17 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32) {
         } else {
             crate::jukebox::removed(level, pos, &mut removed);
         }
+        return;
+    }
+    // `LecternBlockEntity.preRemoveSideEffects`: the book pops out.
+    if removed.kind == BeKind::Lectern && flags & kiln_blocks::flags::SKIP_BLOCK_ENTITY_SIDEEFFECTS == 0 {
+        crate::lectern::removed(level, pos, old, &removed);
+        return;
+    }
+    // `CampfireBlockEntity.preRemoveSideEffects`: the food on the fire drops.
+    if removed.kind == BeKind::Campfire && flags & kiln_blocks::flags::SKIP_BLOCK_ENTITY_SIDEEFFECTS == 0 {
+        let mut rng = pos_random(level, pos, 1);
+        drop_contents(pos, &removed.items, &mut rng, &mut level.out.spawns);
         return;
     }
     if flags & kiln_blocks::flags::SKIP_BLOCK_ENTITY_SIDEEFFECTS != 0 || !removed.kind.is_container() || removed.kind == BeKind::ShulkerBox {
@@ -684,11 +961,25 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32) {
 /// chest reads nothing and a double chest reads both halves).
 pub(crate) fn analog(level: &RegionLevel, pos: BlockPos, s: u16) -> i32 {
     let Some(c) = level.blocks.containers.get(pos) else { return 0 };
+    // `LecternBlock.getAnalogOutputSignal`: how far into the book the page is.
+    if c.kind == BeKind::Lectern {
+        return if kiln_blocks::state::get_bool(s, "has_book") { crate::lectern::analog(c) } else { 0 };
+    }
     if !c.kind.is_container() {
         return 0;
     }
     if c.kind == BeKind::Jukebox {
         return crate::jukebox::comparator_output(level, c);
+    }
+    if c.kind == BeKind::ChiseledBookshelf {
+        return crate::bookshelf::analog(c);
+    }
+    if c.kind == BeKind::Crafter {
+        return crafter::analog(c);
+    }
+    // `CommandBlock.getAnalogOutputSignal`: the success count.
+    if c.kind == BeKind::CommandBlock {
+        return c.command.as_ref().map_or(0, |d| d.success_count);
     }
     if kiln_blocks::behaviour::container::is_chest(s) {
         let blocked = |p: BlockPos| kiln_data::block_logic::is_redstone_conductor(level.block(p.above()));
@@ -715,6 +1006,10 @@ pub(crate) fn scheduled_tick(level: &mut RegionLevel, pos: BlockPos, s: u16) {
     use kiln_data::block_logic::{self as logic, BlockClass as C};
     match logic::block_class(s) {
         C::DispenserBlock | C::DropperBlock => dispense::dispense_from(level, pos, s),
+        C::CrafterBlock => crafter::dispense_from(level, pos, s),
+        C::BrushableBlock => crate::brush::check_reset(level, pos, s),
+        // The command runs in the serial phase after the regions' tick (it may change anything).
+        C::CommandBlock => level.blocks.command_ticks.push(pos),
         _ => level.out.rechecks.push(pos),
     }
 }
@@ -726,7 +1021,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
         .containers
         .map
         .iter()
-        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox))
+        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Beehive | BeKind::Vault | BeKind::Crafter))
         .filter(|(p, _)| ticking.contains(chunk_of(**p)))
         .map(|(p, c)| (*p, c.kind))
         .collect();
@@ -744,6 +1039,17 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
             }
             BeKind::Beacon => beacon::tick(level, pos),
             BeKind::Jukebox => crate::jukebox::tick(level, pos),
+            BeKind::Campfire => crate::campfire::tick(level, pos),
+            BeKind::Beehive => crate::beehive::tick(level, pos),
+            BeKind::Vault => crate::vault::tick(level, pos),
+            BeKind::Crafter => crafter::tick(level, pos),
+            BeKind::DaylightDetector => {
+                // `DaylightDetectorBlock.tickEntity` (only where the level has sky light).
+                let s = level.block(pos);
+                if level.env.dim == crate::OVERWORLD_ID && level.env.game_time % 20 == 0 && kiln_data::block_logic::block_class(s) == kiln_data::block_logic::BlockClass::DaylightDetectorBlock {
+                    kiln_blocks::behaviour::daylight::update_signal(level, s, pos);
+                }
+            }
             _ => {
                 let mut spawns = std::mem::take(&mut level.out.spawns);
                 furnace::server_tick(level, pos, &mut spawns);

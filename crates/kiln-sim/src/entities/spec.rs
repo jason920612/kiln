@@ -366,7 +366,11 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
     }
 
     fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
-        self.packets.extend(crumble_packet(pos, state, count, spread));
+        self.packets.extend(crumble_packet("minecraft:block_crumble", pos, state, count, spread, 0.0));
+    }
+
+    fn block_particles(&mut self, particle: &'static str, pos: Vec3, state: u16, count: i32, spread: Vec3, speed: f32) {
+        self.packets.extend(crumble_packet(particle, pos, state, count, spread, speed));
     }
 
     fn mob_griefing(&self) -> bool {
@@ -494,6 +498,18 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
 
     fn is_raining_at(&self, pos: BlockPos) -> bool {
         self.base.is_raining_at(pos)
+    }
+
+    fn is_raining(&self) -> bool {
+        self.base.is_raining()
+    }
+
+    fn beehive_at(&self, pos: BlockPos) -> Option<kiln_entity::level::BeehiveView> {
+        self.base.beehive_at(pos)
+    }
+
+    fn bees_stay_in_hive(&self) -> bool {
+        self.base.bees_stay_in_hive()
     }
 
     fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
@@ -627,7 +643,7 @@ fn speculate(sim: &SimLevel, i: usize, ticking: &blocks::Ticking, any_player: bo
         return None;
     }
     let base = e.phys.as_deref()?;
-    if base.vehicle.is_some() || !base.passengers.is_empty() || !base.pending_hurts.is_empty() {
+    if base.vehicle.is_some() || !base.passengers.is_empty() || !base.pending_hurts.is_empty() || !base.pending_effects.is_empty() {
         return None;
     }
     let env = sim.level.env();

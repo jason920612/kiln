@@ -1,0 +1,281 @@
+//! Maps in play: the empty map (`EmptyMapItem`), a filled map used on a banner (`MapItem.useOn`),
+//! crafted copies (`MapItem.onCraftedPostProcess`) and the per-tick work of a held map
+//! (`MapItem.inventoryTick`, `ServerPlayer.synchronizeSpecialItemUpdates`).
+
+use crate::Player;
+use crate::entities::Spawn;
+use crate::maps::{self, MapData, MapWorld, SharedMaps, Viewer};
+use kiln_item::ItemStack;
+use kiln_proto::nbt::Tag;
+use kiln_world::{Blocks, ChunkPos};
+
+/// The chunks a map is drawn from.
+pub(crate) struct ChunkWorld<'a, B: Blocks> {
+    pub blocks: &'a B,
+    pub min_y: i32,
+    pub ceiling: bool,
+}
+
+impl<B: Blocks> MapWorld for ChunkWorld<'_, B> {
+    fn min_y(&self) -> i32 {
+        self.min_y
+    }
+
+    fn has_ceiling(&self) -> bool {
+        self.ceiling
+    }
+
+    fn loaded(&self, cx: i32, cz: i32) -> bool {
+        self.blocks.chunk(ChunkPos::new(cx, cz)).is_some()
+    }
+
+    fn surface(&self, x: i32, z: i32) -> i32 {
+        self.blocks.chunk(ChunkPos::of_block(x, z)).map_or(self.min_y, |c| c.surface_y((x & 15) as usize, (z & 15) as usize))
+    }
+
+    fn block(&self, x: i32, y: i32, z: i32) -> u16 {
+        self.blocks.get_block(x, y, z).unwrap_or(kiln_data::blocks::default_state::VOID_AIR)
+    }
+
+    fn banner(&self, x: i32, y: i32, z: i32) -> Option<(u8, Option<Tag>)> {
+        let state = self.blocks.get_block(x, y, z)?;
+        let name = kiln_data::blocks_types::block_of(state).name;
+        let colour = name.strip_prefix("minecraft:")?.strip_suffix("_wall_banner").or_else(|| name.strip_prefix("minecraft:")?.strip_suffix("_banner"))?;
+        let color = maps::DYES.iter().position(|d| *d == colour)? as u8;
+        let custom = self.blocks.chunk(ChunkPos::of_block(x, z))?.block_entity((x & 15) as usize, y, (z & 15) as usize).and_then(|be| be.nbt.get("CustomName").cloned());
+        Some((color, custom))
+    }
+}
+
+/// `MapItem.onCraftedPostProcess`: a map crafted with a glass pane or paper becomes a new map.
+pub(crate) fn post_process(maps: &SharedMaps, stack: &mut ItemStack) {
+    let Some(kind) = stack.get(kiln_item::keys::MAP_POST_PROCESSING).copied() else { return };
+    stack.remove(kiln_item::component::ids::MAP_POST_PROCESSING);
+    let Some(id) = maps::map_id_of(stack) else { return };
+    let Ok(mut store) = maps.lock() else { return };
+    let Some(data) = store.get(id) else { return };
+    let copy = match kind {
+        kiln_item::component::MapPostProcessing::Lock => data.locked_copy(),
+        kiln_item::component::MapPostProcessing::Scale => data.scaled(),
+    };
+    let new = store.free_id();
+    store.set(new, copy);
+    stack.insert(kiln_item::keys::MAP_ID, kiln_item::component::MapId(new));
+}
+
+/// `MapItem.create`: a filled map of the area around (`x`, `z`) in the level `dimension`.
+pub(crate) fn create(maps: &SharedMaps, x: i32, z: i32, scale: i8, tracking: bool, unlimited: bool, dimension: &str) -> ItemStack {
+    let mut stack = ItemStack::of("minecraft:filled_map", 1).expect("filled map");
+    let data = MapData::create_fresh(x as f64, z as f64, scale, tracking, unlimited, dimension);
+    let mut store = maps.lock().unwrap_or_else(|e| e.into_inner());
+    let id = store.free_id();
+    store.set(id, data);
+    stack.insert(kiln_item::keys::MAP_ID, kiln_item::component::MapId(id));
+    stack
+}
+
+/// `EmptyMapItem.use`: the empty map becomes a filled map of the area around the player.
+pub(crate) fn use_empty_map(p: &mut Player, off_hand: bool, dim: crate::DimId, spawns: &mut Vec<Spawn>) {
+    use kiln_inventory::Container;
+    let used = p.in_hand(off_hand).clone();
+    if !p.infinite_materials() {
+        let i = p.hand_index(off_hand);
+        p.inv.item_mut(i).shrink(1);
+        p.inv.times_changed += 1;
+    }
+    p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, used.item()), 1);
+    // `level.playSound(null, player, ...)`: a sound that follows the player.
+    if let Some(id) = kiln_data::builtin_id("minecraft:sound_event", "minecraft:ui.cartography_table.take_result") {
+        use kiln_javamath::random::RandomSource;
+        let seed = p.sound_seed.next_long();
+        let pkt = kiln_proto::packets::world_fx::sound_entity(&kiln_proto::packets::world_fx::Sound::Registered(id), kiln_proto::packets::world_fx::SoundSource::Players, p.entity_id, 1.0, 1.0, seed);
+        p.send(pkt.clone());
+        p.pending_sounds.push(pkt);
+    }
+    let (x, z) = (p.pos[0].floor() as i32, p.pos[2].floor() as i32);
+    let map = create(&p.maps, x, z, 0, true, false, crate::DIMENSIONS[dim].0);
+    let i = p.hand_index(off_hand);
+    if p.inv.item(i).is_empty() {
+        // `heldItemTransformedTo`.
+        *p.inv.item_mut(i) = map;
+        p.inv.times_changed += 1;
+    } else {
+        let mut rest = map.clone();
+        let infinite = p.infinite_materials();
+        if !p.inv.add(None, &mut rest, infinite) {
+            spawns.push(p.throw(map));
+        }
+    }
+}
+
+/// `MapItem.useOn` on a banner: the banner is put on the map or taken off it. `None`: not a banner.
+pub(crate) fn use_on_banner<B: Blocks>(p: &Player, off_hand: bool, blocks: &B, min_y: i32, ceiling: bool, pos: [i32; 3], game_time: i64) -> Option<bool> {
+    let state = blocks.get_block(pos[0], pos[1], pos[2])?;
+    if !kiln_blocks::tags::is(state, "minecraft:banners") {
+        return None;
+    }
+    let world = ChunkWorld { blocks, min_y, ceiling };
+    let ok = match maps::map_id_of(p.in_hand(off_hand)) {
+        Some(id) => {
+            let mut store = p.maps.lock().unwrap_or_else(|e| e.into_inner());
+            store.get(id).is_none_or(|m| m.toggle_banner(&world, pos, game_time))
+        }
+        None => true,
+    };
+    Some(ok)
+}
+
+/// Whether the level has a ceiling (`DimensionType.hasCeiling`): the Nether's maps are drawn differently.
+pub(crate) fn has_ceiling(dim: crate::DimId) -> bool {
+    kiln_data::dimension_type(crate::DIMENSIONS[dim].0).is_some_and(|d| d.has_ceiling)
+}
+
+/// Filled-map ids in the stack list (all slots of the inventory).
+fn has_map(p: &Player) -> bool {
+    p.inv.items.iter().chain(p.inv.equipment.iter()).any(|s| !s.is_empty() && maps::map_id_of(s).is_some())
+}
+
+fn map_ids(p: &Player) -> Vec<i32> {
+    p.inv.items.iter().chain(p.inv.equipment.iter()).filter_map(|s| if s.is_empty() { None } else { maps::map_id_of(s) }).collect()
+}
+
+/// `EquipmentSlot` order of an `EntityEquipment` (an `EnumMap`: off hand, feet, legs, chest, head, body,
+/// saddle) as indices into `PlayerInventory::equipment` (feet, legs, chest, head, off hand, body, saddle).
+const EQUIPMENT_TICK_ORDER: [usize; 7] = [4, 0, 1, 2, 3, 5, 6];
+
+impl crate::Sim {
+    /// `Inventory.tick`, `EntityEquipment.tick` and `ServerPlayer.doTick` for filled maps: every map a player
+    /// carries notes the player, a map in a hand redraws the part of the world around the player, and
+    /// what changed is sent.
+    pub(crate) fn tick_maps(&mut self) {
+        let none_yet = self.maps.lock().unwrap_or_else(|e| e.into_inner()).none_yet();
+        // (Without any map data a map item or frame has nothing to note or send: skip looking at the players and entities.)
+        if none_yet {
+            return;
+        }
+        let frames = self.map_frames();
+        let marked = self.maps.lock().unwrap_or_else(|e| e.into_inner()).frame_markers();
+        if frames.is_empty() && marked.is_empty() && !self.players.values().any(has_map) {
+            return;
+        }
+        let viewers: std::collections::HashMap<uuid::Uuid, Viewer> = self
+            .players
+            .values()
+            .map(|p| {
+                let hidden = p.inv.equipment.iter().enumerate().any(|(i, s)| i != 4 && !s.is_empty() && kiln_entity::mob::item_tag(s.item(), "minecraft:map_invisibility_equipment"));
+                (p.uuid, Viewer { uuid: p.uuid, name: p.name.clone(), dim: p.dim, pos: p.pos, yaw: p.rot[0], maps: map_ids(p), hidden })
+            })
+            .collect();
+        let lookup = |u: uuid::Uuid| viewers.get(&u).cloned();
+        let mut conns: Vec<_> = self.players.iter().filter(|(_, p)| !viewers[&p.uuid].maps.is_empty()).map(|(c, _)| *c).collect();
+        conns.sort();
+        let shared = self.maps.clone();
+        let mut store = shared.lock().unwrap_or_else(|e| e.into_inner());
+        let time = self.game_time;
+        for conn in conns {
+            let Some(p) = self.players.get_mut(&conn) else { continue };
+            let viewer = viewers[&p.uuid].clone();
+            let world = ChunkWorld { blocks: &self.dims[p.dim].regions, min_y: self.dims[p.dim].provider.dimension.min_y, ceiling: has_ceiling(p.dim) };
+            let selected = p.inv.selected;
+            // `Inventory.tick`: the main slots; the selected one is the main hand.
+            for (i, stack) in p.inv.items.iter().enumerate() {
+                let Some(id) = (!stack.is_empty()).then(|| maps::map_id_of(stack)).flatten() else { continue };
+                let Some(data) = store.get(id) else { continue };
+                data.tick_carried_by(&viewer, id, stack, None, time, &lookup);
+                if !data.locked && i == selected {
+                    data.update(&world, &viewer);
+                }
+            }
+            // `EntityEquipment.tick`: the off hand also redraws, armour only notes the player.
+            for &i in &EQUIPMENT_TICK_ORDER {
+                let stack = &p.inv.equipment[i];
+                let Some(id) = (!stack.is_empty()).then(|| maps::map_id_of(stack)).flatten() else { continue };
+                let Some(data) = store.get(id) else { continue };
+                data.tick_carried_by(&viewer, id, stack, None, time, &lookup);
+                if !data.locked && i == 4 {
+                    data.update(&world, &viewer);
+                }
+            }
+            // `ServerPlayer.doTick`: what changed goes to the client.
+            let mut packets = Vec::new();
+            for stack in p.inv.items.iter().chain(p.inv.equipment.iter()) {
+                let Some(id) = (!stack.is_empty()).then(|| maps::map_id_of(stack)).flatten() else { continue };
+                if let Some(pkt) = store.get(id).and_then(|d| d.update_packet(id, p.uuid)) {
+                    packets.push(pkt);
+                }
+            }
+            for pkt in packets {
+                p.send(pkt);
+            }
+        }
+        // A frame that no longer holds the map it marked takes the marker off (`removedFromFrame`).
+        for (map_id, dim_name, pos, entity_id) in marked {
+            let Some(dim) = crate::dim_id(&dim_name) else { continue };
+            let held = frames.iter().any(|f| f.id == entity_id && f.dim == dim && f.map == map_id);
+            let loaded = self.dims[dim].regions.chunk(ChunkPos::of_block(pos[0], pos[2])).is_some();
+            if !held && loaded && let Some(data) = store.get(map_id) {
+                data.removed_from_frame(pos, entity_id);
+            }
+        }
+        // `ServerEntity.sendChanges` of an item frame holding a map, every tenth tick: the players of its
+        // level note the frame and are sent what changed.
+        let mut by_conn: Vec<_> = self.players.keys().copied().collect();
+        by_conn.sort();
+        if std::env::var_os("KILN_MAP_DEBUG").is_some() {
+            for f in &frames {
+                eprintln!("map frame {} age {} at time {}", f.id, f.age, time);
+            }
+        }
+        for f in frames.iter().filter(|f| f.age % 10 == 0) {
+            let Some(data) = store.get(f.map) else { continue };
+            for conn in by_conn.iter().copied() {
+                let Some(p) = self.players.get_mut(&conn) else { continue };
+                if p.dim != f.dim {
+                    continue;
+                }
+                let viewer = viewers[&p.uuid].clone();
+                let info = maps::FrameInfo { pos: f.pos, direction: f.direction, entity_id: f.id };
+                data.tick_carried_by(&viewer, f.map, &f.item, Some(info), time, &lookup);
+                if let Some(pkt) = data.update_packet(f.map, p.uuid) {
+                    p.send(pkt);
+                }
+            }
+        }
+    }
+
+    /// The item frames that hold a filled map, by level and entity id.
+    pub(crate) fn map_frames(&self) -> Vec<FrameRow> {
+        use kiln_entity::ext_entity::item_frame::ItemFrame;
+        let mut rows = Vec::new();
+        for (dim, d) in self.dims.iter().enumerate() {
+            for region in d.regions.iter() {
+                for e in region.part().0.list.iter().filter(|e| !e.removed && (e.kind.id == kiln_data::entities::types::ITEM_FRAME.id || e.kind.id == kiln_data::entities::types::GLOW_ITEM_FRAME.id)) {
+                    let Some(frame) = e.phys.as_deref().and_then(kiln_entity::ext_entity::get::<ItemFrame>) else { continue };
+                    let Some(map) = (!frame.item.is_empty()).then(|| maps::map_id_of(&frame.item)).flatten() else { continue };
+                    use kiln_entity::math::Direction as D;
+                    let direction = match frame.direction {
+                        D::South => 0,
+                        D::West => 1,
+                        D::North => 2,
+                        D::East => 3,
+                        _ => -1,
+                    };
+                    rows.push(FrameRow { dim, id: e.id, pos: [frame.pos.x, frame.pos.y, frame.pos.z], direction, item: frame.item.clone(), map, age: e.age });
+                }
+            }
+        }
+        rows.sort_by_key(|r| (r.dim, r.id));
+        rows
+    }
+}
+
+/// An item frame with a map in it.
+pub(crate) struct FrameRow {
+    pub(crate) dim: crate::DimId,
+    pub(crate) id: i32,
+    pub(crate) pos: [i32; 3],
+    pub(crate) direction: i32,
+    pub(crate) item: ItemStack,
+    pub(crate) map: i32,
+    pub(crate) age: i32,
+}

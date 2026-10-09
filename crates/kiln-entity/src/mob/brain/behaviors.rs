@@ -607,6 +607,7 @@ impl Behavior for FollowTemptation {
 pub fn baby_follow_adult(range: (i32, i32), speed: fn(&Cx) -> f32, adult_mem: Mem, look_in_the_eyes: bool) -> Box<dyn Control> {
     let entry: &'static [(Mem, Status)] = match adult_mem {
         Mem::NearestVisibleAdult => &[(Mem::NearestVisibleAdult, ValuePresent), (Mem::LookTarget, Registered), (Mem::WalkTarget, ValueAbsent)],
+        Mem::NearestVisiblePlayer => &[(Mem::NearestVisiblePlayer, ValuePresent), (Mem::LookTarget, Registered), (Mem::WalkTarget, ValueAbsent)],
         _ => panic!("BabyFollowAdult over {adult_mem:?}: add its entry conditions"),
     };
     shot("BabyFollowAdult", entry, move |cx| {

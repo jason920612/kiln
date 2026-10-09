@@ -112,6 +112,8 @@ pub enum Tag {
     EdibleForSheep = 1 << 9,
     Cauldrons = 1 << 10,
     AnimalsSpawnableOn = 1 << 11,
+    BlocksDolphinJump = 1 << 12,
+    HappyGhastAvoids = 1 << 13,
 }
 
 const TAGS: &[(Tag, &str)] = &[
@@ -127,6 +129,8 @@ const TAGS: &[(Tag, &str)] = &[
     (Tag::EdibleForSheep, "minecraft:edible_for_sheep"),
     (Tag::Cauldrons, "minecraft:cauldrons"),
     (Tag::AnimalsSpawnableOn, "minecraft:animals_spawnable_on"),
+    (Tag::BlocksDolphinJump, "minecraft:blocks_dolphin_jump"),
+    (Tag::HappyGhastAvoids, "minecraft:happy_ghast_avoids"),
 ];
 
 pub fn has_tag(state: u16, tag: Tag) -> bool {
@@ -170,4 +174,9 @@ mod tests {
         assert!(has_tag(d::FIRE, Tag::Fire));
         assert!(has_tag(d::WATER, Tag::FallDamageResetting) || !has_tag(d::STONE, Tag::FallDamageResetting));
     }
+}
+
+/// `DiodeBlock.isDiode`: a repeater or a comparator.
+pub fn is_diode(state: u16) -> bool {
+    matches!(kiln_data::block_logic::block_class(state), kiln_data::block_logic::BlockClass::RepeaterBlock | kiln_data::block_logic::BlockClass::ComparatorBlock)
 }

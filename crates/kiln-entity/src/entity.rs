@@ -72,6 +72,8 @@ pub struct Entity {
     /// Damage a minecart took from what it stood in (lava, fire) while its own tick held its
     /// state: (kind, amount, attacker), taken by the cart right after.
     pub pending_hurts: Vec<(DamageKind, f32, Option<i32>)>,
+    /// Effects the world gives it between ticks (a bell's glow), added at the start of the next entity phase.
+    pub pending_effects: Vec<crate::effect::Effect>,
     /// `Projectile.lastDeflectedBy`: the entity that last deflected this projectile (it flies
     /// through that one's box without being turned again).
     pub last_deflected_by: Option<i32>,
@@ -114,6 +116,10 @@ pub struct Entity {
     /// Set when the velocity changed enough that trackers must resend it (`hasImpulse`/`needsSync`).
     pub needs_sync: bool,
     pub max_up_step: f32,
+    /// `LivingEntity.getEntityBounciness` (the `bounciness` attribute: sulfur cubes with a swallowed item bounce).
+    pub bounciness: f64,
+    /// `LivingEntity.getAirDrag` where it is not the plain 0.98 (a sulfur cube with an item in it).
+    pub air_drag_override: Option<f32>,
     /// `moveDist`, `flyDist`, `nextStep`: step and swim sound pacing (`applyMovementEmissionAndPlaySound`).
     pub move_dist: f32,
     pub fly_dist: f32,
@@ -153,6 +159,7 @@ impl Entity {
         let mut e = Entity {
             pending_fall: None,
             pending_hurts: Vec::new(),
+            pending_effects: Vec::new(),
             last_deflected_by: None,
             id,
             uuid,
@@ -192,6 +199,8 @@ impl Entity {
             invulnerable_time: 0,
             needs_sync: false,
             max_up_step: 0.0,
+            bounciness: 0.0,
+            air_drag_override: None,
             move_dist: 0.0,
             fly_dist: 0.0,
             next_step: 1.0,
@@ -273,6 +282,13 @@ impl Entity {
         Aabb::new(p.x - w as f64, p.y, p.z - w as f64, p.x + w as f64, p.y + h as f64, p.z + w as f64)
     }
 
+    /// `Entity.setXRot`: wrapped to 360 and clamped to +-90.
+    pub fn set_x_rot(&mut self, v: f32) {
+        if v.is_finite() {
+            self.x_rot = (v % 360.0).clamp(-90.0, 90.0);
+        }
+    }
+
     /// `Entity.setOldPosAndRot`.
     pub fn set_old_pos_and_rot(&mut self) {
         self.old_pos = self.position;
@@ -313,7 +329,7 @@ impl Entity {
     }
 
     pub fn air_drag(&self) -> f32 {
-        0.98
+        self.air_drag_override.unwrap_or(0.98)
     }
 
     fn is_living(&self) -> bool {
@@ -348,7 +364,7 @@ impl Entity {
     }
 
     fn entity_bounciness(&self) -> f64 {
-        0.0
+        self.bounciness
     }
 
     /// `canFreeze` (the `freeze_immune_entity_types` tag).

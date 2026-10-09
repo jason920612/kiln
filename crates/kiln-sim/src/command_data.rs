@@ -596,6 +596,14 @@ impl Sim {
                     return false;
                 }
                 if let Tag::Compound(fields) = &mut data {
+                    // `CrafterBlockEntity.setItem`: an item put into a switched-off slot switches it on.
+                    if data_is_crafter(fields) {
+                        for (k, v) in fields.iter_mut() {
+                            if let (true, Tag::IntArray(disabled)) = (k == "disabled_slots", v) {
+                                disabled.retain(|&d| d != slot);
+                            }
+                        }
+                    }
                     if !fields.iter().any(|(k, _)| k == "Items") {
                         fields.push(("Items".into(), Tag::List(Vec::new())));
                     }
@@ -1422,6 +1430,11 @@ fn set_mob_slot(m: &mut kiln_entity::mob::MobData, slot: i32, stack: kiln_item::
 }
 
 /// `Container.getContainerSize` of the block entities that are containers.
+/// Whether block entity data is a crafter's.
+fn data_is_crafter(fields: &[(String, Tag)]) -> bool {
+    fields.iter().any(|(k, v)| k == "id" && v.as_str().is_some_and(|id| id == "minecraft:crafter"))
+}
+
 fn container_size(id: &str) -> Option<i32> {
     Some(match id.strip_prefix("minecraft:").unwrap_or(id) {
         "chest" | "trapped_chest" | "barrel" | "shulker_box" => 27,

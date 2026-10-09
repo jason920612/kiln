@@ -38,6 +38,8 @@ pub enum Effect {
     AnvilUsed { levels: i32 },
     /// The loom's result was taken (its take sound, once a tick).
     LoomUsed,
+    /// The cartography table's result was taken (its take sound, once a tick).
+    CartographyUsed,
     /// The enchanting table enchanted an item: the player loses `levels` experience levels and
     /// its enchantment seed becomes `seed` (`Player.onEnchantmentPerformed`); the table plays its
     /// sound.

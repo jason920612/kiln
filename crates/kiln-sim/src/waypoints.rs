@@ -940,7 +940,7 @@ impl Sim {
         for w in self.waypoints[dim].waypoints.clone() {
             self.create_waypoint_connection(dim, conn, w, on);
         }
-        if self.players.get(&conn).is_some_and(|p| !p.sneaking) {
+        if self.players.get(&conn).is_some_and(|p| !p.crouch_attr) {
             self.track_waypoint(dim, conn);
         }
     }
@@ -996,7 +996,7 @@ impl Sim {
         let mut looked: Vec<(ConnId, DimId, Uuid, Option<DimId>, bool, bool)> = self
             .players
             .iter()
-            .map(|(&c, p)| (c, p.dim, p.uuid, p.waypoint_dim, p.sneaking, !p.waypoint_first_tick && p.waypoint_last_pos != p.pos))
+            .map(|(&c, p)| (c, p.dim, p.uuid, p.waypoint_dim, p.crouch_attr, !p.waypoint_first_tick && p.waypoint_last_pos != p.pos))
             .collect();
         looked.sort_unstable_by_key(|l| l.0);
         for &(conn, dim, uuid, registered, sneaking, _) in &looked {

@@ -100,6 +100,10 @@ impl Kind for SnowGolem {
     }
 
     /// Shears take the pumpkin off (dropping it at the eyes).
+    fn ready_for_shearing(&self, m: &MobData) -> bool {
+        has_pumpkin(m)
+    }
+
     fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
         if stack.is_empty() || mob::item_name(stack) != "minecraft:shears" || !has_pumpkin(m) {
             return Some(Outcome::PASS);

@@ -104,7 +104,7 @@ impl Kind for IronGolem {
         g.add(2, Goal::Custom(Box::new(MoveTowardsTargetGoal { speed: 0.9, within: 32.0, target: None, wanted: Vec3::ZERO })));
         g.add(2, Goal::Custom(Box::new(MoveBackToVillageGoal)));
         g.add(4, Goal::Custom(Box::new(GolemRandomStrollInVillageGoal { speed: 0.6, wanted: Vec3::ZERO })));
-        g.add(5, Goal::Custom(Box::new(OfferFlowerGoal { tick: 0 })));
+        g.add(5, Goal::Custom(Box::new(OfferFlowerGoal::new())));
         g.add(7, Goal::LookAtPlayer { dist: 6.0, probability: 0.02, look_at: None, look_time: 0 });
         g.add(8, Goal::RandomLookAround { rel_x: 0.0, rel_z: 0.0, look_time: 0 });
         let t = &mut m.targets;
@@ -339,11 +339,29 @@ impl CustomGoal for GolemRandomStrollInVillageGoal {
     }
 }
 
-/// `OfferFlowerGoal`: by day, rarely, holds out a poppy to a copper golem nearby (none are
-/// simulated, so only the roll happens).
+/// `OfferFlowerGoal`: by day, rarely, holds a poppy out to the nearest villager or copper golem
+/// within reach; after 20 seconds a copper golem without an antenna takes it.
 #[derive(Clone, Debug)]
 struct OfferFlowerGoal {
     tick: i32,
+    entity: Option<i32>,
+}
+
+impl OfferFlowerGoal {
+    fn new() -> OfferFlowerGoal {
+        OfferFlowerGoal { tick: 0, entity: None }
+    }
+
+    /// `getGolemBoundingBox`.
+    fn golem_box(e: &Entity) -> crate::math::Aabb {
+        e.bounding_box().inflate(6.0, 2.0, 6.0)
+    }
+}
+
+/// `IronGolem.offerFlower`.
+fn offer_flower(e: &Entity, m: &mut MobData, level: &mut dyn EntityLevel, on: bool) {
+    st_mut(m).offer_flower = if on { 400 } else { 0 };
+    level.emit(Event::EntityEvent { entity: e.id, event: if on { 11 } else { 34 } });
 }
 
 impl CustomGoal for OfferFlowerGoal {
@@ -354,14 +372,61 @@ impl CustomGoal for OfferFlowerGoal {
     fn flags(&self) -> u8 {
         MOVE | LOOK
     }
-    fn can_use(&mut self, e: &mut Entity, _m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         if !level.is_bright_outside() {
             return false;
         }
-        let _ = e.random.next_int_bounded(8000);
-        false
+        if e.random.next_int_bounded(8000) != 0 {
+            return false;
+        }
+        // `getNearestEntity(CANDIDATE_FOR_IRON_GOLEM_GIFT, forNonCombat().range(6), golem, x, y, z, box)`.
+        let area = Self::golem_box(e);
+        let mut best: Option<(f64, i32)> = None;
+        for id in level.entities_in(&area, crate::level::EntityFilter::Living, e.id) {
+            let Some(t) = goals::living(&*level, id) else { continue };
+            if !matches!(t.type_name, "minecraft:villager" | "minecraft:copper_golem") || !goals::targeting_ok(e, m, &*level, &t, false, 6.0, true) {
+                continue;
+            }
+            let d = t.dist_sqr(e.x(), e.y(), e.z());
+            if best.is_none_or(|(b, _)| d < b) {
+                best = Some((d, id));
+            }
+        }
+        self.entity = best.map(|(_, id)| id);
+        self.entity.is_some()
     }
     fn can_continue(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
         self.tick > 0
     }
+    fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        self.tick = reduced_tick_delay(400);
+        offer_flower(e, m, level, true);
+    }
+    fn stop(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        offer_flower(e, m, level, false);
+        if self.tick == 0
+            && let Some(id) = self.entity
+        {
+            let area = Self::golem_box(e);
+            if let Some(other) = level.entity_mut(id)
+                && other.type_name == "minecraft:copper_golem"
+                && area.intersects(&other.bounding_box())
+                && let Some(om) = crate::mob::data_mut(other)
+            {
+                let s = super::copper_golem::st_mut(om);
+                if s.antenna.is_empty() {
+                    s.antenna = ItemStack::of("minecraft:poppy", 1).unwrap_or_else(ItemStack::empty);
+                    s.antenna_drop = 2.0;
+                }
+            }
+        }
+        self.entity = None;
+    }
+    fn tick(&mut self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        if let Some(t) = self.entity.and_then(|id| goals::living(&*level, id)) {
+            m.look.set_look_at(t.pos.x, t.eye_y, t.pos.z, 30.0, 30.0);
+        }
+        self.tick -= 1;
+    }
 }
+

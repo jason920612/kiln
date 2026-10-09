@@ -155,6 +155,7 @@ public class BlockTickVectors {
         scenariosGrowth(out);
         scenariosSpread(out);
         scenariosEnd(out);
+        scenariosBubbles(out);
     }
 
     // ================================================================ checks of the harness itself
@@ -165,6 +166,32 @@ public class BlockTickVectors {
         out.add(new Sc("harness_water", 3).cmd(
                 "fill ~0 ~ ~0 ~8 ~ ~8 minecraft:air",
                 "setblock ~4 ~ ~4 minecraft:water").tick(30).set(4, 100, 4, "minecraft:air").tick(30));
+    }
+
+    // ================================================================ family: bubble columns (wp49)
+    // soul sand and magma under water: the columns that grow, change and die with their support.
+    static void scenariosBubbles(List<Sc> out) {
+        String pool = "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:stone";
+        out.add(new Sc("bubble_up", 700).cmd(pool, "fill ~2 ~1 ~2 ~10 ~8 ~10 minecraft:water", "setblock ~4 ~1 ~4 minecraft:soul_sand", "setblock ~8 ~1 ~8 minecraft:soul_sand")
+                .tick(5).tick(20).tick(10).tick(30));
+        out.add(new Sc("bubble_down", 701).cmd(pool, "fill ~2 ~1 ~2 ~10 ~8 ~10 minecraft:water", "setblock ~4 ~1 ~4 minecraft:magma_block", "setblock ~8 ~1 ~8 minecraft:magma_block")
+                .tick(5).tick(20).tick(10).tick(30));
+        // The water is placed over a support that is already there, and the support goes away or changes.
+        out.add(new Sc("bubble_swap", 702).cmd(pool, "fill ~2 ~1 ~2 ~10 ~8 ~10 minecraft:water", "setblock ~4 ~1 ~4 minecraft:soul_sand", "setblock ~8 ~1 ~8 minecraft:magma_block")
+                .tick(40).set(4, 101, 4, "minecraft:magma_block").tick(20).tick(10).set(8, 101, 8, "minecraft:soul_sand").tick(40)
+                .set(4, 101, 4, "minecraft:stone").tick(30).set(8, 101, 8, "minecraft:air").tick(30).set(8, 101, 8, "minecraft:soul_sand").tick(40));
+        // The surface: a column that reaches the top of the water, and one under a cap of glass or a slab.
+        out.add(new Sc("bubble_cap", 703).cmd(pool, "fill ~2 ~1 ~2 ~10 ~4 ~10 minecraft:water", "setblock ~4 ~1 ~4 minecraft:soul_sand", "setblock ~8 ~1 ~8 minecraft:soul_sand",
+                "setblock ~8 ~4 ~8 minecraft:glass", "setblock ~4 ~3 ~4 minecraft:oak_slab[type=bottom]")
+                .tick(40).set(8, 104, 8, "minecraft:air").tick(40).set(4, 103, 4, "minecraft:air").tick(40).set(4, 102, 4, "minecraft:stone").tick(30).set(4, 102, 4, "minecraft:water").tick(40));
+        // Flowing water and partial water: no column; a source beside the column; the water drained.
+        out.add(new Sc("bubble_flow", 704).cmd(pool, "fill ~2 ~1 ~2 ~10 ~3 ~10 minecraft:stone", "fill ~3 ~4 ~3 ~9 ~6 ~9 minecraft:air",
+                "setblock ~5 ~3 ~5 minecraft:soul_sand", "setblock ~5 ~4 ~5 minecraft:water", "setblock ~8 ~3 ~8 minecraft:magma_block", "setblock ~8 ~4 ~8 minecraft:water",
+                "setblock ~3 ~3 ~7 minecraft:soul_sand", "setblock ~3 ~4 ~7 minecraft:oak_slab[type=bottom,waterlogged=true]", "setblock ~7 ~3 ~3 minecraft:soul_sand", "setblock ~7 ~4 ~3 minecraft:kelp[age=5]")
+                .tick(60).set(5, 104, 5, "minecraft:air").tick(40).set(5, 104, 5, "minecraft:water").tick(40).set(5, 105, 5, "minecraft:water").tick(40).set(8, 105, 8, "minecraft:water").tick(40));
+        out.add(new Sc("bubble_waterlogged_top", 705).cmd(pool, "fill ~2 ~1 ~2 ~10 ~6 ~10 minecraft:water", "setblock ~4 ~1 ~4 minecraft:soul_sand", "setblock ~4 ~4 ~4 minecraft:seagrass",
+                "setblock ~6 ~1 ~6 minecraft:soul_sand", "setblock ~6 ~3 ~6 minecraft:oak_trapdoor[open=false,half=bottom,waterlogged=true]", "setblock ~8 ~1 ~8 minecraft:magma_block", "setblock ~8 ~5 ~8 minecraft:oak_fence[waterlogged=true]")
+                .tick(60).set(4, 104, 4, "minecraft:air").tick(40).set(6, 103, 6, "minecraft:air").tick(40).set(8, 105, 8, "minecraft:air").tick(40));
     }
 
     // ================================================================ family: farming

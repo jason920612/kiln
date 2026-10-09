@@ -148,7 +148,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
                     view,
                     living: true,
                     on_ground: p.on_ground,
-                    height: if p.sneaking { 1.5 } else { 1.8 },
+                    height: p.dimensions().1,
                     knockback_resistance: p.attribute(KNOCKBACK_RESISTANCE),
                     spectator: p.game_mode == 3,
                     creative_flying: p.game_mode == 1 && p.flying,
@@ -766,6 +766,15 @@ pub(crate) fn attack(w: &mut Work<'_, '_, '_>, a: usize, target: Target, target_
         Target::Player(t) => Victim::Player(*t),
         Target::Entity { part, .. } => Victim::Entity(target_id - part.map_or(0, |p| p as i32 + 1), *part),
     };
+    // `Player.attack`: `target.skipAttackInteraction(this)` is a hanging entity's `hurtOrSimulate(playerAttack, 0)`;
+    // when it did something the attack is over, else it goes on as any hit.
+    if let Target::Entity { kind: EntityClass::Hanging, .. } = &target {
+        let p = &mut *w.players[a];
+        let source = Source { cause: Cause::PlayerAttack, attacker: Some(p.as_attacker()), direct: None, weapon: Some(p.inv.selected_item().clone()), position: None };
+        if w.hurt(a, victim, 0.0, &source) {
+            return;
+        }
+    }
     let (living, target_view, target_bb) = match &target {
         Target::Player(t) => {
             let f = w.facts(Victim::Player(*t)).expect("player target");

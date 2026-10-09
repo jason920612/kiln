@@ -395,6 +395,14 @@ impl Kind for Camel {
         Some(Outcome::PASS)
     }
 
+    fn set_extra_equipment(&self, m: &mut MobData, slot: u8, stack: ItemStack) -> bool {
+        if slot != 7 {
+            return false;
+        }
+        st_mut(m).saddle = stack;
+        true
+    }
+
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let s = st(m);
         if s.saddle.is_empty() { Vec::new() } else { vec![(7, s.saddle.clone())] }

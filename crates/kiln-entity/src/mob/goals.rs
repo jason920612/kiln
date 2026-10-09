@@ -32,6 +32,8 @@ pub enum MeleeKind {
     Plain,
     Zombie,
     Spider,
+    /// `Bee$BeeAttackGoal`: only while angry and not yet stung.
+    Bee,
 }
 
 #[derive(Clone, Debug)]
@@ -278,7 +280,7 @@ impl Living {
         BlockPos::containing(self.pos.x, self.pos.y, self.pos.z)
     }
 
-    fn dist_sqr(&self, x: f64, y: f64, z: f64) -> f64 {
+    pub fn dist_sqr(&self, x: f64, y: f64, z: f64) -> f64 {
         let (a, b, c) = (self.pos.x - x, self.pos.y - y, self.pos.z - z);
         a * a + b * b + c * c
     }
@@ -305,7 +307,7 @@ pub fn living(level: &dyn EntityLevel, id: i32) -> Option<Living> {
 pub fn living_player(p: &crate::level::PlayerView) -> Living {
     {
         let id = p.id;
-        let h = if p.sneaking { 1.5 } else { 1.8 };
+        let h = p.height as f64;
         return Living {
             id,
             type_name: "minecraft:player",
@@ -491,7 +493,10 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
     let every = g.every_tick();
     let adj = |t: i32| if every { t } else { reduced_tick_delay(t) };
     match g {
-        Goal::Custom(c) => c.can_use(e, m, level),
+        Goal::Custom(c) => {
+            let r = c.can_use(e, m, level);
+            r && (!c.bee_base() || !super::kinds::bee::is_angry(m, level))
+        }
         Goal::Float => (e.fluid_height_water() > fluid_jump_threshold(e)) || e.is_in_lava(),
         Goal::Panic { pos, .. } => {
             if !should_panic(m, level) {
@@ -620,7 +625,12 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
                 return false;
             }
             *path = path::create_path_to_entity(e, m, level, t.block_pos(), 0);
-            path.is_some() || super::within_melee_range(e, m, &t)
+            if std::env::var_os("KILN_DEBUG_MELEE").is_some() {
+                eprintln!("MELEE can_use now {now} target {:?} path {:?} in_water {} breaching {} wb {}", t.block_pos(), path.as_ref().map(|p| p.nodes.len()), e.is_in_water(), m.nav.allow_breaching, m.nav.water_bound);
+            }
+            let found = path.is_some() || super::within_melee_range(e, m, &t);
+            // `Bee$BeeAttackGoal.canUse`: after the melee check (which keeps its 20-tick pause).
+            found && (*kind != MeleeKind::Bee || (super::kinds::bee::is_angry(m, level) && !super::kinds::bee::has_stung(m)))
         }
         Goal::RangedBow { .. } => target(m, level).is_some() && m.holding_bow(),
         Goal::Swell { .. } => {
@@ -721,7 +731,10 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
 
 pub(crate) fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
     match g {
-        Goal::Custom(c) => c.can_continue(e, m, level),
+        Goal::Custom(c) => {
+            let r = c.can_continue(e, m, level);
+            r && (!c.bee_base() || !super::kinds::bee::is_angry(m, level))
+        }
         Goal::Panic { .. } | Goal::FleeSun { .. } => !nav_done(m),
         Goal::RandomStroll { .. } => !nav_done(m),
         Goal::Tempt { .. } => can_use(g, e, m, level),
@@ -748,6 +761,9 @@ pub(crate) fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level:
         Goal::RandomLookAround { look_time, .. } => *look_time >= 0,
         Goal::EatBlock { tick } => *tick > 0,
         Goal::Melee { kind, follow_unseen, .. } => {
+            if *kind == MeleeKind::Bee && !(super::kinds::bee::is_angry(m, level) && !super::kinds::bee::has_stung(m)) {
+                return false;
+            }
             if *kind == MeleeKind::Spider && light_ok_for_spider_to_stop(e, level) && e.random.next_int_bounded(100) == 0 {
                 super::set_target(e, m, None);
                 return false;
@@ -767,6 +783,10 @@ pub(crate) fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level:
             *try_ticks >= -*max_stay && *try_ticks <= 1200 && is_turtle_egg_target(level, *block)
         }
         Goal::HurtByTarget { target_mob, unseen, unseen_memory, .. } => {
+            // `Bee$BeeHurtByOtherGoal.canContinueToUse`: only while angry.
+            if m.kind == MobKind::Bee && !super::kinds::bee::is_angry(m, level) {
+                return false;
+            }
             continue_target(e, m, level, *target_mob, true, unseen, *unseen_memory)
         }
         // `NearestAttackableTargetGoal` never sets `targetMob`: once the mob's target is cleared
@@ -1192,8 +1212,12 @@ pub fn free_partner(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<
 }
 
 /// `HurtByTargetGoal.alertOthers`: mobs of the same type nearby without a target.
-fn alert_others_of_kind(e: &Entity, m: &MobData, level: &mut dyn EntityLevel) {
+fn alert_others_of_kind(e: &Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     let Some(attacker) = m.last_hurt_by_mob else { return };
+    // `Bee$BeeHurtByOtherGoal.alertOther`: only when this bee can see the attacker.
+    if m.kind == MobKind::Bee && !living(level, attacker).is_some_and(|t| super::has_line_of_sight_cached(e, m, level, &t)) {
+        return;
+    }
     let r = m.attrs.value(Attr::FollowRange);
     let p = e.position();
     let area = crate::math::Aabb::new(p.x, p.y, p.z, p.x + 1.0, p.y + 1.0, p.z + 1.0).inflate(r, 10.0, r);

@@ -16,6 +16,10 @@ pub struct Interactor {
     pub creative: bool,
     /// `isSecondaryUseActive` (sneaking).
     pub sneaking: bool,
+    /// Spectator mode.
+    pub spectator: bool,
+    /// Where the click hit the entity, relative to its position.
+    pub hit: crate::math::Vec3,
 }
 
 /// What becomes of the held stack.
@@ -30,6 +34,8 @@ pub enum HeldChange {
     Damage(i32),
     /// `ItemStack.shrink(n)`: taken in every game mode (a lead put on a mob).
     Shrink(i32),
+    /// `Player.setItemInHand`: the held stack becomes this (an armor stand's swap).
+    Replace(ItemStack),
 }
 
 /// `InteractionResult`, as far as the caller cares.
@@ -171,6 +177,18 @@ fn play_eating_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
 /// The held item's `interactLivingEntity` (`DyeItem` on sheep).
 fn item_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Outcome {
     let _ = who;
+    // `NameTagItem.interactLivingEntity`: a named tag names a living mob, which then never despawns.
+    if is(stack, "minecraft:name_tag")
+        && let Some(name) = stack.get(kiln_item::keys::CUSTOM_NAME)
+    {
+        if e.is_alive() && m.health > 0.0 {
+            e.extra.retain(|(k, _)| k != "CustomName");
+            e.extra.push(("CustomName".into(), name.nbt().clone()));
+            m.persistence_required = true;
+            return Outcome::success(HeldChange::Consume(1));
+        }
+        return Outcome::PASS;
+    }
     if let Some(color) = dye_color(stack)
         && let Species::Sheep { color: c, sheared: false } = &mut m.species
         && *c != color

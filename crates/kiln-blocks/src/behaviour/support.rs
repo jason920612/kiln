@@ -113,6 +113,8 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
             }
         }
         C::LeafLitterBlock => sturdy(below(), Direction::Up, Support::Full),
+        C::BubbleColumnBlock => super::bubble::can_survive(level, pos),
+        C::BellBlock => super::bell::can_survive(level, s, pos),
         C::SnowLayerBlock => crate::weather::snow_can_survive(level, pos),
         C::VineBlock => super::growth::vine_can_survive(level, s, pos),
         C::ChorusFlowerBlock => super::growth::chorus_flower_can_survive(level, pos),

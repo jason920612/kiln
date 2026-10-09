@@ -155,6 +155,10 @@ pub mod stat {
         TRADED_WITH_VILLAGER = "minecraft:traded_with_villager",
         TALKED_TO_VILLAGER = "minecraft:talked_to_villager",
         EAT_CAKE_SLICE = "minecraft:eat_cake_slice",
+        INTERACT_WITH_CAMPFIRE = "minecraft:interact_with_campfire",
+        POT_FLOWER = "minecraft:pot_flower",
+        BELL_RING = "minecraft:bell_ring",
+        TARGET_HIT = "minecraft:target_hit",
         ENCHANT_ITEM = "minecraft:enchant_item",
         OPEN_CHEST = "minecraft:open_chest",
         OPEN_ENDERCHEST = "minecraft:open_enderchest",
@@ -172,6 +176,7 @@ pub mod stat {
         INTERACT_WITH_SMITHING_TABLE = "minecraft:interact_with_smithing_table",
         INTERACT_WITH_LOOM = "minecraft:interact_with_loom",
         INTERACT_WITH_CARTOGRAPHY_TABLE = "minecraft:interact_with_cartography_table",
+        INTERACT_WITH_LECTERN = "minecraft:interact_with_lectern",
         INSPECT_HOPPER = "minecraft:inspect_hopper",
         INSPECT_DROPPER = "minecraft:inspect_dropper",
         INSPECT_DISPENSER = "minecraft:inspect_dispenser",
@@ -395,7 +400,7 @@ impl Player {
         }
         let full = ((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() as f32 * 100.0).round() as i32;
         let horizontal = ((d[0] * d[0] + d[2] * d[2]).sqrt() as f32 * 100.0).round() as i32;
-        if self.swimming() {
+        if self.swimming {
             if full > 0 {
                 self.award_stat(*stat::SWIM_ONE_CM, full);
                 self.exhaust(0.01f32 * full as f32 * 0.01f32);
@@ -419,7 +424,7 @@ impl Player {
                 let s = if self.sprinting {
                     self.exhaust(0.1f32 * horizontal as f32 * 0.01f32);
                     *stat::SPRINT_ONE_CM
-                } else if self.sneaking {
+                } else if self.is_crouching() {
                     *stat::CROUCH_ONE_CM
                 } else {
                     *stat::WALK_ONE_CM
@@ -472,10 +477,6 @@ impl Player {
         crate::combat::floor(self.attribute(crate::combat::ARMOR))
     }
 
-    /// Swimming pose: Kiln does not track the swimming flag yet.
-    fn swimming(&self) -> bool {
-        false
-    }
 }
 
 impl Sim {

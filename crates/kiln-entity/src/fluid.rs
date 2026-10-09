@@ -267,7 +267,8 @@ impl Entity {
         }
         let d = self.delta;
         let volume = (1.0f32).min(((d.x * d.x * 0.20000000298023224 + d.y * d.y + d.z * d.z * 0.20000000298023224).sqrt() as f32) * 0.2);
-        let sound = if volume < 0.25 { "minecraft:entity.generic.splash" } else { "minecraft:entity.generic.swim" };
+        let (splash, swim) = crate::mob::splash_sounds_of(self);
+        let sound = if volume < 0.25 { splash } else { swim };
         let pitch = 1.0 + (self.random_next_float() - self.random_next_float()) * 0.4;
         self.play_sound(level, sound, volume, pitch);
         let n = 1.0 + self.width * 20.0;

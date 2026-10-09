@@ -66,6 +66,7 @@ pub(crate) struct PlayerContainers {
     pub bookshelves: i32,
     /// `LoomMenu.lastSoundTime`.
     pub last_loom_sound: i64,
+    pub last_cartography_sound: i64,
 }
 
 impl PlayerContainers {
@@ -85,6 +86,7 @@ impl PlayerContainers {
             enchantment_seed: player.get("XpSeed").and_then(Tag::as_i64).unwrap_or(0) as i32,
             bookshelves: 0,
             last_loom_sound: i64::MIN,
+            last_cartography_sound: i64::MIN,
         }
     }
 
@@ -155,7 +157,7 @@ impl Player {
         let mut out = Vec::new();
         let player = self.player_flags();
         let result = {
-            let Player { inv, menu, open_menu, containers: pc, loot, level_rng, entity_rng, limited_crafting, recipe_book, .. } = self;
+            let Player { inv, menu, open_menu, maps, containers: pc, loot, level_rng, entity_rng, limited_crafting, recipe_book, .. } = self;
             let PlayerContainers { open, ender, cart, bookshelves, .. } = pc;
             let mut world = super::world::SimWorld {
                 loot: loot.as_deref(),
@@ -164,6 +166,7 @@ impl Player {
                 bookshelves: *bookshelves,
                 limited_crafting: *limited_crafting,
                 recipes: &*recipe_book,
+                maps,
             };
             // A double chest's second half is taken out while the menu works on both.
             let mut second_taken: Option<(BlockPos, ContainerBe)> = None;
@@ -243,6 +246,7 @@ impl Player {
                 e @ (kiln_inventory::Effect::GrindstoneUsed { .. }
                 | kiln_inventory::Effect::AnvilUsed { .. }
                 | kiln_inventory::Effect::LoomUsed
+                | kiln_inventory::Effect::CartographyUsed
                 | kiln_inventory::Effect::Enchanted { .. }) => self.containers.pending.push(e),
                 _ => {}
             }
@@ -412,10 +416,14 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         }
         BeKind::Hopper => single(Menu::hopper),
         BeKind::Dispenser | BeKind::Dropper => single(Menu::generic_3x3),
+        BeKind::Crafter => single(Menu::crafter),
         BeKind::Furnace(kind) => single(furnace_menu(kind)),
         BeKind::BrewingStand => single(Menu::brewing_stand),
         BeKind::Beacon => single(Menu::beacon),
-        BeKind::EnderChest | BeKind::Jukebox => return None,
+        // `LecternBlock.getMenuProvider`: only with a book.
+        BeKind::Lectern if state::get_bool(s, "has_book") => single(Menu::lectern),
+        BeKind::Lectern => return None,
+        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock => return None,
     })
 }
 
@@ -463,8 +471,22 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
         }
         return Some(true);
     }
+    // `CommandBlock.useWithoutItem`: a game master's click opens the block's screen.
+    if logic::block_class(s) == C::CommandBlock {
+        return crate::command_block::use_without_item(p, level, pos);
+    }
+    // `LecternBlock.useWithoutItem`: a lectern with a book opens its menu; without one the click is consumed.
+    if logic::block_class(s) == C::LecternBlock {
+        if state::get_bool(s, "has_book")
+            && let Some(provider) = container_provider(level, pos, s)
+        {
+            open_menu(p, level, provider, spawns);
+            p.award_stat(*crate::player_stats::stat::INTERACT_WITH_LECTERN, 1);
+        }
+        return Some(true);
+    }
     // (A jukebox has no menu: its own `useWithoutItem` takes the disc out.)
-    if level.blocks.containers.get(pos)?.kind == BeKind::Jukebox {
+    if matches!(level.blocks.containers.get(pos)?.kind, BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock) {
         return None;
     }
     if let Some(provider) = container_provider(level, pos, s) {
@@ -611,6 +633,11 @@ fn open_changed(level: &mut RegionLevel, pos: BlockPos, s: u16, open: bool) {
 
 /// `startOpen` of the container at `pos` (spectators do not count).
 pub(crate) fn start_open(level: &mut RegionLevel, pos: BlockPos, spectator: bool) {
+    start_open_ranged(level, pos, spectator, BLOCK_INTERACTION_RANGE);
+}
+
+/// [`start_open`] for a user with the interaction range `range` (a copper golem: 3).
+pub(crate) fn start_open_ranged(level: &mut RegionLevel, pos: BlockPos, spectator: bool, range: f64) {
     if spectator {
         return;
     }
@@ -621,7 +648,7 @@ pub(crate) fn start_open(level: &mut RegionLevel, pos: BlockPos, spectator: bool
             // `ContainerOpenersCounter.incrementOpeners`.
             let before = c.openers;
             c.openers += 1;
-            c.max_range = c.max_range.max(BLOCK_INTERACTION_RANGE);
+            c.max_range = c.max_range.max(range);
             let after = c.openers;
             if before == 0 {
                 open_changed(level, pos, s, true);
@@ -666,7 +693,7 @@ fn stop_open(level: &mut RegionLevel, block: &OpenBlock, spectator: bool) {
     }
 }
 
-fn stop_open_at(level: &mut RegionLevel, pos: BlockPos) {
+pub(crate) fn stop_open_at(level: &mut RegionLevel, pos: BlockPos) {
     let s = level.block(pos);
     let Some(c) = level.blocks.containers.get_mut(pos) else { return };
     match c.kind {
@@ -697,7 +724,7 @@ fn stop_open_at(level: &mut RegionLevel, pos: BlockPos) {
 }
 
 /// Whether the player's open menu shows the container at `pos` (`isOwnContainer`).
-fn has_open(p: &Player, pos: BlockPos) -> bool {
+pub(crate) fn has_open(p: &Player, pos: BlockPos) -> bool {
     match &p.containers.open {
         Some(OpenBlock::Containers { first, second }) => first.0 == pos || second.is_some_and(|s| s.0 == pos),
         Some(OpenBlock::EnderChest { pos: at, .. }) => *at == pos,
@@ -705,9 +732,32 @@ fn has_open(p: &Player, pos: BlockPos) -> bool {
     }
 }
 
+/// A copper golem as the openers' recount sees it: its data and box.
+pub(crate) struct GolemBox<'a> {
+    pub mob: &'a kiln_entity::mob::MobData,
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+}
+
+/// The region's copper golems that hold a chest open, for [`recheck_openers`].
+pub(crate) fn golems_with_open_chest(list: &[crate::entities::Entity]) -> Vec<GolemBox<'_>> {
+    list.iter()
+        .filter(|e| !e.removed)
+        .filter_map(|e| {
+            let phys = e.phys.as_deref()?;
+            let mob = kiln_entity::mob::data(phys)?;
+            if mob.kind != kiln_entity::mob::MobKind::CopperGolem || kiln_entity::mob::kinds::copper_golem::st(mob).opened_chest.is_none() {
+                return None;
+            }
+            let b = phys.bounding_box();
+            Some(GolemBox { mob, min: [b.min_x, b.min_y, b.min_z], max: [b.max_x, b.max_y, b.max_z] })
+        })
+        .collect()
+}
+
 /// `ContainerOpenersCounter.recheckOpeners` (the scheduled tick of chests, barrels and ender
 /// chests): counts the players in range with the container open.
-pub(crate) fn recheck_openers(level: &mut RegionLevel, players: &[&mut Player], pos: BlockPos) {
+pub(crate) fn recheck_openers(level: &mut RegionLevel, players: &[&mut Player], golems: &[GolemBox], pos: BlockPos) {
     let s = level.block(pos);
     let Some(c) = level.blocks.containers.get(pos) else { return };
     if !matches!(c.kind, BeKind::Chest | BeKind::TrappedChest | BeKind::Barrel | BeKind::EnderChest) {
@@ -723,8 +773,20 @@ pub(crate) fn recheck_openers(level: &mut RegionLevel, players: &[&mut Player], 
             (0..3).all(|i| bb[0][i] < hi[i] && bb[1][i] > lo[i])
         })
         .collect();
-    let n = viewers.len() as i32;
-    let range = if n > 0 { BLOCK_INTERACTION_RANGE } else { 0.0 };
+    // The copper golems with this chest open (`CopperGolem.hasContainerOpen`), in range.
+    let golems_here = golems
+        .iter()
+        .filter(|g| kiln_entity::mob::kinds::copper_golem::has_container_open_by(g.mob, &|p| level.block(BlockPos::new(p.x, p.y, p.z)), kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z)))
+        .filter(|g| (0..3).all(|i| g.min[i] < hi[i] && g.max[i] > lo[i]))
+        .count();
+    let n = (viewers.len() + golems_here) as i32;
+    let range = if viewers.is_empty() && golems_here == 0 {
+        0.0
+    } else if viewers.is_empty() {
+        kiln_entity::mob::kinds::copper_golem::CONTAINER_INTERACTION_RANGE
+    } else {
+        BLOCK_INTERACTION_RANGE
+    };
     let Some(c) = level.blocks.containers.get_mut(pos) else { return };
     c.max_range = range;
     let before = c.openers;
@@ -781,6 +843,9 @@ pub(crate) fn menu_op<R>(
     workstation_effects(p, level);
     for (pos, n) in before {
         if level.blocks.containers.get(pos).is_some_and(|c| c.changes != n) {
+            // A lectern's page turned or its book taken: its block follows (`LecternBlock.signalPageChange`,
+            // `resetBookState`) before the comparators read it.
+            crate::lectern::after_menu(level, pos);
             let s = level.block(pos);
             kiln_blocks::update::update_neighbour_for_output_signal(level, pos, BlockId::of(s));
         }
@@ -820,6 +885,23 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
         }
         touched = true;
     }
+    // `DecoratedPotBlockEntity.applyImplicitComponents`: the sherds.
+    if c.kind == BeKind::DecoratedPot {
+        let decorations = stack.get(keys::POT_DECORATIONS).cloned().unwrap_or_default();
+        c.extra.retain(|(k, _)| k != "sherds");
+        if decorations != kiln_item::component::PotDecorations::default() {
+            c.extra.push(("sherds".into(), <kiln_item::component::PotDecorations as kiln_item::component::ComponentValue>::to_value(&decorations).to_nbt()));
+        }
+        touched = true;
+    }
+    if let Some(h) = c.hive.as_deref_mut() {
+        // `BeehiveBlockEntity.applyImplicitComponents`.
+        h.occupants.clear();
+        if let Some(bees) = stack.get(keys::BEES) {
+            h.apply(bees);
+        }
+        touched = true;
+    }
     if let Some(loot) = stack.get(keys::CONTAINER_LOOT)
         && c.kind.randomizable()
     {
@@ -833,6 +915,26 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
     }
     if touched {
         c.mark_changed();
+        // The chunk's copy is what the update packet clients get is made of (a decorated pot shows its sherds).
+        sync_chunk_copy(level, pos);
+    }
+}
+
+/// Writes the live block entity at `pos` into its chunk (the copy that is saved and sent to clients).
+pub(crate) fn sync_chunk_copy(level: &mut RegionLevel, pos: BlockPos) {
+    use kiln_world::Blocks as _;
+    let Some(c) = level.blocks.containers.get_mut(pos) else { return };
+    let (type_id, saved) = (c.type_id, c.chunk_tag());
+    c.dirty = false;
+    let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
+    if let Some(chunk) = level.cells.chunk_mut(kiln_world::ChunkPos::of_block(pos.x, pos.z))
+        && chunk.block_entity(x, pos.y, z).is_some_and(|be| be.kind == type_id)
+    {
+        let mut be = kiln_world::block_entity::BlockEntity::new(type_id);
+        if let (Tag::Compound(out), Tag::Compound(fields)) = (&mut be.nbt, saved) {
+            out.extend(fields);
+        }
+        chunk.set_block_entity(x, pos.y, z, be);
     }
 }
 
@@ -881,6 +983,13 @@ fn workstation_effects(p: &mut Player, level: &mut RegionLevel) {
                 if p.containers.last_loom_sound != now {
                     p.containers.last_loom_sound = now;
                     level.effect(Effect::Sound { pos, sound: "minecraft:ui.loom.take_result", volume: 1.0, pitch: 1.0 });
+                }
+            }
+            kiln_inventory::Effect::CartographyUsed => {
+                let now = level.env.game_time;
+                if p.containers.last_cartography_sound != now {
+                    p.containers.last_cartography_sound = now;
+                    level.effect(Effect::Sound { pos, sound: "minecraft:ui.cartography_table.take_result", volume: 1.0, pitch: 1.0 });
                 }
             }
             kiln_inventory::Effect::Enchanted { levels, seed } => {

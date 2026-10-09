@@ -6,7 +6,7 @@
 //! `StrollToPoi`, `StrollAroundPoi`, `Mount`, `DismountOrSkipMounting`, `CrossbowAttack`,
 //! `InteractWithDoor`) in vanilla's order of conditions and random draws.
 
-use super::memory::{GlobalPos, Tracker, Val, WalkTarget};
+use super::memory::{Tracker, Val, WalkTarget};
 use super::util::{self, uniform};
 use super::{Behavior, Control, Cx, Mem, Sensor, Shot, ShotBehavior, Status, Timed, shot};
 use crate::behavior_boilerplate;
@@ -941,139 +941,12 @@ pub fn dismount_or_skip_mounting(max_distance: i32, wants_to_stop: fn(&Cx, i32) 
 
 // ---------------------------------------------------------------------------- doors
 
-/// `InteractWithDoor.create()`: opens the doors on the path and closes those it passed. Only the
-/// opening and closing of doors is simulated.
-#[derive(Clone, Debug, Default)]
-pub struct InteractWithDoor {
-    last_node: Option<(i32, i32, i32)>,
-    cooldown: i32,
-}
-
-impl InteractWithDoor {
-    pub fn new() -> Box<dyn Control> {
-        Shot::new(InteractWithDoor::default())
-    }
-}
-
-fn is_door(level: &dyn EntityLevel, p: BlockPos) -> bool {
-    crate::mob::kinds::wolf::block_in_tag(level.block(p), "minecraft:mob_interactable_doors")
-}
+/// `InteractWithDoor.create()` is the villagers' (one implementation, checked against vanilla).
+pub use super::village::stroll::InteractWithDoor;
 
 /// A property of a block state, by name.
 pub fn block_prop(state: u16, name: &str) -> Option<&'static str> {
     kiln_data::blocks_types::block_of(state).property(state, name)
-}
-
-/// `DoorBlock.setOpen`: both halves of the door at `pos`.
-fn set_door_open(level: &mut dyn EntityLevel, pos: BlockPos, open: bool) -> bool {
-    let s = level.block(pos);
-    let info = kiln_data::blocks_types::block_of(s);
-    let v = if open { "true" } else { "false" };
-    let Some(ns) = info.with_property(s, "open", v) else { return false };
-    let other = if block_prop(s, "half") == Some("lower") { pos.above() } else { pos.below() };
-    level.set_block(pos, ns, 10);
-    let os = level.block(other);
-    if kiln_data::blocks_types::block_of(os).name == info.name
-        && let Some(nos) = kiln_data::blocks_types::block_of(os).with_property(os, "open", v)
-    {
-        level.set_block(other, nos, 10);
-    }
-    true
-}
-
-impl ShotBehavior for InteractWithDoor {
-    fn name(&self) -> &'static str {
-        "InteractWithDoor"
-    }
-    fn entry(&self) -> &'static [(Mem, Status)] {
-        &[(Mem::Path, ValuePresent), (Mem::DoorsToClose, Registered), (Mem::NearestLivingEntities, Registered)]
-    }
-    fn trigger(&mut self, cx: &mut Cx) -> bool {
-        let Some(path) = cx.m.nav.path.as_ref() else { return false };
-        if path.next == 0 || path.is_done() {
-            return false;
-        }
-        let next = path.nodes.get(path.next).map(|n| (n.x, n.y, n.z));
-        if self.last_node == next {
-            self.cooldown = 20;
-        } else {
-            self.cooldown -= 1;
-            if self.cooldown > 0 {
-                return false;
-            }
-        }
-        self.last_node = next;
-        let prev = path.nodes.get(path.next - 1).map(|n| BlockPos::new(n.x, n.y, n.z));
-        let nxt = path.nodes.get(path.next).map(|n| BlockPos::new(n.x, n.y, n.z));
-        let mut opened = Vec::new();
-        for p in [prev, nxt].into_iter().flatten() {
-            if is_door(&*cx.level, p) {
-                let s = cx.level.block(p);
-                if block_prop(s, "open") != Some("true") && set_door_open(cx.level, p, true) {
-                    opened.push(p);
-                }
-            }
-        }
-        if !opened.is_empty() {
-            let mut doors = cx.b.mem.positions(Mem::DoorsToClose).to_vec();
-            let dim = dimension_of(&*cx.level);
-            for p in opened {
-                let g = GlobalPos::new(dim, p);
-                if !doors.contains(&g) {
-                    doors.push(g);
-                }
-            }
-            cx.b.mem.set(Mem::DoorsToClose, Val::Positions(doors));
-        }
-        // Doors passed and no longer on the way close again once the mob has moved off.
-        let mut doors = cx.b.mem.positions(Mem::DoorsToClose).to_vec();
-        if !doors.is_empty() {
-            let me = cx.e.position();
-            let pn = prev;
-            let nn = nxt;
-            let mut keep = Vec::new();
-            for g in doors.drain(..) {
-                if pn == Some(g.pos) || nn == Some(g.pos) {
-                    keep.push(g);
-                    continue;
-                }
-                if !closer_to_center(g.pos, me, 3.0) {
-                    continue;
-                }
-                if is_door(&*cx.level, g.pos) && block_prop(cx.level.block(g.pos), "open") == Some("true") {
-                    // Another mob of the type coming through the door keeps it open.
-                    let coming = cx
-                        .b
-                        .mem
-                        .entities(Mem::NearestLivingEntities)
-                        .iter()
-                        .filter_map(|&id| cx.level.entity(id))
-                        .filter(|o| o.type_name == cx.e.type_name && closer_to_center(g.pos, o.position(), 2.0))
-                        .any(|o| {
-                            mob::data(o).and_then(|m| m.nav.path.as_ref()).is_some_and(|pp| {
-                                !pp.is_done() && pp.next > 0 && {
-                                    let a = pp.nodes.get(pp.next - 1).map(|n| BlockPos::new(n.x, n.y, n.z));
-                                    let b = pp.nodes.get(pp.next).map(|n| BlockPos::new(n.x, n.y, n.z));
-                                    a == Some(g.pos) || b == Some(g.pos)
-                                }
-                            })
-                        });
-                    if !coming {
-                        set_door_open(cx.level, g.pos, false);
-                    } else {
-                        keep.push(g);
-                    }
-                }
-            }
-            if keep.len() != cx.b.mem.positions(Mem::DoorsToClose).len() {
-                cx.b.mem.set(Mem::DoorsToClose, Val::Positions(keep));
-            }
-        }
-        true
-    }
-    fn box_clone(&self) -> Box<dyn ShotBehavior> {
-        Box::new(self.clone())
-    }
 }
 
 // ---------------------------------------------------------------------------- crossbow

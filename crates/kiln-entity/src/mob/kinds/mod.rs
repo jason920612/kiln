@@ -44,6 +44,7 @@ pub mod evoker;
 pub mod vex;
 pub mod ravager;
 pub mod illusioner;
+pub mod giant;
 
 // -- slice 3: the end
 pub mod ender_dragon;
@@ -65,6 +66,14 @@ pub mod panda;
 
 // -- slice 3: common mobs B
 pub mod squid;
+pub mod chest_access;
+pub mod copper_golem;
+pub mod copper_golem_ai;
+pub mod sulfur_archetype;
+pub mod sulfur_cube;
+pub mod dolphin;
+pub mod happy_ghast;
+pub mod happy_ghast_goals;
 pub mod fish;
 pub mod mooshroom;
 pub mod ocelot;
@@ -97,6 +106,8 @@ pub mod nautilus;
 pub mod wandering_trader;
 // -- wp32: parrots
 pub mod parrot;
+// -- wp49: bees
+pub mod bee;
 
 
 /// The behaviour of an extension type; `None` for the shared-code types.
@@ -136,6 +147,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Vex => &vex::KIND,
         MobKind::Ravager => &ravager::KIND,
         MobKind::Illusioner => &illusioner::KIND,
+        MobKind::Giant => &giant::KIND,
 
         // -- slice 3: the end
         MobKind::EnderDragon => &ender_dragon::KIND,
@@ -158,6 +170,10 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         // -- slice 3: common mobs B
         MobKind::Squid => &squid::KIND,
         MobKind::GlowSquid => &squid::GLOW,
+        MobKind::Dolphin => &dolphin::KIND,
+        MobKind::CopperGolem => &copper_golem::KIND,
+        MobKind::SulfurCube => &sulfur_cube::KIND,
+        MobKind::HappyGhast => &happy_ghast::KIND,
         MobKind::Cod => &fish::COD,
         MobKind::Salmon => &fish::SALMON,
         MobKind::TropicalFish => &fish::TROPICAL_FISH,
@@ -196,6 +212,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::WanderingTrader => &wandering_trader::KIND,
         // -- wp32: parrots
         MobKind::Parrot => &parrot::KIND,
+        MobKind::Bee => &bee::KIND,
 
         _ => return None,
     })

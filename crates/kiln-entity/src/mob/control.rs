@@ -42,7 +42,7 @@ pub fn tick_look(e: &mut Entity, m: &mut MobData) {
 /// `LookControl.tick` with `resetXRotOnTick` given (a frog keeps its pitch while its tongue is out).
 pub fn tick_look_with(e: &mut Entity, m: &mut MobData, reset_x_rot: bool) {
     if reset_x_rot {
-        e.x_rot = 0.0;
+        e.set_x_rot(0.0);
     }
     if m.look.cooldown > 0 {
         m.look.cooldown -= 1;
@@ -56,7 +56,7 @@ pub fn tick_look_with(e: &mut Entity, m: &mut MobData, reset_x_rot: bool) {
         let h = (dx * dx + dz * dz).sqrt();
         if dy.abs() > 9.999999747378752e-6 || h.abs() > 9.999999747378752e-6 {
             let pitch = (-(mth::atan2(dy, h) * 57.2957763671875)) as f32;
-            e.x_rot = mth::rotate_towards(e.x_rot, pitch, m.look.x_max_rot_angle);
+            e.set_x_rot(mth::rotate_towards(e.x_rot, pitch, m.look.x_max_rot_angle));
         }
     } else {
         m.y_head_rot = mth::rotate_towards(m.y_head_rot, m.y_body_rot, 10.0);

@@ -43,6 +43,18 @@ pub fn new(small: bool, id: i32, owner: &Entity, dir: Vec3, explosion_power: i32
     e
 }
 
+/// `new SmallFireball(level, x, y, z, direction)` with no owner (a dispenser's fire charge): at `pos`,
+/// heading along `dir`; the caller shoots it and adds it.
+pub fn new_unowned_small(pos: Vec3, dir: Vec3, seed: i64) -> Entity {
+    let x = Fireball { small: true, owner: None, owner_uuid: None, acceleration_power: 0.1, explosion_power: 1, left_owner: false, has_been_shot: false };
+    let mut e = Entity::new("minecraft:small_fireball", 0, 0, EntityKind::Ext(Box::new(x)), seed);
+    e.set_pos(pos);
+    e.delta = dir.normalize().scale(0.1);
+    e.needs_sync = true;
+    e.set_old_pos_and_rot();
+    e
+}
+
 /// Reads a saved one.
 pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>> {
     Some(Box::new(Fireball {

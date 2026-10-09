@@ -96,6 +96,19 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
     if e.air_supply != 300 {
         d.set(data::entity::AIR_SUPPLY, &DataValue::Int(e.air_supply));
     }
+    // `DATA_CUSTOM_NAME`, `DATA_CUSTOM_NAME_VISIBLE`, `DATA_SILENT`, `DATA_NO_GRAVITY` (name tags, `/summon`).
+    if let Some((_, name)) = e.extra.iter().find(|(k, _)| k == "CustomName") {
+        d.set(data::entity::CUSTOM_NAME, &DataValue::OptionalComponent(Some(name.clone())));
+    }
+    if e.extra.iter().any(|(k, v)| k == "CustomNameVisible" && v.as_i64().is_some_and(|b| b != 0)) {
+        d.set(data::entity::CUSTOM_NAME_VISIBLE, &DataValue::Boolean(true));
+    }
+    if e.silent {
+        d.set(data::entity::SILENT, &DataValue::Boolean(true));
+    }
+    if e.no_gravity {
+        d.set(data::entity::NO_GRAVITY, &DataValue::Boolean(true));
+    }
     if m.is_dead_or_dying() {
         d.set(data::entity::POSE, &DataValue::Pose(kiln_data::entities::pose::DYING));
     }
@@ -191,6 +204,22 @@ pub(crate) fn bucket_axolotl(bucket: &kiln_item::ItemStack, pos: [f64; 3]) -> Op
     Some(Spawn { kind: t, pos, vel: [0.0; 3], body: Body::Ready(Box::new(e)) })
 }
 
+/// `EntityType.getYOffset` for a mob made in the block `pos` (a dispenser's egg or bucket, with its
+/// feet aligned to the floor): the mob stands 1 above the block's floor and drops by the free space under
+/// its feet inside the block, that is by up to the block's collision top under the mob's footprint.
+pub(crate) fn align_offset(level: &impl kiln_blocks::Level, pos: kiln_blocks::BlockPos, width: f32) -> f64 {
+    let half = width as f64 / 2.0;
+    let (lo, hi) = (0.5 - half, 0.5 + half);
+    let mut top = 0.0f64;
+    for b in kiln_data::block_props::collision(level.block(pos)) {
+        let (min_x, min_z, max_x, max_z, max_y) = (b[0] as f64, b[2] as f64, b[3] as f64, b[5] as f64, b[4] as f64);
+        if min_x < hi && max_x > lo && min_z < hi && max_z > lo && max_y <= 1.0 {
+            top = top.max(max_y);
+        }
+    }
+    top
+}
+
 /// A new mob of `kind` at `pos`, facing `yaw` (the entity's own random decides nothing
 /// here; `finalize` runs `finalizeSpawn` with the given context when set).
 pub(crate) fn spawn(kind: MobKind, pos: [f64; 3], yaw: Option<f32>, finalize: Option<Finalize>) -> Spawn {
@@ -261,12 +290,14 @@ pub(crate) struct Finalize {
     /// The box a camel husk jockey would stand in is free (`Husk.finalizeSpawn`'s `noCollision`;
     /// only the natural spawner looks).
     pub camel_space: bool,
+    /// The mob appears inside a piece of a `#cats_spawn_as_black` structure (a swamp hut).
+    pub black_cat: bool,
 }
 
 impl Finalize {
     /// A summoned or egg-spawned mob (not `NATURAL`).
     pub(crate) fn command(ctx: mob::SpawnContext, seed: i64, persistent: bool, monsters_disabled: bool) -> Finalize {
-        Finalize { ctx, seed, persistent, natural: false, monsters_disabled, camel_space: false }
+        Finalize { ctx, seed, persistent, natural: false, monsters_disabled, camel_space: false, black_cat: false }
     }
 }
 

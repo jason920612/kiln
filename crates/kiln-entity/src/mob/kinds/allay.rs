@@ -124,7 +124,7 @@ fn wants(m: &MobData, level: &dyn EntityLevel, stack: &ItemStack) -> bool {
 }
 
 /// `BehaviorUtils.throwItem(thrower, stack, target, velocity, yOffset)`.
-fn throw_item(e: &Entity, level: &mut dyn EntityLevel, stack: ItemStack, target: Vec3, velocity: (f64, f64, f64), y_offset: f32) {
+pub(crate) fn throw_item(e: &Entity, level: &mut dyn EntityLevel, stack: ItemStack, target: Vec3, velocity: (f64, f64, f64), y_offset: f32) {
     let id = level.next_entity_id();
     let seed = level.fresh_seed();
     let mut item = crate::item::new(id, 0, stack, seed);

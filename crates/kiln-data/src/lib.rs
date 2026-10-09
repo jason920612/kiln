@@ -100,3 +100,18 @@ pub struct DimensionType {
 pub fn dimension_type(name: &str) -> Option<&'static DimensionType> {
     dimension_types::DIMENSION_TYPES.iter().find(|d| d.name == name)
 }
+
+#[path = "gen/map_colors.rs"]
+mod map_colors;
+
+/// `BlockState.getMapColor`: the `MapColor` id (0 is none) of block state `state`.
+pub fn map_color(state: u16) -> u8 {
+    let runs = map_colors::MAP_COLOR_RUNS;
+    let i = runs.partition_point(|(first, _)| *first <= state);
+    runs[i.saturating_sub(1)].1
+}
+
+/// `MapColor.col` (RGB) of map color `id`.
+pub fn map_color_rgb(id: u8) -> u32 {
+    map_colors::MAP_COLOR_RGB.get(id as usize).map_or(0, |(_, c)| *c)
+}

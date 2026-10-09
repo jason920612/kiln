@@ -436,7 +436,7 @@ impl InteractWithDoor {
 }
 
 /// `DoorBlock.isOpen` and whether the block is a mob-interactable door.
-fn door_open(state: u16) -> Option<bool> {
+pub(crate) fn door_open(state: u16) -> Option<bool> {
     if !block_in_tag(state, "minecraft:mob_interactable_doors") {
         return None;
     }
@@ -448,7 +448,7 @@ fn door_open(state: u16) -> Option<bool> {
 
 /// `DoorBlock.setOpen(entity, level, state, pos, open)`: the door (both halves), its sound (the
 /// pitch draws from the level's random) and the game event.
-fn set_door_open(cx: &mut Cx, pos: BlockPos, open: bool) {
+pub(crate) fn set_door_open(cx: &mut Cx, pos: BlockPos, open: bool) {
     let state = cx.level.block(pos);
     let info = kiln_data::blocks_types::block_of(state);
     if door_open(state) == Some(open) || door_open(state).is_none() {

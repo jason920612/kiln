@@ -274,9 +274,23 @@ pub(crate) fn can_be_hit_by_projectile(e: &Entity) -> bool {
         && match &e.kind {
             EntityKind::Tnt(_) | EntityKind::FallingBlock(_) | EntityKind::Player(_) | EntityKind::Other { .. } => true,
             EntityKind::Mob(m) => m.health > 0.0,
-            EntityKind::Ext(_) => e.type_name == "minecraft:end_crystal",
+            EntityKind::Ext(_) => ext_can_be_hit(e),
             _ => false,
         }
+}
+
+/// `Entity.canBeHitByProjectile` (alive and `isPickable`) of the extension entities: carts and boats,
+/// armor stands that are not markers, hanging entities (`BlockAttachedEntity`), end crystals, shulker
+/// bullets and the redirectable projectiles (`#minecraft:redirectable_projectile`). An interaction
+/// entity says no.
+fn ext_can_be_hit(e: &Entity) -> bool {
+    let n = e.type_name;
+    match n {
+        "minecraft:end_crystal" | "minecraft:item_frame" | "minecraft:glow_item_frame" | "minecraft:painting" | "minecraft:leash_knot" | "minecraft:shulker_bullet" => true,
+        "minecraft:fireball" | "minecraft:wind_charge" | "minecraft:breeze_wind_charge" => true,
+        "minecraft:armor_stand" => crate::ext_entity::get::<crate::ext_entity::armor_stand::ArmorStand>(e).is_some_and(|a| !a.marker),
+        _ => crate::ext_entity::minecart::is_minecart(n) || crate::ext_entity::boat::is_boat(n),
+    }
 }
 
 /// `checkLeftOwner`.

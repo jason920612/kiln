@@ -4,11 +4,15 @@
 //! unchanged by shape updates, always surviving. Waterlogged blocks of any class re-check
 //! their water on shape updates, as almost every `SimpleWaterloggedBlock` does.
 
+pub mod bell;
+pub mod bubble;
 pub mod connect;
 pub mod container;
 pub mod farming;
 pub mod copper;
+pub mod daylight;
 pub mod growth;
+pub mod lectern;
 pub mod end_portal;
 pub mod misc;
 pub mod misc2;
@@ -52,6 +56,7 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::RedstoneLampBlock => components::lamp_neighbor_changed(level, s, pos),
         C::NoteBlock => devices::note_neighbor_changed(level, s, pos),
         C::TntBlock => devices::tnt_neighbor_changed(level, pos),
+        C::BellBlock => bell::neighbor_changed(level, s, pos),
         C::FrostedIceBlock => spread::frosted_neighbor_changed(level, s, pos, source),
         C::SpongeBlock => wet::sponge_try_absorb(level, pos),
         C::FenceGateBlock => misc::powered_open_neighbor_changed(level, s, pos),
@@ -60,6 +65,11 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::PistonHeadBlock => piston::head_neighbor_changed(level, s, pos, source),
         C::HopperBlock => container::hopper_check_powered(level, s, pos),
         C::DispenserBlock | C::DropperBlock => container::dispenser_neighbor_changed(level, s, pos),
+        C::CrafterBlock => container::crafter_neighbor_changed(level, s, pos),
+        C::CommandBlock => {
+            let powered = crate::redstone::has_neighbor_signal(level, pos);
+            level.command_block_powered(pos, s, powered);
+        }
         _ if logic::is_instance(s, C::CopperBulbBlock) => misc3::bulb_check_and_flip(level, s, pos),
         _ if logic::is_instance(s, C::TrapDoorBlock) => misc::powered_open_neighbor_changed(level, s, pos),
         _ if logic::is_instance(s, C::DoorBlock) => components::door_neighbor_changed(level, s, pos, source),
@@ -72,7 +82,6 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
 /// is `neighbor_state`. May schedule ticks.
 pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Direction, neighbor_pos: BlockPos, neighbor_state: u16) -> u16 {
     use BlockClass as C;
-    let _ = neighbor_pos;
     let class = logic::block_class(s);
     if class == C::LiquidBlock {
         return fluid::liquid_update_shape(level, s, pos, dir, neighbor_state);
@@ -108,6 +117,15 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
             return s;
         }
         C::NetherPortalBlock => return portal::portal_update_shape(level, s, pos, dir, neighbor_state),
+        C::BubbleColumnBlock => return bubble::update_shape(level, s, pos, dir, neighbor_state),
+        C::BellBlock => return bell::update_shape(level, s, pos, dir, neighbor_pos, neighbor_state),
+        // `BeehiveBlock.updateShape`: a fire beside the hive sends its bees out.
+        C::BeehiveBlock => {
+            if logic::block_class(neighbor_state) == C::FireBlock {
+                level.beehive_fire(pos, s);
+            }
+            return s;
+        }
         C::FireBlock | C::SoulFireBlock => return crate::fire::update_shape(level, s, pos),
         _ => {}
     }
@@ -231,6 +249,8 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_on_place(level, s, pos, old),
         C::SnifferEggBlock if !state::same_block(old, s) => misc::sniffer_egg_on_place(level, s, pos),
         C::FrogspawnBlock => misc::frogspawn_on_place(level, s, pos),
+        // `BrushableBlock.onPlace`: the brushing and the fall are checked in 2 ticks.
+        C::BrushableBlock => crate::level::schedule_block_tick(level, pos, BlockId::of(s), 2, crate::ticks::TickPriority::Normal),
         C::TurtleEggBlock => misc2::turtle_egg_on_place(level, pos),
         C::TripWireBlock => tripwire::wire_on_place(level, s, pos, old),
         C::TargetBlock => misc3::target_on_place(level, s, pos, old),
@@ -270,6 +290,7 @@ pub fn affect_neighbors_after_removal<L: Level>(level: &mut L, s: u16, pos: Bloc
         C::ObserverBlock => devices::observer_removed(level, s, pos),
         C::PistonHeadBlock => piston::head_removed(level, s, pos),
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_removed(level, s, pos),
+        C::LecternBlock => lectern::removed(level, s, pos),
         _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_removed(level, s, pos, moved_by_piston),
         _ if logic::is_instance(s, C::BaseRailBlock) => rail::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
         _ => {}
@@ -287,6 +308,8 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::ObserverBlock => devices::observer_tick(level, s, pos),
         C::FireBlock => crate::fire::fire_tick(level, s, pos),
         C::LightningRodBlock | C::WeatheringLightningRodBlock => crate::weather::rod_tick(level, s, pos),
+        C::LiquidBlock => bubble::liquid_tick(level, s, pos),
+        C::BubbleColumnBlock => bubble::tick(level, pos),
         C::DetectorRailBlock => rail::detector_tick(level, s, pos),
         // `ComposterBlock.tick`: a full composter's bone meal is ready.
         C::ComposterBlock if state::get_int(s, "level") == 7 => {
@@ -308,16 +331,22 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
             farming::tick(level, s, pos);
         }
         C::DriedGhastBlock => misc2::dried_ghast_tick(level, s, pos),
+        // `BrushableBlock.tick`: the brushing fades (the block entity's), then the block falls if it can.
+        C::BrushableBlock => {
+            level.block_entity_tick(pos, s);
+            misc::falling_tick(level, s, pos);
+        }
         C::TripWireBlock => tripwire::wire_tick(level, pos),
         C::TripWireHookBlock => tripwire::hook_tick(level, s, pos),
         C::TargetBlock => misc3::target_tick(level, s, pos),
+        C::LecternBlock => lectern::tick(level, s, pos),
         C::BigDripleafBlock => misc3::dripleaf_tick(level, s, pos),
         C::BigDripleafStemBlock => misc3::stem_tick(level, s, pos),
         C::CauldronBlock | C::LayeredCauldronBlock | C::LavaCauldronBlock => speleothem::cauldron_tick(level, s, pos),
         C::PointedDripstoneBlock | C::SulfurSpikeBlock => speleothem::tick(level, s, pos),
         // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)
         // and `DispenserBlock.tick` (dispense): the block entity's.
-        C::BarrelBlock | C::EnderChestBlock | C::DispenserBlock | C::DropperBlock => level.block_entity_tick(pos, s),
+        C::BarrelBlock | C::EnderChestBlock | C::DispenserBlock | C::DropperBlock | C::CrafterBlock | C::CommandBlock => level.block_entity_tick(pos, s),
         _ if container::is_chest(s) => level.block_entity_tick(pos, s),
         _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_tick(level, s, pos),
         _ if logic::is_instance(s, C::LeavesBlock) => misc::leaves_tick(level, s, pos),
@@ -384,6 +413,9 @@ pub fn trigger_event<L: Level>(level: &mut L, s: u16, pos: BlockPos, a: i32, b: 
     match logic::block_class(s) {
         BlockClass::NoteBlock => devices::note_trigger(level, s, pos),
         BlockClass::PistonBaseBlock => piston::trigger_event(level, s, pos, a, b),
+        BlockClass::BellBlock => bell::trigger_event(level, pos, a, b),
+        // `DecoratedPotBlockEntity.triggerEvent`: the wobble (event 1, a style).
+        BlockClass::DecoratedPotBlock => a == 1 && (0..2).contains(&b),
         // `BaseEntityBlock.triggerEvent`: the lids of chests, ender chests and shulker boxes
         // (their block entities answer event 1 with the openers count).
         BlockClass::EnderChestBlock | BlockClass::ShulkerBoxBlock => a == 1,

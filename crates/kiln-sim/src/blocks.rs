@@ -49,6 +49,11 @@ pub(crate) struct RegionBlocks {
     pub containers: crate::container::Containers,
     /// Raider news for the level's raids, until the next raid tick takes them.
     pub raid_events: Vec<kiln_entity::level::RaidEvent>,
+    /// Texts of display entities that wait to be resolved: (entity uuid, text).
+    pub text_requests: Vec<(u128, kiln_proto::nbt::Tag)>,
+    /// Hives whose nearby bees take a player as their target (`BeehiveBlock.angerNearbyBees`),
+    /// for the region, which has the entities.
+    pub bee_anger: Vec<BlockPos>,
     /// Game event listeners: sculk block entities and wardens.
     pub sculk: crate::sculk::Sculk,
     /// Creaking heart block entities.
@@ -57,6 +62,10 @@ pub(crate) struct RegionBlocks {
     pub sign_editors: crate::signs::SignEditors,
     /// Mob spawner block entities.
     pub spawners: crate::mob_spawner::Spawners,
+    /// New chunks of generation that still want their animals.
+    pub initial_mobs: Vec<ChunkPos>,
+    /// Command blocks whose scheduled tick came this tick (the serial phase runs their commands).
+    pub command_ticks: Vec<BlockPos>,
 }
 
 impl Default for RegionBlocks {
@@ -70,10 +79,14 @@ impl Default for RegionBlocks {
             generated: Vec::new(),
             containers: Default::default(),
             raid_events: Vec::new(),
+            text_requests: Vec::new(),
+            bee_anger: Vec::new(),
             sculk: Default::default(),
             hearts: Default::default(),
             sign_editors: Default::default(),
             spawners: Default::default(),
+            initial_mobs: Vec::new(),
+            command_ticks: Vec::new(),
         }
     }
 }
@@ -106,6 +119,9 @@ impl RegionBlocks {
         self.sculk.chunk_loaded(pos, chunk);
         self.hearts.chunk_loaded(pos, chunk);
         self.spawners.chunk_loaded(pos, chunk);
+        if std::mem::take(&mut chunk.original_mobs) {
+            self.initial_mobs.push(pos);
+        }
         let moving = kiln_data::blocks::default_state::MOVING_PISTON;
         for ((x, y, z), be) in chunk.block_entities() {
             if chunk.get(x, y, z) == moving {
@@ -136,6 +152,7 @@ impl RegionBlocks {
         self.containers.chunk_unloaded(pos);
         self.sculk.chunk_unloaded(pos);
         self.hearts.chunk_unloaded(pos);
+        self.initial_mobs.retain(|p| *p != pos);
         self.spawners.chunk_unloaded(pos);
     }
 
@@ -194,10 +211,14 @@ impl RegionPart for RegionBlocks {
         into.sub_tick = into.sub_tick.max(from.sub_tick);
         into.containers.merge(std::mem::take(&mut from.containers));
         into.raid_events.append(&mut from.raid_events);
+        into.text_requests.append(&mut from.text_requests);
+        into.bee_anger.append(&mut from.bee_anger);
         into.sculk.merge(std::mem::take(&mut from.sculk));
         into.hearts.merge(std::mem::take(&mut from.hearts));
         into.sign_editors.merge(std::mem::take(&mut from.sign_editors));
         into.spawners.merge(std::mem::take(&mut from.spawners));
+        into.initial_mobs.append(&mut from.initial_mobs);
+        into.command_ticks.append(&mut from.command_ticks);
     }
 
     fn split(mut self, owner_of: &dyn Fn(CellPos) -> usize, n: usize) -> SmallVec<[Self; 4]> {
@@ -235,6 +256,8 @@ impl RegionPart for RegionBlocks {
             self.containers.split_into(&mut containers, |c| owner((c.x, c.z)));
         }
         parts[0].raid_events = std::mem::take(&mut self.raid_events);
+        parts[0].text_requests = std::mem::take(&mut self.text_requests);
+        parts[0].bee_anger = std::mem::take(&mut self.bee_anger);
         {
             let mut sculk: SmallVec<[&mut crate::sculk::Sculk; 4]> = parts.iter_mut().map(|p| &mut p.sculk).collect();
             self.sculk.split_into(&mut sculk, |c| owner((c.x, c.z)));
@@ -251,13 +274,19 @@ impl RegionPart for RegionBlocks {
             let mut spawners: SmallVec<[&mut crate::mob_spawner::Spawners; 4]> = parts.iter_mut().map(|p| &mut p.spawners).collect();
             self.spawners.split_into(&mut spawners, |c| owner((c.x, c.z)));
         }
+        for c in self.initial_mobs.drain(..) {
+            parts[owner((c.x, c.z))].initial_mobs.push(c);
+        }
+        for p in self.command_ticks.drain(..) {
+            parts[owner((p.x >> 4, p.z >> 4))].command_ticks.push(p);
+        }
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
         parts
     }
 
     fn count(&self) -> usize {
-        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.sign_editors.len() + self.spawners.len()
+        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.sign_editors.len() + self.spawners.len() + self.initial_mobs.len()
     }
 
     fn for_each_cell(&self, f: &mut dyn FnMut(CellPos)) {
@@ -294,13 +323,19 @@ pub(crate) struct BlockEnv {
     pub spawn_table: Option<std::sync::Arc<crate::spawner::SpawnTable>>,
     /// Recipes and item rules for menus and furnaces.
     pub menus: std::sync::Arc<kiln_inventory::Rules>,
+    /// The trial spawner configs the datapack holds.
+    pub trial_configs: std::sync::Arc<crate::mob_spawner::TrialConfigs>,
     /// The level's weather and the biome climates.
     pub weather: crate::weather::WeatherEnv,
     /// `minecraft:fire_spread_radius_around_player` (-1: everywhere).
     pub fire_spread_radius: i32,
+    /// `minecraft:send_command_feedback` (a new command block tracks its output by it).
+    pub send_command_feedback: bool,
     /// Where the level's non-spectator players stood when the tick began (fire spreads near
     /// them; the same in every region).
     pub fire_watchers: std::sync::Arc<Vec<[f64; 3]>>,
+    /// The level's players as they stood when the tick began (vaults detect them).
+    pub players: std::sync::Arc<Vec<crate::vault::Near>>,
     /// The level's raids as they stood when the tick began.
     pub raids: std::sync::Arc<Vec<kiln_entity::level::RaidView>>,
     /// The End's dragon fight as the level's entities see it (`None` elsewhere).
@@ -331,6 +366,34 @@ pub(crate) struct EntityBox {
     pub prevents_rest: bool,
     /// A player as the source of the game events it causes.
     pub player_source: Option<kiln_entity::vibration::EventSource>,
+    /// A hanging entity (item frame, painting): its facing and type.
+    pub hanging: Option<(kiln_entity::math::Direction, &'static str)>,
+    /// What a dispenser asks of a living thing (a player, an armor stand, a mob).
+    pub wear: Option<Wear>,
+}
+
+/// What a dispenser needs to know of a living thing in front of it (`LivingEntity.canEquipWithDispenser`).
+#[derive(Clone, Copy)]
+pub(crate) struct Wear {
+    pub id: i32,
+    pub type_name: &'static str,
+    /// Alive and not a spectator.
+    pub open: bool,
+    /// A bit per `EquipmentSlot` ordinal that it can use and that is empty, for equipment a dispenser puts on.
+    pub accepts: u8,
+    /// A mob's facts.
+    pub mob: Option<kiln_entity::mob::dispense::Facts>,
+    /// `Shearable.readyForShearing`.
+    pub shearable: bool,
+}
+
+/// What a dispenser did to a living thing, to be carried out once the entities can be changed.
+pub(crate) enum DispenseOp {
+    Equip { id: i32, slot: kiln_item::component::EquipmentSlot, stack: kiln_item::ItemStack },
+    Chest { id: i32 },
+    Swallow { id: i32, stack: kiln_item::ItemStack },
+    /// Shears on a sheep, a mooshroom, a snow golem or a bogged.
+    Shear { id: i32, tool: kiln_item::ItemStack },
 }
 
 impl EntityBox {
@@ -341,18 +404,38 @@ impl EntityBox {
 
 /// The boxes of a region's players (not spectators) and entities.
 pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities) -> Vec<EntityBox> {
+    boxes(players, entities, &[])
+}
+
+/// [`entity_boxes`] with what dispensers ask of the living things ([`Wear`]), for the phases in which they fire:
+/// only for the ones near a dispenser or dropper (`spots`; none, none of them).
+pub(crate) fn entity_boxes_wear<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities, spots: &[BlockPos]) -> Vec<EntityBox> {
+    boxes(players, entities, spots)
+}
+
+fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities, spots: &[BlockPos]) -> Vec<EntityBox> {
+    // Whether a box can meet the block in front of a dispenser at one of the spots.
+    let near = |min: [f64; 3], max: [f64; 3]| {
+        spots.iter().any(|s| {
+            let (lo, hi) = ([s.x as f64 - 1.0, s.y as f64 - 1.0, s.z as f64 - 1.0], [s.x as f64 + 2.0, s.y as f64 + 2.0, s.z as f64 + 2.0]);
+            (0..3).all(|i| min[i] < hi[i] && max[i] > lo[i])
+        })
+    };
     let mut out: Vec<EntityBox> = players
         .filter(|p| p.game_mode != 3 && !p.dead)
         .map(|p| {
-            let h = if p.sneaking { 1.5 } else { 1.8 };
+            let h = p.dimensions().1 as f64;
+            let (min, max) = ([p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3], [p.pos[0] + 0.3, p.pos[1] + h, p.pos[2] + 0.3]);
             EntityBox {
-                min: [p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3],
-                max: [p.pos[0] + 0.3, p.pos[1] + h, p.pos[2] + 0.3],
+                min,
+                max,
                 living: true,
                 blocks_building: true,
                 conn: Some(p.conn),
                 prevents_rest: false,
                 player_source: Some(player_source(p)),
+                hanging: None,
+                wear: (!spots.is_empty() && near(min, max)).then(|| crate::container::equip::wear_of_player(p)),
             }
         })
         .collect();
@@ -360,7 +443,8 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
         let (min, max, blocks_building) = e.body();
         // Mobs are living entities (pressure plates, lightning targets).
         let living = e.phys.as_deref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
-        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None }
+        let wear = if !spots.is_empty() && near(min, max) { e.phys.as_deref().and_then(crate::container::equip::wear_of) } else { None };
+        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of), wear }
     }));
     out
 }
@@ -402,8 +486,12 @@ pub(crate) struct BlockOut {
     /// Sculk shriekers whose shriek ended (`tryRespond`) and their warning level: the region
     /// answers with darkness and maybe a warden.
     pub responds: Vec<(BlockPos, i32)>,
+    /// Bells that rang this phase (their block events ran): the region lists what hears them.
+    pub bell_events: Vec<BlockPos>,
     /// Block states changed so far (whatever the flags).
     pub edits: u64,
+    /// What dispensers did to living things in front of them.
+    pub dispenses: Vec<DispenseOp>,
 }
 
 /// A block entity's effect on the players whose box meets `min..max`.
@@ -450,7 +538,7 @@ impl Level for RegionLevel<'_> {
             self.out.changed.push([pos.x, pos.y, pos.z]);
         }
         if kiln_data::block_props::has_block_entity(old) || kiln_data::block_props::has_block_entity(state) {
-            crate::container::block_set(self, pos, flags);
+            crate::container::block_set(self, pos, flags, old);
             crate::sculk::block_set(self, pos);
             crate::heart::block_set(self, pos);
             crate::mob_spawner::block_set(self, pos);
@@ -504,6 +592,27 @@ impl Level for RegionLevel<'_> {
 
     fn rules(&self) -> &kiln_blocks::Rules {
         &self.env.rules
+    }
+
+    fn sky_light(&self, pos: BlockPos) -> i32 {
+        let top = self.env.min_y + self.env.height;
+        self.cells.light_at(LightLayer::Sky, pos.x, pos.y, pos.z).map_or(if pos.y >= top { 15 } else { 0 }, i32::from)
+    }
+
+    fn sun_angle(&self) -> f32 {
+        kiln_blocks::behaviour::daylight::sun_angle(self.env.mobs.day_time)
+    }
+
+    fn bell_hit(&mut self, pos: BlockPos, dir: kiln_blocks::Direction) -> bool {
+        crate::bell::on_hit(self, pos, dir)
+    }
+
+    fn bell_event(&mut self, pos: BlockPos, dir: kiln_blocks::Direction) -> bool {
+        crate::bell::trigger_event(self, pos, dir)
+    }
+
+    fn beehive_fire(&mut self, pos: BlockPos, state: u16) {
+        crate::beehive::neighbour_fire(self, pos, state);
     }
 
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
@@ -566,6 +675,16 @@ impl Level for RegionLevel<'_> {
 
     fn container_openers(&self, pos: BlockPos) -> i32 {
         self.blocks.containers.get(pos).map_or(0, |c| c.openers)
+    }
+
+    fn command_block_powered(&mut self, pos: BlockPos, state: u16, powered: bool) {
+        crate::command_block::powered_changed(self, pos, state, powered);
+    }
+
+    fn crafter_triggered(&mut self, pos: BlockPos, triggered: bool) {
+        if let Some(cr) = self.blocks.containers.get_mut(pos).and_then(|c| c.crafter.as_mut()) {
+            cr.triggered = triggered;
+        }
     }
 
     fn block_entity_tick(&mut self, pos: BlockPos, state: u16) {
@@ -1095,9 +1214,10 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
     for (i, (actor, effect)) in std::mem::take(&mut out.effects).into_iter().enumerate() {
         let others = |p: &&mut Player| Some(p.conn) != actor;
         match effect {
-            effect @ (Effect::Drop { .. } | Effect::ExplosionDrop { .. }) => {
+            effect @ (Effect::Drop { .. } | Effect::ExplosionDrop { .. } | Effect::EntityDrop { .. }) => {
+                let by_entity = matches!(effect, Effect::EntityDrop { .. });
                 let (pos, state, explosion) = match effect {
-                    Effect::Drop { pos, state } => (pos, state, None),
+                    Effect::Drop { pos, state } | Effect::EntityDrop { pos, state } => (pos, state, None),
                     Effect::ExplosionDrop { pos, state, radius } => (pos, state, Some(radius)),
                     _ => unreachable!("matched above"),
                 };
@@ -1109,6 +1229,7 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                 if env.drops {
                     // The breaking player's held item is the tool; other breaks use an empty hand.
                     let tool = actor.and_then(|c| players.iter().find(|p| p.conn == c)).map(|p| p.inv.selected_item().clone());
+                    let tool = if by_entity { Some(kiln_item::ItemStack::empty()) } else { tool };
                     let components = out.removed_components.iter().rev().find(|(p, _)| *p == pos).map(|(_, c)| c.clone());
                     // `InfestedBlock.spawnAfterBreak`: a silverfish comes out unless the tool has
                     // silk touch (`#prevents_infested_spawns`).
@@ -1286,9 +1407,19 @@ fn effect_hash(env: &BlockEnv, pos: BlockPos, i: usize) -> u64 {
 }
 
 fn sound_packet(sound: &str, source: world_fx::SoundSource, pos: BlockPos, volume: f32, pitch: f32, env: &BlockEnv, i: usize) -> Option<Bytes> {
-    let id = kiln_data::builtin_id("minecraft:sound_event", sound)?;
     let at = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
-    Some(world_fx::sound(&world_fx::Sound::Registered(id), source, at, volume, pitch, effect_hash(env, pos, i) as i64))
+    sound_packet_at_pos(sound, source, at, volume, pitch, effect_hash(env, pos, i) as i64)
+}
+
+fn sound_packet_at_pos(sound: &str, source: world_fx::SoundSource, at: [f64; 3], volume: f32, pitch: f32, seed: i64) -> Option<Bytes> {
+    let id = kiln_data::builtin_id("minecraft:sound_event", sound)?;
+    Some(world_fx::sound(&world_fx::Sound::Registered(id), source, at, volume, pitch, seed))
+}
+
+/// A block sound at exact coordinates (`Level.playSound(null, x, y, z, ...)`).
+pub(crate) fn sound_packet_at(sound: &str, at: [f64; 3], volume: f32, pitch: f32, env: &BlockEnv, salt: usize) -> Option<Bytes> {
+    let p = BlockPos::new(at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32);
+    sound_packet_at_pos(sound, world_fx::SoundSource::Blocks, at, volume, pitch, effect_hash(env, p, salt) as i64)
 }
 
 /// `NoteBlock.triggerEvent`: the instrument's sound, pitched by the note for tunable ones.
@@ -1403,8 +1534,26 @@ impl kiln_loot::LootContext for BreakContext {
     fn explosion_radius(&self) -> Option<f32> {
         self.explosion
     }
+    /// `DecoratedPotBlock`'s `sherds` dynamic drop: the sherds, left, back, front, right.
+    fn dynamic_drops(&self, name: &kiln_item::ident::Identifier, sink: &mut dyn FnMut(kiln_item::ItemStack)) {
+        if name.as_str() != "minecraft:sherds" {
+            return;
+        }
+        let Some(kiln_item::component::PotDecorations { back, left, right, front }) =
+            self.block_entity.as_ref().and_then(|c| c.iter().find_map(|c| if let kiln_item::component::Component::PotDecorations(d) = c { Some(d.clone()) } else { None }))
+        else {
+            return;
+        };
+        for sherd in [left, back, front, right].into_iter().flatten() {
+            sink(sherd.create());
+        }
+    }
     fn has_entity(&self, target: kiln_loot::EntityTarget) -> bool {
         self.player && target == kiln_loot::EntityTarget::This
+    }
+    /// The empty predicate (snow, chorus flowers: "broken by something") matches any entity.
+    fn entity_matches(&self, target: kiln_loot::EntityTarget, predicate: &kiln_loot::predicate::EntityPredicate) -> bool {
+        self.player && target == kiln_loot::EntityTarget::This && predicate.parts.is_empty()
     }
     fn origin(&self) -> Option<[f64; 3]> {
         Some(self.origin)
@@ -1591,9 +1740,12 @@ mod tests {
             mobs: Default::default(),
             spawn_table: None,
             menus: Default::default(),
+            trial_configs: Default::default(),
             weather: Default::default(),
             fire_spread_radius: 128,
+            send_command_feedback: true,
             fire_watchers: Default::default(),
+            players: Default::default(),
             raids: Default::default(),
             dragon_fight: None,
             pipeline: None,

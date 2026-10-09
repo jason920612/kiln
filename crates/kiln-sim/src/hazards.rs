@@ -63,7 +63,7 @@ fn camera_height(block: BlockAt, pos: BlockPos, f: &FluidState) -> f32 {
 impl Player {
     /// `EntityDimensions` of the standing or crouching player: (width, height, eye height).
     pub(crate) fn dimensions(&self) -> (f32, f32, f32) {
-        if self.sneaking { (0.6, 1.5, 1.27) } else { (0.6, 1.8, 1.62) }
+        crate::pose::dimensions_of(self.pose)
     }
 
     /// `getEyeY`.
@@ -137,6 +137,7 @@ impl Player {
     /// void, the on-fire flag, the air supply and the effects. `commonTick` ages the player.
     pub(crate) fn base_tick(&mut self, block: BlockAt, min_y: i32, border: &crate::world_state::BorderBox, ctx: &mut DamageCtx) {
         self.tick_count += 1;
+        self.crouch_attr = self.is_crouching();
         // `Entity.baseTick`: powder snow sets the flag again while the player is in it.
         self.is_in_powder_snow = false;
         let fluids = self.fluids(block);
@@ -146,6 +147,12 @@ impl Player {
         }
         self.was_touching_water = fluids.in_water;
         self.was_eye_in_water = fluids.eye_in_water;
+        {
+            // `Entity.baseTick`'s `updateSwimming`: water at the feet is a water block or flowing water.
+            let feet = BlockPos::containing(self.pos[0], self.pos[1], self.pos[2]);
+            let water_at_feet = fluid_at(block, feet).kind.is_water();
+            self.update_swimming(fluids.in_water, fluids.eye_in_water && fluids.in_water, water_at_feet);
+        }
         if self.fire_ticks > 0 {
             if self.fire_ticks % 20 == 0 && !fluids.in_lava {
                 self.hurt(1.0, &Cause::Other("minecraft:on_fire").into(), ctx);
@@ -500,10 +507,24 @@ impl Player {
                 }
             }
             Kind::BubbleColumn => {
-                // `BubbleColumnBlock.entityInside`: inside the column (not above it) the fall ends.
-                if intersects {
+                // `BubbleColumnBlock.entityInside` (a precise hit; a flying player is left alone):
+                // above the column the water throws it up (or pulls it down), inside it the fall
+                // ends.
+                if intersects && !self.flying {
                     let above = block(pos.above());
-                    if !(physics::collision_shape(above).is_empty() && physics::fluid_state(above).is_empty()) {
+                    let drag = kiln_data::blocks_types::block_of(state).property(state, "drag") == Some("true");
+                    let open = physics::collision_shape(above).is_empty() && physics::fluid_state(above).is_empty();
+                    let v = self.server_delta;
+                    if open {
+                        self.server_delta[1] = if drag { kiln_entity::math::jmax(-0.9, v[1] - 0.03) } else { kiln_entity::math::jmin(1.8, v[1] + 0.1) };
+                        // `sendBubbleColumnParticles`: the level's random places the particles.
+                        for _ in 0..2 {
+                            for _ in 0..4 {
+                                self.level_rng.next_double();
+                            }
+                        }
+                    } else {
+                        self.server_delta[1] = if drag { kiln_entity::math::jmax(-0.3, v[1] - 0.03) } else { kiln_entity::math::jmin(0.7, v[1] + 0.06) };
                         self.reset_fall_distance();
                     }
                 }

@@ -4,7 +4,7 @@
 use crate::entity::{Entity, EntityKind};
 use crate::level::{EntityFilter, EntityLevel, Event, PlayerView};
 use crate::math::{Aabb, BlockPos};
-use kiln_javamath::random::LegacyRandom;
+use kiln_javamath::random::{LegacyRandom, RandomSource as _};
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 
@@ -82,6 +82,8 @@ pub struct MemoryLevel {
     /// last tick (`game_event` posts to them like `GameEventDispatcher`).
     pub ears: Vec<(i32, crate::vibration::Ear)>,
     pub heard: Vec<(i32, crate::vibration::Heard)>,
+    /// The chests (container block entities) by position.
+    pub chests: FastMap<BlockPos, ChestBe>,
     /// The creaking hearts (their block entities) by position.
     pub hearts: FastMap<BlockPos, crate::mob::kinds::creaking_heart::HeartBe>,
     /// The `minecraft:gameplay/creaking_active` attribute.
@@ -132,6 +134,7 @@ impl MemoryLevel {
             poi_taken: FastMap::default(),
             ears: Vec::new(),
             heard: Vec::new(),
+            chests: FastMap::default(),
             hearts: FastMap::default(),
             creaking_active: false,
             spawners: FastMap::default(),
@@ -344,6 +347,27 @@ impl EntityLevel for MemoryLevel {
 
     fn day_time(&self) -> i64 {
         self.day_time
+    }
+
+    /// A hive or bee nest block (never full: the replay's hives take every bee).
+    fn beehive_at(&self, pos: BlockPos) -> Option<crate::level::BeehiveView> {
+        use kiln_data::block_logic::{BlockClass, block_class};
+        if block_class(self.block(pos)) != BlockClass::BeehiveBlock {
+            return None;
+        }
+        let mut fire_nearby = false;
+        for x in -1..=1 {
+            for y in -1..=1 {
+                for z in -1..=1 {
+                    fire_nearby |= block_class(self.block(BlockPos::new(pos.x + x, pos.y + y, pos.z + z))) == BlockClass::FireBlock;
+                }
+            }
+        }
+        Some(crate::level::BeehiveView { full: false, fire_nearby })
+    }
+
+    fn bees_stay_in_hive(&self) -> bool {
+        (12542..23460).contains(&self.day_time.rem_euclid(24000))
     }
 
     fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: crate::level::PoiOccupancy) -> Vec<BlockPos> {
@@ -571,6 +595,69 @@ impl EntityLevel for MemoryLevel {
             self.ears.push((id, ear));
         }
     }
+    fn chest_block_entities(&self, cx: i32, cz: i32) -> Option<Vec<BlockPos>> {
+        let mut v: Vec<BlockPos> = self.chests.keys().copied().filter(|p| p.x >> 4 == cx && p.z >> 4 == cz).collect();
+        v.sort_by_key(|p| (p.x, p.y, p.z));
+        Some(v)
+    }
+    fn block_entity_serial(&self, pos: BlockPos) -> Option<u64> {
+        self.chests.contains_key(&pos).then(|| ((pos.x as u64) << 40) ^ ((pos.y as u64 & 0xFFFF) << 24) ^ (pos.z as u64 & 0xFF_FFFF))
+    }
+    fn container_items(&self, pos: BlockPos) -> Option<Vec<kiln_item::ItemStack>> {
+        self.chests.get(&pos).map(|c| c.items.clone())
+    }
+    fn set_container_items(&mut self, pos: BlockPos, items: Vec<kiln_item::ItemStack>) {
+        if let Some(c) = self.chests.get_mut(&pos) {
+            c.items = items;
+        }
+    }
+    fn container_locked(&self, pos: BlockPos) -> bool {
+        self.chests.get(&pos).is_some_and(|c| c.locked)
+    }
+    fn container_users(&self, pos: BlockPos) -> Vec<i32> {
+        // `ContainerOpenersCounter.getEntitiesWithContainerOpen`: whoever within the counter's range
+        // (grown by 4) says it has the container open.
+        let Some(c) = self.chests.get(&pos) else { return Vec::new() };
+        let area = Aabb::of_block(pos).inflate_all(c.max_range + 4.0);
+        self.entities_in(&area, EntityFilter::Any, i32::MIN)
+            .into_iter()
+            .filter(|&id| self.entity(id).and_then(crate::mob::data).is_some_and(|m| crate::mob::kinds::copper_golem::has_container_open(m, self, pos)))
+            .collect()
+    }
+    fn container_start_open(&mut self, pos: BlockPos, user: i32, range: f64) {
+        let first = match self.chests.get_mut(&pos) {
+            Some(c) => {
+                c.openers += 1;
+                c.users.push(user);
+                c.max_range = c.max_range.max(range);
+                c.openers == 1
+            }
+            None => return,
+        };
+        // `ContainerOpenersCounter.onOpen` -> `ChestBlockEntity.playSound`: the left half stays
+        // silent; the sound's pitch is a draw from the level's random.
+        if first && crate::mob::kinds::chest_access::double_half(self.block(pos)) != Some(true) {
+            self.random.next_float();
+        }
+    }
+    fn container_stop_open(&mut self, pos: BlockPos, user: i32) {
+        let last = match self.chests.get_mut(&pos) {
+            Some(c) => {
+                c.openers -= 1;
+                if let Some(i) = c.users.iter().position(|&u| u == user) {
+                    c.users.remove(i);
+                }
+                if c.openers == 0 {
+                    c.max_range = 0.0;
+                }
+                c.openers == 0
+            }
+            None => return,
+        };
+        if last && crate::mob::kinds::chest_access::double_half(self.block(pos)) != Some(true) {
+            self.random.next_float();
+        }
+    }
     fn heart_protects(&mut self, home: BlockPos, id: i32, uuid: u128) -> bool {
         crate::mob::kinds::creaking_heart::is_heart(self.block(home)) && self.hearts.get(&home).is_some_and(|h| h.protects(id, uuid))
     }
@@ -589,4 +676,16 @@ impl EntityLevel for MemoryLevel {
     fn creaking_active(&self, _pos: BlockPos) -> bool {
         self.creaking_active
     }
+}
+
+/// A chest's block entity in a [`MemoryLevel`]: its slots, who has it open.
+#[derive(Clone, Debug, Default)]
+pub struct ChestBe {
+    pub items: Vec<kiln_item::ItemStack>,
+    pub locked: bool,
+    /// The entities that opened it (`startOpen`), and `ContainerOpenersCounter.openCount`.
+    pub users: Vec<i32>,
+    pub openers: i32,
+    /// `ContainerOpenersCounter.maxInteractionRange`.
+    pub max_range: f64,
 }

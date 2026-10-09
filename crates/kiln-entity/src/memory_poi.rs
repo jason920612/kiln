@@ -45,6 +45,8 @@ pub fn type_of_state(state: u16) -> Option<&'static str> {
         "smithing_table" => "minecraft:toolsmith",
         "grindstone" => "minecraft:weaponsmith",
         "bell" => "minecraft:meeting",
+        "beehive" => "minecraft:beehive",
+        "bee_nest" => "minecraft:bee_nest",
         // The head half of each bed.
         p if p.ends_with("_bed") => {
             if kiln_data::blocks_types::block_of(state).property(state, "part") != Some("head") {
@@ -60,6 +62,7 @@ pub fn type_of_state(state: u16) -> Option<&'static str> {
 pub fn max_tickets(t: &str) -> i32 {
     match t {
         "minecraft:meeting" => 32,
+        "minecraft:beehive" | "minecraft:bee_nest" => 0,
         _ => 1,
     }
 }
@@ -68,6 +71,7 @@ fn wanted(types: &[&str], t: &str) -> bool {
     types.iter().any(|n| match *n {
         "#minecraft:acquirable_job_site" => JOB_SITES.contains(&t),
         "#minecraft:village" => JOB_SITES.contains(&t) || t == "minecraft:home" || t == "minecraft:meeting",
+        "#minecraft:bee_home" => t == "minecraft:beehive" || t == "minecraft:bee_nest",
         n => n == t,
     })
 }

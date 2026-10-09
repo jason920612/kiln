@@ -114,6 +114,11 @@ impl<L: Level + ?Sized> Ctx<'_, L> {
         dirs
     }
 
+    /// `getNearestLookingDirection`: the way the player looks (not moved by the clicked face).
+    fn looking(&self) -> Direction {
+        ordered_by_nearest(self.yaw, self.pitch)[0]
+    }
+
     fn in_water_source(&self) -> bool {
         let f = logic::fluid(self.level.block(self.pos));
         f.kind == FluidKind::Water && f.source
@@ -243,12 +248,23 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
                 support::can_survive(level, s, pos).then_some(s)
             });
         }
+        C::BellBlock => return crate::behaviour::bell::placement(level, d, pos, c.face, c.horizontal()),
+        C::BeehiveBlock => state::set_dir(d, "facing", c.horizontal().opposite()),
+        // `DecoratedPotBlock.getStateForPlacement`: the player's own way, in water waterlogged.
+        C::DecoratedPotBlock => c.waterlogged(state::set_dir(d, "facing", c.horizontal())),
+        // `LecternBlock.getStateForPlacement` (a game master's item with a `Book` aside).
+        C::LecternBlock => state::set_dir(d, "facing", c.horizontal().opposite()),
         C::RepeaterBlock | C::ComparatorBlock => diode::placement(level, pos, state::set_dir(d, "facing", c.horizontal().opposite())),
         C::RedstoneWireBlock => wire::placement(level, pos),
         C::HopperBlock => container::hopper_placement(d, c.face),
+        C::CrafterBlock => container::crafter_placement(level, d, pos, c.looking(), c.horizontal()),
         C::ShulkerBoxBlock => container::shulker_placement(d, c.face),
         _ if container::is_chest(d) => c.waterlogged(container::chest_placement(level, d, pos, c.horizontal(), c.face, c.sneaking)),
-        C::ObserverBlock => state::set_dir(d, "facing", c.nearest()[0]),
+        // `getNearestLookingDirection` (the way the player looks, whatever face he clicked): observers face it,
+        // pistons, dispensers, droppers, barrels and command blocks face back at the player.
+        C::ObserverBlock => state::set_dir(d, "facing", c.looking()),
+        C::PistonBaseBlock | C::BarrelBlock | C::CommandBlock => state::set_dir(d, "facing", c.looking().opposite()),
+        _ if logic::is_instance(d, C::DispenserBlock) => state::set_dir(d, "facing", c.looking().opposite()),
         C::RedstoneLampBlock => state::set_bool(d, "lit", has_neighbor_signal(level, pos)),
         C::NoteBlock => crate::redstone::devices::note_instrument(level, pos, d),
         C::RailBlock | C::PoweredRailBlock | C::DetectorRailBlock => {
@@ -398,6 +414,9 @@ pub fn placed_by<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
         diode::placed(level, s, pos);
     } else if logic::block_class(s) == C::PistonBaseBlock {
         crate::behaviour::piston::check_if_extend(level, s, pos);
+    } else if logic::block_class(s) == C::CrafterBlock && state::get_bool(s, "triggered") {
+        // `CrafterBlock.setPlacedBy`: placed onto power, it crafts in 4 ticks.
+        crate::level::schedule_block_tick(level, pos, BlockId::of(s), 4, crate::ticks::TickPriority::Normal);
     }
 }
 

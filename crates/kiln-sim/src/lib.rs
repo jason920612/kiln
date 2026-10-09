@@ -28,6 +28,20 @@ mod command_data;
 mod commands;
 mod consume;
 mod buckets;
+mod beehive;
+mod brush;
+mod command_block;
+mod vault;
+mod copper_golem_statue;
+mod decorated_pot;
+mod lectern;
+mod maps;
+mod map_items;
+mod bell;
+mod campfire;
+mod stands;
+mod frames;
+mod bookshelf;
 mod use_item;
 mod ranged;
 mod spear;
@@ -58,7 +72,9 @@ mod dragon_fight;
 mod effects;
 mod fall;
 mod phantom;
+mod pose;
 mod freeze;
+mod enchant_loc;
 mod entities;
 mod entity_world;
 mod fishing;
@@ -96,6 +112,8 @@ mod stats;
 mod trading;
 mod leash;
 mod trader;
+mod village;
+mod display_text;
 mod waypoints;
 mod weather;
 mod world_state;
@@ -181,6 +199,8 @@ pub struct SimConfig {
     pub max_players: usize,
     pub view_distance: u8,
     pub simulation_distance: u8,
+    /// `enable-command-block` of server.properties: command blocks run their commands (off by default, as in vanilla).
+    pub enable_command_block: bool,
     /// A vanilla world save to load; a superflat world is used when `None`.
     pub world: Option<std::path::PathBuf>,
     /// Whether players were authenticated with Mojang (sent to clients in Login).
@@ -285,6 +305,7 @@ impl SimConfig {
             max_players,
             view_distance,
             simulation_distance: view_distance,
+            enable_command_block: false,
             world,
             online_mode: false,
             pool: {
@@ -415,6 +436,8 @@ struct Player {
     menu: kiln_inventory::Menu,
     /// A block or entity menu the player has open.
     open_menu: Option<kiln_inventory::Menu>,
+    /// The server's maps (an empty map used makes one; the cartography table reads them).
+    maps: maps::SharedMaps,
     /// What an open merchant screen told its villager, for [`trading::apply_events`].
     merchant_events: Vec<(i32, kiln_inventory::merchant::MerchantEvent)>,
     /// What the open menu is on, the menu counter and the ender chest items.
@@ -427,8 +450,16 @@ struct Player {
     seen_by: Vec<ConnId>,
     /// Section at the last visibility update; `None` forces a re-evaluation.
     section: Option<[i32; 3]>,
+    /// The shift key (`isShiftKeyDown`); the pose follows it in `pose`.
     sneaking: bool,
     sprinting: bool,
+    /// `Avatar.updateSwimming`: sprinting in water (shared flag 4).
+    swimming: bool,
+    /// `Entity.getPose`, settled at the end of every tick (see `pose.rs`).
+    pose: i32,
+    /// Whether the pose was crouching when the tick began (`updatePlayerAttributes` runs before
+    /// the pose is settled): the waypoint is hidden by it.
+    crouch_attr: bool,
     /// Gliding with an elytra (shared flag 7) and the ticks it has lasted.
     fall_flying: bool,
     fall_fly_ticks: i32,
@@ -456,6 +487,10 @@ struct Player {
     swing_wire_duration: i32,
     /// Ticks of use of a `kinetic_weapon` this tick (for [`spear::kinetic_attack`]).
     kinetic_ticks: Option<i32>,
+    /// Ticks of use of a brush this tick, for [`brush::use_tick`] (the level's part of `BrushItem.onUseTick`).
+    brush_ticks: Option<i32>,
+    /// The operator permission level (`/op`), kept by the server for the regions' sake (game master blocks).
+    permission: u8,
     /// `LivingEntity.recentKineticEnemies`: the entities a charging weapon touched and when.
     recent_stabs: Vec<(i32, i64)>,
     /// Latest tab-completion request, answered once per tick.
@@ -534,6 +569,13 @@ struct Player {
     ticks_frozen: i32,
     is_in_powder_snow: bool,
     frost_speed: Option<f64>,
+    /// `LivingEntity.lastPos`: the block the location-changed enchantments last ran for; whether the
+    /// player landed this tick (`checkFallDamage` runs them too); the soul speed level whose modifiers
+    /// are on; whether the client was told of movement efficiency.
+    loc_last_pos: Option<[i32; 3]>,
+    loc_landed: bool,
+    soul_speed: Option<i32>,
+    soul_sent: bool,
     /// Block changes a player's own tick asks of its region (melted powder snow, trampled
     /// farmland).
     block_edits: Vec<fall::BlockEdit>,
@@ -584,6 +626,9 @@ struct Player {
     shoulder_time: i64,
     shoulder_dirty: bool,
     released_shoulders: Vec<kiln_proto::nbt::Tag>,
+    /// `Entity.lastKnownPosition` and the horizontal length of `lastKnownSpeed` (`computeSpeed`).
+    speed_pos: Option<[f64; 3]>,
+    speed_h: f64,
     /// `lastKnownClientMovement`: the last accepted move, zero after a tick without one.
     known_movement: [f64; 3],
     moved_this_tick: bool,
@@ -708,6 +753,7 @@ impl Player {
             removed: self.disconnected,
             xp_level: self.xp_level,
             enchantment_seed: self.containers.enchantment_seed,
+            may_build: self.game_mode <= 1,
         }
     }
 
@@ -773,7 +819,7 @@ impl Player {
             (-sin_pitch * f + 0.1 + (self.rng.next_f32() - self.rng.next_f32()) * 0.1) as f64,
             (cos_yaw * cos_pitch * f) as f64 + trig::sin(angle) * spread,
         ];
-        let eye_y = self.pos[1] + if self.sneaking { 1.27 } else { 1.62 };
+        let eye_y = self.pos[1] + self.dimensions().2 as f64;
         entities::Spawn {
             kind: &kiln_data::entities::types::ITEM,
             pos: [self.pos[0], eye_y - 0.3, self.pos[2]],
@@ -1266,6 +1312,7 @@ pub struct Sim {
     config: SimConfig,
     /// Recipes and item rules from the vanilla datapack.
     rules: std::sync::Arc<kiln_inventory::Rules>,
+    trial_configs: std::sync::Arc<mob_spawner::TrialConfigs>,
     /// Loot tables from the vanilla datapack (block drops), if it was found.
     loot: Option<std::sync::Arc<kiln_loot::LootData>>,
     /// Biome spawn lists from the vanilla datapack (natural mob spawning).
@@ -1320,6 +1367,9 @@ pub struct Sim {
     post_effects_pending: bool,
     /// `WanderingTraderSpawner` (the overworld's).
     trader: trader::TraderSpawner,
+    /// `CatSpawner.nextTick` and `VillageSiege` (the overworld's).
+    cat_next_tick: i32,
+    siege: village::Siege,
     /// Borders, tick rate, forced chunks and random sequences (the world commands).
     world: world_state::WorldState,
     /// Packets of players in [`WAITING`] that need their region's blocks (clicks on blocks and
@@ -1327,6 +1377,8 @@ pub struct Sim {
     held_packets: Vec<(ConnId, PlayIn)>,
     /// A world save going on over several ticks: the chunks still to copy, by level.
     save_run: Option<Vec<(DimId, ChunkPos)>>,
+    /// The maps (`data/minecraft/maps`), shared with the players that use empty maps.
+    maps: maps::SharedMaps,
 }
 
 /// Tick time a world save spends per tick copying chunks for the storage threads.
@@ -1520,10 +1572,17 @@ impl Sim {
         let datapack = config.noise.as_ref().map(|n| n.datapack.as_path());
         let vanilla_pack = datapack_dir(datapack);
         let rules = std::sync::Arc::new(load_rules(datapack));
-        let loot = load_loot(datapack);
+        let maps = maps::MapStore::shared(storage.as_ref().map(|s| s.dir.clone()));
+        // Treasure and explorer maps look for structures in the overworld.
+        let explorer = pipelines
+            .first()
+            .and_then(Option::clone)
+            .map(|p| kiln_loot::ExplorerHandle(std::sync::Arc::new(maps::Explorer::new(maps.clone(), p))));
+        let loot = load_loot(datapack, explorer);
         let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
         let mut sim = Sim {
             rules,
+            trial_configs: std::sync::Arc::new(mob_spawner::TrialConfigs::load(&vanilla_pack)),
             loot,
             spawn_table,
             pool: kiln_sched::TickPool::with_config(config.pool.clone()),
@@ -1557,9 +1616,12 @@ impl Sim {
             unit_costs: Default::default(),
             post_effects_pending: false,
             trader: Default::default(),
+            cat_next_tick: 0,
+            siege: Default::default(),
             world: world_state::WorldState { pipelines, feature_hosts, ..Default::default() },
             held_packets: Vec::new(),
             save_run: None,
+            maps,
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -1697,6 +1759,8 @@ impl Sim {
         lap(&mut self.stats, "g.advancements");
         // Players teleported in PX or G tick in their destination's region from now on.
         self.settle_teleported();
+        // Filled maps redraw and send what changed (the players' own part of `ServerPlayer.tick`).
+        self.tick_maps();
         lap(&mut self.stats, "g.settle");
         self.deliver_plugin_messages();
         lap(&mut self.stats, "global");
@@ -1732,6 +1796,8 @@ impl Sim {
                 diag::add(name, d);
             }
         }
+        // The command blocks whose tick came run their commands (they may change anything).
+        self.run_command_blocks();
         // Entities from here on have newer ids.
         let first_new = self.next_entity_id;
         self.materialize_spawns();
@@ -1904,6 +1970,11 @@ impl Sim {
     /// Block state at a position in the overworld, if its chunk is loaded.
     pub fn block_at(&self, x: i32, y: i32, z: i32) -> Option<u16> {
         self.dims[OVERWORLD_ID].regions.get_block(x, y, z)
+    }
+
+    /// The block at a position of a level, if its chunk is loaded.
+    pub(crate) fn block_at_in(&self, dim: DimId, pos: [i32; 3]) -> Option<u16> {
+        self.dims[dim].regions.get_block(pos[0], pos[1], pos[2])
     }
 
     /// Ticks players spent near the loaded overworld chunk holding `x`, `z` (`InhabitedTime`).
@@ -2386,6 +2457,7 @@ impl Sim {
             },
             spawn_table: self.spawn_table.clone(),
             menus: self.rules.clone(),
+            trial_configs: self.trial_configs.clone(),
             weather: weather::WeatherEnv {
                 weather: kiln_blocks::weather::Weather {
                     raining: self.is_raining(dim),
@@ -2397,10 +2469,18 @@ impl Sim {
                 sea_level: SEA_LEVELS[dim],
             },
             fire_spread_radius: self.rule_int("minecraft:fire_spread_radius_around_player"),
+            send_command_feedback: self.rule_bool("minecraft:send_command_feedback"),
             dragon_fight: self.fight_env(dim),
             pipeline: self.world.pipelines.get(dim).cloned().flatten(),
             // Only asked whether any is near (in no order).
             fire_watchers: std::sync::Arc::new(self.players.values().filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()),
+            players: std::sync::Arc::new(
+                self.players
+                    .values()
+                    .filter(|p| p.dim == dim)
+                    .map(|p| vault::Near { uuid: p.uuid, block: [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32], game_mode: p.game_mode })
+                    .collect(),
+            ),
             raids: self.dims[dim].raids.views.clone(),
             entity_ticking: self.config.entity_ticking,
             speculate: self.config.speculate,
@@ -3106,6 +3186,7 @@ impl Sim {
                 }
             }
             PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
+            PlayIn::SetCommandBlock(update) => self.set_command_block(conn, &update),
             PlayIn::ResourcePack { id, action } => self.resource_pack_response(conn, id, action),
             PlayIn::CookieResponse(response) => self.cookie_response(conn, response),
             PlayIn::Chat { message } => {
@@ -3435,6 +3516,7 @@ impl Sim {
             inv_extra: joining.inv_extra,
             menu: kiln_inventory::Menu::inventory(),
             open_menu: None,
+            maps: self.maps.clone(),
             merchant_events: Vec::new(),
             containers: container::open::PlayerContainers::load(joining.saved.raw()),
             command_slots: Default::default(),
@@ -3447,6 +3529,9 @@ impl Sim {
             section: None,
             sneaking: false,
             sprinting: false,
+            swimming: false,
+            pose: kiln_data::entities::pose::STANDING,
+            crouch_attr: false,
             fall_flying: false,
             fall_fly_ticks: 0,
             spin_ticks: 0,
@@ -3462,6 +3547,8 @@ impl Sim {
             swing_kind: kiln_proto::packets::entity::swing::WHACK,
             swing_wire_duration: kiln_proto::packets::entity::swing::DEFAULT_DURATION,
             kinetic_ticks: None,
+            brush_ticks: None,
+            permission: 0,
             recent_stabs: Vec::new(),
             pending_suggestion: None,
             teleport_id: 1,
@@ -3505,6 +3592,10 @@ impl Sim {
             ticks_frozen: 0,
             is_in_powder_snow: false,
             frost_speed: None,
+            loc_last_pos: None,
+            loc_landed: false,
+            soul_speed: None,
+            soul_sent: false,
             block_edits: Vec::new(),
             flying: false,
             dead: joining.health <= 0.0,
@@ -3528,6 +3619,8 @@ impl Sim {
             released_shoulders: Vec::new(),
             known_movement: [0.0; 3],
             moved_this_tick: false,
+            speed_pos: None,
+            speed_h: 0.0,
             death_location: None,
             death_dim: OVERWORLD_ID,
             exhaustion: joining.exhaustion,
@@ -3627,6 +3720,7 @@ impl Sim {
         }
         self.sleep_status[player.dim].dirty = true;
         self.players.insert(j.conn, player);
+        self.refresh_permissions();
         self.send_command_tree(j.conn);
         self.announce_join(j.conn);
         self.broadcast_system(msg);
@@ -3710,6 +3804,7 @@ impl Sim {
         self.tick_waypoints();
         lap(&mut self.stats, "g.waypoints");
         self.tick_raids();
+        self.resolve_display_texts();
         self.tick_dragon_fight();
         lap(&mut self.stats, "g.raids_dragon");
         // `save-all` asks for a save; `save-off` stops the autosave.
@@ -3751,7 +3846,7 @@ fn load_rules(path: Option<&std::path::Path>) -> kiln_inventory::Rules {
 
 /// Loot tables from the datapack at `path`, `KILN_DATAPACK` or `work/generated`; none if absent
 /// (blocks then drop their own item).
-fn load_loot(path: Option<&std::path::Path>) -> Option<std::sync::Arc<kiln_loot::LootData>> {
+fn load_loot(path: Option<&std::path::Path>, explorer: Option<kiln_loot::ExplorerHandle>) -> Option<std::sync::Arc<kiln_loot::LootData>> {
     let dir = path.map(std::path::Path::to_path_buf).or_else(|| std::env::var_os("KILN_DATAPACK").map(Into::into));
     let dir = dir.unwrap_or_else(|| "work/generated".into());
     if !dir.join("data").is_dir() {
@@ -3759,10 +3854,11 @@ fn load_loot(path: Option<&std::path::Path>) -> Option<std::sync::Arc<kiln_loot:
         return None;
     }
     match kiln_loot::LootData::load_lenient(&dir) {
-        Ok(data) => {
+        Ok(mut data) => {
             for e in data.errors.iter().take(10) {
                 warn!("loot: {e}");
             }
+            data.explorer = explorer;
             info!("loot: {} tables", data.table_ids().len());
             Some(std::sync::Arc::new(data))
         }

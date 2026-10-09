@@ -169,6 +169,10 @@ fn handle_on_climbable(e: &mut Entity, level: &dyn EntityLevel, v: Vec3) -> Vec3
 /// runs for a player no input reaches (gravity and drag, ladders, fluids, bounces), which
 /// the client's move packets overrule only by position.
 pub fn travel(level: &mut dyn EntityLevel, e: &mut Entity, t: &TravelInput) {
+    // `LivingEntity.aiStep`: a velocity under 0.003 on an axis is nothing.
+    let v = e.delta;
+    let small = |c: f64| if c.abs() < 0.003 { 0.0 } else { c };
+    e.delta = Vec3::new(small(v.x), small(v.y), small(v.z));
     if e.is_in_water() || e.is_in_lava() {
         travel_in_fluid(level, e, t);
     } else {

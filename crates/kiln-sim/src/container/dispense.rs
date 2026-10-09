@@ -31,13 +31,13 @@ fn random_slot(items: &[ItemStack], rng: &mut dyn RandomSource) -> Option<usize>
 }
 
 /// `DispenserBlock.getDispensePosition`: 0.7 blocks out of the front face's centre.
-fn dispense_position(pos: BlockPos, facing: Direction) -> [f64; 3] {
+pub(super) fn dispense_position(pos: BlockPos, facing: Direction) -> [f64; 3] {
     let st = facing.step();
     [pos.x as f64 + 0.5 + 0.7 * st[0] as f64, pos.y as f64 + 0.5 + 0.7 * st[1] as f64, pos.z as f64 + 0.5 + 0.7 * st[2] as f64]
 }
 
 /// `DefaultDispenseItemBehavior.spawnItem`.
-fn spawn_item(level: &mut RegionLevel, rng: &mut LegacyRandom, stack: ItemStack, accuracy: i32, facing: Direction, at: [f64; 3]) {
+pub(crate) fn spawn_item(level: &mut RegionLevel, rng: &mut LegacyRandom, stack: ItemStack, accuracy: i32, facing: Direction, at: [f64; 3]) {
     let y = at[1] - if facing.axis() == kiln_blocks::Axis::Y { 0.125 } else { 0.15625 };
     // The `ItemEntity` constructor's random throw, replaced below.
     rng.next_double();
@@ -56,7 +56,7 @@ fn spawn_item(level: &mut RegionLevel, rng: &mut LegacyRandom, stack: ItemStack,
 
 /// `DefaultDispenseItemBehavior.dispense`: one item flies out, with the click sound (level
 /// event 1000) and smoke (2000).
-fn default_dispense(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> ItemStack {
+pub(super) fn default_dispense(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> ItemStack {
     let one = stack.split_count(1);
     spawn_item(level, rng, one, 6, facing, dispense_position(pos, facing));
     level.effect(Effect::LevelEvent { id: 1000, pos, data: 0 });
@@ -122,18 +122,56 @@ pub(crate) fn dispense_from(level: &mut RegionLevel, pos: BlockPos, s: u16) {
 /// the projectile flies out of the front face (`Projectile.shoot`), click sound 1002.
 fn dispense_projectile(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> ItemStack {
     use kiln_entity::math::Vec3;
-    let at = dispense_position(pos, facing);
+    let mut at = dispense_position(pos, facing);
+    let (mut uncertainty, mut power) = (6.0f64, 1.1f64);
+    // `DispenseConfig.overrideDispenseEvent`.
+    let mut event = 1002;
     let (kind, entity) = {
         let seed = rng.next_long();
-        let origin = Vec3::new(at[0], at[1], at[2]);
+        let mut origin = Vec3::new(at[0], at[1], at[2]);
         match stack.item_name() {
-            "minecraft:snowball" | "minecraft:egg" => {
-                let (t, k) = if stack.item_name() == "minecraft:snowball" {
-                    (kiln_entity::projectile::Throwable::Snowball, &kiln_data::entities::types::SNOWBALL)
+            // (`FireChargeItem` and `WindChargeItem`: a whole block out, the direction spread by the level's random first.)
+            "minecraft:fire_charge" | "minecraft:wind_charge" => {
+                let st = facing.step();
+                at = [pos.x as f64 + 0.5 + st[0] as f64, pos.y as f64 + 0.5 + st[1] as f64, pos.z as f64 + 0.5 + st[2] as f64];
+                origin = Vec3::new(at[0], at[1], at[2]);
+                let dir = Vec3::new(triangle(rng, st[0] as f64, 0.11485000000000001), triangle(rng, st[1] as f64, 0.11485000000000001), triangle(rng, st[2] as f64, 0.11485000000000001));
+                (uncertainty, power) = (6.6666665f32 as f64, 1.0);
+                if stack.item_name() == "minecraft:fire_charge" {
+                    event = 1018;
+                    let e = kiln_entity::ext_entity::fireball::new_unowned_small(origin, dir, seed);
+                    (&kiln_data::entities::types::SMALL_FIREBALL, e)
                 } else {
-                    (kiln_entity::projectile::Throwable::Egg, &kiln_data::entities::types::EGG)
+                    event = 1051;
+                    let mut e = kiln_entity::ext_entity::wind_charge::new_thrown(None, origin, seed);
+                    e.delta = dir;
+                    (&kiln_data::entities::types::WIND_CHARGE, e)
+                }
+            }
+            "minecraft:firework_rocket" => {
+                (uncertainty, power) = (1.0, 0.5);
+                event = 1004;
+                let e = kiln_entity::ext_entity::firework::new(origin, stack.with_count(1), None, None, true, seed);
+                (&kiln_data::entities::types::FIREWORK_ROCKET, e)
+            }
+            "minecraft:snowball" | "minecraft:egg" | "minecraft:blue_egg" | "minecraft:brown_egg" | "minecraft:splash_potion" | "minecraft:lingering_potion" | "minecraft:experience_bottle" => {
+                use kiln_entity::projectile::Throwable as T;
+                let (t, k) = match stack.item_name() {
+                    "minecraft:snowball" => (T::Snowball, &kiln_data::entities::types::SNOWBALL),
+                    "minecraft:splash_potion" => (T::SplashPotion, &kiln_data::entities::types::SPLASH_POTION),
+                    "minecraft:lingering_potion" => (T::LingeringPotion, &kiln_data::entities::types::LINGERING_POTION),
+                    "minecraft:experience_bottle" => (T::ExperienceBottle, &kiln_data::entities::types::EXPERIENCE_BOTTLE),
+                    _ => (T::Egg, &kiln_data::entities::types::EGG),
                 };
-                (k, kiln_entity::projectile::new(0, 0, t, origin, Vec3::new(0.0, 0.0, 0.0), None, seed))
+                // (`ThrowablePotionItem`'s config: half the uncertainty, a quarter more power.)
+                if matches!(t, T::SplashPotion | T::LingeringPotion | T::ExperienceBottle) {
+                    (uncertainty, power) = (3.0, 1.375);
+                }
+                let mut e = kiln_entity::projectile::new(0, 0, t, origin, Vec3::new(0.0, 0.0, 0.0), None, seed);
+                if let kiln_entity::EntityKind::Throwable(d) = &mut e.kind {
+                    d.item = Some(stack.with_count(1));
+                }
+                (k, e)
             }
             name => {
                 let (type_name, k) = if name == "minecraft:spectral_arrow" {
@@ -141,7 +179,22 @@ fn dispense_projectile(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Blo
                 } else {
                     ("minecraft:arrow", &kiln_data::entities::types::ARROW)
                 };
-                (k, kiln_entity::arrow::new(0, 0, type_name, origin, Vec3::new(0.0, 0.0, 0.0), None, seed))
+                let mut e = kiln_entity::arrow::new(0, 0, type_name, origin, Vec3::new(0.0, 0.0, 0.0), None, seed);
+                // `ArrowItem.asProjectile`: picked up as the item, with a tipped arrow's potion effects.
+                let one = stack.with_count(1);
+                let effects: Vec<_> = match one.get(kiln_item::keys::POTION_CONTENTS) {
+                    Some(c) if name != "minecraft:spectral_arrow" => crate::effects::potion_effects(c, 1.0)
+                        .into_iter()
+                        .filter_map(|fx| kiln_data::builtin_entries("minecraft:mob_effect").and_then(|l| l.get(fx.id as usize).copied()).map(|n| (n, fx.duration, fx.amplifier)))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                if let kiln_entity::EntityKind::Arrow(a) = &mut e.kind {
+                    a.pickup = kiln_entity::arrow::PICKUP_ALLOWED;
+                    a.pickup_item = Some(one);
+                    a.effects = effects;
+                }
+                (k, e)
             }
         }
     };
@@ -149,12 +202,12 @@ fn dispense_projectile(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Blo
     // `Projectile.getMovementToShoot` and `shoot`: the facing, spread by the entity's random.
     let st = facing.step();
     let len = ((st[0] * st[0] + st[1] * st[1] + st[2] * st[2]) as f64).sqrt();
-    let spread = 0.0172275 * 6.0;
+    let spread = 0.0172275 * uncertainty;
     let mut v = [st[0] as f64 / len, st[1] as f64 / len, st[2] as f64 / len];
     for c in &mut v {
         *c += triangle(&mut entity.random, 0.0, spread);
     }
-    let v = v.map(|c| c * 1.1);
+    let v = v.map(|c| c * power);
     entity.delta = Vec3::new(v[0], v[1], v[2]);
     let horizontal = (v[0] * v[0] + v[2] * v[2]).sqrt();
     entity.y_rot = (kiln_javamath::mth::atan2(v[0], v[2]) * 57.2957763671875) as f32;
@@ -163,7 +216,7 @@ fn dispense_projectile(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Blo
     entity.x_rot_o = entity.x_rot;
     level.out.spawns.push(crate::entities::Spawn { kind, pos: at, vel: v, body: crate::entities::Body::Ready(Box::new(entity)) });
     stack.shrink_count(1);
-    level.effect(Effect::LevelEvent { id: 1002, pos, data: 0 });
+    level.effect(Effect::LevelEvent { id: event, pos, data: 0 });
     level.effect(Effect::LevelEvent { id: 2000, pos, data: facing as i32 });
     stack
 }
@@ -205,27 +258,20 @@ fn dispense_minecart(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Block
 }
 
 fn dispense_behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, stack: ItemStack) -> ItemStack {
+    // The behaviours of `dispense_items`: `DefaultDispenseItemBehavior.dispense` follows them with its sound and animation.
+    let stack = match super::dispense_items::behaviour(level, rng, pos, facing, stack) {
+        Ok(done) => {
+            let id = if done.success == Some(false) { 1001 } else { 1000 };
+            level.effect(Effect::LevelEvent { id, pos, data: 0 });
+            level.effect(Effect::LevelEvent { id: 2000, pos, data: facing as i32 });
+            return done.stack;
+        }
+        Err(stack) => stack,
+    };
     let target = pos.relative(facing);
     match stack.item_name() {
         name if kiln_entity::ext_entity::minecart::is_minecart(name) => dispense_minecart(level, rng, pos, facing, stack),
-        "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:snowball" | "minecraft:egg" => dispense_projectile(level, rng, pos, facing, stack),
-        "minecraft:water_bucket" | "minecraft:lava_bucket" => {
-            // `DispenseItemBehavior` for filled buckets: `BucketItem.emptyContents`, then an
-            // empty bucket.
-            let t = level.block(target);
-            if kiln_data::block_props::replaceable(t) || kiln_data::blocks_types::is_air(t) {
-                let fluid = if stack.item_name() == "minecraft:water_bucket" {
-                    kiln_data::blocks::default_state::WATER
-                } else {
-                    kiln_data::blocks::default_state::LAVA
-                };
-                let sound = if fluid == kiln_data::blocks::default_state::WATER { "minecraft:item.bucket.empty" } else { "minecraft:item.bucket.empty_lava" };
-                level.effect(Effect::Sound { pos: target, sound, volume: 1.0, pitch: 1.0 });
-                kiln_blocks::set_block(level, target, fluid, kiln_blocks::flags::ALL_IMMEDIATE);
-                return ItemStack::of("minecraft:bucket", 1).unwrap_or_default();
-            }
-            default_dispense(level, rng, pos, facing, stack)
-        }
+        "minecraft:arrow" | "minecraft:tipped_arrow" | "minecraft:spectral_arrow" | "minecraft:fire_charge" | "minecraft:wind_charge" | "minecraft:firework_rocket" | "minecraft:snowball" | "minecraft:egg" | "minecraft:blue_egg" | "minecraft:brown_egg" | "minecraft:splash_potion" | "minecraft:lingering_potion" | "minecraft:experience_bottle" => dispense_projectile(level, rng, pos, facing, stack),
         "minecraft:bucket" => {
             // Picks up a fluid source in front (`BucketPickup`).
             let t = level.block(target);

@@ -3,7 +3,7 @@
 
 use crate::{Player, Sim};
 use bytes::Bytes;
-use kiln_data::entities::{data, pose, types::PLAYER};
+use kiln_data::entities::{data, types::PLAYER};
 use kiln_link::ConnId;
 use kiln_proto::packets::entity::metadata::{HumanoidArm, shared_flags};
 use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, PlayerInfoActions, PlayerInfoEntry};
@@ -56,6 +56,9 @@ impl Player {
         if self.sneaking {
             f |= shared_flags::CROUCHING;
         }
+        if self.swimming {
+            f |= shared_flags::SWIMMING;
+        }
         if self.sprinting {
             f |= shared_flags::SPRINTING;
         }
@@ -66,15 +69,7 @@ impl Player {
     }
 
     fn pose(&self) -> i32 {
-        if self.fall_flying {
-            pose::FALL_FLYING
-        } else if self.sleep.pos.is_some() {
-            pose::SLEEPING
-        } else if self.sneaking {
-            pose::CROUCHING
-        } else {
-            pose::STANDING
-        }
+        self.pose
     }
 
     /// Entity data a new viewer needs (fields that differ from their defaults).

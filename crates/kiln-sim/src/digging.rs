@@ -62,7 +62,7 @@ pub(crate) fn has_correct_tool(stack: &ItemStack, state: u16) -> bool {
 
 impl Player {
     fn eye_height(&self) -> f64 {
-        if self.sneaking { 1.27 } else { 1.62 }
+        self.dimensions().2 as f64
     }
 
     /// `Player.isWithinBlockInteractionRange`: the block's box within the block interaction
@@ -258,6 +258,12 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     let previous = level.actor.replace(p.conn);
     crate::container::open::player_will_destroy(level, bp, state, actor.creative);
     crate::heart::player_will_destroy(level, bp, state, p.entity_id, p.game_mode == 0 || p.game_mode == 2);
+    crate::beehive::player_will_destroy(level, bp, state, actor.creative);
+    crate::decorated_pot::will_destroy(level, bp, state, &p.inv.selected_item().clone());
+    // `BeehiveBlock.playerDestroy`: for a player who harvests the block.
+    if drops && kiln_data::block_logic::block_class(state) == kiln_data::block_logic::BlockClass::BeehiveBlock {
+        crate::beehive::player_destroy(level, bp, state, p);
+    }
     let removed = interact::player_destroy(level, bp, &actor, drops);
     level.actor = previous;
     // `ItemStack.mineBlock` (survival only): a tool loses `damage_per_block` durability for

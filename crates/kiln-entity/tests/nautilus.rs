@@ -30,7 +30,7 @@ fn nautilus_at(kind: MobKind, seed: i64) -> Entity {
 }
 
 fn who() -> Interactor {
-    Interactor { id: 1, creative: false, sneaking: false }
+    Interactor { id: 1, creative: false, sneaking: false, spectator: false, hit: kiln_entity::math::Vec3::ZERO }
 }
 
 fn is_tame(e: &Entity) -> bool {

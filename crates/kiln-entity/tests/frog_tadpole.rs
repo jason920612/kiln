@@ -48,7 +48,7 @@ fn a_frog_saves_and_loads_its_variant_and_pregnancy() {
 fn slime_balls_put_frogs_in_love_and_are_their_tempting_food() {
     let mut level = MemoryLevel::new(-64, 1);
     let mut e = mob::new(MobKind::Frog, 2, 0, 1);
-    let who = Interactor { id: 99, creative: false, sneaking: false };
+    let who = Interactor { id: 99, creative: false, sneaking: false, spectator: false, hit: kiln_entity::math::Vec3::ZERO };
     let ball = kiln_item::ItemStack::of("minecraft:slime_ball", 1).unwrap();
     let out = mob::interact::interact(&mut e, &mut level, &who, &ball);
     assert!(out.success && out.held == HeldChange::Consume(1));
@@ -88,7 +88,7 @@ fn a_tadpole_grows_into_a_frog_after_24000_ticks() {
 fn slime_balls_speed_up_a_tadpole_and_a_dandelion_locks_it() {
     let mut level = MemoryLevel::new(-64, 1);
     let mut e = tadpole_with_age(0);
-    let who = Interactor { id: 99, creative: false, sneaking: false };
+    let who = Interactor { id: 99, creative: false, sneaking: false, spectator: false, hit: kiln_entity::math::Vec3::ZERO };
     let ball = kiln_item::ItemStack::of("minecraft:slime_ball", 1).unwrap();
     let out = mob::interact::interact(&mut e, &mut level, &who, &ball);
     assert!(out.success);
@@ -110,7 +110,7 @@ fn slime_balls_speed_up_a_tadpole_and_a_dandelion_locks_it() {
 fn a_water_bucket_takes_a_tadpole_with_its_age() {
     let mut level = MemoryLevel::new(-64, 1);
     let mut e = tadpole_with_age(1234);
-    let who = Interactor { id: 99, creative: false, sneaking: false };
+    let who = Interactor { id: 99, creative: false, sneaking: false, spectator: false, hit: kiln_entity::math::Vec3::ZERO };
     let bucket = kiln_item::ItemStack::of("minecraft:water_bucket", 1).unwrap();
     let out = mob::interact::interact(&mut e, &mut level, &who, &bucket);
     assert!(out.success);

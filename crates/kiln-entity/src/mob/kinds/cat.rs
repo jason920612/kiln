@@ -197,8 +197,8 @@ impl Kind for Cat {
     fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, group: &mut GroupData) {
         ext::ageable_finalize(e, m, r, group, 0.05);
         ext::mob_finalize(m, r);
-        // `CatVariants`: the ten common cats, and the all-black one under a (nearly) full moon.
-        // Approximation: the witch hut rule (`#cats_spawn_as_black` structures) is not checked.
+        // `CatVariants`: the ten common cats, and the all-black one under a (nearly) full moon; inside a swamp
+        // hut (`#cats_spawn_as_black`, priority 1) only the all-black one.
         let full_moon = ctx.moon_brightness >= 0.9;
         let candidates: Vec<&str> = kiln_data::registries::SYNCHRONIZED
             .iter()
@@ -206,7 +206,7 @@ impl Kind for Cat {
             .map_or(&[][..], |(_, e)| *e)
             .iter()
             .copied()
-            .filter(|v| *v != "minecraft:all_black" || full_moon)
+            .filter(|v| if group.black_cat { *v == "minecraft:all_black" } else { *v != "minecraft:all_black" || full_moon })
             .collect();
         if !candidates.is_empty() {
             let pick = candidates[r.next_int_bounded(candidates.len() as i32) as usize];

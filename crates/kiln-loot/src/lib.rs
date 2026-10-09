@@ -39,8 +39,8 @@ pub mod trade;
 pub mod view;
 
 pub use condition::Condition;
-pub use context::{EmptyContext, EntityTarget, LootContext, Source};
-pub use data::{JukeboxSong, Kind, LoadError, LootData};
+pub use context::{EmptyContext, EntityTarget, ExplorationMap, LootContext, MapExplorer, Source};
+pub use data::{ExplorerHandle, JukeboxSong, Kind, LoadError, LootData};
 pub use eval::Eval;
 pub use function::Function;
 pub use json::Json;

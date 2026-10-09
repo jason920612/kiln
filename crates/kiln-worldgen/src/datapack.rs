@@ -22,6 +22,8 @@ pub struct NoiseSettings {
     pub height: i32,
     pub sea_level: i32,
     pub legacy_random_source: bool,
+    /// `disable_mob_generation`: no initial animals (the End).
+    pub disable_mob_generation: bool,
     /// `noise_router` fields by name, in vanilla's declaration order.
     pub router: Vec<(String, NodeId)>,
     /// `aquifers` density functions by name, when aquifers are enabled.
@@ -358,6 +360,7 @@ fn parse_settings(graph: &mut Graph, json: &Json) -> Result<NoiseSettings, Error
         height: int(noise, "height")?,
         sea_level: int(json, "sea_level")?,
         legacy_random_source: field(json, "legacy_random_source")?.as_bool().unwrap_or(false),
+        disable_mob_generation: field(json, "disable_mob_generation").ok().and_then(|v| v.as_bool()).unwrap_or(false),
         router,
         aquifers,
         default_block: parse_block_state(field(json, "default_block")?)?,

@@ -35,10 +35,16 @@ pub struct Cube {
     pub move_y_rot: f32,
     pub jump_delay: i32,
     pub move_aggressive: bool,
+    /// The sulfur cube's own state (`None` for slimes and magma cubes).
+    pub sulfur: Option<Box<super::sulfur_cube::Sulfur>>,
 }
 
 fn magma(m: &MobData) -> bool {
     m.kind == mob::MobKind::MagmaCube
+}
+
+fn sulfur(m: &MobData) -> bool {
+    m.kind == mob::MobKind::SulfurCube
 }
 
 pub fn size(m: &MobData) -> i32 {
@@ -57,6 +63,13 @@ fn sound(e: &Entity, level: &mut dyn EntityLevel, name: &str, volume: f32, pitch
     }
 }
 
+/// [`sound`] in the sound category of the type (sulfur cubes are neutral).
+fn sound_for(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, name: &str, volume: f32, pitch: f32) {
+    if !e.silent {
+        level.emit(Event::Sound { pos: e.position(), sound: mob::sound_event(name), source: if sulfur(m) { "neutral" } else { "hostile" }, volume, pitch });
+    }
+}
+
 /// `getSoundPitch`: two draws, 1.4 for tiny cubes, else 0.8.
 fn sound_pitch(e: &mut Entity, size: i32) -> f32 {
     let base = if size <= 1 { 1.4 } else { 0.8 };
@@ -67,6 +80,9 @@ fn sound_pitch(e: &mut Entity, size: i32) -> f32 {
 
 /// The type's sound: `<cube>.<what>` or its `_small` form for tiny cubes where one exists.
 fn cube_sound(m: &MobData, what: &str) -> String {
+    if sulfur(m) {
+        return super::sulfur_cube::cube_sound(m, what);
+    }
     let base = if magma(m) { "magma_cube" } else { "slime" };
     let small = size(m) <= 1 && !(magma(m) && what == "jump");
     format!("minecraft:entity.{base}.{what}{}", if small { "_small" } else { "" })
@@ -88,7 +104,8 @@ pub fn set_size(e: &mut Entity, m: &mut MobData, size: i32, update_health: bool)
             let _ = e.random.next_int_bounded(20);
         }
     }
-    set_base(m, Attr::MaxHealth, (i * i) as f64);
+    // `setCubeMobHealth`: the square of the size (a sulfur cube: four per size).
+    set_base(m, Attr::MaxHealth, if sulfur(m) { (4 * i) as f64 } else { (i * i) as f64 });
     set_base(m, Attr::MovementSpeed, (0.2f32 + 0.1 * i as f32) as f64);
     if update_health {
         m.health = m.max_health();
@@ -100,17 +117,27 @@ pub fn set_size(e: &mut Entity, m: &mut MobData, size: i32, update_health: bool)
 }
 
 pub fn new_state(m: &mut MobData) -> Option<Box<dyn MobExt>> {
-    let c = Cube { size: 1, target_squish: 0.0, squish: 0.0, o_squish: 0.0, was_on_ground: false, move_y_rot: 0.0, jump_delay: 0, move_aggressive: false };
+    new_state_with(m, None)
+}
+
+/// [`new_state`] for a type with state of its own (the sulfur cube's).
+pub fn new_state_with(m: &mut MobData, sulfur: Option<Box<super::sulfur_cube::Sulfur>>) -> Option<Box<dyn MobExt>> {
+    let c = Cube { size: 1, target_squish: 0.0, squish: 0.0, o_squish: 0.0, was_on_ground: false, move_y_rot: 0.0, jump_delay: 0, move_aggressive: false, sulfur };
     m.nav.can_float = true;
     Some(Box::new(c))
 }
 
-pub fn register_goals(m: &mut MobData) {
+/// `AbstractCubeMob.registerGoals` without the type's behaviour and targeting goals.
+pub(crate) fn register_base_goals(m: &mut MobData) {
     let g = &mut m.goals;
     g.add(1, Goal::Custom(Box::new(CubeFloat)));
-    g.add(2, Goal::Custom(Box::new(CubeAttack { grow_tired: 0 })));
     g.add(4, Goal::Custom(Box::new(CubeRandomDirection { chosen: 0.0, next_randomize: 0 })));
     g.add(5, Goal::Custom(Box::new(CubeKeepOnJumping)));
+}
+
+pub fn register_goals(m: &mut MobData) {
+    register_base_goals(m);
+    m.goals.add(2, Goal::Custom(Box::new(CubeAttack { grow_tired: 0 })));
     let nearest = |wanted| Goal::NearestAttackable { wanted, interval: mth::reduced_tick_delay(10), must_see: true, target: None, unseen: 0, spider: false };
     m.targets.add(1, nearest(Wanted::PlayerWithinDy(4)));
     m.targets.add(3, nearest(Wanted::Types(&["minecraft:iron_golem"])));
@@ -142,7 +169,7 @@ pub fn post_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let b = e.random.next_float();
         let pitch = ((a - b) * 0.2 + 1.0) / 0.8;
         let s = cube_sound(m, "squish");
-        sound(e, level, &s, 0.4 * size as f32, pitch);
+        sound_for(e, m, level, &s, 0.4 * size as f32, pitch);
         target = -0.5;
     } else if !e.on_ground && was {
         target = 1.0;
@@ -166,7 +193,7 @@ fn rotlerp(from: f32, to: f32, max: f32) -> f32 {
 }
 
 /// `CubeMobMoveControl.setDirection`.
-fn set_direction(m: &mut MobData, y_rot: f32, aggressive: bool) {
+pub(crate) fn set_direction(m: &mut MobData, y_rot: f32, aggressive: bool) {
     if let Some(c) = state_mut::<Cube>(m) {
         c.move_y_rot = y_rot;
         c.move_aggressive = aggressive;
@@ -174,7 +201,7 @@ fn set_direction(m: &mut MobData, y_rot: f32, aggressive: bool) {
 }
 
 /// `CubeMobMoveControl.setWantedMovement`.
-fn set_wanted_movement(m: &mut MobData, speed: f64) {
+pub(crate) fn set_wanted_movement(m: &mut MobData, speed: f64) {
     m.mov.speed_modifier = speed;
     m.mov.operation = Operation::MoveTo;
 }
@@ -214,7 +241,7 @@ pub fn tick_move(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if size > 0 {
             let pitch = sound_pitch(e, size);
             let s = cube_sound(m, "jump");
-            sound(e, level, &s, 0.4 * size as f32, pitch);
+            sound_for(e, m, level, &s, 0.4 * size as f32, pitch);
         }
     } else {
         m.xxa = 0.0;
@@ -299,7 +326,8 @@ pub fn on_killed_removal(e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
     }
     let half = e.width / 2.0;
     let child_size = size / 2;
-    let count = 2 + e.random.next_int_bounded(3);
+    // `getSplitCount`: 2 to 4 (a sulfur cube: two, none once it is primed).
+    let count = if sulfur(m) { if super::sulfur_cube::is_primed(m) { 0 } else { 2 } } else { 2 + e.random.next_int_bounded(3) };
     for l in 0..count {
         let ox = ((l % 2) as f32 - 0.5) * half;
         let oz = ((l / 2) as f32 - 0.5) * half;
@@ -320,6 +348,10 @@ pub fn on_killed_removal(e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
             child.remaining_fire_ticks = 1;
         }
         set_size(&mut child, &mut cm, child_size, true);
+        // `SulfurCube.setUpSplitCube`: the halves are babies.
+        if sulfur(m) {
+            mob::set_age(&mut child, &mut cm, mob::breed::BABY_START_AGE);
+        }
         // `snapTo(x + ox, y + 0.5, z + oz, random * 360, 0)`.
         let yaw = e.random.next_float() * 360.0;
         child.set_pos(Vec3::new(e.x() + ox as f64, e.y() + 0.5, e.z() + oz as f64));
@@ -336,7 +368,7 @@ pub fn on_killed_removal(e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
 /// constructor's own yaw is random and not reproducible: loading and splitting pin it).
 /// [`pin_move_yaw`] on a cube mob entity (no-op for other entities).
 pub fn pin_move_yaw_of(e: &mut Entity) {
-    if matches!(mob::data(e).map(|m| m.kind), Some(mob::MobKind::Slime | mob::MobKind::MagmaCube)) {
+    if matches!(mob::data(e).map(|m| m.kind), Some(mob::MobKind::Slime | mob::MobKind::MagmaCube | mob::MobKind::SulfurCube)) {
         let mut m = mob::take(e);
         pin_move_yaw(e, &mut m);
         mob::put(e, m);
@@ -506,7 +538,7 @@ fn in_liquid(e: &Entity) -> bool {
 
 /// `CubeMobFloatGoal`.
 #[derive(Clone, Debug)]
-struct CubeFloat;
+pub(crate) struct CubeFloat;
 
 impl CustomGoal for CubeFloat {
     crate::custom_goal_boilerplate!();
@@ -571,9 +603,9 @@ impl CustomGoal for CubeAttack {
 
 /// `CubeMobRandomDirectionGoal`.
 #[derive(Clone, Debug)]
-struct CubeRandomDirection {
-    chosen: f32,
-    next_randomize: i32,
+pub(crate) struct CubeRandomDirection {
+    pub chosen: f32,
+    pub next_randomize: i32,
 }
 
 impl CustomGoal for CubeRandomDirection {
@@ -599,7 +631,7 @@ impl CustomGoal for CubeRandomDirection {
 
 /// `CubeMobKeepOnJumpingGoal`.
 #[derive(Clone, Debug)]
-struct CubeKeepOnJumping;
+pub(crate) struct CubeKeepOnJumping;
 
 impl CustomGoal for CubeKeepOnJumping {
     crate::custom_goal_boilerplate!();

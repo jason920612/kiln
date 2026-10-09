@@ -14,9 +14,12 @@ enum Cell {
     Skull,
     Base,
     Air,
+    Any,
 }
 
 const PATTERN: [[Cell; 3]; 3] = [[Cell::Skull, Cell::Skull, Cell::Skull], [Cell::Base, Cell::Base, Cell::Base], [Cell::Air, Cell::Base, Cell::Air]];
+/// `getOrCreateWitherBase`: the same without the skulls (`aisle("   ", "###", "~#~")`).
+const BASE: [[Cell; 3]; 3] = [[Cell::Any, Cell::Any, Cell::Any], [Cell::Base, Cell::Base, Cell::Base], [Cell::Air, Cell::Base, Cell::Air]];
 
 fn is_skull(state: u16) -> bool {
     matches!(kiln_entity::blocks::block_name(state), "minecraft:wither_skeleton_skull" | "minecraft:wither_skeleton_wall_skull")
@@ -27,6 +30,7 @@ fn fits(cell: Cell, state: u16) -> bool {
         Cell::Skull => is_skull(state),
         Cell::Base => kiln_entity::ext_entity::wither_skull::block_tag(state, "minecraft:wither_summon_base_blocks"),
         Cell::Air => kiln_data::blocks_types::is_air(state),
+        Cell::Any => true,
     }
 }
 
@@ -43,6 +47,17 @@ fn translate(origin: BlockPos, fwd: Direction, up: Direction, right: i32, down: 
 /// `BlockPattern.find` from the placed skull: the first corner (x fastest, then y, then z) and
 /// orientation (`Direction.values()` for forwards, then up) where every cell matches.
 fn find(level: &RegionLevel, pos: BlockPos) -> Option<(BlockPos, Direction, Direction)> {
+    find_pattern(level, pos, &PATTERN)
+}
+
+/// `WitherSkullBlock.canSpawnMob`: a wither skeleton skull at `pos` (not yet placed) would complete the wither
+/// pattern: high enough above the bottom of the world, not on peaceful, and the T of soul sand under it.
+pub(crate) fn can_spawn_mob(level: &RegionLevel, pos: BlockPos) -> bool {
+    let env = level.env;
+    pos.y >= env.min_y + 2 && env.mobs.difficulty != 0 && find_pattern(level, pos, &BASE).is_some()
+}
+
+fn find_pattern(level: &RegionLevel, pos: BlockPos, pattern: &[[Cell; 3]; 3]) -> Option<(BlockPos, Direction, Direction)> {
     for z in 0..3 {
         for y in 0..3 {
             for x in 0..3 {
@@ -52,7 +67,7 @@ fn find(level: &RegionLevel, pos: BlockPos) -> Option<(BlockPos, Direction, Dire
                         if up == fwd || up == fwd.opposite() {
                             continue;
                         }
-                        let ok = (0..3).all(|r| (0..3).all(|d| fits(PATTERN[d as usize][r as usize], level.block(translate(origin, fwd, up, r, d, 0)))));
+                        let ok = (0..3).all(|r| (0..3).all(|d| fits(pattern[d as usize][r as usize], level.block(translate(origin, fwd, up, r, d, 0)))));
                         if ok {
                             return Some((origin, fwd, up));
                         }

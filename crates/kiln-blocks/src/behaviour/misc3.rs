@@ -23,6 +23,31 @@ pub fn target_on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16)
     }
 }
 
+/// `TargetBlock.getRedstoneStrength`: how close to the middle of the face the hit was.
+fn target_strength(face: Direction, location: [f64; 3]) -> i32 {
+    let frac = |v: f64| v - v.floor();
+    let (dx, dy, dz) = ((frac(location[0]) - 0.5).abs(), (frac(location[1]) - 0.5).abs(), (frac(location[2]) - 0.5).abs());
+    let d = match face.axis() {
+        crate::pos::Axis::Y => dx.max(dz),
+        crate::pos::Axis::Z => dx.max(dy),
+        crate::pos::Axis::X => dy.max(dz),
+    };
+    let v = 15.0 * ((0.5 - d) / 0.5).clamp(0.0, 1.0);
+    1.max(v.ceil() as i32)
+}
+
+/// `TargetBlock.onProjectileHit` (`updateRedstoneOutput`): the target gives a signal by how
+/// near the middle the hit was, for 20 ticks from an arrow and 8 from anything else; the signal.
+pub fn target_hit<L: Level>(level: &mut L, s: u16, pos: BlockPos, face: Direction, location: [f64; 3], arrow: bool) -> i32 {
+    let signal = target_strength(face, location);
+    let duration = if arrow { 20 } else { 8 };
+    if !level.block_ticks().has_scheduled_tick(pos, BlockId::of(s)) {
+        set_block_and_update(level, pos, state::set_int(s, "power", signal));
+        schedule_block_tick(level, pos, BlockId::of(s), duration, TickPriority::Normal);
+    }
+    signal
+}
+
 /// `TargetBlock.tick`: the reset after a hit.
 pub fn target_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     if state::get_int(s, "power") != 0 {

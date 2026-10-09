@@ -26,6 +26,8 @@ enum Content {
     Empty,
     Water,
     Lava,
+    /// A mob bucket with no fluid (`MobBucketItem` of `Fluids.EMPTY`: the sulfur cube's).
+    NoFluid,
 }
 
 /// A bucket item: its fluid, and the mob a mob bucket lets out (with its empty sound).
@@ -40,6 +42,7 @@ fn bucket(name: &str) -> Option<(Content, Option<(&'static str, &'static str)>)>
         "minecraft:tropical_fish_bucket" => (Content::Water, Some(("minecraft:tropical_fish", "minecraft:item.bucket.empty_fish"))),
         "minecraft:axolotl_bucket" => (Content::Water, Some(("minecraft:axolotl", "minecraft:item.bucket.empty_axolotl"))),
         "minecraft:tadpole_bucket" => (Content::Water, Some(("minecraft:tadpole", "minecraft:item.bucket.empty_tadpole"))),
+        "minecraft:sulfur_cube_bucket" => (Content::NoFluid, Some(("minecraft:sulfur_cube", "minecraft:item.bucket.empty_sulfur_cube"))),
         _ => return None,
     })
 }
@@ -77,19 +80,14 @@ pub(crate) fn use_bucket(p: &mut Player, level: &mut RegionLevel, off_hand: bool
     }
     let state = level.block(pos);
     let target = if logic::implements(state, interface::LIQUID_BLOCK_CONTAINER) && content == Content::Water { pos } else { next };
-    if !empty_contents(p, level, content, mob.map(|m| m.1), target, Some((pos, dir))) {
+    if !empty_contents(Some(&mut *p), level, content, mob.map(|m| m.1), target, Some((pos, dir))) {
         return;
     }
     // `MobBucketItem.checkExtraContent`: the mob comes out.
     if let Some((mob_type, _)) = mob
-        && let Some(kind) = kiln_entity::mob::MobKind::by_name(mob_type)
+        && let Some(spawn) = release_mob(level, &held, mob_type, target)
     {
-        let at = [target.x as f64 + 0.5, target.y as f64, target.z as f64 + 0.5];
-        match (kind, crate::mobs::bucket_axolotl(&held, at)) {
-            // An axolotl keeps its variant, health and age in the bucket.
-            (kiln_entity::mob::MobKind::Axolotl, Some(spawn)) => spawns.push(spawn),
-            _ => spawns.push(crate::mobs::spawn(kind, at, None, None)),
-        }
+        spawns.push(spawn);
     }
     let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     p.used_on_block("minecraft:placed_block", [target.x, target.y, target.z], level.block(target), &held, &probe);
@@ -99,6 +97,61 @@ pub(crate) fn use_bucket(p: &mut Player, level: &mut RegionLevel, off_hand: bool
         let empty = ItemStack::of("minecraft:bucket", 1).unwrap_or_else(ItemStack::empty);
         p.fill_in_hand(off_hand, empty, true, spawns);
     }
+}
+
+/// `MobBucketItem.spawn`: the mob of a bucket at the block `target` (`EntitySpawnReason.BUCKET`, aligned to
+/// the floor of the block), as the bucket kept it.
+fn release_mob(level: &RegionLevel, bucket: &ItemStack, mob_type: &str, target: BlockPos) -> Option<Spawn> {
+    use kiln_entity::mob::MobKind;
+    let kind = MobKind::by_name(mob_type)?;
+    let width = kiln_data::entities::by_name(kind.type_name())?.width;
+    let off = crate::mobs::align_offset(level, target, width);
+    let at = [target.x as f64 + 0.5, target.y as f64 + off, target.z as f64 + 0.5];
+    let env = level.env;
+    let seed = crate::mobs::loot_seed(env.seed, env.game_time, 0, (target.x as u64) << 32 ^ target.z as u64 ^ (target.y as u64) << 16 ^ 0x6275_636b);
+    let mut spawn = match kind {
+        // An axolotl keeps its variant, health and age in the bucket.
+        MobKind::Axolotl => crate::mobs::bucket_axolotl(bucket, at)?,
+        MobKind::Salmon | MobKind::Cod | MobKind::Pufferfish | MobKind::TropicalFish | MobKind::Tadpole => {
+            let mut s = crate::mobs::bucket_release(bucket, [target.x, target.y, target.z], env.mobs.difficulty, env.game_time, seed)?;
+            s.pos = at;
+            if let crate::entities::Body::Ready(e) = &mut s.body {
+                e.set_pos(kiln_entity::math::Vec3::new(at[0], at[1], at[2]));
+                e.set_old_pos_and_rot();
+            }
+            s
+        }
+        _ => crate::mobs::spawn(kind, at, None, None),
+    };
+    spawn.pos = at;
+    Some(spawn)
+}
+
+/// `DispenseItemBehavior$3` (`DispensibleContainerItem.emptyContents` with no one holding the bucket, then
+/// `checkExtraContent`): a full bucket emptied at the block `pos`. Whether it was.
+pub(crate) fn dispense_empty(level: &mut RegionLevel, stack: &ItemStack, pos: BlockPos) -> bool {
+    let name = stack.item_name();
+    if name == "minecraft:powder_snow_bucket" {
+        // `SolidBucketItem.emptyContents`: only into an empty block.
+        if level.in_bounds(pos) && kiln_data::blocks_types::is_air(level.block(pos)) {
+            kiln_blocks::set_block_and_update(level, pos, d::POWDER_SNOW);
+            level.effect(Effect::GameEvent { pos, event: "minecraft:block_place" });
+            level.effect(Effect::ActorSound { pos, sound: "minecraft:item.bucket.empty_powder_snow", volume: 1.0, pitch: 1.0 });
+            return true;
+        }
+        return false;
+    }
+    let Some((content, mob)) = bucket(name) else { return false };
+    if content == Content::Empty || !empty_contents(None, level, content, mob.map(|m| m.1), pos, None) {
+        return false;
+    }
+    if let Some((mob_type, _)) = mob
+        && let Some(spawn) = release_mob(level, stack, mob_type, pos)
+    {
+        level.out.spawns.push(spawn);
+        level.effect(Effect::GameEvent { pos, event: "minecraft:entity_place" });
+    }
+    true
 }
 
 /// `BucketPickup.pickupBlock`: the filled bucket and its sound, the block drained.
@@ -147,7 +200,7 @@ fn pickup_block(level: &mut RegionLevel, pos: BlockPos, state: u16) -> Option<(I
 /// `BucketItem.emptyContents`: pours the bucket's fluid at `pos` (see the module docs);
 /// `hit` retries in front of the hit face when `pos` cannot take it.
 fn empty_contents(
-    p: &mut Player,
+    mut p: Option<&mut Player>,
     level: &mut RegionLevel,
     content: Content,
     mob_sound: Option<&'static str>,
@@ -158,6 +211,11 @@ fn empty_contents(
         Content::Water => (FluidKind::Water, kiln_blocks::FluidType::Water),
         Content::Lava => (FluidKind::Lava, kiln_blocks::FluidType::Lava),
         Content::Empty => return false,
+        // `MobBucketItem.emptyContents` of a bucket with no fluid: just the sound.
+        Content::NoFluid => {
+            play_empty_sound(level, pos, content, mob_sound);
+            return true;
+        }
     };
     let state = level.block(pos);
     // `BlockState.canBeReplaced(Fluid)`: replaceable or not solid.
@@ -165,7 +223,8 @@ fn empty_contents(
     let container = logic::implements(state, interface::LIQUID_BLOCK_CONTAINER);
     let placeable = replaceable || container && kiln_blocks::fluid::can_place_liquid(state, fluid_type);
     let air = kiln_data::blocks_types::is_air(state);
-    if !(air || placeable && (!p.sneaking || hit.is_none())) {
+    let sneaking = p.as_ref().is_some_and(|p| p.sneaking);
+    if !(air || placeable && (!sneaking || hit.is_none())) {
         return match hit {
             Some((at, dir)) => empty_contents(p, level, content, mob_sound, at.relative(dir), None),
             None => false,
@@ -175,7 +234,9 @@ fn empty_contents(
         let r = level.random();
         let pitch = 2.6 + (r.next_float() - r.next_float()) * 0.8;
         level.effect(Effect::ActorSound { pos, sound: "minecraft:block.fire.extinguish", volume: 0.5, pitch });
-        if let Some(smoke) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:large_smoke") {
+        if let Some(smoke) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:large_smoke")
+            && let Some(p) = p.as_deref_mut()
+        {
             use kiln_proto::packets::world_fx;
             p.send(world_fx::level_particles(&world_fx::LevelParticles {
                 particle: world_fx::Particle { kind: smoke, options: world_fx::ParticleOptions::None },

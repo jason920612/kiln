@@ -85,8 +85,12 @@ pub struct PlayerView {
     pub uuid: u128,
     pub pos: Vec3,
     pub eye_height: f32,
+    /// The height of the hit box in the player's pose (1.8 standing, 1.5 crouching, 0.6 swimming).
+    pub height: f32,
     pub spectator: bool,
     pub creative: bool,
+    /// `Abilities.mayBuild`: survival or creative mode.
+    pub may_build: bool,
     pub sneaking: bool,
     /// `isSprinting`.
     pub sprinting: bool,
@@ -124,6 +128,10 @@ pub struct PlayerView {
     pub hurt_recently: bool,
     /// The entity the player rides.
     pub vehicle: Option<i32>,
+    /// `isSwimming` (the swimming pose).
+    pub swimming: bool,
+    /// `Entity.hasMovedHorizontallyRecently`: the last tick's change of position had a horizontal part.
+    pub moved_horizontally: bool,
     /// The amplifier of the player's Hero of the Village effect.
     pub hero_of_the_village: Option<i32>,
     /// wp32 parrots: `LandOnOwnersShoulderGoal.canUse`'s view of the player (not a spectator,
@@ -142,8 +150,10 @@ impl PlayerView {
             uuid: 0,
             pos,
             eye_height: 1.62,
+            height: 1.8,
             spectator: false,
             creative: false,
+            may_build: true,
             sneaking: false,
             sprinting: false,
             alive: true,
@@ -165,6 +175,8 @@ impl PlayerView {
             last_hurt_mob_time: 0,
             hurt_recently: false,
             vehicle: None,
+            swimming: false,
+            moved_horizontally: false,
             hero_of_the_village: None,
             parrot_may_land: false,
             parrot_can_sit: false,
@@ -257,6 +269,13 @@ pub enum DamageKind {
     Named(&'static str),
 }
 
+/// What a bee needs to know of a beehive or bee nest block entity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BeehiveView {
+    pub full: bool,
+    pub fire_nearby: bool,
+}
+
 /// Side effects the simulation carries out or broadcasts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
@@ -278,6 +297,11 @@ pub enum Event {
     /// Vanilla block side effects of an entity inside a block that this crate does not
     /// simulate (hoppers, pressure plates, tripwires, portals, detector rails).
     EntityInsideBlock { pos: BlockPos, state: u16, entity: i32 },
+    /// `BeehiveBlockEntity.addOccupant(bee)`: bee `bee` goes into the hive at `hive`.
+    BeeEntersHive { bee: i32, hive: BlockPos },
+    /// `CopperGolem.turnToStatue`: the block at `pos` becomes an oxidized statue in `pose` (0 to 3) facing `facing`, its
+    /// block entity holding the golem's custom name.
+    CopperGolemStatue { pos: BlockPos, pose: u8, facing: crate::math::Direction, name: Option<kiln_proto::nbt::Tag> },
     /// A projectile hit a block (`Block.onProjectileHit`) or an entity: damage, egg hatching,
     /// pearl teleports and potion splashes are the simulation's.
     ProjectileHit { projectile: i32, projectile_type: &'static str, owner: Option<i32>, hit: crate::projectile::Hit },
@@ -320,6 +344,9 @@ pub enum Event {
     Criterion { player: i32, criterion: Criterion },
     /// A raider's news for its raid.
     Raid(RaidEvent),
+    /// A text display whose text holds selectors or scores wants them resolved (`ComponentUtils.resolve` with the
+    /// display as the source, which the simulation answers with `display::set_text`).
+    ResolveText { entity: i32, uuid: u128, text: kiln_proto::nbt::Tag },
     /// What the ender dragon and end crystals tell the level's dragon fight.
     DragonFight(DragonFightEvent),
     /// `Level.globalLevelEvent` (the wither's spawn sound heard everywhere).
@@ -369,7 +396,7 @@ pub fn stop_riding_entity<L: EntityLevel + ?Sized>(level: &mut L, id: i32) {
 
 /// A player's collision box from its view.
 pub fn player_box(p: &PlayerView) -> Aabb {
-    let h = if p.sneaking { 1.5 } else { 1.8 };
+    let h = p.height as f64;
     Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3)
 }
 
@@ -588,6 +615,13 @@ pub trait EntityLevel {
         false
     }
 
+    /// `ServerLevel.findNearestMapStructure(structure tag, pos, radius, false)`: the nearest structure of the tag
+    /// within `radius` chunks (`None`: none found, or the level generates none).
+    fn find_nearest_map_structure(&self, tag: &str, pos: BlockPos, radius: i32) -> Option<BlockPos> {
+        let _ = (tag, pos, radius);
+        None
+    }
+
     /// `LightningBolt.spawnFire` at one position: fire (or soul fire) where the block is air
     /// and fire survives. Returns whether fire was placed.
     /// `ServerLevel.canSpreadFireAround`.
@@ -764,6 +798,11 @@ pub trait EntityLevel {
         let _ = (pos, target, color, duration);
     }
 
+    /// `sendParticles(BlockParticleOption(particle, state), pos, count, dx, dy, dz, speed)`.
+    fn block_particles(&mut self, particle: &'static str, pos: Vec3, state: u16, count: i32, spread: Vec3, speed: f32) {
+        let _ = (particle, pos, state, count, spread, speed);
+    }
+
     /// `sendParticles(BlockParticleOption(block_crumble, state), pos, count, dx, dy, dz, 0)`.
     fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
         let _ = (pos, state, count, spread);
@@ -774,6 +813,22 @@ pub trait EntityLevel {
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
         let _ = pos;
         15 - sky_darken
+    }
+
+    /// The beehive or bee nest block entity at `pos`, if there is one.
+    fn beehive_at(&self, pos: BlockPos) -> Option<BeehiveView> {
+        let _ = pos;
+        None
+    }
+
+    /// The `minecraft:gameplay/bees_stay_in_hive` environment attribute.
+    fn bees_stay_in_hive(&self) -> bool {
+        false
+    }
+
+    /// `Level.isRaining` (the level's rain level over 0.2).
+    fn is_raining(&self) -> bool {
+        false
     }
 
     /// The sky light at `pos`.
@@ -879,6 +934,12 @@ pub trait EntityLevel {
     fn add_effect_instance(&mut self, id: i32, effect: crate::effect::Effect, source: Option<i32>) -> bool {
         let _ = (id, effect, source);
         false
+    }
+
+    /// `SignalGetter.getBestOwnOrNeighbourSignal`: the redstone signal at `pos` (powered blocks around it).
+    fn best_own_or_neighbour_signal(&self, pos: BlockPos) -> i32 {
+        let _ = pos;
+        0
     }
 
     /// `Level.isThundering` (channeling).
@@ -1076,6 +1137,54 @@ pub trait EntityLevel {
         let _ = (home, id, uuid, at);
     }
 
+    /// The `ChestBlockEntity`s (chests, trapped chests, copper chests) of chunk (`cx`, `cz`):
+    /// `None` when the chunk is not loaded (`getChunkNow`).
+    fn chest_block_entities(&self, cx: i32, cz: i32) -> Option<Vec<BlockPos>> {
+        let _ = (cx, cz);
+        None
+    }
+
+    /// The block entity at `pos` as an identity: the same number while it is the same object
+    /// (`BlockEntity.equals`), `None` without one.
+    fn block_entity_serial(&self, pos: BlockPos) -> Option<u64> {
+        let _ = pos;
+        None
+    }
+
+    /// The slots of the container block entity at `pos`.
+    fn container_items(&self, pos: BlockPos) -> Option<Vec<kiln_item::ItemStack>> {
+        let _ = pos;
+        None
+    }
+
+    /// Writes the slots of the container block entity at `pos` back (`setChanged`).
+    fn set_container_items(&mut self, pos: BlockPos, items: Vec<kiln_item::ItemStack>) {
+        let _ = (pos, items);
+    }
+
+    /// `BaseContainerBlockEntity.isLocked`.
+    fn container_locked(&self, pos: BlockPos) -> bool {
+        let _ = pos;
+        false
+    }
+
+    /// `ChestBlockEntity.getEntitiesWithContainerOpen`: the ids of the entities (players
+    /// too) that have the container at `pos` open.
+    fn container_users(&self, pos: BlockPos) -> Vec<i32> {
+        let _ = pos;
+        Vec::new()
+    }
+
+    /// `ChestBlockEntity.startOpen(user)` (`range`: `getContainerInteractionRange`).
+    fn container_start_open(&mut self, pos: BlockPos, user: i32, range: f64) {
+        let _ = (pos, user, range);
+    }
+
+    /// `ChestBlockEntity.stopOpen(user)`.
+    fn container_stop_open(&mut self, pos: BlockPos, user: i32) {
+        let _ = (pos, user);
+    }
+
     /// The entity with this UUID (`ServerLevel.getEntity(UUID)`), among the entities and the
     /// ticking entity's neighbours.
     fn entity_by_uuid(&self, uuid: u128) -> Option<&Entity> {
@@ -1156,6 +1265,42 @@ pub trait EntityLevel {
     /// The world seed (slime chunks).
     fn world_seed(&self) -> i64 {
         0
+    }
+
+    // -- wp49 trial spawners (`crate::trial_spawner`).
+
+    /// The `minecraft:trial_spawner` config the datapack holds under `key`.
+    fn trial_config(&self, key: &str) -> Option<std::sync::Arc<crate::trial_spawner::Config>> {
+        let _ = key;
+        None
+    }
+
+    /// The `spawn_mobs` game rule.
+    fn spawn_mobs_rule(&self) -> bool {
+        true
+    }
+
+    /// Whether the player `id` has the effect (`minecraft:` name).
+    fn player_has_effect(&self, id: i32, effect: &str) -> bool {
+        let _ = (id, effect);
+        false
+    }
+
+    /// `TrialSpawnerStateData.transformBadOmenIntoTrialOmen`: the player's Bad Omen becomes Trial Omen.
+    fn transform_bad_omen(&mut self, player: i32) {
+        let _ = player;
+    }
+
+    /// A mob the trial spawner remembers by UUID goes (`remove(DISCARDED)`, its equipment dropped).
+    fn discard_trial_mob(&mut self, uuid: u128) {
+        let _ = uuid;
+    }
+
+    /// `TrialSpawner.ejectReward`: the loot table's items fly out of the top of the spawner at
+    /// `pos` (`DefaultDispenseItemBehavior.spawnItem`). True when there were any.
+    fn trial_eject(&mut self, table: &str, pos: BlockPos) -> bool {
+        let _ = (table, pos);
+        false
     }
 
     /// `Level.blockEvent` of the block entity's block at `pos` (a spawner's `1`: its delay was reset).

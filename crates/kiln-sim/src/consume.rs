@@ -88,6 +88,7 @@ impl Player {
         // (`recentKineticEnemies` is dropped with the use.)
         self.recent_stabs.clear();
         self.kinetic_ticks = None;
+        self.brush_ticks = None;
         if self.using.take().is_some() {
             self.meta_dirty = true;
         }
@@ -121,6 +122,10 @@ impl Player {
         // `ItemStack.onUseTick` of a kinetic weapon: the region's tick carries out the charge.
         if stack.get(keys::KINETIC_WEAPON).is_some() {
             self.kinetic_ticks = Some(u.duration - u.remaining);
+        }
+        // `BrushItem.onUseTick`: the region's tick carries it out (the ticks used, counting this one).
+        if stack.item_name() == crate::brush::ITEM {
+            self.brush_ticks = Some(u.duration - u.remaining + 1);
         }
         u.remaining -= 1;
         self.using = Some(u);

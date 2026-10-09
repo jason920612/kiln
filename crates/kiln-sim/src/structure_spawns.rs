@@ -139,6 +139,30 @@ impl StructureSpawns {
     }
 }
 
+/// `StructureManager.getStructureWithPieceAt(pos, structures).isValid()`: a start of one of the structures
+/// `ids` has a piece whose box holds `pos`. `structures` gives a loaded chunk's `structures` NBT.
+pub(crate) fn piece_at<'c, F>(structures: &F, pos: [i32; 3], ids: &[String]) -> bool
+where
+    F: Fn(ChunkPos) -> Option<&'c Tag>,
+{
+    let Some(here) = structures(ChunkPos::of_block(pos[0], pos[2])) else { return false };
+    let Some(Tag::Compound(refs)) = here.get("References") else { return false };
+    for (id, chunks) in refs {
+        if !ids.iter().any(|i| i == id) {
+            continue;
+        }
+        let Tag::LongArray(starts) = chunks else { continue };
+        let found = starts.iter().any(|&packed| {
+            let c = ChunkPos::new(packed as i32, (packed >> 32) as i32);
+            start_of(structures, c, id).is_some_and(|pieces| pieces.iter().any(|b| inside(b, pos)))
+        });
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
 /// The bounding boxes of the pieces of structure `id`'s start in chunk `c` (none: no valid start).
 fn start_of<'c, F>(structures: &F, c: ChunkPos, id: &str) -> Option<Vec<[i32; 6]>>
 where

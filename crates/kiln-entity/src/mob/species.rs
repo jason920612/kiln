@@ -68,7 +68,7 @@ pub fn post_tick(e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) 
 /// The types' `aiStep` additions (after `Mob.aiStep`).
 pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if super::breed::is_ageable(m.kind) {
-        super::breed::ai_step(e, m);
+        super::breed::ai_step(e, m, &mut *level);
     }
     if let Some(k) = m.kind.ext() {
         k.ai_step(e, m, level);

@@ -432,7 +432,7 @@ fn run_lift(v: &Value) -> Vec<String> {
         p.pos = [bx as f64 + 0.5 + v["dx"].as_f64().unwrap(), base[1], bz as f64 + 0.5];
         p.rot = [yaw, pitch];
         p.on_ground = v["on_ground"].as_bool().unwrap();
-        p.sneaking = v["sneak"].as_bool().unwrap();
+        p.set_shift_key(v["sneak"].as_bool().unwrap());
         p.vel = [0.0; 3];
         p.fall_distance = 0.0;
         p.loot = vanilla_loot();

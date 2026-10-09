@@ -169,6 +169,11 @@ pub trait CustomGoal: Debug + Send + Sync {
     fn every_tick(&self) -> bool {
         false
     }
+    /// `Bee$BaseBeeGoal`: `canUse` and `canContinueToUse` are the goal's own check (with its side
+    /// effects) and then "not angry".
+    fn bee_base(&self) -> bool {
+        false
+    }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool;
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         self.can_use(e, m, level)
@@ -621,6 +626,15 @@ pub trait Kind: Sync + Send {
         let _ = (m, partner);
         true
     }
+    /// `canBreatheUnderwater` when it depends on the state (`None`: the type's `EntityTypeTags.CAN_BREATHE_UNDER_WATER`).
+    fn breathes_under_water_now(&self, m: &MobData) -> Option<bool> {
+        let _ = m;
+        None
+    }
+    /// `increaseAirSupply(current)`(4 more a tick, up to the maximum; a dolphin takes a full breath at once).
+    fn increase_air_supply(&self, current: i32, max: i32) -> i32 {
+        (current + 4).min(max)
+    }
     /// `getAmbientSound` when it draws randomness or depends on state: `Some(sound)` replaces the
     /// type's `ambient` sound (`Some(None)`: silent this time, no pitch draws).
     fn ambient_sound(&self, e: &mut Entity, m: &MobData, level: &dyn EntityLevel) -> Option<Option<&'static str>> {
@@ -655,6 +669,22 @@ pub trait Kind: Sync + Send {
     }
     /// Equipment beyond the six hand and armor slots, as (`EquipmentSlot` ordinal, stack): a
     /// horse's saddle (7).
+    /// `Shearable.readyForShearing` of an alive mob of the type (a dispenser's shears look at it).
+    fn ready_for_shearing(&self, m: &MobData) -> bool {
+        let _ = m;
+        false
+    }
+    /// `setItemSlot` and `setGuaranteedDrop` for the slots past the six (`BODY` is 6, `SADDLE` 7) when a
+    /// dispenser puts a piece on: whether the type has the slot.
+    fn set_extra_equipment(&self, m: &mut MobData, slot: u8, stack: ItemStack) -> bool {
+        let _ = (m, slot, stack);
+        false
+    }
+    /// A dispenser puts a chest on a pack animal (`AbstractChestedHorse`'s slot 499): whether it has one now.
+    fn put_chest(&self, m: &mut MobData) -> bool {
+        let _ = m;
+        false
+    }
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let _ = m;
         Vec::new()
@@ -738,6 +768,10 @@ pub trait Kind: Sync + Send {
         Some("minecraft:entity.generic.swim")
     }
     /// A swim sound that depends on the mob's state (a calf's), when it has one.
+    /// `getSwimSplashSound` and `getSwimSound` when they are not the generic ones (`doWaterSplashEffect`).
+    fn splash_sounds(&self) -> Option<(&'static str, &'static str)> {
+        None
+    }
     fn swim_sound_for(&self, _m: &MobData) -> Option<&'static str> {
         None
     }
@@ -755,6 +789,27 @@ pub trait Kind: Sync + Send {
     fn omnidirectional_air_mover(&self) -> bool {
         false
     }
+    /// [`Kind::omnidirectional_air_mover`] for types that decide by their state (a sulfur cube with an
+    /// item in it).
+    fn omnidirectional_air_mover_now(&self, m: &MobData) -> bool {
+        let _ = m;
+        self.omnidirectional_air_mover()
+    }
+    /// `detectEquipmentUpdates` past the attribute modifiers of the six slots: the type's own slots
+    /// (a sulfur cube's body) noticed a tick after they changed.
+    fn detect_equipment_updates(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let _ = (e, m, level);
+    }
+    /// `knockback(strength, dx, dz, source, amount)` of a full hit, when the type has its own
+    /// (a sulfur cube with an item in it): true when it moved the mob.
+    fn hit_knockback(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, strength: f64, dx: f64, dz: f64, source: &DamageSource, amount: f32) -> bool {
+        let _ = (e, m, level, strength, dx, dz, source, amount);
+        false
+    }
+    /// What `travelInFluid` of the type adds after the shared movement (a floating sulfur cube bobs up).
+    fn after_travel_in_fluid(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let _ = (e, m, level);
+    }
     /// `doPush(player)` overridden to nothing (parrots): neither side moves.
     fn do_push_skips_players(&self) -> bool {
         false
@@ -763,6 +818,10 @@ pub trait Kind: Sync + Send {
     fn sound_volume(&self, m: &MobData) -> f32 {
         let _ = m;
         1.0
+    }
+    /// `getVoicePitch` when it is a constant that draws nothing (happy ghasts: 1).
+    fn fixed_voice_pitch(&self) -> Option<f32> {
+        None
     }
     /// `getVoicePitch` from the shared one (bats: 0.95 of it).
     fn voice_pitch(&self, m: &MobData, pitch: f32) -> f32 {
@@ -774,6 +833,10 @@ pub trait Kind: Sync + Send {
     fn thunder_hit(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, bolt: i32) -> bool {
         let _ = (e, m, level, bolt);
         false
+    }
+    /// What the type does after the plain `Entity.thunderHit` (which the caller runs when `thunder_hit` is false).
+    fn after_thunder_hit(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, bolt: i32) {
+        let _ = (e, m, level, bolt);
     }
     /// `isPushable` (false: bats neither push nor get pushed).
     fn pushable(&self) -> bool {
@@ -810,6 +873,10 @@ pub trait Kind: Sync + Send {
     /// rebuild their brain for the other age.
     fn age_boundary_reached(&self, e: &mut Entity, m: &mut MobData) {
         let _ = (e, m);
+    }
+    /// The part of `ageBoundaryReached` that needs the level (a happy ghast stops its brain).
+    fn age_boundary_reached_in(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let _ = (e, m, level);
     }
     /// `shouldDiscardFriction`: in the air the motion is kept, without drag (a long-jumping goat).
     fn discard_friction(&self, m: &MobData) -> bool {

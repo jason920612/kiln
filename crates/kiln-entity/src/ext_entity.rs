@@ -10,6 +10,10 @@ use std::fmt::Debug;
 
 pub mod boat;
 pub mod area_effect_cloud;
+pub mod armor_stand;
+pub mod display;
+pub mod interaction;
+pub mod marker;
 pub mod evoker_fangs;
 pub mod dragon_fireball;
 pub mod end_crystal;
@@ -18,6 +22,10 @@ pub mod fireball;
 pub mod minecart;
 pub mod firework;
 pub mod fishing_hook;
+pub mod hanging;
+pub mod item_frame;
+pub mod painting;
+pub mod painting_variants;
 pub mod leash_knot;
 pub mod lightning;
 pub mod llama_spit;
@@ -46,6 +54,11 @@ pub trait EntityExt: Any + Debug + Send + Sync {
         let _ = (e, d);
     }
     /// The spawn packet's data field (`getAddEntityPacket`: often the owner's id).
+    /// What a viewer sees it wear: (equipment slot id, stack), the filled slots.
+    fn equipment_shown(&self) -> Vec<(u8, kiln_item::ItemStack)> {
+        Vec::new()
+    }
+
     fn spawn_data(&self) -> i32 {
         0
     }
@@ -126,6 +139,7 @@ pub const TYPES: &[&str] = &[
     "minecraft:dragon_fireball",
     "minecraft:wither_skull",
     "minecraft:breeze_wind_charge",
+    "minecraft:wind_charge",
     "minecraft:firework_rocket",
     // -- wp30: llamas
     "minecraft:llama_spit",
@@ -133,6 +147,17 @@ pub const TYPES: &[&str] = &[
     "minecraft:leash_knot",
     // -- wp44: the End
     "minecraft:eye_of_ender",
+    // -- wp49: hanging entities
+    "minecraft:item_frame",
+    "minecraft:glow_item_frame",
+    "minecraft:painting",
+    "minecraft:armor_stand",
+    // -- wp49: data entities
+    "minecraft:block_display",
+    "minecraft:item_display",
+    "minecraft:text_display",
+    "minecraft:interaction",
+    "minecraft:marker",
 ];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
@@ -144,7 +169,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:firework_rocket" => firework::load(r),
         n if boat::is_boat(n) => boat::load(n, r),
         n if minecart::is_minecart(n) => minecart::load(n, r),
-        "minecraft:breeze_wind_charge" => wind_charge::load(r),
+        "minecraft:breeze_wind_charge" | "minecraft:wind_charge" => wind_charge::load(type_name, r),
         "minecraft:area_effect_cloud" => area_effect_cloud::load(r),
         "minecraft:evoker_fangs" => evoker_fangs::load(r),
         "minecraft:end_crystal" => end_crystal::load(r),
@@ -153,6 +178,13 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:llama_spit" => llama_spit::load(r),
         "minecraft:leash_knot" => leash_knot::load(r),
         "minecraft:eye_of_ender" => eye_of_ender::load(r),
+        "minecraft:item_frame" => item_frame::load(false, r),
+        "minecraft:glow_item_frame" => item_frame::load(true, r),
+        "minecraft:painting" => painting::load(r),
+        "minecraft:armor_stand" => armor_stand::load(r),
+        n if display::is_display(n) => display::load(n, r),
+        "minecraft:interaction" => interaction::load(r),
+        "minecraft:marker" => marker::load(r),
         _ => None,
     }
 }

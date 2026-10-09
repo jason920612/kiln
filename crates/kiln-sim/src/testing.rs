@@ -355,3 +355,19 @@ pub fn stream_digest(walkers: &[Walker], retired: &[Arc<SinkStats>]) -> u64 {
     }
     h
 }
+
+/// One mob chunk generation made, as `InitialMobVectors` lists it: chunk, type, position, yaw.
+pub type InitialMob = ((i32, i32), &'static str, [f64; 3], f32);
+
+/// The log of [`log_initial_mobs`].
+pub(crate) static INITIAL_LOG: Mutex<Option<Vec<InitialMob>>> = Mutex::new(None);
+
+/// Starts (or stops, with `false`) logging the mobs chunk generation makes; [`take_initial_mobs`] gives them.
+pub fn log_initial_mobs(on: bool) {
+    *INITIAL_LOG.lock().unwrap() = on.then(Vec::new);
+}
+
+/// The mobs logged since the last call.
+pub fn take_initial_mobs() -> Vec<InitialMob> {
+    INITIAL_LOG.lock().unwrap().as_mut().map(std::mem::take).unwrap_or_default()
+}

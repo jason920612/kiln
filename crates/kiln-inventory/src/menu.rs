@@ -25,6 +25,8 @@ pub struct PlayerFlags {
     /// `hasInfiniteMaterials()` (the `instabuild` ability).
     pub infinite_materials: bool,
     pub spectator: bool,
+    /// `Player.mayBuild()` (not in adventure or spectator mode).
+    pub may_build: bool,
     /// `isDeadOrDying()`.
     pub dead: bool,
     /// Removed from the world (other than by changing dimension) or disconnected: items that
@@ -51,6 +53,11 @@ pub trait World {
     /// `MapItemSavedData` scale of a map (`MapExtendingRecipe`); `None` if the map has no data
     /// or is an exploration map.
     fn map_scale(&self, _map_id: i32) -> Option<i8> {
+        None
+    }
+
+    /// Whether the map's saved data is locked (`MapItemSavedData.locked`); `None` without data.
+    fn map_locked(&self, _map_id: i32) -> Option<bool> {
         None
     }
 
@@ -129,7 +136,7 @@ pub struct Env<'a> {
 }
 
 impl Env<'_> {
-    fn drop_item(&mut self, stack: ItemStack, retain_ownership: bool) {
+    pub(crate) fn drop_item(&mut self, stack: ItemStack, retain_ownership: bool) {
         if !stack.is_empty() {
             self.out.push(Effect::Drop { stack, retain_ownership });
         }
@@ -361,7 +368,17 @@ impl Menu {
     }
 
     fn may_place(&self, env: &Env, i: usize, stack: &ItemStack) -> bool {
-        self.slots[i].may_place(stack, env.rules)
+        let slot = self.slots[i];
+        // `CrafterSlot.mayPlace`: not into a slot the crafter has disabled.
+        if slot.kind == SlotKind::CrafterInput && self.slot_disabled(env, slot.index) {
+            return false;
+        }
+        slot.may_place(stack, env.rules)
+    }
+
+    /// `CrafterMenu.isSlotDisabled`: the block entity's data value for the slot.
+    fn slot_disabled(&self, env: &Env, index: usize) -> bool {
+        index < 9 && self.data(env, index) == 1
     }
 
     fn may_pickup(&self, env: &Env, i: usize) -> bool {
@@ -499,7 +516,7 @@ impl Menu {
     fn safe_clone(&mut self, env: &mut Env, i: usize) -> ItemStack {
         let item = self.item(env, i);
         let mut clone = item.copy_with_count(item.max_stack_size());
-        if self.slots[i].kind == SlotKind::CraftResult {
+        if matches!(self.slots[i].kind, SlotKind::CraftResult | SlotKind::CartographyResult) {
             self.crafted_post_process(env, &mut clone);
         }
         clone
@@ -525,6 +542,8 @@ impl Menu {
                 self.on_crafted_by(env, stack, self.remove_count, None);
                 self.remove_count = 0;
             }
+            // `CartographyTableMenu$5.onTake`: `Item.onCraftedBy` (the map is locked or scaled).
+            SlotKind::CartographyResult => self.crafted_post_process(env, stack),
             SlotKind::StonecutterResult | SlotKind::SmithingResult => {
                 let n = stack.count();
                 self.on_crafted_by(env, stack, n, self.result.recipe_used);
@@ -582,6 +601,10 @@ impl Menu {
             SlotKind::AnvilResult => crate::workstation::anvil_take(self, env),
             SlotKind::LoomResult => {
                 crate::stations::loom_take(self, env);
+                self.set_changed(env, i);
+            }
+            SlotKind::CartographyResult => {
+                crate::stations::cartography_take(self, env);
                 self.set_changed(env, i);
             }
             _ => self.set_changed(env, i),
@@ -711,7 +734,7 @@ impl Menu {
         }
     }
 
-    fn data(&self, env: &Env, i: usize) -> i32 {
+    pub(crate) fn data(&self, env: &Env, i: usize) -> i32 {
         match self.local_data.get(i) {
             Some(v) => *v,
             None => env.block.as_deref().map_or(0, |b| b.data(i)),
@@ -734,6 +757,10 @@ impl Menu {
     /// `broadcastChanges`: sends every slot, the carried stack and the data values the client
     /// does not have yet.
     pub fn broadcast_changes(&mut self, env: &mut Env) {
+        // `CrafterMenu.slotChanged` (the menu listens to itself): the result follows the 3x3 container's items.
+        if self.kind == MenuKind::Crafter {
+            crate::menus::crafter_refresh_result(self, env);
+        }
         for i in 0..self.slots.len() {
             if self.settled[i] && matches(&self.last_slots[i], self.item(env, i)) {
                 continue;
