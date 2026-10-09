@@ -133,7 +133,7 @@
 | 鍋釜（空、水、熔岩、粉雪） | C | 4 | buckets.rs、tests/items.rs；降水填充 A（weather vectors） |  |
 | 堆肥桶、蠟燭與蠟燭蛋糕、南瓜、鑿過的南瓜、乾草捆、發光方塊、小徑 | C | 8 | tools.rs、tests/items.rs、golem.rs | 蛋糕本體（吃蛋糕）為 D；乾草捆摔落減傷為 D（見玩家）；小徑 tick 轉泥土為 D |
 | 骨粉可成長但無隨機 tick 的植物（草、蕨、海草、海泡菜、苔蘚、杜鵑、地獄真菌、玫瑰苔、花壇、灌木等） | C | 17 | tools.rs 骨粉 perform；tests/items.rs | 骨粉本身沒有向量；樹苗骨粉只進一階（樹不會長） |
-| 發射器、投擲器 | C | 2 | tests/containers.rs；比較器輸出 A | 發射器只實作預設掉落、箭、雪球、蛋、水與岩漿桶、礦車（`dispense.rs:6`）；點擊選單 A |
+| 發射器、投擲器 | A／投擲器 C | 2 | `container_parity` 的 `dispenser_` 95 個 scenario＋`wind_` 28 個（wp49，見 6.3）；比較器輸出 A | 發射器：骨粉、打火石、蜂蜜瓶與玻璃瓶、發光石、蜂巢與剪刀、TNT、潛影盒、船、礦車、盔甲座、全部拋射物（箭、藥水箭、煙火、火焰彈、風彈、雪球…）、水／岩漿／粉雪／生物桶、生怪蛋、南瓜與凋零頭顱的傀儡建造、穿裝備（盔甲座、拾取戰利品的生物、馬鞍與馬鎧、熾足獸鞍）、箱子上驢與羊駝、硫磺方塊吞物、剪雪人／哞菇都有向量；玩家穿裝備、剪羊、駱駝鞍、快樂恐懼魔馬具只有 `tests/items.rs` 的單元測試或無測試；缺：刷子對犰狳、剪斷拴繩、豬鞍（豬沒有鞍欄位）、鸚鵡螺鞍與護甲 |
 | 信標、附魔台、釀造台、砂輪、織布機、鐵砧選單 | C | 5 | tests/containers.rs、kiln-inventory/tests/menus.rs | 選單點擊無向量（見容器區） |
 | 頭顱（凋零骷髏頭、玩家頭、豬布林頭等） | C | 7 | wither.rs（凋零建造） | 玩家頭顱 profile 放置時不套用 |
 | 避雷針 | C | 1 | weather.rs 單元測試 | 氧化版為 D |
@@ -147,11 +147,11 @@
 | 銅氧化與其他風化銅 | A | 14 | `misc` 的 13 個銅 scenario（`ChangeOverTimeBlock` 掃描與機率、門的下半、箱與大箱的兩半互相跟隨） |  |
 | 海龜蛋、紅石礦、紫水晶、滴水石、乾燥的哈氣、硫磺 | A | 9 | `misc` 44 個 scenario（生長、掉落、滴水、鍋釜、泥） | 模擬端讓身體壓到絆線與海龜蛋 |
 | 珊瑚、海綿、鷹架、絆線與鉤、目標方塊、大型垂葉 | A | 13 | `wet` 7＋`misc` 的絆線、目標、垂葉、銅燈 scenario | 鷹架塌落的實體部分為 C |
-| 刷怪磚、試煉刷怪磚、寶庫 | 刷怪磚 A／其餘 D | 3 | 刷怪磚：mob_parity 的 `spawner_` 49 個 scenario（延遲、潛在生成物與權重、範圍、上限、光線與自訂規則、生怪蛋、`spawner_blocks_work`、亂數與存檔）；試煉刷怪磚與寶庫只存 NBT | 試煉刷怪磚、寶庫不運作 |
+| 刷怪磚、試煉刷怪磚、寶庫 | A | 3 | 刷怪磚：mob_parity 的 `spawner_` 49 個 scenario（延遲、潛在生成物與權重、範圍、上限、光線與自訂規則、生怪蛋、`spawner_blocks_work`、亂數與存檔）；試煉刷怪磚 `interact_parity` `trial_` 14 個、寶庫 `vault_` 19 個 scenario（wp49，見 6.3） | 試煉刷怪磚的怪物由 level 亂數決定的部分（出現位置）靠給定位置避開；不祥試煉的 mob 組合只用 datapack 設定檢查 |
 | 告示牌、懸掛式告示牌 | A | 4 | `interact_parity` 的 sign／equip／book／pick 共 409 個 scenario（編輯與編輯鎖、染色、上蠟、螢光墨囊、點擊事件、牆上與懸掛式放置） | 懸掛告示牌的存活（支撐消失會掉）未模擬 |
-| 營火、蜂巢、鐘、講台、裝飾陶罐、書架、擱板、合成器、製圖台、潛影導管 | D | 10 | 只存 NBT 或選單不完整 | 營火不烹飪、蜂巢無蜜蜂、鐘不響、講台無選單 |
-| 指令方塊、結構方塊、拼圖方塊 | D | 3 | 只存 NBT；封包被丟棄 |  |
-| 其他：日光感測器、旗幟、花盆、蛋糕、凋零玫瑰、終界傳送門框架、氣泡柱、可摔落的刷子方塊 | 框架與凋零玫瑰 A／其餘 D | 9 | 終界傳送門框架：`end` 28 個 scenario（放眼、比較器、環形開啟、1503／1038 事件）；凋零玫瑰：`effect_parity` `haz_wither_rose_*` | 日光感測器無輸出、蛋糕不能吃、氣泡柱無作用 |
+| 營火、蜂巢、鐘、講台、裝飾陶罐、書架（雕紋）、合成器、製圖台 | A | 8 | wp49：`interact_parity` 的營火＋陶罐＋書架 `b49` 67、鐘 76、蜂巢 22、講台 22、合成器 99、陶罐 44、製圖台與地圖 21；`container_parity` 的營火 6、蜂巢 6、講台 10、陶罐 14、合成器 26（見 6.3） | 原清單中的擱板（shelf）與潛影導管沒有獨立向量（未驗證，沿用 C） |
+| 指令方塊（普通、連鎖、重複；條件式）、結構方塊、拼圖方塊 | 指令方塊 A／結構與拼圖方塊 D | 3 | wp49：`interact_parity` 的指令方塊 46 個＋`container_parity` 的 `cmdblock` 24 個 scenario（執行、條件、連鎖、重複、紅石、自動、`command_block_output`、礦車指令方塊） | 結構方塊、拼圖方塊只存 NBT；封包被丟棄 |
+| 其他：日光感測器、旗幟、花盆、蛋糕、凋零玫瑰、終界傳送門框架、氣泡柱、可摔落的刷子方塊 | A（旗幟圖樣除外） | 9 | 終界傳送門框架：`end` 28 個 scenario；凋零玫瑰：`effect_parity` `haz_wither_rose_*`；wp49：日光感測器 `daylight` 4、蛋糕 `cake` 23、花盆（見上）、氣泡柱 `block/bubble` 6、刷子 `brush` 17 個 scenario | 旗幟圖樣為 D |
 
 沒列的純形狀類別（樓梯、牆、鐵欄杆等，無伺服器端 hook）由 `blocks_diff` 的連接與彈出 scenario 一併驗證（A）。
 
@@ -168,10 +168,10 @@
 | 馬、驢、騾、骷髏馬物品欄 | A | 240 | `mount.jsonl` | 無羊駝向量 |
 | Sculk 感測器、創生之心 | A | 12／10 | `sculk_parity.rs`、`tests/creaking.rs` | – |
 | 釀造台運作 | C | 0（配方查詢 A 3,289 筆） | `tests/containers.rs` | 計時、燃料、選單點擊無向量 |
-| 發射器 | C（部分 D） | 2 | `tests/containers.rs` | 只實作預設掉落、箭、雪球、蛋、水與岩漿桶、空桶、礦車；缺火焰彈、骨粉、盔甲、藥水、剪刀、TNT、煙火、船、潛影盒等（`dispense.rs:6`） |
+| 發射器 | A | 95＋28 | `container_parity` 的 `dispenser_`／`wind_`（wp49，見 3.1 與 6.3） | 刷子對犰狳、剪斷拴繩、豬鞍、鸚鵡螺鞍與護甲 |
 | 投擲器、終界箱、信標、附魔台、鐵砧、砂輪、織布機、商人選單、羊駝物品欄、床、重生錨 | C | 0 | `tests/*`、`kiln-inventory/tests/menus.rs` | 選單點擊向量只涵蓋 13 種選單（見下） |
-| 合成器、講台、製圖台、裝飾陶罐、書架、營火、潛影導管、鐘、蜂巢 | D | 0 | 只有 NBT 往返（B） | 見 3.1 |
-| 刷怪磚 A／試煉刷怪磚、寶庫 D | 刷怪磚 A | 49 | `mob_parity` 的 `spawner_`＋`cavespider_` | 試煉刷怪磚、寶庫只存 NBT |
+| 合成器、講台、製圖台、裝飾陶罐、書架、營火、鐘、蜂巢 | A | 見 3.1 | wp49 的 `interact_parity`／`container_parity` 向量（見 3.1 與 6.3） | – |
+| 刷怪磚、試煉刷怪磚、寶庫 | A | 49＋14＋19 | `mob_parity` 的 `spawner_`＋`cavespider_`；`interact_parity` 的 `trial_`、`vault_` | – |
 | 告示牌編輯、染色、上蠟、書與筆 | A | 194＋21 | `interact_parity.rs`（`sign_*`、`book_*`）；未放行文字過濾（聊天過濾器）與書的 `resolveBookComponents` | 橫幅與頭顱放置資料仍 D |
 | 合成配方：有形、無形、轉換、特殊、冶煉、高爐、煙燻、營火烹飪、釀造、切石、鍛造 | A | 827／375／33＋全部特殊配方；冶煉類 116 配方；釀造 279 | `crafting_parity.rs`、`single_parity.rs` | 有 4 個配方沒被向量打到 |
 | 配方書顯示與放置 | C | 0 | `recipe_book.rs`、`menus.rs` | 無封包位元組比對 |
@@ -209,7 +209,7 @@
 | 右鍵穿裝備（盔甲、鞘翅；交換、創造、詛咒、冷卻、副手、冒險模式） | A | `equip_*` 115 個 scenario（`interact_parity.rs`） | `InteractVectors.java` |  |
 | 剪刀、釣竿、皮帶、煙火、末影珍珠 | A\* | 528／96／18／16／20 | 各 vector | 浮標咬鉤時序、珍珠傳送傷害為 C |
 | 末影之眼（放進框架、開傳送門、飛行、落下或碎裂）、`/locate` 的 `#eye_of_ender_located` | A | 40 個飛行向量（`entity_parity`）、28 個框架與環形 scenario（`block_parity` 的 `end`） | `EntityVectors.java`、`BlockTickVectors.java` |  |
-| 地圖、命名牌、刷子、玩家 wind charge、發射器多數行為 | D | 0 | – | 地圖與製圖台不可用；探索地圖停在空地圖 |
+| 地圖（含製圖台、旗幟、展示框、探索地圖）、命名牌、刷子、玩家 wind charge、發射器 | A | `interact_parity` 的 `maps_`／`carto_`／`mframe_` 23 個、`explore` 11 個、`brush_` 17 個；`container_parity` 的 `wind_` 28 個＋`dispenser_` 95 個（wp49，見 6.3） | `InteractVectors.java`、`ExploreMapVectors.java`、`ContainerVectors.java` | 命名牌（Name Tag）見 6.3；地圖顏色以世界地形算（同 worldgen 的 A 範圍） |
 | 移動檢查 | C | 0 | `movement.rs` | 「moved wrongly」缺：`player::server_move` 有 120 個原版向量但模擬沒接上（`region.rs:855`） |
 | 飢餓、飽和、自然回血 | A\* | 隨效果向量 | `health.rs` | 自然回血無專屬向量 |
 | 經驗與等級、死亡重生、睡眠、出生點 | C／A\* | – | `xp.rs`、`sleep.rs`、`weather_parity.rs` | 等級公式無向量 |

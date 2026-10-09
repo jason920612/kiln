@@ -493,6 +493,10 @@ fn run_case(line: &Value) -> Vec<String> {
     if line["op"].as_bool() == Some(true) {
         console.push(ToSim::Console("op Interact".into()));
     }
+    // (The vectors' player had its game mode from the start: a trial spawner must not meet a survival player first.)
+    if let Some(mode) = line["game_mode"].as_str().filter(|m| *m != "survival") {
+        console.push(ToSim::Console(format!("gamemode {mode} Interact")));
+    }
     console.extend(line["commands"].as_array().unwrap().iter().map(|c| ToSim::Console(c.as_str().unwrap().to_owned())));
     assert!(sim.step(console));
     let pos: Vec<f64> = line["pos"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
