@@ -9,7 +9,7 @@ use crate::{OVERWORLD_ID, Sim, mobs, poi, spawner};
 use kiln_blocks::BlockPos;
 use kiln_entity::mob::{MobKind, mth};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
-use kiln_world::ChunkPos;
+use kiln_world::{Blocks as _, ChunkPos};
 
 /// `VillageSiege.State`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
