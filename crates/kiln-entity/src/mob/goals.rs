@@ -625,6 +625,9 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
                 return false;
             }
             *path = path::create_path_to_entity(e, m, level, t.block_pos(), 0);
+            if std::env::var_os("KILN_DEBUG_MELEE").is_some() {
+                eprintln!("MELEE can_use now {now} target {:?} path {:?} in_water {} breaching {} wb {}", t.block_pos(), path.as_ref().map(|p| p.nodes.len()), e.is_in_water(), m.nav.allow_breaching, m.nav.water_bound);
+            }
             let found = path.is_some() || super::within_melee_range(e, m, &t);
             // `Bee$BeeAttackGoal.canUse`: after the melee check (which keeps its 20-tick pause).
             found && (*kind != MeleeKind::Bee || (super::kinds::bee::is_angry(m, level) && !super::kinds::bee::has_stung(m)))
