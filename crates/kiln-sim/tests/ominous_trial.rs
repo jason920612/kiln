@@ -22,6 +22,8 @@ impl World {
             ToSim::Console("gamemode survival Keeper".into()),
             ToSim::Console("difficulty normal".into()),
             ToSim::Console("time set 18000".into()),
+            ToSim::Console("effect give Keeper minecraft:resistance 1000000 4 true".into()),
+            ToSim::Console("effect give Keeper minecraft:regeneration 1000000 4 true".into()),
         ]));
         let mut client = Client::new(1, stats);
         for _ in 0..5 {
