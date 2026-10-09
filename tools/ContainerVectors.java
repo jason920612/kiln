@@ -297,7 +297,70 @@ public class ContainerVectors {
         potScenarios(out);
         lecternScenarios(out);
         dispenserScenarios(out);
+        crafterScenarios(out);
         return out;
+    }
+
+    /**
+     * wp49: a crafter facing east at the origin, powered from above at tick 2 (it crafts at tick 6); what it puts into
+     * the container in front (1, 0, 0) or throws out, its own slots and its block are recorded.
+     */
+    static Scenario craft(String name, String nbt) {
+        return new Scenario("crafter_" + name, 20)
+                .container(0, 0, 0, "minecraft:crafter[orientation=east_up]" + nbt).state(0, 0, 0).drops().entities()
+                .at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block");
+    }
+
+    static void crafterScenarios(List<Scenario> out) {
+        // One log makes four planks, thrown out in front.
+        out.add(craft("planks", items(slot(4, "oak_log", 3))));
+        // A recipe that needs the shape, and slots that hold more than one.
+        out.add(craft("sticks", items(slot(1, "oak_planks", 2), slot(4, "oak_planks", 5))));
+        out.add(craft("crafting_table_stacks", items(slot(0, "oak_planks", 10), slot(1, "oak_planks", 3), slot(3, "oak_planks", 1), slot(4, "oak_planks", 64))));
+        out.add(craft("no_recipe", items(slot(0, "dirt", 1))));
+        out.add(craft("empty", ""));
+        // Milk buckets leave their buckets behind.
+        out.add(craft("cake", items(slot(0, "milk_bucket", 1), slot(1, "milk_bucket", 1), slot(2, "milk_bucket", 1), slot(3, "sugar", 1), slot(4, "egg", 1),
+                slot(5, "sugar", 1), slot(6, "wheat", 2), slot(7, "wheat", 1), slot(8, "wheat", 1))));
+        // The result goes into the container in front.
+        out.add(craft("into_chest", items(slot(4, "oak_log", 1))).container(1, 0, 0, "minecraft:chest"));
+        out.add(craft("into_full_chest", items(slot(4, "oak_log", 1))).container(1, 0, 0, "minecraft:chest" + items(fullChest("stone", 64, 27, 0))));
+        out.add(craft("into_nearly_full_chest", items(slot(4, "oak_log", 1))).container(1, 0, 0, "minecraft:chest" + items(fullChest("stone", 64, 26, 0), slot(26, "oak_planks", 62))));
+        out.add(craft("into_hopper", items(slot(4, "oak_log", 1))).container(1, 0, 0, "minecraft:hopper[facing=east]"));
+        out.add(craft("cake_into_chest", items(slot(0, "milk_bucket", 1), slot(1, "milk_bucket", 1), slot(2, "milk_bucket", 1), slot(3, "sugar", 1), slot(4, "egg", 1),
+                slot(5, "sugar", 1), slot(6, "wheat", 1), slot(7, "wheat", 1), slot(8, "wheat", 1))).container(1, 0, 0, "minecraft:chest"));
+        // Into another crafter one item at a time, over its enabled slots.
+        out.add(craft("into_crafter", items(slot(4, "oak_log", 1)))
+                .container(1, 0, 0, "minecraft:crafter[orientation=north_up]{Items:[" + slot(2, "oak_planks", 1) + "],disabled_slots:[I;0,1]}"));
+        // Slots switched off: kept, and counted by comparators.
+        out.add(craft("disabled_slots", "{Items:[" + slot(4, "oak_log", 1) + "],disabled_slots:[I;0,1,8]}").comparator(0, 0, -1, "south"));
+        out.add(craft("comparator_items", items(slot(0, "dirt", 1), slot(5, "dirt", 1))).comparator(0, 0, -1, "south"));
+        out.add(craft("comparator_full", items(slot(0, "oak_log", 1), slot(1, "dirt", 1), slot(2, "dirt", 1), slot(3, "dirt", 1), slot(4, "dirt", 1), slot(5, "dirt", 1),
+                slot(6, "dirt", 1), slot(7, "dirt", 1), slot(8, "dirt", 1))).comparator(0, 0, -1, "south"));
+        // Facing down into a chest, and up.
+        out.add(new Scenario("crafter_down_into_chest", 20).container(0, 0, 0, "minecraft:crafter[orientation=down_north]" + items(slot(4, "oak_log", 1)))
+                .container(0, -1, 0, "minecraft:chest").state(0, 0, 0).drops().entities().at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
+        out.add(new Scenario("crafter_up_throws", 20).container(0, 0, 0, "minecraft:crafter[orientation=up_east]" + items(slot(4, "oak_log", 1)))
+                .state(0, 0, 0).drops().entities().at(2, "setblock ~0 ~-1 ~0 minecraft:redstone_block"));
+        // Power that comes and goes before the scheduled tick still crafts; power that stays does not craft again.
+        out.add(craft("short_pulse", items(slot(4, "oak_log", 4))).at(3, "setblock ~0 ~1 ~0 minecraft:air"));
+        out.add(craft("pulses_twice", items(slot(4, "oak_log", 4))).at(9, "setblock ~0 ~1 ~0 minecraft:air").at(12, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
+        out.add(new Scenario("crafter_unpowered", 12).container(0, 0, 0, "minecraft:crafter[orientation=east_up]" + items(slot(4, "oak_log", 1))).state(0, 0, 0).drops());
+        // A hopper above spreads its items over the slots.
+        out.add(new Scenario("crafter_fed_by_hopper", 60).container(0, 1, 0, "minecraft:hopper[facing=down]" + items(slot(0, "cobblestone", 20), slot(1, "dirt", 5)))
+                .container(0, 0, 0, "minecraft:crafter[orientation=east_up]" + items(slot(2, "cobblestone", 3), slot(5, "cobblestone", 1))).state(0, 0, 0));
+        out.add(new Scenario("crafter_fed_skips_disabled", 60).container(0, 1, 0, "minecraft:hopper[facing=down]" + items(slot(0, "cobblestone", 30)))
+                .container(0, 0, 0, "minecraft:crafter[orientation=east_up]{disabled_slots:[I;0,1,2,3]}").state(0, 0, 0));
+        out.add(new Scenario("crafter_fed_by_dropper", 40).container(0, 1, 0, "minecraft:dropper[facing=down]" + items(slot(0, "cobblestone", 9)))
+                .container(0, 0, 0, "minecraft:crafter[orientation=east_up]").state(0, 0, 0)
+                .at(2, "setblock ~1 ~1 ~0 minecraft:redstone_block").at(8, "setblock ~1 ~1 ~0 minecraft:air").at(10, "setblock ~1 ~1 ~0 minecraft:redstone_block")
+                .at(16, "setblock ~1 ~1 ~0 minecraft:air").at(18, "setblock ~1 ~1 ~0 minecraft:redstone_block"));
+        // A hopper below takes what the crafter holds (a crafter is a container like any).
+        out.add(new Scenario("crafter_hopper_below", 40).container(0, 0, 0, "minecraft:crafter[orientation=east_up]" + items(slot(0, "dirt", 3))).container(0, -1, 0, "minecraft:hopper[facing=down]")
+                .container(0, -2, 0, "minecraft:chest").state(0, 0, 0));
+        // The command that empties it, and an item put into a switched-off slot switches it on.
+        out.add(craft("item_command_enables_slot", "{disabled_slots:[I;3]}").at(1, "item replace block ~0 ~0 ~0 container.3 with minecraft:stone 2"));
+        out.add(craft("clear_command", items(slot(4, "oak_log", 1))).at(1, "item replace block ~0 ~0 ~0 container.4 with minecraft:air"));
     }
 
     /**
@@ -900,6 +963,12 @@ public class ContainerVectors {
         }
         m.put("items", items);
         if (be instanceof HopperBlockEntity) m.put("cooldown", field(be, "cooldownTime"));
+        // wp49: a crafter's switched-off slots (a bit each), its crafting countdown and whether it is powered.
+        if (be instanceof net.minecraft.world.level.block.entity.CrafterBlockEntity cb) {
+            int mask = 0;
+            for (int i = 0; i < 9; i++) if (cb.isSlotDisabled(i)) mask |= 1 << i;
+            m.put("crafter", List.of(mask, field(be, "craftingTicksRemaining"), cb.isTriggered() ? 1 : 0));
+        }
         // wp36: a jukebox's song player (playing, ticks since the song started).
         if (be instanceof net.minecraft.world.level.block.entity.JukeboxBlockEntity j) {
             m.put("jukebox", List.of(j.getSongPlayer().isPlaying() ? 1 : 0, j.getSongPlayer().getTicksSinceSongStarted()));

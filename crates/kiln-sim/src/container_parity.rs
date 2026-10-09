@@ -36,6 +36,13 @@ fn container_json(sim: &Sim, pos: BlockPos) -> Value {
         crate::container::BeKind::Furnace(_) => {
             m.insert("furnace".into(), json!([c.lit_remaining, c.lit_total, c.cook_timer, c.cook_total]));
         }
+        // A crafter: the switched-off slots (a bit each), the crafting countdown, whether it is powered.
+        crate::container::BeKind::Crafter => {
+            if let Some(cr) = &c.crafter {
+                let mask: i32 = (0..9).filter(|&i| cr.disabled[i]).map(|i| 1 << i).sum();
+                m.insert("crafter".into(), json!([mask, cr.ticks, i32::from(cr.triggered)]));
+            }
+        }
         // A campfire: the four timers, then the four totals.
         crate::container::BeKind::Campfire => {
             let mut v: Vec<i32> = c.cooking.to_vec();

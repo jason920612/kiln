@@ -1065,7 +1065,7 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 && let Some(crate::container::open::OpenBlock::Containers { first, .. }) = &p.containers.open
             {
                 let at = first.0;
-                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                let level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 if let Some(c) = level.blocks.containers.get_mut(at)
                     && let Ok(slot) = usize::try_from(slot)
                 {

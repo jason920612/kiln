@@ -79,7 +79,7 @@ fn smaller_stack_exists(c: &ContainerBe, count: i32, stack: &ItemStack, slot: us
 }
 
 /// `CrafterBlockEntity.canPlaceItem`: hoppers spread items over the slots, filling the earliest of the least full.
-pub(crate) fn can_place_item(c: &ContainerBe, slot: usize, stack: &ItemStack) -> bool {
+pub(crate) fn can_place_item(c: &ContainerBe, slot: usize, _stack: &ItemStack) -> bool {
     if c.crafter.as_ref().is_some_and(|cr| cr.disabled.get(slot) == Some(&true)) {
         return false;
     }
