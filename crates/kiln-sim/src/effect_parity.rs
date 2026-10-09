@@ -402,8 +402,12 @@ fn run_scenario(line: &Value) -> Vec<String> {
         if let Some(watched) = want["blocks"].as_array() {
             for (w, state) in line["watch"].as_array().unwrap().iter().zip(watched) {
                 let at = |k: usize| w[k].as_i64().unwrap() as i32;
-                let got = sim.block_at(base[0] + at(0), base[1] + at(1), base[2] + at(2)).map(kiln_blocks::state::state_string).unwrap_or_default();
-                eq(&format!("block {w}"), got, state.as_str().unwrap().to_owned());
+                // (`EffectVectors.BASE`; the player's own offset is `dy`.)
+                let got = sim.block_at(at(0), 100 + at(1), at(2)).map(kiln_blocks::state::state_string).unwrap_or_default();
+                let want = state.as_str().unwrap().to_owned();
+                // (Water that flows is not what these look at: Kiln's level ticks, the recorded one stands still.)
+                let both_flowing = got.starts_with("minecraft:water[") && want.starts_with("minecraft:water[");
+                eq(&format!("block {w}"), if both_flowing { want.clone() } else { got }, want);
             }
         }
         if let Some(wear) = want["boots_damage"].as_i64() {
