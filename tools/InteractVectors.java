@@ -466,6 +466,272 @@ public class InteractVectors {
         out.add(c);
     }
 
+    /** wp50: a cushion case: the cushions around are recorded after every step. */
+    static Case cushionCase(String name) {
+        return new Case("cushion50_" + name).hanging();
+    }
+
+    static final String[] DYES = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"};
+
+    static void cushions50(List<Case> out) {
+        Case c;
+        // ---- putting one down on the top of a stone block (2, 99, 0): every color, a few clicks, the way the player faces
+        for (String color : DYES) {
+            c = cushionCase("place_" + color).stat("minecraft:" + color + "_cushion");
+            c.cmd("setblock 2 99 0 minecraft:stone");
+            c.slot("h0", stack("minecraft:" + color + "_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+            out.add(c);
+        }
+        float[] yaws = {0f, 45f, 90f, 135f, 180f, -135f, -90f, -45f, 22f, 359f, 720f};
+        for (float yaw : yaws) {
+            c = cushionCase("yaw_" + (int) yaw).stat("minecraft:red_cushion");
+            c.yaw = yaw;
+            c.cmd("setblock 2 99 0 minecraft:stone");
+            c.slot("h0", stack("minecraft:red_cushion", 1)).step(useOnAt(2, 99, 0, 1, 0, 0.1, 1.0, 0.9));
+            out.add(c);
+        }
+        c = cushionCase("place_twice").stat("minecraft:blue_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:blue_cushion", 5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(2, 99, 0, 1, 0, 0.3, 1.0, 0.3));
+        out.add(c);
+        c = cushionCase("place_beside").stat("minecraft:blue_cushion");
+        c.cmd("fill 2 99 0 3 99 1 minecraft:stone");
+        c.slot("h0", stack("minecraft:blue_cushion", 5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(3, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(2, 99, 1, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
+        c = cushionCase("place_overlapping_heights").stat("minecraft:blue_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone");
+        // (The second click is lower in the same cell: the boxes overlap.)
+        c.slot("h0", stack("minecraft:blue_cushion", 5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 0.9, 0.5));
+        out.add(c);
+        for (String mode : new String[] {"creative", "adventure"}) {
+            c = cushionCase("place_" + mode).stat("minecraft:green_cushion");
+            c.gameMode = mode;
+            c.cmd("setblock 2 99 0 minecraft:stone");
+            c.slot("h0", stack("minecraft:green_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+            out.add(c);
+        }
+        c = cushionCase("place_offhand").stat("minecraft:green_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone");
+        c.slot("offhand", stack("minecraft:green_cushion", 2)).step(useOnAt(2, 99, 0, 1, 1, 0.5, 1.0, 0.5));
+        out.add(c);
+        c = cushionCase("place_named").stat("minecraft:green_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone");
+        c.slot("h0", parsed("minecraft:green_cushion[custom_name='\"Seat\"']")).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5))
+                .step(attackEntity(2.5, 100.0, 0.5));
+        out.add(c);
+        // ---- the other faces, and a block over the place
+        for (int face : new int[] {0, 2, 3, 4, 5}) {
+            c = cushionCase("face_" + face).stat("minecraft:red_cushion");
+            c.cmd("setblock 2 99 0 minecraft:stone");
+            c.slot("h0", stack("minecraft:red_cushion", 2)).step(useOnAt(2, 99, 0, face, 0, 0.5, 0.5, 0.5));
+            out.add(c);
+        }
+        c = cushionCase("blocked_above").stat("minecraft:red_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:red_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
+        c = cushionCase("blocked_above_glass").stat("minecraft:red_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:glass");
+        c.slot("h0", stack("minecraft:red_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
+        c = cushionCase("click_inside_stone").stat("minecraft:red_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:red_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 0.5, 0.5));
+        out.add(c);
+        c = cushionCase("click_in_the_air").stat("minecraft:red_cushion");
+        c.cmd("setblock 2 99 0 minecraft:white_carpet");
+        c.slot("h0", stack("minecraft:red_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
+        // ---- on all sorts of blocks: [block, click height]
+        String[][] grounds = {
+                {"carpet", "minecraft:white_carpet", "0.0625"},
+                {"slab_bottom", "minecraft:stone_slab[type=bottom]", "0.5"},
+                {"slab_top", "minecraft:stone_slab[type=top]", "1.0"},
+                {"slab_double", "minecraft:stone_slab[type=double]", "1.0"},
+                {"stairs", "minecraft:oak_stairs[facing=east,half=bottom,shape=straight]", "1.0"},
+                {"stairs_low", "minecraft:oak_stairs[facing=east,half=bottom,shape=straight]", "0.5"},
+                {"stairs_top", "minecraft:oak_stairs[facing=east,half=top,shape=straight]", "1.0"},
+                {"snow_1", "minecraft:snow[layers=1]", "0.125"},
+                {"snow_2", "minecraft:snow[layers=2]", "0.25"},
+                {"snow_8", "minecraft:snow[layers=8]", "1.0"},
+                {"grass", "minecraft:short_grass", "0.5"},
+                {"tall_grass", "minecraft:tall_grass[half=lower]", "0.9"},
+                {"farmland", "minecraft:farmland[moisture=0]", "0.9375"},
+                {"soul_sand", "minecraft:soul_sand", "0.875"},
+                {"path", "minecraft:dirt_path", "0.9375"},
+                {"honey", "minecraft:honey_block", "0.9375"},
+                {"fence", "minecraft:oak_fence", "1.5"},
+                {"fence_gate", "minecraft:oak_fence_gate[facing=south,open=false]", "1.0"},
+                {"wall", "minecraft:cobblestone_wall", "1.0"},
+                {"glass", "minecraft:glass", "1.0"},
+                {"leaves", "minecraft:oak_leaves", "1.0"},
+                {"ice", "minecraft:ice", "1.0"},
+                {"lily", "minecraft:lily_pad", "0.015625"},
+                {"trapdoor_open", "minecraft:oak_trapdoor[open=true,facing=north,half=bottom]", "1.0"},
+                {"trapdoor_closed", "minecraft:oak_trapdoor[open=false,half=bottom]", "0.1875"},
+                {"chest", "minecraft:chest[facing=north]", "0.875"},
+                {"bed", "minecraft:red_bed[facing=east,part=head]", "0.5625"},
+                {"cake", "minecraft:cake[bites=0]", "0.5"},
+                {"torch", "minecraft:torch", "0.6"},
+                {"flower", "minecraft:poppy", "0.375"},
+                {"anvil", "minecraft:anvil[facing=north]", "1.0"},
+                {"lantern", "minecraft:lantern[hanging=false]", "0.5625"},
+                {"cauldron_full_height", "minecraft:cauldron", "1.0"},
+                {"water_cauldron", "minecraft:water_cauldron[level=3]", "1.0"},
+                {"hopper", "minecraft:hopper[enabled=true,facing=down]", "1.0"},
+                {"composter", "minecraft:composter[level=3]", "1.0"},
+                {"composter_empty", "minecraft:composter[level=0]", "1.0"},
+                {"campfire", "minecraft:campfire[lit=false]", "0.4375"},
+                {"end_portal_frame", "minecraft:end_portal_frame[facing=north,eye=false]", "0.8125"},
+                {"lectern", "minecraft:lectern[facing=north,has_book=false,powered=false]", "0.875"},
+                {"scaffolding", "minecraft:scaffolding", "1.0"},
+                {"powder_snow", "minecraft:powder_snow", "1.0"},
+                {"azalea", "minecraft:potted_poppy", "0.375"},
+                {"slime", "minecraft:slime_block", "1.0"},
+                {"cobweb", "minecraft:cobweb", "1.0"},
+                {"vine", "minecraft:vine[north=true]", "1.0"},
+                {"ladder", "minecraft:ladder[facing=north]", "1.0"},
+                {"pointed_dripstone", "minecraft:pointed_dripstone[thickness=tip,vertical_direction=up]", "0.6"},
+                {"bamboo", "minecraft:bamboo", "0.5"},
+                {"sea_pickle", "minecraft:sea_pickle[pickles=1]", "0.375"},
+                {"turtle_egg", "minecraft:turtle_egg", "0.4375"},
+                {"conduit", "minecraft:conduit", "0.8125"},
+                {"stonecutter", "minecraft:stonecutter", "0.5625"},
+                {"grindstone", "minecraft:grindstone[face=floor,facing=north]", "1.0"},
+                {"bell", "minecraft:bell[attachment=floor,facing=north]", "1.0"},
+                {"daylight", "minecraft:daylight_detector", "0.375"},
+                {"repeater", "minecraft:repeater", "0.125"},
+                {"rail", "minecraft:rail", "0.125"},
+                {"pressure_plate", "minecraft:stone_pressure_plate", "0.0625"},
+                {"button_floor", "minecraft:stone_button[face=floor,facing=north]", "0.125"},
+                {"skull", "minecraft:skeleton_skull", "0.5"},
+                {"banner", "minecraft:white_banner", "1.0"},
+                {"sign", "minecraft:oak_sign", "1.0"},
+        };
+        for (String[] g : grounds) {
+            c = cushionCase("on_" + g[0]).stat("minecraft:orange_cushion");
+            c.cmd("setblock 2 99 0 " + g[1]);
+            c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, Double.parseDouble(g[2]), 0.5));
+            out.add(c);
+        }
+        // ---- cauldrons, hoppers and composters are clicked on their collision shape: the corners and the middle
+        for (String block : new String[] {"minecraft:cauldron", "minecraft:hopper[enabled=true,facing=down]", "minecraft:composter[level=0]"}) {
+            String shortName = block.substring(10, block.contains("[") ? block.indexOf('[') : block.length());
+            double[][] clicks = {{0.5, 1.0, 0.5}, {0.1, 1.0, 0.1}, {0.9, 1.0, 0.5}, {0.5, 0.5, 0.05}, {0.5, 0.3, 0.5}, {0.05, 0.9, 0.95}};
+            for (int i = 0; i < clicks.length; i++) {
+                c = cushionCase("shape_" + shortName + "_" + i).stat("minecraft:orange_cushion");
+                c.cmd("setblock 2 99 0 " + block);
+                c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, clicks[i][0], clicks[i][1], clicks[i][2]));
+                out.add(c);
+            }
+        }
+        // the player looks down at the cauldron (the eyes at 101.62)
+        c = cushionCase("shape_cauldron_pitch").stat("minecraft:orange_cushion");
+        c.pitch = 60f;
+        c.cmd("setblock 2 99 0 minecraft:cauldron");
+        c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.3, 1.0, 0.4));
+        out.add(c);
+        // ---- places that are not air: water, lava, fire, a replaceable plant
+        for (String above : new String[] {"minecraft:water", "minecraft:lava", "minecraft:fire", "minecraft:soul_fire", "minecraft:short_grass", "minecraft:snow[layers=1]", "minecraft:snow[layers=3]", "minecraft:vine[north=true]", "minecraft:oak_sign", "minecraft:cobweb", "minecraft:campfire[lit=true]", "minecraft:torch"}) {
+            c = cushionCase("above_" + above.substring(10).replaceAll("[^a-z_]", "_")).stat("minecraft:orange_cushion");
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 " + above);
+            c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+            out.add(c);
+        }
+        // the clicked block itself is the place (a plant): the cushion sits in it
+        for (String plant : new String[] {"minecraft:short_grass", "minecraft:snow[layers=1]", "minecraft:snow[layers=2]", "minecraft:fire", "minecraft:water"}) {
+            c = cushionCase("clicked_" + plant.substring(10).replaceAll("[^a-z_]", "_")).stat("minecraft:orange_cushion");
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 " + plant);
+            c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 100, 0, 1, 0, 0.5, 0.2, 0.5));
+            out.add(c);
+        }
+        // ---- fire beside it: in the cell next to the cushion nothing happens; in its own cell it burns up
+        c = cushionCase("fire_next_to").stat("minecraft:orange_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 3 100 0 minecraft:fire");
+        c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
+        // ---- sitting
+        for (String variant : new String[] {"plain", "sneaking", "item", "creative", "adventure", "named", "twice"}) {
+            c = cushionCase("sit_" + variant);
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"cyan\"" + (variant.equals("named") ? ",CustomName:'\"Sofa\"'" : "") + "}");
+            if (variant.equals("sneaking")) c.sneaking = true;
+            if (variant.equals("creative") || variant.equals("adventure")) c.gameMode = variant;
+            if (variant.equals("item")) c.slot("h0", stack("minecraft:stick", 3));
+            c.step(useEntity(2.5, 100.0, 0.5, 0, variant.equals("sneaking")));
+            if (variant.equals("twice")) c.step(useEntity(2.5, 100.0, 0.5, 0, false));
+            out.add(c);
+        }
+        c = cushionCase("sit_two_cushions");
+        c.cmd("fill 2 99 0 3 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"cyan\"}").cmd("summon minecraft:cushion 3.5 100 0.5 {color:\"red\"}");
+        c.step(useEntity(2.5, 100.0, 0.5, 0, false)).step(useEntity(3.5, 100.0, 0.5, 0, false));
+        out.add(c);
+        c = cushionCase("sit_low");
+        c.cmd("setblock 2 99 0 minecraft:white_carpet").cmd("summon minecraft:cushion 2.5 99.0625 0.5 {color:\"gray\"}");
+        c.step(useEntity(2.5, 99.0625, 0.5, 0, false));
+        out.add(c);
+        // ---- hitting
+        for (String variant : new String[] {"survival", "creative", "adventure"}) {
+            c = cushionCase("hit_" + variant);
+            c.gameMode = variant;
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"magenta\",CustomName:'\"Pouf\"'}");
+            c.step(attackEntity(2.5, 100.0, 0.5)).step(attackEntity(2.5, 100.0, 0.5));
+            out.add(c);
+        }
+        c = cushionCase("hit_plain");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5");
+        c.step(attackEntity(2.5, 100.0, 0.5));
+        out.add(c);
+        c = cushionCase("hit_no_drops");
+        c.cmd("gamerule entity_drops false").cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"lime\"}");
+        c.step(attackEntity(2.5, 100.0, 0.5));
+        out.add(c);
+        c = cushionCase("hit_sitting");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"lime\"}");
+        c.step(useEntity(2.5, 100.0, 0.5, 0, false)).step(attackEntity(2.5, 100.0, 0.5));
+        out.add(c);
+        // ---- the check every 100 ticks (the cushions are ticked by hand)
+        c = cushionCase("tick_on_stone");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"red\"}");
+        c.step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_over_air");
+        c.cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"red\",CustomName:'\"Floating\"'}");
+        c.step(op("op", "tick_cushions", "ticks", 99)).step(op("op", "tick_cushions", "ticks", 1)).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_support_broken");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "command", "command", "setblock 2 99 0 minecraft:air")).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_buried");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:stone")).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_in_fire");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:fire")).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_in_soul_fire");
+        c.cmd("setblock 2 99 0 minecraft:soul_sand").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:soul_fire")).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_carpet_support");
+        c.cmd("setblock 2 99 0 minecraft:white_carpet").cmd("summon minecraft:cushion 2.5 99.0625 0.5 {color:\"blue\"}");
+        c.step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_half_under");
+        c.cmd("setblock 2 99 0 minecraft:stone_slab[type=bottom]").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_saved_color");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"nonsense\"}").cmd("summon minecraft:cushion 3.5 100 0.5 {color:\"purple\"}");
+        c.step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_while_sitting");
+        c.cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(useEntity(2.5, 100.0, 0.5, 0, false)).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+    }
+
     static void cauldrons50(List<Case> out) {
         Case c;
         String[] customs = {"minecraft:fill_cauldron", "minecraft:use_cauldron", "minecraft:clean_armor", "minecraft:clean_banner", "minecraft:clean_shulker_box"};
@@ -2771,7 +3037,7 @@ public class InteractVectors {
         net.minecraft.world.entity.Entity best = null;
         double bd = 1e18;
         for (var e : level.getEntities((net.minecraft.world.entity.Entity) null, new AABB(x - 2, y - 2, z - 2, x + 2, y + 2, z + 2),
-                en -> en instanceof net.minecraft.world.entity.decoration.HangingEntity || en instanceof net.minecraft.world.entity.decoration.ArmorStand)) {
+                en -> en instanceof net.minecraft.world.entity.decoration.HangingEntity || en instanceof net.minecraft.world.entity.decoration.ArmorStand || en instanceof net.minecraft.world.entity.decoration.Cushion)) {
             double d = e.position().distanceToSqr(x, y, z);
             if (d < bd) { bd = d; best = e; }
         }
@@ -2795,6 +3061,15 @@ public class InteractVectors {
                 if (System.getenv("INTERACT_DEBUG") != null) System.out.println("DEBUG painting " + pt.getVariant().getRegisteredName() + " " + pt.getVariant().value().width() + "x" + pt.getVariant().value().height() + " bb " + pt.getBoundingBox());
             }
             rows.add(new Object[] {type, e.getX(), e.getY(), e.getZ(), e.getDirection().get3DDataValue(), item, rot, area});
+        }
+        // wp50: cushions: [type, x, y, z, 0, color, riders, the riders' seat height in ten thousandths].
+        for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 90, -16, 32, 120, 32))) {
+            long seat = 0;
+            if (!cu.getPassengers().isEmpty()) {
+                var rider = cu.getPassengers().get(0);
+                seat = (long) Math.floor(cu.getPassengerRidingPosition(rider).subtract(rider.getVehicleAttachmentPoint(cu)).y * 1.0e4);
+            }
+            rows.add(new Object[] {BuiltInRegistries.ENTITY_TYPE.getKey(cu.getType()).toString(), cu.getX(), cu.getY(), cu.getZ(), 0, cu.getColor().getName(), cu.getPassengers().size(), seat});
         }
         rows.sort(Comparator.comparing((Object[] r) -> (String) r[0]).thenComparingDouble(r -> (Double) r[1]).thenComparingDouble(r -> (Double) r[2]).thenComparingDouble(r -> (Double) r[3]));
         List<Object> out = new ArrayList<>();
@@ -2919,6 +3194,12 @@ public class InteractVectors {
                 } else {
                     var data = (net.minecraft.world.level.storage.ServerLevelData) level.getLevelData();
                     data.setGameTime(data.getGameTime() + (int) s.get("ticks"));
+                }
+            }
+            // wp50: the cushions in the area tick `ticks` times (the level itself does not tick here).
+            case "tick_cushions" -> {
+                for (int i = 0; i < (int) s.get("ticks"); i++) {
+                    for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 90, -16, 32, 120, 32))) cu.tick();
                 }
             }
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
@@ -3252,6 +3533,7 @@ public class InteractVectors {
         command("kill @e[type=minecraft:item_frame]");
         command("kill @e[type=minecraft:glow_item_frame]");
         command("kill @e[type=minecraft:painting]");
+        command("kill @e[type=minecraft:cushion]");
         command("kill @e[type=minecraft:armor_stand]");
         command("kill @e[type=minecraft:falling_block]");
         command("kill @e[type=minecraft:item]");
@@ -3401,6 +3683,7 @@ public class InteractVectors {
             crafters49(all);
             brushes49(all);
             banners50(all);
+            cushions50(all);
             cauldrons50(all);
             commandBlocks49(all);
         }).get();
