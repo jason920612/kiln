@@ -67,6 +67,16 @@ public class EntityNbtVectors {
         c.add(new Case("block_display_unknown_block", "block_display", "{block_state:{Name:\"minecraft:nonsense\"}}"));
         c.add(new Case("block_display_air", "block_display", "{block_state:{Name:\"minecraft:air\"}}"));
         c.add(new Case("block_display_string_state", "block_display", "{block_state:\"minecraft:stone\"}"));
+        c.add(new Case("block_display_state_stairs", "block_display", "{block_state:\"minecraft:oak_stairs[facing=east,half=top]\"}"));
+        c.add(new Case("block_display_state_default_props", "block_display", "{block_state:\"minecraft:oak_stairs\"}"));
+        c.add(new Case("block_display_state_bad_prop", "block_display", "{block_state:\"minecraft:stone[x=y]\"}"));
+        c.add(new Case("block_display_state_bad_value", "block_display", "{block_state:\"minecraft:oak_stairs[facing=up]\"}"));
+        c.add(new Case("block_display_state_unknown", "block_display", "{block_state:\"minecraft:nonsense\"}"));
+        c.add(new Case("block_display_state_waterlogged", "block_display", "{block_state:\"minecraft:oak_slab[type=bottom,waterlogged=true]\"}"));
+        c.add(new Case("block_display_state_tag", "block_display", "{block_state:\"#minecraft:logs\"}"));
+        c.add(new Case("block_display_state_spaces", "block_display", "{block_state:\" minecraft:stone\"}"));
+        c.add(new Case("block_display_state_no_namespace", "block_display", "{block_state:\"stone\"}"));
+        c.add(new Case("block_display_state_chest", "block_display", "{block_state:\"minecraft:chest[facing=west,type=left]\"}"));
         // ---- item displays
         c.add(new Case("item_display_diamond", "item_display", "{item:{id:\"minecraft:diamond\",count:1}}"));
         c.add(new Case("item_display_components", "item_display", "{item:{id:\"minecraft:diamond_sword\",count:1,components:{\"minecraft:custom_name\":'\"Excalibur\"',\"minecraft:damage\":5}},item_display:\"fixed\"}"));
@@ -85,6 +95,24 @@ public class EntityNbtVectors {
         c.add(new Case("text_display_selector", "text_display", "{text:'{\"selector\":\"@e[type=marker]\"}'}"));
         c.add(new Case("text_display_self", "text_display", "{text:'{\"selector\":\"@s\"}',CustomName:'\"Me\"'}"));
         c.add(new Case("text_display_bad", "text_display", "{text:'{\"text\":'}"));
+        // Text components as NBT.
+        c.add(new Case("text_display_nbt_extra", "text_display", "{text:{text:\"a\",extra:[\"b\",{text:\"c\",bold:1b}]}}"));
+        c.add(new Case("text_display_nbt_list", "text_display", "{text:[\"a\",{text:\"b\",italic:1b},\"c\"]}"));
+        c.add(new Case("text_display_nbt_style", "text_display", "{text:{text:\"s\",color:\"#ff8800\",bold:1b,italic:0b,underlined:1b,strikethrough:1b,obfuscated:1b,font:\"minecraft:uniform\",insertion:\"ins\",shadow_color:-1}}"));
+        c.add(new Case("text_display_nbt_click", "text_display", "{text:{text:\"c\",click_event:{action:\"open_url\",url:\"https://example.com\"},hover_event:{action:\"show_text\",value:\"tip\"}}}"));
+        c.add(new Case("text_display_nbt_translate", "text_display", "{text:{translate:\"block.minecraft.stone\",with:[\"x\",5]}}"));
+        c.add(new Case("text_display_nbt_translate_fallback", "text_display", "{text:{translate:\"no.such.key\",fallback:\"Fallback %s\",with:[\"x\"]}}"));
+        c.add(new Case("text_display_nbt_keybind", "text_display", "{text:{keybind:\"key.jump\"}}"));
+        c.add(new Case("text_display_nbt_selector", "text_display", "{text:{selector:\"@e[type=marker]\"}}"));
+        c.add(new Case("text_display_nbt_selector_self", "text_display", "{text:{selector:\"@s\"},CustomName:{text:\"Me\"}}"));
+        c.add(new Case("text_display_nbt_selector_sep", "text_display", "{text:{selector:\"@e[type=text_display]\",separator:{text:\" | \"}},CustomName:{text:\"Me\"}}"));
+        c.add(new Case("text_display_nbt_score", "text_display", "{text:{score:{name:\"@s\",objective:\"o\"}}}"));
+        c.add(new Case("text_display_nbt_score_missing", "text_display", "{text:{score:{name:\"nobody\",objective:\"o\"}}}"));
+        c.add(new Case("text_display_nbt_int", "text_display", "{text:5}"));
+        c.add(new Case("text_display_nbt_bool", "text_display", "{text:1b}"));
+        c.add(new Case("text_display_nbt_empty_list", "text_display", "{text:[]}"));
+        c.add(new Case("text_display_nbt_string_plain", "text_display", "{text:\"plain\"}"));
+        c.add(new Case("text_display_nbt_nested", "text_display", "{text:{text:\"a\",extra:[{text:\"b\",extra:[{text:\"c\",color:\"red\"}]}],color:\"blue\"}}"));
         c.add(new Case("text_display_options", "text_display", "{text:'\"x\"',line_width:50,background:-16777216,text_opacity:64b,shadow:1b,see_through:1b,default_background:1b}"));
         c.add(new Case("text_display_align_left", "text_display", "{text:'\"x\"',alignment:\"left\"}"));
         c.add(new Case("text_display_align_right", "text_display", "{text:'\"x\"',alignment:\"right\"}"));
