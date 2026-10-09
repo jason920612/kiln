@@ -66,6 +66,8 @@ public class ContainerVectors {
         boolean watchBees;
         /** wp49: the new entities of each tick are recorded. */
         boolean watchEntities;
+        /** wp49: the equipment (and chest) of every living thing about is recorded each tick. */
+        boolean watchMobs;
 
         Scenario(String name, int ticks) {
             this.name = name;
@@ -134,6 +136,11 @@ public class ContainerVectors {
             return this;
         }
 
+        Scenario mobs() {
+            watchMobs = true;
+            return this;
+        }
+
         Scenario at(int tick, String command) {
             actions.computeIfAbsent(tick, k -> new ArrayList<>()).add(command);
             return this;
@@ -158,6 +165,7 @@ public class ContainerVectors {
             m.put("drops_lag", dropsLag);
             m.put("bees", watchBees);
             m.put("entities", watchEntities);
+            m.put("mobs", watchMobs);
             return m;
         }
 
@@ -297,6 +305,7 @@ public class ContainerVectors {
         potScenarios(out);
         lecternScenarios(out);
         dispenserScenarios(out);
+        dispenserScenarios2(out);
         crafterScenarios(out);
         commandBlockScenarios(out);
         return out;
@@ -429,7 +438,7 @@ public class ContainerVectors {
     static Scenario dispense(String name, String item, int count) {
         return new Scenario("dispenser_" + name, 14)
                 .container(0, 0, 0, "minecraft:dispenser[facing=east]" + items(slot(0, item, count)))
-                .state(1, 0, 0).drops().entities()
+                .state(1, 0, 0).drops().entities().mobs()
                 .at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block");
     }
 
@@ -500,6 +509,69 @@ public class ContainerVectors {
                 .block(0, 1, 0, "minecraft:torchflower_crop[age=0]").state(0, 1, 0).drops().entities().at(2, "setblock ~1 ~0 ~0 minecraft:redstone_block"));
         out.add(new Scenario("dispenser_last_flint_and_steel", 14).container(0, 0, 0, "minecraft:dispenser[facing=east]" + items(slot(0, "flint_and_steel", 1)))
                 .block(1, -1, 0, "minecraft:stone").state(1, 0, 0).drops().entities().at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
+    }
+
+    /** wp49: an entity summoned at the first tick, at the middle of the block (x, y, z) in front of the dispenser, without AI. */
+    static Scenario mob(Scenario s, String type, double dx, double dy, double dz, String nbt) {
+        return s.at(1, String.format(Locale.ROOT, "summon minecraft:%s %s %s %s {NoAI:1b,PersistenceRequired:1b%s}", type, BASE[0] + dx, BASE[1] + dy, BASE[2] + dz, nbt.isEmpty() ? "" : "," + nbt));
+    }
+
+    /** wp49: the behaviours the first dispenser scenarios left out. */
+    static void dispenserScenarios2(List<Scenario> out) {
+        String tipped = "{Slot:0b,id:\"minecraft:tipped_arrow\",count:2,components:{\"minecraft:potion_contents\":{potion:\"minecraft:swiftness\"}}}";
+        out.add(new Scenario("dispenser_shoots_tipped_arrow", 14).container(0, 0, 0, "minecraft:dispenser[facing=east]" + items(tipped))
+                .state(1, 0, 0).drops().entities().at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
+        String rocket = "{Slot:0b,id:\"minecraft:firework_rocket\",count:2,components:{\"minecraft:fireworks\":{flight_duration:2,explosions:[{shape:\"small_ball\",colors:[I;255]}]}}}";
+        out.add(new Scenario("dispenser_firework_rocket", 14).container(0, 0, 0, "minecraft:dispenser[facing=east]" + items(rocket))
+                .state(1, 0, 0).drops().entities().at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
+        out.add(dispense("fire_charge", "fire_charge", 2).block(1, -1, 0, "minecraft:stone"));
+        out.add(dispense("fire_charge_air", "fire_charge", 2));
+        out.add(dispense("wind_charge", "wind_charge", 2));
+        // Spawn eggs.
+        out.add(dispense("spawn_egg_pig", "pig_spawn_egg", 2).block(1, -1, 0, "minecraft:stone"));
+        out.add(dispense("spawn_egg_creeper", "creeper_spawn_egg", 2).block(1, -1, 0, "minecraft:stone"));
+        out.add(dispense("spawn_egg_zombie_over_air", "zombie_spawn_egg", 1));
+        out.add(dispense("spawn_egg_blocked", "pig_spawn_egg", 2).block(1, 0, 0, "minecraft:stone"));
+        out.add(dispense("spawn_egg_sheep_up", "sheep_spawn_egg", 2).block(1, -1, 0, "minecraft:stone"));
+        // Buckets.
+        out.add(dispense("powder_snow_bucket", "powder_snow_bucket", 2).block(1, -1, 0, "minecraft:stone"));
+        out.add(dispense("powder_snow_bucket_stone", "powder_snow_bucket", 2).block(1, 0, 0, "minecraft:stone"));
+        out.add(dispense("salmon_bucket_water", "salmon_bucket", 2).block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:water[level=0]"));
+        out.add(dispense("salmon_bucket_land", "salmon_bucket", 2).block(1, -1, 0, "minecraft:stone"));
+        out.add(dispense("cod_bucket_water", "cod_bucket", 2).block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:water[level=0]"));
+        out.add(dispense("pufferfish_bucket_water", "pufferfish_bucket", 2).block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:water[level=0]"));
+        out.add(dispense("tropical_fish_bucket_water", "tropical_fish_bucket", 2).block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:water[level=0]"));
+        out.add(dispense("axolotl_bucket_water", "axolotl_bucket", 2).block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:water[level=0]"));
+        out.add(dispense("tadpole_bucket_water", "tadpole_bucket", 2).block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:water[level=0]"));
+        out.add(dispense("sulfur_cube_bucket", "sulfur_cube_bucket", 2).block(1, -1, 0, "minecraft:stone"));
+        // Skulls and pumpkins.
+        out.add(dispense("wither_skull", "wither_skeleton_skull", 2).block(1, -1, 0, "minecraft:stone"));
+        out.add(dispense("wither_skull_blocked", "wither_skeleton_skull", 2).block(1, 0, 0, "minecraft:stone"));
+        out.add(dispense("carved_pumpkin", "carved_pumpkin", 2).block(1, -1, 0, "minecraft:stone"));
+        out.add(dispense("carved_pumpkin_snow_golem", "carved_pumpkin", 2).block(1, -1, 0, "minecraft:snow_block").block(1, -2, 0, "minecraft:snow_block"));
+        out.add(dispense("carved_pumpkin_iron_golem", "carved_pumpkin", 2).block(1, -1, 0, "minecraft:iron_block").block(1, -2, 0, "minecraft:iron_block")
+                .block(1, -1, 1, "minecraft:iron_block").block(1, -1, -1, "minecraft:iron_block"));
+        // Equipment on whoever stands in front.
+        for (String[] eq : new String[][] {{"iron_helmet", "zombie"}, {"iron_chestplate", "zombie"}, {"iron_boots", "skeleton"}, {"elytra", "zombie"}, {"carved_pumpkin", "zombie"}, {"saddle", "horse"}, {"leather_horse_armor", "horse"}, {"saddle", "pig"}, {"diamond_helmet", "armor_stand"}}) {
+            Scenario s = dispense("equip_" + eq[0] + "_on_" + eq[1], eq[0], 2).block(1, -1, 0, "minecraft:stone");
+            out.add(mob(s, eq[1], 1.5, 0, 0.5, eq[1].equals("horse") || eq[1].equals("pig") ? "Tame:1b" : ""));
+        }
+        out.add(mob(dispense("equip_helmet_on_player_less_zombie_with_helmet", "iron_helmet", 2).block(1, -1, 0, "minecraft:stone"), "zombie", 1.5, 0, 0.5,
+                "equipment:{head:{id:\"minecraft:leather_helmet\",count:1}}"));
+        out.add(mob(dispense("equip_wolf_armor", "wolf_armor", 2).block(1, -1, 0, "minecraft:stone"), "wolf", 1.5, 0, 0.5, "Owner:[I;1,2,3,4]"));
+        // Chests onto the chested animals.
+        out.add(mob(dispense("chest_on_donkey", "chest", 2).block(1, -1, 0, "minecraft:stone"), "donkey", 1.5, 0, 0.5, "Tame:1b"));
+        out.add(mob(dispense("chest_on_horse", "chest", 2).block(1, -1, 0, "minecraft:stone"), "horse", 1.5, 0, 0.5, "Tame:1b"));
+        out.add(mob(dispense("chest_on_untamed_donkey", "chest", 2).block(1, -1, 0, "minecraft:stone"), "donkey", 1.5, 0, 0.5, ""));
+        out.add(mob(dispense("chest_on_llama", "chest", 2).block(1, -1, 0, "minecraft:stone"), "llama", 1.5, 0, 0.5, "Tame:1b"));
+        // Brush on suspicious sand.
+        out.add(dispense("brush_sand", "brush", 1).block(1, 0, 0, "minecraft:suspicious_sand[dusted=0]"));
+        out.add(dispense("brush_stone", "brush", 1).block(1, 0, 0, "minecraft:stone"));
+        // Something swallowable into a sulfur cube.
+        out.add(mob(dispense("swallow_planks", "oak_planks", 2).block(1, -1, 0, "minecraft:stone"), "sulfur_cube", 1.5, 0, 0.5, "Size:1"));
+        out.add(mob(dispense("swallow_by_baby", "oak_planks", 2).block(1, -1, 0, "minecraft:stone"), "sulfur_cube", 1.5, 0, 0.5, "Size:1,Age:-24000"));
+        out.add(mob(dispense("swallow_dirt_when_full", "dirt", 2).block(1, -1, 0, "minecraft:stone"), "sulfur_cube", 1.5, 0, 0.5,
+                "Size:1,equipment:{body:{id:\"minecraft:oak_planks\",count:1}}"));
     }
 
     /** wp49: a comparator reads how far into the book a lectern is open. */
@@ -1151,6 +1223,25 @@ public class ContainerVectors {
                     fresh.sort(Comparator.<List<Object>, String>comparing(l -> (String) l.get(0)).thenComparingDouble(l -> (Double) l.get(1))
                             .thenComparingDouble(l -> (Double) l.get(2)).thenComparingDouble(l -> (Double) l.get(3)));
                     tick.put("entities_new", new ArrayList<Object>(fresh));
+                }
+                if (s.watchMobs) {
+                    var box = new net.minecraft.world.phys.AABB(BASE[0] - 8, BASE[1] - 8, BASE[2] - 8, BASE[0] + 12, BASE[1] + 12, BASE[2] + 12);
+                    List<Object> sigs = new ArrayList<>();
+                    for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.LivingEntity.class, box)) {
+                        if (e instanceof net.minecraft.world.entity.player.Player) continue;
+                        StringBuilder sb = new StringBuilder(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString());
+                        List<String> parts = new ArrayList<>();
+                        for (var slot : net.minecraft.world.entity.EquipmentSlot.values()) {
+                            var it = e.getItemBySlot(slot);
+                            if (!it.isEmpty()) parts.add(slot.getName() + "=" + BuiltInRegistries.ITEM.getKey(it.getItem()) + "*" + it.getCount());
+                        }
+                        java.util.Collections.sort(parts);
+                        for (String part : parts) sb.append('|').append(part);
+                        if (e instanceof net.minecraft.world.entity.animal.equine.AbstractChestedHorse h && h.hasChest()) sb.append("|chest");
+                        sigs.add(sb.toString());
+                    }
+                    sigs.sort(Comparator.comparing(o -> (String) o));
+                    tick.put("mobs", sigs);
                 }
                 if (s.watchDrops) {
                     tick.put("drops", dropsState(level));

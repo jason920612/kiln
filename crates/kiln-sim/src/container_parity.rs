@@ -291,6 +291,39 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                 errors.push(format!("tick {tick} new entities: kiln {got}, vanilla {expected}"));
             }
         }
+        if line["mobs"].as_bool() == Some(true) {
+            // `ContainerVectors`: each living thing's type, what it wears (by slot) and whether it carries a chest.
+            let mut got: Vec<String> = Vec::new();
+            for t in sim.entity_nbt() {
+                let id = t.get("id").and_then(Tag::as_str).unwrap_or("");
+                if matches!(id, "minecraft:item" | "minecraft:player") || t.get("Health").is_none() && id != "minecraft:armor_stand" {
+                    continue;
+                }
+                let mut parts: Vec<String> = Vec::new();
+                if let Some(Tag::Compound(eq)) = t.get("equipment") {
+                    for (slot, item) in eq {
+                        let name = item.get("id").and_then(Tag::as_str).unwrap_or("");
+                        let count = item.get("count").and_then(Tag::as_i64).unwrap_or(1);
+                        parts.push(format!("{slot}={name}*{count}"));
+                    }
+                }
+                parts.sort();
+                let mut sig = id.to_owned();
+                for p in parts {
+                    sig.push('|');
+                    sig.push_str(&p);
+                }
+                if t.get("ChestedHorse").and_then(Tag::as_i64) == Some(1) {
+                    sig.push_str("|chest");
+                }
+                got.push(sig);
+            }
+            got.sort();
+            compared += 1;
+            if json!(got) != want["mobs"] {
+                errors.push(format!("tick {tick} mobs: kiln {got:?}, vanilla {}", want["mobs"]));
+            }
+        }
         if line["drops"].as_bool() == Some(true) {
             let got = drops_json(&sim);
             compared += 1;
