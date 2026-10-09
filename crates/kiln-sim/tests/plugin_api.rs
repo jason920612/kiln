@@ -186,9 +186,11 @@ fn the_shop_menu_is_locked_and_sells() {
     g.send(0, PlayIn::SetCarriedItem { slot: slot as i16 });
     g.ticks(1);
     g.received(0);
+    eprintln!("slot {slot}, selected {:?}, inventory {:?}", g.sim.selected_slot(1), g.sim.inventory(1).unwrap().iter().take(12).collect::<Vec<_>>());
     g.send(0, PlayIn::UseItem { hand: kiln_proto::packets::serverbound::Hand::Main, sequence: 9, yaw: 0.0, pitch: 0.0 });
     g.ticks(1);
-    assert!(g.got_text(0, "Zap!"), "the item-use event reached the shop");
+    let texts: Vec<String> = g.received(0).iter().map(|p| String::from_utf8_lossy(p).chars().filter(|c| c.is_ascii_graphic() || *c == ' ').collect()).collect();
+    assert!(texts.iter().any(|t| t.contains("Zap!")), "the item-use event reached the shop: {texts:?}");
 }
 
 /// A claim: gold block placed by Dora protects 17x17 blocks; Eli cannot dig or build there,
