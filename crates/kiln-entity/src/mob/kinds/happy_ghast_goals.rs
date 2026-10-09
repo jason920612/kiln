@@ -37,7 +37,7 @@ impl TemptForNonPathfinders {
 impl CustomGoal for TemptForNonPathfinders {
     custom_goal_boilerplate!();
     fn name(&self) -> &'static str {
-        "TemptGoal$ForNonPathfinders"
+        "ForNonPathfinders"
     }
     fn flags(&self) -> u8 {
         MOVE | LOOK
