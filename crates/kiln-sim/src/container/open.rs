@@ -633,6 +633,11 @@ fn open_changed(level: &mut RegionLevel, pos: BlockPos, s: u16, open: bool) {
 
 /// `startOpen` of the container at `pos` (spectators do not count).
 pub(crate) fn start_open(level: &mut RegionLevel, pos: BlockPos, spectator: bool) {
+    start_open_ranged(level, pos, spectator, BLOCK_INTERACTION_RANGE);
+}
+
+/// [`start_open`] for a user with the interaction range `range` (a copper golem: 3).
+pub(crate) fn start_open_ranged(level: &mut RegionLevel, pos: BlockPos, spectator: bool, range: f64) {
     if spectator {
         return;
     }
@@ -643,7 +648,7 @@ pub(crate) fn start_open(level: &mut RegionLevel, pos: BlockPos, spectator: bool
             // `ContainerOpenersCounter.incrementOpeners`.
             let before = c.openers;
             c.openers += 1;
-            c.max_range = c.max_range.max(BLOCK_INTERACTION_RANGE);
+            c.max_range = c.max_range.max(range);
             let after = c.openers;
             if before == 0 {
                 open_changed(level, pos, s, true);
@@ -688,7 +693,7 @@ fn stop_open(level: &mut RegionLevel, block: &OpenBlock, spectator: bool) {
     }
 }
 
-fn stop_open_at(level: &mut RegionLevel, pos: BlockPos) {
+pub(crate) fn stop_open_at(level: &mut RegionLevel, pos: BlockPos) {
     let s = level.block(pos);
     let Some(c) = level.blocks.containers.get_mut(pos) else { return };
     match c.kind {
@@ -719,7 +724,7 @@ fn stop_open_at(level: &mut RegionLevel, pos: BlockPos) {
 }
 
 /// Whether the player's open menu shows the container at `pos` (`isOwnContainer`).
-fn has_open(p: &Player, pos: BlockPos) -> bool {
+pub(crate) fn has_open(p: &Player, pos: BlockPos) -> bool {
     match &p.containers.open {
         Some(OpenBlock::Containers { first, second }) => first.0 == pos || second.is_some_and(|s| s.0 == pos),
         Some(OpenBlock::EnderChest { pos: at, .. }) => *at == pos,
@@ -727,9 +732,32 @@ fn has_open(p: &Player, pos: BlockPos) -> bool {
     }
 }
 
+/// A copper golem as the openers' recount sees it: its data and box.
+pub(crate) struct GolemBox<'a> {
+    pub mob: &'a kiln_entity::mob::MobData,
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+}
+
+/// The region's copper golems that hold a chest open, for [`recheck_openers`].
+pub(crate) fn golems_with_open_chest(list: &[crate::entities::Entity]) -> Vec<GolemBox<'_>> {
+    list.iter()
+        .filter(|e| !e.removed)
+        .filter_map(|e| {
+            let phys = e.phys.as_deref()?;
+            let mob = kiln_entity::mob::data(phys)?;
+            if mob.kind != kiln_entity::mob::MobKind::CopperGolem || kiln_entity::mob::kinds::copper_golem::st(mob).opened_chest.is_none() {
+                return None;
+            }
+            let b = phys.bounding_box();
+            Some(GolemBox { mob, min: [b.min_x, b.min_y, b.min_z], max: [b.max_x, b.max_y, b.max_z] })
+        })
+        .collect()
+}
+
 /// `ContainerOpenersCounter.recheckOpeners` (the scheduled tick of chests, barrels and ender
 /// chests): counts the players in range with the container open.
-pub(crate) fn recheck_openers(level: &mut RegionLevel, players: &[&mut Player], pos: BlockPos) {
+pub(crate) fn recheck_openers(level: &mut RegionLevel, players: &[&mut Player], golems: &[GolemBox], pos: BlockPos) {
     let s = level.block(pos);
     let Some(c) = level.blocks.containers.get(pos) else { return };
     if !matches!(c.kind, BeKind::Chest | BeKind::TrappedChest | BeKind::Barrel | BeKind::EnderChest) {
@@ -745,8 +773,20 @@ pub(crate) fn recheck_openers(level: &mut RegionLevel, players: &[&mut Player], 
             (0..3).all(|i| bb[0][i] < hi[i] && bb[1][i] > lo[i])
         })
         .collect();
-    let n = viewers.len() as i32;
-    let range = if n > 0 { BLOCK_INTERACTION_RANGE } else { 0.0 };
+    // The copper golems with this chest open (`CopperGolem.hasContainerOpen`), in range.
+    let golems_here = golems
+        .iter()
+        .filter(|g| kiln_entity::mob::kinds::copper_golem::has_container_open_by(g.mob, &|p| level.block(BlockPos::new(p.x, p.y, p.z)), kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z)))
+        .filter(|g| (0..3).all(|i| g.min[i] < hi[i] && g.max[i] > lo[i]))
+        .count();
+    let n = (viewers.len() + golems_here) as i32;
+    let range = if viewers.is_empty() && golems_here == 0 {
+        0.0
+    } else if viewers.is_empty() {
+        kiln_entity::mob::kinds::copper_golem::CONTAINER_INTERACTION_RANGE
+    } else {
+        BLOCK_INTERACTION_RANGE
+    };
     let Some(c) = level.blocks.containers.get_mut(pos) else { return };
     c.max_range = range;
     let before = c.openers;

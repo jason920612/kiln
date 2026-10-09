@@ -596,8 +596,12 @@ impl RegionWork<'_> {
                 let dt = crate::diag::lap("b.sculk_step", dt);
                 blocks::tick_blocks(&mut level, &ticking);
                 crate::diag::lap("b.tick_blocks", dt);
-                for pos in std::mem::take(&mut level.out.rechecks) {
-                    crate::container::open::recheck_openers(&mut level, &self.players, pos);
+                let rechecks = std::mem::take(&mut level.out.rechecks);
+                if !rechecks.is_empty() {
+                    let golems = crate::container::open::golems_with_open_chest(&self.entities.list);
+                    for pos in rechecks {
+                        crate::container::open::recheck_openers(&mut level, &self.players, &golems, pos);
+                    }
                 }
                 blocks::tick_pistons(&mut level, &ticking);
                 crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);

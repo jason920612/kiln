@@ -43,7 +43,8 @@ const MIN_ENTITIES: usize = 32;
 /// tiles; never the workers, so the result does not depend on them.
 const ISLAND_SHARE: usize = 4;
 /// Entity types whose tick needs region state an island cannot change later.
-pub(super) const SERIAL: [&str; 9] = [
+pub(super) const SERIAL: [&str; 10] = [
+    "minecraft:copper_golem",
     "minecraft:villager",
     "minecraft:warden",
     "minecraft:allay",

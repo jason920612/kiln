@@ -402,7 +402,7 @@ impl TransportItemsBetweenContainers {
         if ticks == 1 {
             // `container.startOpen(golem)`: every half; the chest counts it as a user.
             for &h in &t.halves {
-                cx.level.container_start_open(h, id, 3.0);
+                cx.level.container_start_open(h, id, super::copper_golem::CONTAINER_INTERACTION_RANGE);
             }
             let s = st_mut(cx.m);
             s.opened_chest = Some(t.pos);

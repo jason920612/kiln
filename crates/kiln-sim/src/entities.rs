@@ -1362,6 +1362,90 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         crate::container::hopper::take_into_cart(self.level.region()?, kb(pos), dest)
     }
 
+    fn chest_block_entities(&self, cx: i32, cz: i32) -> Option<Vec<BlockPos>> {
+        use crate::container::BeKind;
+        let l = self.level.region_ref()?;
+        if !l.is_loaded(kiln_blocks::BlockPos::new(cx * 16, 0, cz * 16)) {
+            return None;
+        }
+        let (lo, hi) = (kiln_blocks::BlockPos::new(cx * 16, i32::MIN, cz * 16), kiln_blocks::BlockPos::new(cx * 16 + 15, i32::MAX, cz * 16 + 15));
+        Some(
+            l.blocks
+                .containers
+                .map
+                .range(lo..=hi)
+                .filter(|(p, c)| p.z >> 4 == cz && matches!(c.kind, BeKind::Chest | BeKind::TrappedChest))
+                .map(|(p, _)| BlockPos::new(p.x, p.y, p.z))
+                .collect(),
+        )
+    }
+
+    fn block_entity_serial(&self, pos: BlockPos) -> Option<u64> {
+        self.level.region_ref()?.blocks.containers.get(kb(pos)).map(|c| c.serial)
+    }
+
+    fn container_items(&self, pos: BlockPos) -> Option<Vec<kiln_item::ItemStack>> {
+        self.level.region_ref()?.blocks.containers.get(kb(pos)).map(|c| c.items.clone())
+    }
+
+    fn set_container_items(&mut self, pos: BlockPos, items: Vec<kiln_item::ItemStack>) {
+        let Some(l) = self.level.region() else { return };
+        let p = kb(pos);
+        if let Some(c) = l.blocks.containers.get_mut(p) {
+            for (i, s) in items.into_iter().enumerate().take(c.items.len()) {
+                c.set_item(i, s);
+            }
+            c.mark_changed();
+        }
+        crate::container::hopper::changed(l, p);
+    }
+
+    fn container_locked(&self, pos: BlockPos) -> bool {
+        self.level.region_ref().and_then(|l| l.blocks.containers.get(kb(pos))).is_some_and(|c| c.lock.is_some())
+    }
+
+    /// `ContainerOpenersCounter.getEntitiesWithContainerOpen`: the players with the menu open and the
+    /// copper golems holding it open, within the counter's range (grown by 4).
+    fn container_users(&self, pos: BlockPos) -> Vec<i32> {
+        let Some(l) = self.level.region_ref() else { return Vec::new() };
+        let p = kb(pos);
+        let Some(c) = l.blocks.containers.get(p) else { return Vec::new() };
+        let r = c.max_range + 4.0;
+        let (lo, hi) = ([p.x as f64 - r, p.y as f64 - r, p.z as f64 - r], [p.x as f64 + 1.0 + r, p.y as f64 + 1.0 + r, p.z as f64 + 1.0 + r]);
+        let mut out = Vec::new();
+        for pl in self.players.iter() {
+            let bb = [[pl.pos[0] - 0.3, pl.pos[1], pl.pos[2] - 0.3], [pl.pos[0] + 0.3, pl.pos[1] + 1.8, pl.pos[2] + 0.3]];
+            if pl.game_mode != 3 && !pl.disconnected && crate::container::open::has_open(pl, p) && (0..3).all(|i| bb[0][i] < hi[i] && bb[1][i] > lo[i]) {
+                out.push(pl.entity_id);
+            }
+        }
+        for e in self.list.iter().filter(|e| !e.removed) {
+            let Some(phys) = e.phys.as_deref() else { continue };
+            let Some(m) = kiln_entity::mob::data(phys) else { continue };
+            if m.kind != kiln_entity::mob::MobKind::CopperGolem {
+                continue;
+            }
+            let b = phys.bounding_box();
+            let (bmin, bmax) = ([b.min_x, b.min_y, b.min_z], [b.max_x, b.max_y, b.max_z]);
+            if kiln_entity::mob::kinds::copper_golem::has_container_open_by(m, &|q| self.level.block(kb(q)), pos) && (0..3).all(|i| bmin[i] < hi[i] && bmax[i] > lo[i]) {
+                out.push(e.id);
+            }
+        }
+        out
+    }
+
+    fn container_start_open(&mut self, pos: BlockPos, _user: i32, range: f64) {
+        if let Some(l) = self.level.region() {
+            crate::container::open::start_open_ranged(l, kb(pos), false, range);
+        }
+    }
+
+    fn container_stop_open(&mut self, pos: BlockPos, _user: i32) {
+        if let Some(l) = self.level.region() {
+            crate::container::open::stop_open_at(l, kb(pos));
+        }
+    }
+
     fn difficulty(&self) -> u8 {
         self.level.env().mobs.difficulty
     }
@@ -3188,6 +3272,28 @@ fn carry_out(
         Event::DragonFight(ev) => {
             if let Some(f) = &env.dragon_fight {
                 f.send(crate::dragon_fight::FightMsg::Entity(ev));
+            }
+        }
+        // wp49 copper golems: a golem stiffened into a statue (`turnToStatue`): the oxidized statue
+        // block in the pose and facing, its block entity holding the golem's custom name.
+        Event::CopperGolemStatue { pos, pose, facing, name } => {
+            let at = kb(pos);
+            if let Some(info) = kiln_data::blocks_types::block_by_name("minecraft:oxidized_copper_golem_statue") {
+                use kiln_entity::math::Direction as D;
+                let dir = match facing {
+                    D::North => "north",
+                    D::South => "south",
+                    D::West => "west",
+                    _ => "east",
+                };
+                let mut s = info.default;
+                s = info.with_property(s, "facing", dir).unwrap_or(s);
+                s = info.with_property(s, "copper_golem_pose", ["standing", "sitting", "running", "star"][pose as usize & 3]).unwrap_or(s);
+                kiln_blocks::set_block(level, at, s, kiln_blocks::flags::ALL);
+                if let Some(name) = name {
+                    let components = kiln_proto::nbt::Tag::Compound(vec![("minecraft:custom_name".into(), name)]);
+                    kiln_blocks::Level::set_block_entity_data(level, at, &kiln_proto::nbt::Tag::Compound(vec![("components".into(), components)]));
+                }
             }
         }
         // wp49 bees: a bee went into its hive (`addOccupant` saves it and discards the entity).
