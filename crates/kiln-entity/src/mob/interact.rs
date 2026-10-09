@@ -208,7 +208,8 @@ fn name_tag(e: &mut Entity, stack: &ItemStack) -> Option<Outcome> {
 /// sound plays. `None`: nothing to take, or the type does not let this player.
 fn shear_equipment(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
     use kiln_item::component::EquipmentSlot;
-    if !is(stack, "minecraft:shears") || !super::is_alive(e, m) || who.sneaking {
+    // (A dispenser, who.id < 0, only shears what is `Shearable`.)
+    if !is(stack, "minecraft:shears") || !super::is_alive(e, m) || who.sneaking || who.id < 0 {
         return None;
     }
     // `canShearEquipment`: a wolf lets only its owner, the others unless they carry a passenger.

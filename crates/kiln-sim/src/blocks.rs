@@ -385,6 +385,8 @@ pub(crate) struct Wear {
     pub mob: Option<kiln_entity::mob::dispense::Facts>,
     /// `Shearable.readyForShearing`.
     pub shearable: bool,
+    /// `shearOffAllLeashConnections` would cut something: it is leashed, or something is leashed to it.
+    pub leads: bool,
 }
 
 /// What a dispenser did to a living thing, to be carried out once the entities can be changed.
@@ -421,6 +423,12 @@ fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Ent
             (0..3).all(|i| min[i] < hi[i] && max[i] > lo[i])
         })
     };
+    // The holders of leads (for the dispensers' shears).
+    let holders: std::collections::HashSet<i32> = if spots.is_empty() {
+        Default::default()
+    } else {
+        entities.list.iter().filter(|e| !e.removed).filter_map(|e| e.phys.as_deref().and_then(kiln_entity::leash::holder_of)).collect()
+    };
     let mut out: Vec<EntityBox> = players
         .filter(|p| p.game_mode != 3 && !p.dead)
         .map(|p| {
@@ -443,7 +451,14 @@ fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Ent
         let (min, max, blocks_building) = e.body();
         // Mobs are living entities (pressure plates, lightning targets).
         let living = e.phys.as_deref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
-        let wear = if !spots.is_empty() && near(min, max) { e.phys.as_deref().and_then(crate::container::equip::wear_of) } else { None };
+        let wear = if !spots.is_empty() && near(min, max) {
+            e.phys.as_deref().and_then(crate::container::equip::wear_of).map(|mut w| {
+                w.leads = holders.contains(&e.id) || e.phys.as_deref().is_some_and(kiln_entity::leash::is_leashed);
+                w
+            })
+        } else {
+            None
+        };
         EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of), wear }
     }));
     out

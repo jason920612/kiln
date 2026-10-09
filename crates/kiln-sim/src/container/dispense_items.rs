@@ -29,12 +29,17 @@ fn failed(stack: ItemStack) -> Done {
 
 /// `ItemStack.hurtAndBreak(1, level, null, ...)` on a stack nobody holds: unbreaking is not asked.
 fn hurt(level: &RegionLevel, stack: &mut ItemStack, rng: &mut LegacyRandom) {
+    hurt_by(level, stack, rng, 1);
+}
+
+/// [`hurt`] by `amount`.
+fn hurt_by(level: &RegionLevel, stack: &mut ItemStack, rng: &mut LegacyRandom, amount: i32) {
     if !stack.is_damageable_item() {
         return;
     }
     let amount = match &level.env.loot {
-        Some(loot) => loot.process_durability_change(stack, rng, 1),
-        None => 1,
+        Some(loot) => loot.process_durability_change(stack, rng, amount),
+        None => amount,
     };
     if amount == 0 {
         return;
@@ -87,7 +92,7 @@ pub(super) fn behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Bl
         | "minecraft:tropical_fish_bucket" | "minecraft:axolotl_bucket" | "minecraft:sulfur_cube_bucket" | "minecraft:tadpole_bucket" => full_bucket(level, rng, pos, facing, target, stack),
         "minecraft:carved_pumpkin" => carved_pumpkin(level, pos, facing, target, stack),
         "minecraft:wither_skeleton_skull" => wither_skull(level, pos, facing, target, stack),
-        "minecraft:brush" => brush(level, rng, target, stack),
+        "minecraft:brush" => brush(level, rng, pos, facing, stack),
         "minecraft:chest" => {
             let mut stack = stack;
             if super::equip::dispense_chest(level, pos, facing, &mut stack) {
@@ -188,9 +193,13 @@ fn wither_skull(level: &mut RegionLevel, pos: BlockPos, facing: Direction, targe
 }
 
 /// `DispenseItemBehavior$11`: a brush scrapes a scute off an armadillo in front, else it fails.
-fn brush(level: &mut RegionLevel, _rng: &mut LegacyRandom, target: BlockPos, stack: ItemStack) -> Done {
-    let _ = (level, target);
-    failed(stack)
+fn brush(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> Done {
+    if !super::equip::dispense_brush(level, pos, facing, &stack) {
+        return failed(stack);
+    }
+    // `hurtAndBreak(16, ...)`.
+    hurt_by(level, &mut stack, rng, 16);
+    ok(stack)
 }
 
 fn is_boat(name: &str) -> bool {
