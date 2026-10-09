@@ -812,7 +812,7 @@ impl CustomGoal for FollowPlayerRiddenEntityGoal {
         let Some(p) = self.following.and_then(|id| level.player(id)) else { return };
         let pb = BlockPos::containing(p.pos.x, p.pos.y, p.pos.z);
         let (dx, dz) = facing_step(p.yaw);
-        let dist = e.position().distance_to(p.pos) as f32;
+        let dist = e.position().distance_to_sqr(p.pos).sqrt() as f32;
         if !self.go_in_direction {
             // The block behind the player, one lower.
             let at = BlockPos::new(pb.x - dx, pb.y - 1, pb.z - dz);
