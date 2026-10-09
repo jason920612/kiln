@@ -149,8 +149,8 @@ impl crate::Sim {
     /// what changed is sent.
     pub(crate) fn tick_maps(&mut self) {
         let none_yet = self.maps.lock().unwrap_or_else(|e| e.into_inner()).none_yet();
-        // (Without any map data there is nothing for the frames to mark or send: skip looking at the entities.)
-        if none_yet && !self.players.values().any(has_map) {
+        // (Without any map data a map item or frame has nothing to note or send: skip looking at the players and entities.)
+        if none_yet {
             return;
         }
         let frames = self.map_frames();
