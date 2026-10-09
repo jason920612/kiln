@@ -1130,6 +1130,9 @@ public class InteractVectors {
         c = brushCase("brush_place_block_item", "minecraft:air");
         c.slot("h0", stack("minecraft:suspicious_sand", 2)).step(useOn(2, 98, 0, 1, 0)).step(wait(3));
         out.add(c);
+        c = brushCase("brush_put_down_stone", "minecraft:air");
+        c.slot("h0", stack("minecraft:stone", 2)).step(useOn(2, 98, 0, 1, 0)).step(wait(3));
+        out.add(c);
         c = brushCase("brush_put_down_sand", "minecraft:air");
         c.slot("h0", stack("minecraft:suspicious_gravel", 2)).step(useOn(2, 98, 0, 1, 0)).step(wait(3));
         out.add(c);
