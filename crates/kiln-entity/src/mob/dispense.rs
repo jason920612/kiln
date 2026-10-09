@@ -42,7 +42,12 @@ pub fn facts(e: &Entity) -> Option<Facts> {
             }
         }
     }
-    let tamed = is_horse_like(m.kind) && super::kinds::horse::is_tamed(m);
+    // (A camel is always tame; a nautilus is tamed with a pufferfish.)
+    let tamed = match m.kind {
+        MobKind::Camel | MobKind::CamelHusk => true,
+        MobKind::Nautilus | MobKind::ZombieNautilus => super::kinds::nautilus::is_tame(m),
+        k => is_horse_like(k) && super::kinds::horse::is_tamed(m),
+    };
     Some(Facts { kind: m.kind, baby: m.baby(), tamed, pick_up_loot: m.can_pick_up_loot, worn, body_item })
 }
 
