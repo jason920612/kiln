@@ -498,6 +498,18 @@ impl TransportItemsBetweenContainers {
     fn on_travel(&mut self, cx: &mut Cx) {
         let Some(t) = self.target.clone() else { return };
         let center = Self::center_pos(cx);
+        if std::env::var_os("KILN_CG_DEBUG").is_some() {
+            eprintln!(
+                "cg travel tick {} pos {:?} w3 {} others {} w_range {} (range {}) path {:?}",
+                cx.time,
+                cx.e.position(),
+                Self::within_distance(cx, 3.0, &t, center),
+                Self::another_mob_interacting(cx, &t),
+                Self::within_distance(cx, Self::interaction_range(cx), &t, Self::center_pos(cx)),
+                Self::interaction_range(cx),
+                cx.m.nav.path.as_ref().map(|p| p.next)
+            );
+        }
         if Self::within_distance(cx, 3.0, &t, center) && Self::another_mob_interacting(cx, &t) {
             // `startQueuing`.
             Self::stop_in_place(cx);
