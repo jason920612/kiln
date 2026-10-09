@@ -258,7 +258,7 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
             let id = ids[a["mob"].as_u64().unwrap() as usize];
             let p = player.expect("an interacting player");
             let who = mob::interact::Interactor { id: p.id, creative: p.creative, sneaking: p.sneaking, spectator: false, hit: kiln_entity::math::Vec3::ZERO };
-            let stack = kiln_item::ItemStack::of(what, 1).unwrap();
+            let stack = if what == "minecraft:air" { kiln_item::ItemStack::empty() } else { kiln_item::ItemStack::of(what, 1).unwrap() };
             // The harness puts the item in the player's hand, where it stays.
             for p in level.players.iter_mut() {
                 p.main_hand = stack.item();
@@ -376,6 +376,15 @@ fn pin_fresh(level: &mut MemoryLevel, id: i32, n: i64, tick: i64, pin_yaw: bool,
     }
 }
 
+/// `MobVectors.itemSig`: the hash of the item name times 31, plus the count (0 for no item).
+fn item_sig(st: &kiln_item::ItemStack) -> i64 {
+    if st.is_empty() {
+        return 0;
+    }
+    let hash = st.item_name().chars().fold(0i32, |h, c| h.wrapping_mul(31).wrapping_add(c as i32));
+    hash as i64 * 31 + st.count() as i64
+}
+
 fn replay(s: &Value) -> Result<usize, String> {
     if std::env::var_os("KILN_SPAWN_DEBUG").is_some() {
         for sp in s.get("spawned").and_then(Value::as_array).into_iter().flatten() {
@@ -400,6 +409,22 @@ fn replay(s: &Value) -> Result<usize, String> {
         let p = BlockPos::new(b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
         level.blocks.insert(p, b[3].as_u64().unwrap() as u16);
     }
+    // wp49 copper golems: the chests' block entities (27 slots) as the recording had them.
+    let chests: Vec<BlockPos> = s
+        .get("chests")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|c| {
+            let p = BlockPos::new(c["pos"][0].as_i64().unwrap() as i32, c["pos"][1].as_i64().unwrap() as i32, c["pos"][2].as_i64().unwrap() as i32);
+            let mut be = kiln_entity::memory::ChestBe { items: vec![kiln_item::ItemStack::empty(); 27], ..Default::default() };
+            for it in c["items"].as_array().unwrap() {
+                be.items[it["slot"].as_u64().unwrap() as usize] = kiln_item::ItemStack::of(it["id"].as_str().unwrap(), it["count"].as_i64().unwrap() as i32).unwrap();
+            }
+            level.chests.insert(p, be);
+            p
+        })
+        .collect();
     // wp44 spawners: the block entities, the recorded light around them and the game rule.
     level.spawner_blocks_work = s.get("spawner_blocks_work").and_then(Value::as_bool).unwrap_or(true);
     for l in s.get("lights").and_then(Value::as_array).into_iter().flatten() {
@@ -497,6 +522,10 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         if let Some(b) = spec.get("bee").and_then(Value::as_array) {
             kiln_entity::mob::kinds::bee::pin_constructor_draws(&mut e, b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
+        }
+        // wp49 copper golems: the constructor's transport cooldown draw.
+        if let Some(c) = spec.get("copper").and_then(Value::as_array) {
+            kiln_entity::mob::kinds::copper_golem::pin_constructor_draws(&mut e, c[0].as_i64().unwrap() as i32);
         }
         if let Some(nbt) = spec.get("nbt").filter(|v| !v.is_null()) {
             mob::persist::apply_nbt(&mut e, &tag_of(nbt));
@@ -854,6 +883,22 @@ fn replay(s: &Value) -> Result<usize, String> {
                 return Err(format!("tick {tick} mob {k}: goals [{goals}] (kiln) vs [{want_goals}] (vanilla)"));
             }
             compared += 1;
+        }
+        // wp49 copper golems: per chest its openers and a signature of its slots, then what each mob holds.
+        if let Some(want) = s.get("chest_trace").and_then(Value::as_array).and_then(|t| t.get(tick as usize)).and_then(Value::as_array) {
+            let mut got: Vec<i64> = Vec::new();
+            for p in &chests {
+                let be = &level.chests[p];
+                got.push(be.openers as i64);
+                got.push(be.items.iter().enumerate().map(|(i, st)| (i as i64 + 1).wrapping_mul(item_sig(st))).fold(0i64, i64::wrapping_add));
+            }
+            for k in 0..initial {
+                got.push(level.entity(ids[k]).and_then(mob::data).map_or(0, |m| item_sig(&m.equipment[mob::MAINHAND])));
+            }
+            let want: Vec<i64> = want.iter().map(|v| v.as_i64().unwrap()).collect();
+            if got != want {
+                return Err(format!("tick {tick}: chests and hands {got:?} (kiln) vs {want:?} (vanilla)"));
+            }
         }
     }
     // wp32 parrots: what the scenario drew from the level's random.

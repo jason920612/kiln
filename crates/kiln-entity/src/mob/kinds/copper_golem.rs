@@ -401,3 +401,11 @@ fn make_brain(random: &mut dyn RandomSource) -> Brain {
     Brain::new(&[Mem::GazeCooldownTicks], sensors, vec![core, idle], random)
 }
 
+
+/// For the parity replay: the constructor's draw as the recording had it (vanilla draws it from
+/// the mob's unseeded random): the first transport cooldown.
+pub fn pin_constructor_draws(e: &mut Entity, transport_cooldown: i32) {
+    if let Some(b) = crate::mob::data_mut(e).and_then(|m| m.brain.as_mut()) {
+        b.st.mem.set(Mem::TransportItemsCooldownTicks, Val::Int(transport_cooldown));
+    }
+}
