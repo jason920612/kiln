@@ -409,3 +409,14 @@ pub fn pin_constructor_draws(e: &mut Entity, transport_cooldown: i32) {
         b.st.mem.set(Mem::TransportItemsCooldownTicks, Val::Int(transport_cooldown));
     }
 }
+
+/// `CopperGolem.hasContainerOpen(counter, pos)`: the chest it holds open is the one at `pos`, or
+/// the other half of its double chest.
+pub fn has_container_open(m: &MobData, level: &dyn EntityLevel, pos: BlockPos) -> bool {
+    let Some(opened) = ext::state::<State>(m).and_then(|s| s.opened_chest) else { return false };
+    if opened == pos {
+        return true;
+    }
+    let s = level.block(opened);
+    chest_access::is_chest_block(s) && chest_access::double_half(s).is_some() && chest_access::connected_pos(opened, s) == pos
+}

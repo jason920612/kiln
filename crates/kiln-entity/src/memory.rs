@@ -615,13 +615,21 @@ impl EntityLevel for MemoryLevel {
         self.chests.get(&pos).is_some_and(|c| c.locked)
     }
     fn container_users(&self, pos: BlockPos) -> Vec<i32> {
-        self.chests.get(&pos).map(|c| c.users.clone()).unwrap_or_default()
+        // `ContainerOpenersCounter.getEntitiesWithContainerOpen`: whoever within the counter's range
+        // (grown by 4) says it has the container open.
+        let Some(c) = self.chests.get(&pos) else { return Vec::new() };
+        let area = Aabb::of_block(pos).inflate_all(c.max_range + 4.0);
+        self.entities_in(&area, EntityFilter::Any, i32::MIN)
+            .into_iter()
+            .filter(|&id| self.entity(id).and_then(crate::mob::data).is_some_and(|m| crate::mob::kinds::copper_golem::has_container_open(m, self, pos)))
+            .collect()
     }
-    fn container_start_open(&mut self, pos: BlockPos, user: i32, _range: f64) {
+    fn container_start_open(&mut self, pos: BlockPos, user: i32, range: f64) {
         let first = match self.chests.get_mut(&pos) {
             Some(c) => {
                 c.openers += 1;
                 c.users.push(user);
+                c.max_range = c.max_range.max(range);
                 c.openers == 1
             }
             None => return,
@@ -638,6 +646,9 @@ impl EntityLevel for MemoryLevel {
                 c.openers -= 1;
                 if let Some(i) = c.users.iter().position(|&u| u == user) {
                     c.users.remove(i);
+                }
+                if c.openers == 0 {
+                    c.max_range = 0.0;
                 }
                 c.openers == 0
             }
@@ -675,4 +686,6 @@ pub struct ChestBe {
     /// The entities that opened it (`startOpen`), and `ContainerOpenersCounter.openCount`.
     pub users: Vec<i32>,
     pub openers: i32,
+    /// `ContainerOpenersCounter.maxInteractionRange`.
+    pub max_range: f64,
 }
