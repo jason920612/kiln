@@ -105,6 +105,8 @@ public class InteractVectors {
         boolean tickLevel;
         // wp49: the living mobs around are recorded.
         boolean watchMobs;
+        // wp50: the cushions tick once after every step (the replay's level does), `tick_cushions` ticks them that many times.
+        boolean tickCushions;
         // wp49: commands the replay runs together with the first step (after the level has settled), not before it
         // (a hive ages while the replay's level ticks; the recorded one stands still).
         List<String> late = new ArrayList<>();
@@ -676,44 +678,44 @@ public class InteractVectors {
         c.step(useEntity(2.5, 100.0, 0.5, 0, false)).step(attackEntity(2.5, 100.0, 0.5));
         out.add(c);
         // ---- the check every 100 ticks (the cushions are ticked by hand)
-        c = cushionCase("tick_on_stone");
-        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"red\"}");
+        c = cushionCase("tick_on_stone"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"red\"}");
         c.step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
-        c = cushionCase("tick_over_air");
-        c.cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"red\",CustomName:'\"Floating\"'}");
+        c = cushionCase("tick_over_air"); c.tickCushions = true;
+        c.late("summon minecraft:cushion 2.5 100 0.5 {color:\"red\",CustomName:'\"Floating\"'}");
         c.step(op("op", "tick_cushions", "ticks", 99)).step(op("op", "tick_cushions", "ticks", 1)).step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
-        c = cushionCase("tick_support_broken");
-        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c = cushionCase("tick_support_broken"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
         c.step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "command", "command", "setblock 2 99 0 minecraft:air")).step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
-        c = cushionCase("tick_buried");
-        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c = cushionCase("tick_buried"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
         c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:stone")).step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
-        c = cushionCase("tick_in_fire");
-        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c = cushionCase("tick_in_fire"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
         c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:fire")).step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
-        c = cushionCase("tick_in_soul_fire");
-        c.cmd("setblock 2 99 0 minecraft:soul_sand").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c = cushionCase("tick_in_soul_fire"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:soul_sand").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
         c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:soul_fire")).step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
-        c = cushionCase("tick_carpet_support");
-        c.cmd("setblock 2 99 0 minecraft:white_carpet").cmd("summon minecraft:cushion 2.5 99.0625 0.5 {color:\"blue\"}");
+        c = cushionCase("tick_carpet_support"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:white_carpet").late("summon minecraft:cushion 2.5 99.0625 0.5 {color:\"blue\"}");
         c.step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
-        c = cushionCase("tick_half_under");
-        c.cmd("setblock 2 99 0 minecraft:stone_slab[type=bottom]").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c = cushionCase("tick_half_under"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone_slab[type=bottom]").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
         c.step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
-        c = cushionCase("tick_saved_color");
-        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"nonsense\"}").cmd("summon minecraft:cushion 3.5 100 0.5 {color:\"purple\"}");
+        c = cushionCase("tick_saved_color"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"nonsense\"}").late("summon minecraft:cushion 3.5 100 0.5 {color:\"purple\"}");
         c.step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
-        c = cushionCase("tick_while_sitting");
-        c.cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c = cushionCase("tick_while_sitting"); c.tickCushions = true;
+        c.late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
         c.step(useEntity(2.5, 100.0, 0.5, 0, false)).step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
     }
@@ -3461,6 +3463,9 @@ public class InteractVectors {
         if (c.watchMaps) resetMaps();
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
+            if (c.tickCushions && !"tick_cushions".equals(s.get("op"))) {
+                for (var cu : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 90, -16, 32, 120, 32))) cu.tick();
+            }
             if (c.watchMaps) mapTick(p);
             Map<String, Object> r = new LinkedHashMap<>();
             if (c.watchMaps) r.put("maps", mapsOf(p));

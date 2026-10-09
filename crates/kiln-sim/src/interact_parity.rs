@@ -426,19 +426,6 @@ fn stand_diff(got: &[StandRow], want: &[StandRow]) -> String {
     out.join("; ")
 }
 
-/// The age of the oldest cushion in the level (`tickCount`).
-fn cushion_age(sim: &Sim) -> Option<i32> {
-    let mut best: Option<i32> = None;
-    for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
-        for e in region.part().0.list.iter().filter(|e| !e.removed) {
-            if let Some(phys) = e.phys.as_deref().filter(|p| kiln_entity::ext_entity::cushion::is_cushion(p)) {
-                best = best.max(Some(phys.tick_count));
-            }
-        }
-    }
-    best
-}
-
 /// The id of the hanging entity (or armor stand) nearest to `at`.
 fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
     let mut best: Option<(f64, i32)> = None;
@@ -570,7 +557,6 @@ fn run_case(line: &Value) -> Vec<String> {
     }
     let mut errors = Vec::new();
     let mut seen_bees: std::collections::HashSet<i32> = Default::default();
-    let mut cushion_clock: Option<i32> = None;
     let steps = line["steps"].as_array().unwrap();
     let results = line["result"].as_array().unwrap();
     for (n, (step, want)) in steps.iter().zip(results).enumerate() {
@@ -638,27 +624,12 @@ fn run_case(line: &Value) -> Vec<String> {
                     assert!(sim.step(idle));
                 }
             }
-            // The vectors tick the cushions by hand `ticks` times, from age 0. The replay's level ticked them while the
-            // player joined: the first of these steps takes that age as its start, and the step's own tick is the last.
+            // The vectors tick the cushions `ticks` times (the step's own tick is one of them).
             "tick_cushions" => {
-                let ticks = i32_of(&step["ticks"]);
-                match cushion_age(&sim) {
-                    Some(age) => {
-                        let want = cushion_clock.unwrap_or(age) + ticks;
-                        cushion_clock = Some(want);
-                        while cushion_age(&sim).is_some_and(|a| a + 1 < want) {
-                            let mut idle = Vec::new();
-                            client.tick(None, &mut idle);
-                            assert!(sim.step(idle));
-                        }
-                    }
-                    None => {
-                        for _ in 1..ticks {
-                            let mut idle = Vec::new();
-                            client.tick(None, &mut idle);
-                            assert!(sim.step(idle));
-                        }
-                    }
+                for _ in 1..i32_of(&step["ticks"]) {
+                    let mut idle = Vec::new();
+                    client.tick(None, &mut idle);
+                    assert!(sim.step(idle));
                 }
             }
             "select" => inbox.push(ToSim::Packet(1, PlayIn::SetCarriedItem { slot: i32_of(&step["slot"]) as i16 })),
