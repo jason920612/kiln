@@ -448,6 +448,7 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         level.spawners.insert(*p, be);
     }
+    let player_health = s.get("player").and_then(|p| p.get("health")).and_then(Value::as_f64).map(|h| h as f32);
     let mut player = s.get("player").filter(|p| !p.is_null()).map(|p| {
         let mut v = PlayerView::new(p["id"].as_i64().unwrap() as i32, vec3(&p["pos"]));
         v.sneaking = p["sneaking"].as_bool().unwrap_or(false);
@@ -813,6 +814,8 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         let dealt: f32 = level.player_hits[before..].iter().map(|h| h.1).sum();
         if dealt > 0.0 {
+            // (The recording measures the health the player lost: the difference of two floats.)
+            let dealt = player_health.map_or(dealt, |hp| hp - (hp - dealt));
             got_hits.push((tick, dealt as f64));
         }
         if let Some(k) = std::env::var("KILN_MOB_DEBUG").ok().map(|v| v.parse::<usize>().unwrap_or(0))
