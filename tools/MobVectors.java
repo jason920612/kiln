@@ -1793,6 +1793,7 @@ public class MobVectors {
         scenariosBee(out);
         scenariosGiant(out);
         scenariosDolphin(out);
+        scenariosHappyGhast(out);
         // -- wp33: mule breeding, jockeys, the undead mounts, projectile deflection
         scenariosWp33(out);
         scenariosSpears(out);
@@ -3171,6 +3172,217 @@ public class MobVectors {
             s.playerCreative = true;
             s.levelSeed = 520;
             s.ticks = 300;
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp49: happy ghasts
+    static void scenariosHappyGhast(List<Scenario> out) {
+        // Floating about over a floor, grown.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("happy_ghast_idle_" + seed);
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 50f * seed, 39000L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 600 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Low over the floor.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("happy_ghast_low_" + seed);
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 1, 0.5, 70f * seed, 39100L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 610 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Over nothing.
+        {
+            Scenario s = new Scenario("happy_ghast_void");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 20f, 39200L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 620;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A player holding snowballs.
+        {
+            Scenario s = new Scenario("happy_ghast_tempt");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 20f, 39300L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:snowball";
+            s.levelSeed = 630;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A player on its back: it stays still.
+        {
+            Scenario s = new Scenario("happy_ghast_player_above");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 4, 0.5, 20f, 39400L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {0.5, BY + 8.0, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 640;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Hurt.
+        {
+            Scenario s = new Scenario("happy_ghast_hurt");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 20f, 39500L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {10.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.levelSeed = 650;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Healing: a heart a minute.
+        {
+            Scenario s = new Scenario("happy_ghast_heal");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 20f, 39600L);
+            m.nbt = "{PersistenceRequired:1b,Health:10f}";
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 660;
+            s.ticks = 1300;
+            out.add(s);
+        }
+        // With a harness.
+        {
+            Scenario s = new Scenario("happy_ghast_harness");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 8, 0.5, 20f, 39700L);
+            m.nbt = "{PersistenceRequired:1b,equipment:{body:{id:\"minecraft:white_harness\",count:1}}}";
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 670;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Ghastlings.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("happy_ghast_baby_" + seed);
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f * seed, 39800L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 680 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("happy_ghast_baby_follows_player");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f, 39900L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 690;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("happy_ghast_baby_tempt");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f, 39910L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:snowball";
+            s.levelSeed = 691;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("happy_ghast_baby_follows_adult");
+            floor(s, 30, "minecraft:stone");
+            MobSpec baby = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f, 39920L);
+            baby.nbt = "{PersistenceRequired:1b}";
+            baby.age = -24000;
+            s.mobs.add(baby);
+            MobSpec adult = new MobSpec("minecraft:happy_ghast", 12.5, BY + 8, 3.5, 200f, 39921L);
+            adult.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(adult);
+            s.player = new double[] {30.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 692;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("happy_ghast_baby_hurt");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f, 39930L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.levelSeed = 693;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Fed snowballs, a ghastling grows up faster.
+        {
+            Scenario s = new Scenario("happy_ghast_baby_feed");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 2, 0.5, 60f, 39940L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:snowball";
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:snowball";
+            s.actions.add(a);
+            s.levelSeed = 694;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Grown up (the age runs out): the goals take over from the brain.
+        {
+            Scenario s = new Scenario("happy_ghast_grows_up");
+            floor(s, 30, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:happy_ghast", 0.5, BY + 5, 0.5, 60f, 39950L);
+            m.nbt = "{PersistenceRequired:1b}";
+            m.age = -100;
+            s.mobs.add(m);
+            s.player = new double[] {24.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 695;
+            s.ticks = 400;
             out.add(s);
         }
     }
