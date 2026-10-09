@@ -321,6 +321,11 @@ impl Sim {
         let [x, y, z] = pos;
         let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
         let chunk_pos = ChunkPos::of_block(x, z);
+        // A command block that is "always active" before the new data comes (`setAutomatic` compares).
+        let was_auto = self.dims[dim]
+            .regions
+            .at(chunk_pos.cell())
+            .and_then(|r| r.part().1.containers.get(kiln_blocks::BlockPos::new(x, y, z)).and_then(|c| c.command.as_ref().map(|d| d.auto)));
         // A live container writes its state into the chunk first.
         if let Some(region) = self.dims[dim].regions.at_mut(chunk_pos.cell()) {
             let (cells, part) = region.cells_and_part_mut();
@@ -333,6 +338,13 @@ impl Sim {
         let Some(old) = chunk.block_entity(lx, y, lz).cloned() else { return false };
         let mut be = kiln_world::block_entity::BlockEntity::new(old.kind);
         if let Tag::Compound(out) = &mut be.nbt {
+            // `BlockInput.place` merges the data into what the block entity saves: a command block keeps its flags
+            // (a chain block that is "always active" stays so unless the data says otherwise).
+            if kiln_world::block_entity::type_name(old.kind) == "minecraft:command_block"
+                && let Tag::Compound(kept) = &old.nbt
+            {
+                out.extend(kept.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z")).cloned());
+            }
             // The new contents replace the defaults a block entity starts with (a sign's empty sides).
             for (k, v) in fields.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z")) {
                 out.retain(|(ok, _)| ok != k);
@@ -355,6 +367,9 @@ impl Sim {
             part.1.sculk.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.hearts.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.spawners.reload(kiln_blocks::BlockPos::new(x, y, z), be);
+        }
+        if let Some(was) = was_auto {
+            self.with_level_in(dim, pos, |l| crate::command_block::auto_reloaded(l, kiln_blocks::BlockPos::new(x, y, z), was));
         }
         let Some((kind, tag)) = self.dims[dim].regions.block_entity_data(x, y, z) else { return true };
         let pkt = packets::block_entity_data(pos, kind as i32, &tag);

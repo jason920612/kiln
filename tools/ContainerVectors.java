@@ -323,9 +323,9 @@ public class ContainerVectors {
         out.add(cbScenario("held_power", 20).container(0, 0, 0, cb("command_block", false, gold, "")).at(2, power).at(8, "setblock ~0 ~1 ~0 minecraft:air"));
         // The scoreboard counts the runs.
         String count = "scoreboard players add s n 1";
-        out.add(cbScenario("repeating_powered", 16).container(0, 0, 0, cb("repeating_command_block", false, count, "")).at(1, "scoreboard objectives add n dummy").at(2, power));
-        out.add(cbScenario("repeating_idle", 16).container(0, 0, 0, cb("repeating_command_block", false, count, "auto:1b")).at(1, "scoreboard objectives add n dummy"));
-        out.add(cbScenario("repeating_auto_kick", 16).container(0, 0, 0, cb("repeating_command_block", false, count, "auto:1b")).at(1, "scoreboard objectives add n dummy").at(3, power)
+        out.add(cbScenario("repeating_powered", 16).container(0, 0, 0, cb("repeating_command_block", false, count, "")).at(1, "scoreboard objectives remove n").at(1, "scoreboard objectives add n dummy").at(2, power));
+        out.add(cbScenario("repeating_idle", 16).container(0, 0, 0, cb("repeating_command_block", false, count, "auto:1b")).at(1, "scoreboard objectives remove n").at(1, "scoreboard objectives add n dummy"));
+        out.add(cbScenario("repeating_auto_kick", 16).container(0, 0, 0, cb("repeating_command_block", false, count, "auto:1b")).at(1, "scoreboard objectives remove n").at(1, "scoreboard objectives add n dummy").at(3, power)
                 .at(5, "setblock ~0 ~-1 ~0 minecraft:air"));
         // Chains: each block above its own.
         out.add(cbScenario("chain", 16).container(0, 0, 0, cb("command_block", false, gold, "")).container(1, 0, 0, cb("chain_command_block", false, iron, "auto:1b"))
@@ -343,10 +343,10 @@ public class ContainerVectors {
         out.add(cbScenario("comparator_forks", 14).container(0, 0, 0, cb("command_block", false, "execute positioned ~ ~ ~ positioned ~1 ~ ~ positioned ~2 ~ ~ run setblock ~ ~2 ~ minecraft:gold_block", ""))
                 .comparator(0, 0, -2, "south").at(2, power));
         // What the output says.
-        out.add(cbScenario("output_scoreboard", 10).container(0, 0, 0, cb("command_block", false, count, "")).at(1, "scoreboard objectives add n dummy").at(2, power));
+        out.add(cbScenario("output_scoreboard", 10).container(0, 0, 0, cb("command_block", false, count, "")).at(1, "scoreboard objectives remove n").at(1, "scoreboard objectives add n dummy").at(2, power));
         out.add(cbScenario("output_failure", 10).container(0, 0, 0, cb("command_block", false, "foo bar", "")).at(2, power));
         out.add(cbScenario("output_failure_in_command", 10).container(0, 0, 0, cb("command_block", false, "setblock ~ ~1 ~ minecraft:not_a_block", "")).at(2, power));
-        out.add(cbScenario("output_untracked", 10).container(0, 0, 0, cb("command_block", false, count, "TrackOutput:0b")).at(1, "scoreboard objectives add n dummy").at(2, power));
+        out.add(cbScenario("output_untracked", 10).container(0, 0, 0, cb("command_block", false, count, "TrackOutput:0b")).at(1, "scoreboard objectives remove n").at(1, "scoreboard objectives add n dummy").at(2, power));
         out.add(cbScenario("output_say", 10).container(0, 0, 0, cb("command_block", false, "say hello", "")).at(2, power));
         out.add(cbScenario("output_leading_slash", 10).container(0, 0, 0, cb("command_block", false, "/setblock ~ ~1 ~ minecraft:gold_block", "")).at(2, power));
         out.add(cbScenario("searge", 10).container(0, 0, 0, cb("command_block", false, "Searge", "")).at(2, power));

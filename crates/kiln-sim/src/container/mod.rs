@@ -836,7 +836,14 @@ impl Containers {
     pub fn reload(&mut self, pos: BlockPos, be: Option<&BlockEntity>) {
         match be.and_then(|be| Some((kind_of(be)?, be))) {
             Some((kind, be)) => {
-                self.map.insert(pos, ContainerBe::load(kind, be.kind, &be.nbt));
+                let mut loaded = ContainerBe::load(kind, be.kind, &be.nbt);
+                // (A command block's plain last output is kept for tests while the output itself stays.)
+                if let (Some(new), Some(old)) = (loaded.command.as_deref_mut(), self.map.get(&pos).and_then(|c| c.command.as_deref()))
+                    && new.last_output == old.last_output
+                {
+                    new.last_plain = old.last_plain.clone();
+                }
+                self.map.insert(pos, loaded);
             }
             None => {
                 self.map.remove(&pos);

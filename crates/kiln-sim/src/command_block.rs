@@ -31,9 +31,9 @@ pub(crate) fn mode_of(s: u16) -> Mode {
     }
 }
 
-/// `CommandBlock.automatic`: the repeating and the chain blocks start "always active".
+/// `CommandBlock.automatic`: chain command blocks start "always active" (the other two need redstone).
 pub(crate) fn automatic_default(s: u16) -> bool {
-    BlockId::of(s).name() != "minecraft:command_block"
+    BlockId::of(s).name() == "minecraft:chain_command_block"
 }
 
 /// What a command block entity keeps (`BaseCommandBlock` and the entity's own flags).
@@ -202,6 +202,17 @@ pub(crate) fn use_without_item(p: &mut Player, level: &mut RegionLevel, pos: Blo
     c.command.as_ref()?.save(&mut fields);
     p.send(kiln_proto::packets::block_entity_data([pos.x, pos.y, pos.z], c.type_id as i32, &Tag::Compound(fields)));
     Some(true)
+}
+
+/// `CommandBlockEntity.setAutomatic` after its data was loaded (a command, `/data merge`): turned on while unpowered, a
+/// block that is not a chain's starts working.
+pub(crate) fn auto_reloaded(level: &mut RegionLevel, pos: BlockPos, was_auto: bool) {
+    let s = level.block(pos);
+    let Some(d) = data(level, pos) else { return };
+    if !was_auto && d.auto && !d.powered && mode_of(s) != Mode::Sequence {
+        mark_condition_met(level, pos);
+        schedule_block_tick(level, pos, BlockId::of(s), 1, TickPriority::Normal);
+    }
 }
 
 /// A new command block entity takes its block's "always active" (`CommandBlock.newBlockEntity`).
