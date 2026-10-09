@@ -1444,6 +1444,10 @@ fn use_on_block(
     if item_name == Some("minecraft:armor_stand") && crate::stands::use_on(p, level, bp, dir, !main_hand, spawns) {
         return;
     }
+    // `CushionItem.useOn`.
+    if item_name.is_some_and(crate::cushion::is_cushion_item) && actor.may_build && crate::cushion::use_on(p, level, bp, dir, cursor, !main_hand, spawns) {
+        return;
+    }
     // `HangingEntityItem.useOn`: item frames and paintings.
     if item_name.is_some_and(crate::frames::is_hanging_item) && crate::frames::use_on(p, level, bp, dir, !main_hand, spawns) {
         return;
@@ -1579,6 +1583,7 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
         prevents_rest: false,
         player_source: None,
         hanging: None,
+        cushion: false,
         wear: None,
     };
     let origin = [at.x as f64, at.y as f64, at.z as f64];

@@ -223,6 +223,11 @@ impl EntityExt for Painting {
         true
     }
 
+    /// `BlockAttachedEntity.thunderHit`: nothing.
+    fn thunder_hit(&mut self, _e: &mut Entity, _level: &mut dyn EntityLevel, _bolt: i32) -> bool {
+        true
+    }
+
     /// `BlockAttachedEntity.hurtServer`.
     fn hurt(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, _amount: f32, attacker: Option<i32>) -> bool {
         if e.is_invulnerable_to_base(kind) {

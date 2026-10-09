@@ -41,6 +41,7 @@ mod bell;
 mod campfire;
 mod stands;
 mod frames;
+mod cushion;
 mod bookshelf;
 mod use_item;
 mod ranged;

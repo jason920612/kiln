@@ -368,6 +368,8 @@ pub(crate) struct EntityBox {
     pub player_source: Option<kiln_entity::vibration::EventSource>,
     /// A hanging entity (item frame, painting): its facing and type.
     pub hanging: Option<(kiln_entity::math::Direction, &'static str)>,
+    /// A cushion (placing one does not overlap another).
+    pub cushion: bool,
     /// What a dispenser asks of a living thing (a player, an armor stand, a mob).
     pub wear: Option<Wear>,
 }
@@ -443,6 +445,7 @@ fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Ent
                 prevents_rest: false,
                 player_source: Some(player_source(p)),
                 hanging: None,
+                cushion: false,
                 wear: (!spots.is_empty() && near(min, max)).then(|| crate::container::equip::wear_of_player(p)),
             }
         })
@@ -459,7 +462,7 @@ fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Ent
         } else {
             None
         };
-        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of), wear }
+        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of), cushion: e.phys.as_deref().is_some_and(kiln_entity::ext_entity::cushion::is_cushion), wear }
     }));
     out
 }

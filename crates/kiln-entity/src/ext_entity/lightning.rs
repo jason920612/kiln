@@ -163,12 +163,21 @@ pub fn thunder_hit(level: &mut dyn EntityLevel, id: i32, bolt: i32) {
     }
     let marker = Entity::new("minecraft:marker", 0, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0);
     let mut t2 = std::mem::replace(t, marker);
-    if !crate::mob::thunder_hit(&mut t2, level, bolt) {
+    if !crate::mob::thunder_hit(&mut t2, level, bolt) && !ext_thunder_hit(&mut t2, level, bolt) {
         base_thunder_hit(&mut t2, level);
     }
     if let Some(slot) = level.entity_mut(id) {
         *slot = t2;
     }
+}
+
+/// The `thunderHit` an extension entity brings (`BlockAttachedEntity`: nothing).
+fn ext_thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, bolt: i32) -> bool {
+    let placeholder = EntityKind::Other { type_name: e.type_name };
+    let EntityKind::Ext(mut x) = std::mem::replace(&mut e.kind, placeholder) else { return false };
+    let handled = x.thunder_hit(e, level, bolt);
+    e.kind = EntityKind::Ext(x);
+    handled
 }
 
 /// The plain `Entity.thunderHit`.

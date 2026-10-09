@@ -285,6 +285,11 @@ impl EntityExt for ItemFrame {
         true
     }
 
+    /// `BlockAttachedEntity.thunderHit`: nothing.
+    fn thunder_hit(&mut self, _e: &mut Entity, _level: &mut dyn EntityLevel, _bolt: i32) -> bool {
+        true
+    }
+
     /// `hurtServer`.
     fn hurt(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, _amount: f32, attacker: Option<i32>) -> bool {
         let creative_attacker = attacker.and_then(|a| level.player(a)).is_some_and(|p| p.creative && kind == DamageKind::PlayerAttack);

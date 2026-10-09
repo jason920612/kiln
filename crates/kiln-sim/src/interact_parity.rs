@@ -266,6 +266,14 @@ fn hangings_json(sim: &Sim) -> Value {
     for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
         for e in region.part().0.list.iter().filter(|e| !e.removed) {
             let Some(phys) = e.phys.as_deref() else { continue };
+            if let Some(c) = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::cushion::Cushion>(phys) {
+                // [type, x, y, z, 0, color, riders, the riders seat height in ten thousandths].
+                let p = phys.position();
+                let seat = if phys.passengers.is_empty() { 0 } else { (kiln_entity::ride::rider_position(phys, 0, "minecraft:player", 1.0).y * 1.0e4).floor() as i64 };
+                let color = kiln_entity::ext_entity::cushion::COLORS[c.color as usize];
+                rows.push((phys.type_name.to_owned(), p.x, p.y, p.z, json!([phys.type_name, p.x, p.y, p.z, 0, color, phys.passengers.len(), seat])));
+                continue;
+            }
             let Some(dir) = kiln_entity::ext_entity::hanging::direction_of(phys) else { continue };
             let (item, rot, area) = if let Some(f) = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::item_frame::ItemFrame>(phys) {
                 (if f.item.is_empty() { Value::Null } else { Value::String(stack_hex(&f.item)) }, f.rotation, 0)
@@ -424,7 +432,7 @@ fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
     for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
         for e in region.part().0.list.iter().filter(|e| !e.removed) {
             let Some(phys) = e.phys.as_deref() else { continue };
-            if kiln_entity::ext_entity::hanging::direction_of(phys).is_none() && phys.type_name != "minecraft:armor_stand" {
+            if kiln_entity::ext_entity::hanging::direction_of(phys).is_none() && phys.type_name != "minecraft:armor_stand" && !kiln_entity::ext_entity::cushion::is_cushion(phys) {
                 continue;
             }
             let p = phys.position();
@@ -609,7 +617,7 @@ fn run_case(line: &Value) -> Vec<String> {
                 }
             }
             // `ticks` server ticks pass for the maps: the step's own tick is one of them.
-            "map_wait" => {
+            "map_wait" | "tick_cushions" => {
                 for _ in 1..i32_of(&step["ticks"]) {
                     let mut idle = Vec::new();
                     client.tick(None, &mut idle);

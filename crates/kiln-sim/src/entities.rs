@@ -2354,6 +2354,17 @@ fn settle(sim: &mut SimLevel, i: usize) {
     }
 }
 
+/// `Entity.removePassenger` of the vehicle at `idx`: a cushion that stays plays its get-up sound.
+fn remove_rider(sim: &mut SimLevel, idx: Option<usize>, pid: i32) {
+    let Some(j) = idx else { return };
+    let Some(mut vp) = sim.list[j].phys.take() else { return };
+    kiln_entity::ride::remove_passenger(&mut vp, pid);
+    if kiln_entity::ext_entity::cushion::is_cushion(&vp) {
+        kiln_entity::ext_entity::cushion::Cushion::passenger_left(&mut vp, sim);
+    }
+    sim.list[j].phys = Some(vp);
+}
+
 /// `Player.rideTick` for the region's riding players, after the entities ticked: a sneaking
 /// player (or one whose mount is gone or threw it off) gets off at the mount's dismount
 /// location; the others sit where the mount carries them.
@@ -2367,9 +2378,7 @@ fn ride_players(sim: &mut SimLevel) {
         // A teleport of the player's own got it off at once (`Entity.teleport`: `stopRiding`): it
         // stays where it went.
         if std::mem::take(&mut sim.players[k].dismount_on_teleport) {
-            if let Some(vp) = idx.and_then(|j| sim.list[j].phys.as_deref_mut()) {
-                kiln_entity::ride::remove_passenger(vp, pid);
-            }
+            remove_rider(sim, idx, pid);
             let p = &mut *sim.players[k];
             p.vehicle = None;
             p.vehicle_type = None;
@@ -2391,9 +2400,7 @@ fn ride_players(sim: &mut SimLevel) {
         // `stopRiding` → `dismountVehicle`.
         let mut to = sim.players[k].pos;
         if let Some(j) = idx {
-            if let Some(vp) = sim.list[j].phys.as_deref_mut() {
-                kiln_entity::ride::remove_passenger(vp, pid);
-            }
+            remove_rider(sim, Some(j), pid);
             let vp = sim.list[j].phys.clone().expect("vehicle state");
             let height = sim.players[k].dimensions().1 as f64;
             to = arr(kiln_entity::ride::dismount_location(&*sim, &vp, 0.6, height));

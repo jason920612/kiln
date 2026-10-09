@@ -79,6 +79,11 @@ impl EntityExt for LeashKnot {
         true
     }
 
+    /// `BlockAttachedEntity.thunderHit`: nothing.
+    fn thunder_hit(&mut self, _e: &mut Entity, _level: &mut dyn EntityLevel, _bolt: i32) -> bool {
+        true
+    }
+
     /// `LeashFenceKnotEntity.interact`: shears cut every lead on the knot; otherwise the leads
     /// the player holds go on the knot, and when it holds none of them the leads on the knot go
     /// to the player (not when sneaking).
