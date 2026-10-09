@@ -1132,7 +1132,7 @@ public class MobVectors {
     /// the mob's current yaw.
     static void pinCubeMoveYaw(Mob m) throws Exception {
         Object mc = m.getMoveControl();
-        if (mc.getClass().getSimpleName().equals("CubeMobMoveControl")) {
+        if (mc.getClass().getSimpleName().equals("CubeMobMoveControl") || mc.getClass().getSimpleName().equals("SulfurCubeMobMoveControl")) {
             set(mc, "yRot", 180.0F * m.getYRot() / 3.1415927F);
         }
         pinCommonB(m);
@@ -3362,7 +3362,7 @@ public class MobVectors {
         {
             Scenario s = sulfurWorld("sulfur_tnt_lit", 43900L, 995, 160);
             s.mobs.get(0).nbt = sulfurNbt("minecraft:tnt");
-            s.player = new double[] {1.5, BY, 0.5};
+            s.player = new double[] {5.5, BY, 0.5};
             s.playerCreative = false;
             s.actions.add(interact(5, 0, "minecraft:flint_and_steel"));
             out.add(s);
