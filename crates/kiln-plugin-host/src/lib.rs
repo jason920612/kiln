@@ -943,8 +943,6 @@ pub(crate) struct CustomEvent {
     pub name: String,
     pub source: Arc<str>,
     pub payload: Vec<u8>,
-    /// The raising plugin (never called for its own event).
-    pub source_index: usize,
 }
 
 /// The other plugins' instances, lent to a plugin that may raise events for the length of

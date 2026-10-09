@@ -15,7 +15,7 @@ impl Plugin for Counter {
     fn on_join(p: Player) {
         let mine = state::get_i64(Scope::Player(p.handle), "broken");
         if mine > 0 {
-            chat::send(p.handle, &[text("Welcome back! You have broken "), colored(&mine.to_string(), "aqua"), text(" blocks.")]);
+            chat::send_spans(p.handle, &[text("Welcome back! You have broken "), colored(&mine.to_string(), "aqua"), text(" blocks.")]);
         }
     }
 

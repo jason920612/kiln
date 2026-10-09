@@ -57,7 +57,7 @@ fn runtime_cfg(plugins: &[(&str, &str)], cfg: RuntimeConfig) -> PluginRuntime {
 }
 
 fn alice() -> Actor<'static> {
-    Actor { uuid: 0xa11ce, name: "Alice", operator: false }
+    Actor::new(0xa11ce, "Alice", false)
 }
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
@@ -130,7 +130,7 @@ fn counter_counts_per_player_and_globally() {
     let mut rt = runtime(&[("counter", "")], None);
     assert_eq!(rt.commands().len(), 1);
     assert_eq!(rt.commands()[0].name, "broken");
-    let (a, b) = (alice(), Actor { uuid: 0xb0b, name: "Bob", operator: false });
+    let (a, b) = (alice(), Actor::new(0xb0b, "Bob", false));
     rt.sync_regions(0, [1, 2]);
     for _ in 0..3 {
         rt.region_mut(0, 1).unwrap().observe_block(true, &a, [0, 0, 0], STONE);
@@ -273,7 +273,7 @@ fn manifest_filters_keep_events_on_the_host() {
 fn player_buckets_limit_one_player_only() {
     let cfg = RuntimeConfig { player_burst: 4, player_events_per_second: 20, ..config(Duration::from_millis(200)) };
     let mut rt = runtime_cfg(&[("spawn-protection", "")], cfg);
-    let (a, b) = (alice(), Actor { uuid: 0xb0b, name: "Bob", operator: false });
+    let (a, b) = (alice(), Actor::new(0xb0b, "Bob", false));
     let far = [SPAWN[0] + 500, 0, SPAWN[2]];
     let r = rt.region_mut(0, 1).unwrap();
     for i in 0..4 {

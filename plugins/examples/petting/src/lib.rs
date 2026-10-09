@@ -16,7 +16,7 @@ impl Plugin for Petting {
         let kind = registry::key(Kind::EntityType, ev.kind).unwrap_or_default();
         let name = kind.strip_prefix("minecraft:").unwrap_or(&kind).replace('_', " ");
         let times = if n == 1 { "once".to_owned() } else { format!("{n} times") };
-        chat::send(ev.player.handle, &[text("You petted this "), colored(&name, "gold"), text(&format!(" {times}."))]);
+        chat::send_spans(ev.player.handle, &[text("You petted this "), colored(&name, "gold"), text(&format!(" {times}."))]);
         Verdict::Allow
     }
 }

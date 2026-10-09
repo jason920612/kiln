@@ -73,7 +73,7 @@ fn names() -> Vec<String> {
 }
 
 fn actor(names: &[String], i: usize) -> Actor<'_> {
-    Actor { uuid: uuid(i), name: &names[i], operator: false }
+    Actor::new(uuid(i), &names[i], false)
 }
 
 fn int(v: &Option<Vec<u8>>) -> Option<i64> {

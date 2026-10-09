@@ -722,7 +722,7 @@ impl kiln::api::events::Host for HostState {
         };
         // Depth one: a handler of a raised event has no peers lent, so it raises into nothing.
         let Some(mut peers) = self.peers.take() else { return Ok(wit::Decision::Allow) };
-        let ev = crate::CustomEvent { name: self.owned(&name), source: self.id.clone(), payload, source_index: self.plugin };
+        let ev = crate::CustomEvent { name: self.owned(&name), source: self.id.clone(), payload };
         let source = self.frame.source;
         let verdict = crate::dispatch_custom(&mut peers, &self.shared, &ev, actor.as_ref().map(|(u, o, n, i)| (*u, *o, n.as_str(), i)), source);
         self.peers = Some(peers);
