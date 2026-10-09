@@ -95,6 +95,7 @@ import net.minecraft.world.inventory.DispenserMenu;
 import net.minecraft.world.inventory.FurnaceMenu;
 import net.minecraft.world.inventory.HopperMenu;
 import net.minecraft.world.inventory.InventoryMenu;
+import net.minecraft.world.inventory.LoomMenu;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.RemoteSlot;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
@@ -439,6 +440,23 @@ public class InventoryVectors {
         "generic_3x3", "hopper", "shulker_box", "furnace", "blast_furnace", "smoker", "stonecutter", "stonecutter", "smithing", "smithing",
     };
 
+    /// wp50: only the looms (`LOOM_ONLY=1`).
+    static final String[] LOOM_KINDS = {"loom"};
+
+    static final String[] LOOM_POOL = {
+        "white_banner", "red_banner", "blue_banner", "black_banner", "yellow_banner", "white_banner", "white_banner",
+        "red_banner[banner_patterns=[{pattern:\"minecraft:stripe_downright\",color:\"blue\"}]]",
+        "white_banner[banner_patterns=[{pattern:\"minecraft:circle\",color:\"black\"},{pattern:\"minecraft:border\",color:\"red\"}]]",
+        "white_banner[banner_patterns=[{pattern:\"minecraft:stripe_top\",color:\"red\"},{pattern:\"minecraft:stripe_bottom\",color:\"red\"},{pattern:\"minecraft:stripe_left\",color:\"red\"},{pattern:\"minecraft:stripe_right\",color:\"red\"},{pattern:\"minecraft:stripe_middle\",color:\"red\"},{pattern:\"minecraft:cross\",color:\"red\"}]]",
+        "white_banner[banner_patterns=[{pattern:\"minecraft:stripe_top\",color:\"red\"},{pattern:\"minecraft:stripe_bottom\",color:\"red\"},{pattern:\"minecraft:stripe_left\",color:\"red\"},{pattern:\"minecraft:stripe_right\",color:\"red\"},{pattern:\"minecraft:stripe_middle\",color:\"red\"}]]",
+        "orange_banner[custom_name='\"Flag\"']",
+        "white_banner[banner_patterns=[{pattern:\"minecraft:rhombus\",color:\"cyan\"},{pattern:\"minecraft:stripe_bottom\",color:\"brown\"}],tooltip_display={hidden_components:[\"minecraft:banner_patterns\"]}]",
+        "red_dye", "blue_dye", "white_dye", "black_dye", "green_dye", "yellow_dye", "lapis_lazuli", "bone_meal",
+        "flower_banner_pattern", "creeper_banner_pattern", "skull_banner_pattern", "mojang_banner_pattern", "globe_banner_pattern",
+        "piglin_banner_pattern", "flow_banner_pattern", "guster_banner_pattern", "field_masoned_banner_pattern", "bordure_indented_banner_pattern",
+        "stone", "shield", "shield[base_color=\"red\"]", "paper", "bundle",
+    };
+
     static int blockSize(String kind) {
         return switch (kind) {
             case "generic_9x1" -> 9;
@@ -498,6 +516,7 @@ public class InventoryVectors {
             case "smoker" -> new SmokerMenu(id, s.inv, s.block, s.data);
             case "stonecutter" -> new StonecutterMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
             case "smithing" -> new SmithingMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
+            case "loom" -> new LoomMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
             default -> throw new IllegalArgumentException(s.kind);
         };
     }
@@ -520,12 +539,12 @@ public class InventoryVectors {
         int crashes = 0;
         try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(out, StandardCharsets.UTF_8))) {
             for (int n = 0; n < sequences; n++) {
-                String kind = KINDS[rng.nextInt(KINDS.length)];
+                String kind = (System.getenv("LOOM_ONLY") != null ? LOOM_KINDS : KINDS)[rng.nextInt((System.getenv("LOOM_ONLY") != null ? LOOM_KINDS : KINDS).length)];
                 boolean creative = rng.nextInt(5) == 0;
                 int id = kind.equals("inventory") ? 0 : 1 + rng.nextInt(100);
                 Session s = session(kind, id, creative);
                 String[] pool = kind.equals("crafting") || (kind.equals("inventory") && rng.nextBoolean()) ? CRAFT_POOL
-                        : kind.equals("stonecutter") ? STONE_POOL : kind.equals("smithing") ? SMITH_POOL : CLICK_POOL;
+                        : kind.equals("stonecutter") ? STONE_POOL : kind.equals("smithing") ? SMITH_POOL : kind.equals("loom") ? LOOM_POOL : CLICK_POOL;
                 double fill = rng.nextDouble();
                 for (int i = 0; i < 43; i++) {
                     if (rng.nextDouble() < fill * 0.8) s.inv.setItem(i, randomStack(rng, pool));
@@ -556,7 +575,7 @@ public class InventoryVectors {
                         grid = g;
                     }
                 }
-                boolean station = kind.equals("stonecutter") || kind.equals("smithing");
+                boolean station = kind.equals("stonecutter") || kind.equals("smithing") || kind.equals("loom");
                 if (station && rng.nextInt(4) < 3) grid = stationInput(kind, rng);
                 for (int i = 0; i < grid.size(); i++) {
                     if (!grid.get(i).isEmpty()) s.menu.getSlot((station ? 0 : 1) + i).set(grid.get(i).copy());
@@ -614,6 +633,7 @@ public class InventoryVectors {
         if ((s.kind.equals("crafting") || s.kind.equals("inventory")) && rng.nextInt(5) == 0) slot = rng.nextInt(3) == 0 ? 1 + rng.nextInt(4) : 0;
         if (s.kind.equals("stonecutter") && rng.nextInt(3) == 0) slot = rng.nextInt(2);
         if (s.kind.equals("smithing") && rng.nextInt(3) == 0) slot = rng.nextInt(4);
+        if (s.kind.equals("loom") && rng.nextInt(3) == 0) slot = rng.nextInt(4);
         if (rng.nextInt(200) == 0) slot = size + rng.nextInt(3);
         if (rng.nextInt(300) == 0) slot = -1 - rng.nextInt(3);
         int r = rng.nextInt(100);
@@ -703,7 +723,7 @@ public class InventoryVectors {
     static String buttonStep(Session s, Random rng) {
         AbstractContainerMenu m = s.menu;
         int containerId = rng.nextInt(30) == 0 ? m.containerId + 1 : m.containerId;
-        int visible = m instanceof StonecutterMenu sc ? sc.getNumberOfVisibleRecipes() : 2;
+        int visible = m instanceof StonecutterMenu sc ? sc.getNumberOfVisibleRecipes() : m instanceof LoomMenu lm ? lm.getSelectablePatterns().size() : 2;
         int button = rng.nextInt(10) == 0 ? rng.nextInt(8) - 3 : rng.nextInt(visible + 2);
         if (m.containerId == containerId && m.clickMenuButton(s.player, button)) m.broadcastChanges();
         return "{\"button\": [" + containerId + ", " + button + "], \"out\": " + drain(s) + ", \"state\": " + state(s) + "}";
@@ -860,7 +880,14 @@ public class InventoryVectors {
     /** Station inputs that some recipe takes: a stonecutter input, or smithing template/base/addition (sometimes one wrong). */
     static List<ItemStack> stationInput(String kind, Random rng) {
         List<ItemStack> g = new ArrayList<>();
-        if (kind.equals("stonecutter")) {
+        if (kind.equals("loom")) {
+            // A banner, a dye and (mostly) a pattern item, each sometimes missing or the wrong thing.
+            String[] banners = {LOOM_POOL[rng.nextInt(13)], LOOM_POOL[rng.nextInt(7)]};
+            g.add(rng.nextInt(10) == 0 ? ItemStack.EMPTY : parse(banners[rng.nextInt(2)], 1));
+            g.add(rng.nextInt(8) == 0 ? ItemStack.EMPTY : parse(LOOM_POOL[13 + rng.nextInt(8)], 1));
+            g.add(rng.nextInt(3) == 0 ? ItemStack.EMPTY : parse(LOOM_POOL[21 + rng.nextInt(10)], 1));
+            if (rng.nextInt(12) == 0) g.set(rng.nextInt(3), randomStack(rng, LOOM_POOL));
+        } else if (kind.equals("stonecutter")) {
             var list = sortedRecipes(net.minecraft.world.item.crafting.StonecutterRecipe.class);
             var r = (net.minecraft.world.item.crafting.StonecutterRecipe) list.get(rng.nextInt(list.size())).value();
             g.add(pick(r.input(), rng));
