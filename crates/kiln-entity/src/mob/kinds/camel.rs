@@ -71,6 +71,8 @@ const STANDUP_TICKS: i64 = 52;
 #[derive(Clone, Debug, Default)]
 pub struct State {
     pub saddle: ItemStack,
+    /// `Mob.dropChances` of the saddle slot (`None`: the default 0.085).
+    saddle_drop: Option<f32>,
     /// `LAST_POSE_CHANGE_TICK` (negative while sitting).
     pub last_pose_change: i64,
     pub dashing: bool,
@@ -351,12 +353,13 @@ impl Kind for Camel {
             // The inventory screen is not modelled.
             return Some(Outcome::success(HeldChange::None));
         }
-        let name = if stack.is_empty() { "minecraft:air" } else { mob::item_name(stack) };
-        if name == "minecraft:saddle" && st(m).saddle.is_empty() && !m.baby() && mob::is_alive(e, m) {
-            let mut one = stack.clone();
-            one.set_count(1);
-            st_mut(m).saddle = one;
-            level.emit(Event::Sound { pos: e.position(), sound: snd(m, "saddle"), source: "neutral", volume: 0.5, pitch: 1.0 });
+        // `stack.interactLivingEntity`: `Equippable.equipOnTarget` of a saddle (`canUseSlot`: alive and grown).
+        if st(m).saddle.is_empty() && !m.baby() && mob::is_alive(e, m)
+            && let Some(one) = super::steering::equip_on_target(e, level, stack, kiln_item::component::EquipmentSlot::Saddle, Some(snd(m, "saddle")))
+        {
+            let s = st_mut(m);
+            s.saddle = one;
+            s.saddle_drop = Some(2.0);
             return Some(Outcome::success(HeldChange::Consume(1)));
         }
         if !stack.is_empty() && self.is_food(stack.item()) {
@@ -399,8 +402,15 @@ impl Kind for Camel {
         if slot != 7 {
             return false;
         }
-        st_mut(m).saddle = stack;
+        let s = st_mut(m);
+        s.saddle = stack;
+        s.saddle_drop = Some(2.0);
         true
+    }
+
+    fn take_extra_equipment_for_drop(&self, m: &mut MobData) -> Vec<(ItemStack, f32)> {
+        let s = st_mut(m);
+        vec![(std::mem::take(&mut s.saddle), s.saddle_drop.unwrap_or(0.085))]
     }
 
     fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
@@ -452,6 +462,10 @@ impl Kind for Camel {
             Some(Tag::Compound(eq)) => eq.iter().find(|(k, _)| k == "saddle").and_then(|(_, v)| ItemStack::from_nbt(v).ok()),
             _ => None,
         };
+        let saddle_drop = match r.get("drop_chances") {
+            Some(Tag::Compound(dc)) => dc.iter().find(|(k, _)| k == "saddle").and_then(|(_, v)| v.as_f64()).map(|f| f as f32),
+            _ => None,
+        };
         let pose = match r.get("LastPoseTick") {
             Some(Tag::Long(t)) => *t,
             _ => 0,
@@ -459,6 +473,9 @@ impl Kind for Camel {
         let s = st_mut(m);
         if let Some(sd) = saddle {
             s.saddle = sd;
+        }
+        if saddle_drop.is_some() {
+            s.saddle_drop = saddle_drop;
         }
         s.last_pose_change = pose;
         mob::refresh_dimensions(e, m);
@@ -471,6 +488,13 @@ impl Kind for Camel {
             match o.0.iter_mut().find(|(k, _)| k == "equipment") {
                 Some((_, Tag::Compound(eq))) => eq.push(entry),
                 _ => o.put("equipment", Tag::Compound(vec![entry])),
+            }
+        }
+        if let Some(chance) = s.saddle_drop.filter(|c| *c != 0.085) {
+            let entry = ("saddle".to_owned(), Tag::Float(chance));
+            match o.0.iter_mut().find(|(k, _)| k == "drop_chances") {
+                Some((_, Tag::Compound(dc))) => dc.push(entry),
+                _ => o.put("drop_chances", Tag::Compound(vec![entry])),
             }
         }
         o.put("EatingHaystack", Tag::Byte(0));

@@ -8633,7 +8633,7 @@ public class MobVectors {
         // Horses: tame and not, saddle and armor by hand, shears.
         for (String kind : new String[] {"horse", "donkey", "camel", "llama"}) {
             String land = kind.equals("camel") ? "minecraft:sand" : "minecraft:grass_block";
-            for (boolean tame : new boolean[] {true, false}) {
+            for (boolean tame : kind.equals("camel") ? new boolean[] {true} : new boolean[] {true, false}) {
                 String tag = "eq50_" + kind + (tame ? "_tame" : "_wild");
                 String base = "{NoAI:1b,PersistenceRequired:1b" + (tame ? ",Tame:1b" : "");
                 long seed = 52000L + kind.length() * 100 + (tame ? 7 : 0);
@@ -8642,13 +8642,13 @@ public class MobVectors {
                 Scenario s1 = eqClick(tag + "_saddle", a, "minecraft:saddle", false, false, 40);
                 floor(s1, 16, land);
                 out.add(s1);
-                if (!kind.equals("llama")) {
+                if (kind.equals("horse")) {
                     MobSpec b = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
                     b.nbt = base + "}";
-                    Scenario s2 = eqClick(tag + "_armor", b, kind.equals("camel") ? "minecraft:iron_horse_armor" : "minecraft:iron_horse_armor", false, false, 40);
+                    Scenario s2 = eqClick(tag + "_armor", b, "minecraft:iron_horse_armor", false, false, 40);
                     floor(s2, 16, land);
                     out.add(s2);
-                } else {
+                } else if (kind.equals("llama")) {
                     MobSpec b = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
                     b.nbt = base + "}";
                     Scenario s2 = eqClick(tag + "_carpet", b, "minecraft:red_carpet", false, false, 40);
@@ -8676,6 +8676,7 @@ public class MobVectors {
                 MobSpec m = new MobSpec("minecraft:" + kind, 0.5, W, 0.5, 30f, seed++);
                 m.nbt = tame.substring(0, tame.length() - 1) + (c[2].isEmpty() ? "" : "," + c[2]) + "}";
                 Scenario s = eqClick("eq50_" + kind + "_" + c[0], m, c[1], c[3].equals("creative"), false, 60);
+                s.player = new double[] {10.5, BY, 0.5};
                 poolWorld(s, 14, -6, -6, 6, 6, 5);
                 out.add(s);
             }
@@ -8683,6 +8684,7 @@ public class MobVectors {
             MobSpec w = new MobSpec("minecraft:" + kind, 0.5, W, 0.5, 30f, seed++);
             w.nbt = "{PersistenceRequired:1b}";
             Scenario sw = eqClick("eq50_" + kind + "_wild_saddle", w, "minecraft:saddle", false, false, 40);
+            sw.player = new double[] {10.5, BY, 0.5};
             poolWorld(sw, 14, -6, -6, 6, 6, 5);
             out.add(sw);
         }
@@ -8698,7 +8700,7 @@ public class MobVectors {
         for (String item : new String[] {"minecraft:wolf_armor", "minecraft:shears"}) {
             MobSpec w = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 30f, 55000L + item.length());
             w.nbt = "{NoAI:1b,PersistenceRequired:1b," + owner() + (item.endsWith("shears") ? ",equipment:{body:{id:\"minecraft:wolf_armor\",count:1}}" : "") + "}";
-            Scenario s = eqClick("eq50_wolf_" + item.substring(10), w, item, false, false, 40);
+            Scenario s = eqClick("eqwolf50_" + item.substring(10), w, item, false, false, 40);
             floor(s, 16, "minecraft:grass_block");
             out.add(s);
         }

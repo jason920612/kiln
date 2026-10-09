@@ -121,10 +121,30 @@ pub fn passenger_attachment(vehicle: &Entity, index: usize) -> Vec3 {
 
 /// `EntityAttachments.getAverage(PASSENGER)` of `vehicle`: where its passenger point is, before it turns with the vehicle.
 pub fn passenger_attachment_unrotated(vehicle: &Entity, m: &crate::mob::MobData) -> Vec3 {
+    let s = if m.baby() { 0.5 } else { 1.0 };
+    // The types that wear gear (`tools/DumpAttachments.java`): the static point of the type, which the
+    // dynamic seats of the mounts (a horse rearing, a camel sitting) do not move.
+    let worn = match vehicle.type_name {
+        "minecraft:pig" => Some((0.868_749_976_158_142_1, 0.0)),
+        "minecraft:strider" => Some((1.700_000_047_683_716, 0.0)),
+        "minecraft:horse" => Some((1.443_750_023_841_858, 0.0)),
+        "minecraft:donkey" => Some((1.112_499_952_316_284_2, 0.0)),
+        "minecraft:mule" => Some((1.212_499_976_158_142, 0.0)),
+        "minecraft:skeleton_horse" | "minecraft:zombie_horse" => Some((1.318_750_023_841_858, 0.0)),
+        "minecraft:llama" | "minecraft:trader_llama" => Some((1.37, -0.3)),
+        "minecraft:camel" | "minecraft:camel_husk" => Some((2.375, 0.0)),
+        "minecraft:nautilus" | "minecraft:zombie_nautilus" => Some((1.137_500_047_683_716, 0.0)),
+        "minecraft:happy_ghast" => Some((4.0, 0.0)),
+        "minecraft:wolf" => Some((0.81875, -0.0625)),
+        "minecraft:sulfur_cube" => Some((0.490_000_009_536_743_16, 0.0)),
+        _ => None,
+    };
+    if let Some((y, z)) = worn {
+        return Vec3::new(0.0, y * s, z * s);
+    }
     if let Some(v) = m.kind.ext().and_then(|k| k.passenger_offset_at(vehicle, m, 0)) {
         return v;
     }
-    let s = if m.baby() && !crate::mob::kinds::horse::is_equine(m.kind) { 0.5 } else { 1.0 };
     if let Some((y, z)) = passenger_point(vehicle.type_name) {
         return Vec3::new(0.0, y * s, z * s);
     }
