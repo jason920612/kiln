@@ -210,7 +210,7 @@ pub fn name_of(p: &Player) -> String {
 
 /// The current event: names, player state, who is online, the denial message.
 pub mod event {
-    pub use crate::bindings::kiln::api::event::{deny_message, online, player_info, player_name};
+    pub use crate::bindings::kiln::api::event::{deny_message, info, online, player_name};
 }
 
 /// Owned namespaces: player, cell, entity and the plugin's global namespace.

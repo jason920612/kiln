@@ -381,7 +381,7 @@ impl kiln::api::event::Host for HostState {
         Ok(())
     }
 
-    fn player_info(&mut self, p: u64) -> wasmtime::Result<wit::PlayerInfo> {
+    fn info(&mut self, p: u64) -> wasmtime::Result<wit::PlayerInfo> {
         let generation = self.generation;
         let f = self.frame()?;
         let i = f.player_index(generation, p)?;

@@ -67,7 +67,7 @@ interface types {
 
     enum game-mode { survival, creative, adventure, spectator }
 
-    /// What the host knows of a player right now (`event.player-info`).
+    /// What the host knows of a player right now (`event.info`).
     record player-info {
         level: level,
         pos: tuple<f64, f64, f64>,
@@ -357,7 +357,7 @@ interface event {
     /// The message the acting player gets if this handler denies.
     deny-message: func(text: list<span>);
     /// A player of the call as the host sees them right now.
-    player-info: func(p: player-handle) -> player-info;
+    info: func(p: player-handle) -> player-info;
     /// The players online at the start of the tick (a snapshot, the same in every context).
     online: func() -> list<online-player>;
 }

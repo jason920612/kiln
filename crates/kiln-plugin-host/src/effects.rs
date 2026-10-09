@@ -11,7 +11,7 @@
 use crate::Span;
 use std::sync::Arc;
 
-/// What the host knows of a player when an event happens (`event.player-info`).
+/// What the host knows of a player when an event happens (`event.info`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PlayerInfo {
     /// Level id (index into the registries' levels).

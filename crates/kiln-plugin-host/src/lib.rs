@@ -93,7 +93,7 @@ pub struct Actor<'a> {
     pub uuid: u128,
     pub name: &'a str,
     pub operator: bool,
-    /// What `event.player-info` answers for this player.
+    /// What `event.info` answers for this player.
     pub info: PlayerInfo,
 }
 
