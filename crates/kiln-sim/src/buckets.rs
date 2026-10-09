@@ -381,8 +381,8 @@ pub(crate) fn use_cauldron(p: &mut Player, level: &mut RegionLevel, pos: BlockPo
                 return Some(false);
             }
             p.fill_in_hand(off_hand, bottle(), true, spawns);
+            // (Unlike an empty cauldron's, this branch counts no use of the item: only the cauldron's.)
             p.award_stat(player_stats::custom("minecraft:use_cauldron"), 1);
-            p.award_stat(used, 1);
             kiln_blocks::set_block_and_update(level, pos, kiln_blocks::state::set_int(state, "level", level_now + 1));
             level.effect(Effect::Sound { pos, sound: "minecraft:item.bottle.empty", volume: 1.0, pitch: 1.0 });
             Some(true)
