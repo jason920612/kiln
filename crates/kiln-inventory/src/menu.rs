@@ -676,10 +676,12 @@ impl Menu {
             MenuKind::Smithing => crate::menus::smithing_slots_changed(self, env, source),
             MenuKind::Grindstone => crate::workstation::grindstone_slots_changed(self, env, source),
             MenuKind::Anvil => crate::workstation::anvil_slots_changed(self, env, source),
-            MenuKind::Loom if source == Source::Input => crate::stations::loom_slots_changed(self, env),
-            MenuKind::CartographyTable if source == Source::Input => crate::stations::cartography_slots_changed(self, env),
+            // (The loom and the cartography table do not look at which container changed: a bundle in the
+            // player inventory calls it too.)
+            MenuKind::Loom => crate::stations::loom_slots_changed(self, env),
+            MenuKind::CartographyTable => crate::stations::cartography_slots_changed(self, env),
             MenuKind::Enchantment if source == Source::Input => crate::stations::enchantment_slots_changed(self, env),
-            MenuKind::Loom | MenuKind::CartographyTable | MenuKind::Enchantment => {}
+            MenuKind::Enchantment => {}
             _ => self.broadcast_changes(env),
         }
     }

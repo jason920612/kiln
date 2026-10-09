@@ -64,7 +64,6 @@ fn loom_setup_result(menu: &mut Menu, env: &mut Env, pattern: i32) {
 
 /// `LoomMenu.slotsChanged`.
 pub(crate) fn loom_slots_changed(menu: &mut Menu, env: &mut Env) {
-    if std::env::var_os("LOOM_DBG").is_some() { eprintln!("slots_changed: in {:?} idx {}", menu.input.items.iter().map(|s| s.item_name().to_string()).collect::<Vec<_>>(), menu.local_data[0]); }
     let banner = menu.input.items[0].clone();
     let dye = menu.input.items[1].clone();
     let pattern_item = menu.input.items[2].clone();
@@ -122,7 +121,6 @@ pub(crate) fn loom_click(menu: &mut Menu, env: &mut Env, button: i32) -> bool {
 
 /// The loom result slot's `onTake`: one banner and one dye are used (the pattern item stays).
 pub(crate) fn loom_take(menu: &mut Menu, env: &mut Env) {
-    if std::env::var_os("LOOM_DBG").is_some() { eprintln!("loom_take"); }
     for slot in [0, 1] {
         let removed = crate::container::remove_item(&mut menu.input.items, slot, 1);
         if !removed.is_empty() {

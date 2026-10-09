@@ -216,7 +216,6 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
     for (k, step) in seq["steps"].as_array().unwrap().iter().enumerate() {
         *steps += 1;
         out.clear();
-        if std::env::var_os("LOOM_DBG").is_some() { eprintln!("-- step {k}"); }
         let what;
         if let Some(click) = step.get("click") {
             let click = ContainerClick::decode(&unhex(click.as_str().unwrap())).map_err(|e| format!("step {k}: decode: {e}"))?;
