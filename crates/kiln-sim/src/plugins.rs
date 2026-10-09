@@ -363,7 +363,7 @@ pub(crate) fn deny_packet(
                 }
             }
         }
-        PlayIn::ContainerClick { body } => container_click(hook, p, env, body, spawns),
+        PlayIn::ContainerClick { body } => container_click(hook, p, env, &body, spawns),
         _ => false,
     }
 }
@@ -570,7 +570,7 @@ pub(crate) fn after_packets(hook: &mut RegionHook, cells: &CellSet<Cell>, _env: 
         if now == w.before || (w.broken && !kiln_data::blocks_types::is_air(now)) {
             continue;
         }
-        let a = Actor { uuid: w.uuid.as_u128(), name: &w.name, operator: w.operator };
+        let a = Actor::new(w.uuid.as_u128(), &w.name, w.operator);
         hook.rp.observe_block(w.broken, &a, w.pos, block_id(if w.broken { w.before } else { now }));
     }
     hook.rp.flush_observed();
