@@ -16,7 +16,6 @@
 //
 // This world is the one part of `kiln:api` that is not in the 1.0 compatibility promise until
 // WASI 0.3 is stable (see `docs/plugin-api.md`).
-package kiln:api@1.0.0;
 
 interface http {
     record request {
