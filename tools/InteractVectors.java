@@ -181,6 +181,9 @@ public class InteractVectors {
             return this;
         }
 
+        /** wp49: the player is an operator (level 4). */
+        boolean op;
+
         /** wp49: the level ticks also run the scheduled block ticks and the player's use of his item (a brush). */
         boolean fullTicks;
 
@@ -1135,6 +1138,93 @@ public class InteractVectors {
         out.add(c);
         c = brushCase("brush_put_down_sand", "minecraft:air");
         c.slot("h0", stack("minecraft:suspicious_gravel", 2)).step(useOn(2, 98, 0, 1, 0)).step(wait(3));
+        out.add(c);
+    }
+
+    static Map<String, Object> setCommandBlock(int y, String command, String mode, boolean track, boolean conditional, boolean auto) {
+        return op("op", "set_command_block", "pos", List.of(2, y, 0), "command", command, "mode", mode, "track", track, "conditional", conditional, "auto", auto);
+    }
+
+    /** wp49: command blocks: who can put one up and open it, and what the screen's settings do. */
+    static void commandBlocks49(List<Case> out) {
+        Case c;
+        for (String kind : new String[] {"command_block", "chain_command_block", "repeating_command_block"}) {
+            String[][] who = {{"survival", "op"}, {"creative", "op"}, {"creative", "player"}, {"adventure", "op"}};
+            for (String[] w : who) {
+                c = new Case("cmd_place_" + kind + "_" + w[0] + "_" + w[1]).watch(2, 100, 0).fullTicking();
+                c.gameMode = w[0];
+                c.op = w[1].equals("op");
+                c.cmd("setblock 2 99 0 minecraft:stone");
+                c.slot("h0", stack("minecraft:" + kind, 2)).step(useOn(2, 99, 0, 1, 0)).step(wait(3));
+                out.add(c);
+            }
+        }
+        // The screen.
+        String cb = "minecraft:command_block[conditional=false,facing=up]{Command:\"say hi\",TrackOutput:1b}";
+        String[][] who = {{"creative", "op"}, {"survival", "op"}, {"creative", "player"}, {"spectator", "op"}};
+        for (String[] w : who) {
+            c = blockCase("cmd_open_" + w[0] + "_" + w[1], cb).menus().fullTicking();
+            c.gameMode = w[0];
+            c.op = w[1].equals("op");
+            c.step(useOn(2, 100, 0, 1, 0)).step(wait(2));
+            out.add(c);
+        }
+        // The settings.
+        for (String mode : new String[] {"sequence", "auto", "redstone"}) {
+            for (boolean conditional : new boolean[] {false, true}) {
+                for (boolean auto : new boolean[] {false, true}) {
+                    String name = "cmd_set_" + mode + (conditional ? "_cond" : "") + (auto ? "_auto" : "");
+                    c = blockCase(name, cb).fullTicking();
+                    c.gameMode = "creative";
+                    c.op = true;
+                    c.step(setCommandBlock(100, "say set", mode, true, conditional, auto)).step(wait(4)).step(wait(30));
+                    out.add(c);
+                }
+            }
+        }
+        c = blockCase("cmd_set_no_track", cb).fullTicking();
+        c.gameMode = "creative";
+        c.op = true;
+        c.step(setCommandBlock(100, "say set", "redstone", false, false, true)).step(wait(4));
+        out.add(c);
+        c = blockCase("cmd_set_empty", cb).fullTicking();
+        c.gameMode = "creative";
+        c.op = true;
+        c.step(setCommandBlock(100, "", "redstone", true, false, true)).step(wait(4));
+        out.add(c);
+        c = blockCase("cmd_set_slash", cb).fullTicking();
+        c.gameMode = "creative";
+        c.op = true;
+        c.step(setCommandBlock(100, "/say slashed", "redstone", true, false, true)).step(wait(4));
+        out.add(c);
+        for (String[] w : new String[][] {{"survival", "op"}, {"creative", "player"}, {"adventure", "op"}, {"spectator", "op"}}) {
+            c = blockCase("cmd_set_refused_" + w[0] + "_" + w[1], cb).fullTicking();
+            c.gameMode = w[0];
+            c.op = w[1].equals("op");
+            c.step(setCommandBlock(100, "say set", "auto", true, true, true)).step(wait(4));
+            out.add(c);
+        }
+        c = blockCase("cmd_set_on_stone", "minecraft:stone").fullTicking();
+        c.gameMode = "creative";
+        c.op = true;
+        c.step(setCommandBlock(100, "say set", "auto", true, true, true)).step(wait(4));
+        out.add(c);
+        // Mode change turns the block into the other kind (and keeps its facing).
+        for (String from : new String[] {"command_block", "chain_command_block", "repeating_command_block"}) {
+            for (String mode : new String[] {"sequence", "auto", "redstone"}) {
+                c = blockCase("cmd_mode_" + from + "_" + mode, "minecraft:" + from + "[conditional=false,facing=east]{Command:\"say hi\"}").fullTicking();
+                c.gameMode = "creative";
+                c.op = true;
+                c.step(setCommandBlock(100, "say hi", mode, true, true, false)).step(wait(4));
+                out.add(c);
+            }
+        }
+        // A chain behind a block that is set to run.
+        c = blockCase("cmd_set_runs_chain", "minecraft:command_block[conditional=false,facing=east]{Command:\"say first\"}").fullTicking();
+        c.cmd("setblock 3 100 0 minecraft:chain_command_block[conditional=false,facing=east]{Command:\"say second\",auto:1b}");
+        c.gameMode = "creative";
+        c.op = true;
+        c.step(setCommandBlock(100, "say first", "auto", true, false, true)).step(wait(4)).step(wait(10));
         out.add(c);
     }
 
@@ -2379,6 +2469,7 @@ public class InteractVectors {
         ((net.minecraft.world.level.storage.ServerLevelData) server.overworld().getLevelData()).setGameTime(START_TIME);
         p.setGameMode(GameType.byName(c.gameMode));
         call(p.connection, "markClientLoaded");
+        if (c.op) command("op " + p.getGameProfile().name());
         p.snapTo(c.pos[0], c.pos[1], c.pos[2], c.yaw, c.pitch);
         if (c.fullTicks) settleRotation(p);
         p.setDeltaMovement(Vec3.ZERO);
@@ -2670,6 +2761,18 @@ public class InteractVectors {
                 p.connection.handleContainerClose(new ServerboundContainerClosePacket(p.containerMenu.containerId));
                 p.containerMenu.broadcastChanges();
             }
+            // wp49: the command block screen's settings.
+            case "set_command_block" -> {
+                @SuppressWarnings("unchecked")
+                List<Integer> at = (List<Integer>) s.get("pos");
+                var mode = switch ((String) s.get("mode")) {
+                    case "sequence" -> net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.SEQUENCE;
+                    case "auto" -> net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.AUTO;
+                    default -> net.minecraft.world.level.block.entity.CommandBlockEntity.Mode.REDSTONE;
+                };
+                p.connection.handleSetCommandBlock(new net.minecraft.network.protocol.game.ServerboundSetCommandBlockPacket(new BlockPos(at.get(0), at.get(1), at.get(2)), (String) s.get("command"), mode,
+                        (boolean) s.get("track"), (boolean) s.get("conditional"), (boolean) s.get("auto")));
+            }
             // wp49: the use key is let go (`ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM`).
             case "release_use" -> p.connection.handlePlayerAction(new ServerboundPlayerActionPacket(ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM, BlockPos.ZERO, Direction.DOWN, 1));
             // wp49: the player closes the menu.
@@ -2948,6 +3051,7 @@ public class InteractVectors {
             results.add(r);
         }
         server.getPlayerList().remove(p);
+        if (c.op) command("deop " + p.getGameProfile().name());
         command("fill -4 90 -8 15 110 15 minecraft:air");
         // (Scheduled ticks that were still due when the case ended would block the next case's: the game time goes back.)
         if (c.fullTicks) {
@@ -3002,6 +3106,7 @@ public class InteractVectors {
         line.put("menus", c.watchMenus);
         line.put("maps", c.watchMaps);
         line.put("ticking", c.tickLevel);
+        line.put("op", c.op);
         line.put("mobs", c.watchMobs);
         line.put("player_uuid", p.getUUID().toString());
         line.put("custom_stats", c.customStats);
@@ -3118,6 +3223,7 @@ public class InteractVectors {
             trials49(all);
             crafters49(all);
             brushes49(all);
+            commandBlocks49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {
@@ -3175,6 +3281,7 @@ public class InteractVectors {
                 "enable-rcon=false",
                 "enable-query=false",
                 "spawn-monsters=false",
+                "enable-command-block=true",
                 "generate-structures=false",
                 "") + "\n");
         Path world = Path.of("world");

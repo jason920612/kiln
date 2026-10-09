@@ -441,7 +441,9 @@ fn run_case(line: &Value) -> Vec<String> {
     // (A map covers 128 blocks around the origin: the replay's player sees as far.)
     let maps = line["maps"].as_bool() == Some(true);
     let view = if maps { 8 } else { 2 };
-    let mut sim = Sim::new(SimConfig::new(2, view, None));
+    let mut config = SimConfig::new(2, view, None);
+    config.enable_command_block = true;
+    let mut sim = Sim::new(config);
     // (Vaults roll loot tables: the level has the vanilla ones whatever the working directory.)
     if line["ticking"].as_bool() == Some(true) && sim.loot.is_none() {
         sim.loot = crate::combat_parity::vanilla_loot();
@@ -474,6 +476,9 @@ fn run_case(line: &Value) -> Vec<String> {
     }
     // (The vectors were recorded without announcements of advancements; with a datapack Kiln has them.)
     let mut console: Vec<ToSim> = vec![ToSim::Console("gamerule minecraft:show_advancement_messages false".into())];
+    if line["op"].as_bool() == Some(true) {
+        console.push(ToSim::Console("op Interact".into()));
+    }
     console.extend(line["commands"].as_array().unwrap().iter().map(|c| ToSim::Console(c.as_str().unwrap().to_owned())));
     assert!(sim.step(console));
     let pos: Vec<f64> = line["pos"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
@@ -596,6 +601,24 @@ fn run_case(line: &Value) -> Vec<String> {
                 inbox.push(ToSim::Packet(1, PlayIn::ContainerButtonClick { container_id: id, button_id: i32_of(&step["button"]) }));
             }
             "release_use" => inbox.push(ToSim::Packet(1, PlayIn::PlayerAction { action: 6, pos: [0, 0, 0], face: 0, sequence: 1 })),
+            "set_command_block" => {
+                use kiln_proto::packets::serverbound::{CommandBlockMode, CommandBlockUpdate};
+                inbox.push(ToSim::Packet(
+                    1,
+                    PlayIn::SetCommandBlock(CommandBlockUpdate {
+                        pos: arr3(&step["pos"]),
+                        command: step["command"].as_str().unwrap().to_owned(),
+                        mode: match step["mode"].as_str().unwrap() {
+                            "sequence" => CommandBlockMode::Sequence,
+                            "auto" => CommandBlockMode::Auto,
+                            _ => CommandBlockMode::Redstone,
+                        },
+                        track_output: step["track"].as_bool().unwrap(),
+                        conditional: step["conditional"].as_bool().unwrap(),
+                        automatic: step["auto"].as_bool().unwrap(),
+                    }),
+                ));
+            }
             "menu_slot_state" => {
                 let id = sim.players[&1].containers.counter;
                 inbox.push(ToSim::Packet(1, PlayIn::ContainerSlotStateChanged { slot: i32_of(&step["slot"]), container_id: id, enabled: step["enabled"].as_bool().unwrap() }));
