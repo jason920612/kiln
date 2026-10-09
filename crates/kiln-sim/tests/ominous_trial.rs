@@ -79,6 +79,10 @@ fn an_ominous_trial_hangs_item_spawners_over_the_player_and_throws_their_items()
             edges += 1;
         }
         before = now;
+        if tick % 20 == 0 {
+            let st = w.sim.block_at(g[0] + 3, g[1] + 1, g[2]).map(|s| kiln_data::blocks_types::block_of(s).property(s, "trial_spawner_state").map(str::to_owned));
+            eprintln!("tick {tick}: {st:?} spawners {now} mobs {}", w.sim.mobs().len());
+        }
         shot = shot.max(w.count("minecraft:arrow") + w.count("minecraft:lingering_potion") + w.count("minecraft:small_fireball") + w.count("minecraft:wind_charge"));
     }
     eprintln!("first item spawner at tick {seen_spawner_at:?}, {edges} of them, at most {spawners} at once, {shot} projectiles");
