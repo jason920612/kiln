@@ -17,9 +17,9 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 /// `kiln:api@1.0.0`, `wit/kiln-api.wit`.
-const KILN_API_DIGEST: &str = "FILL";
+const KILN_API_DIGEST: &str = "7b3032b84e8a93cd0ddff0b9662b262f0d5c3328f08806565f3adeafa72667df";
 /// `wit/async-tasks.wit` (unstable until WASI 0.3 is).
-const ASYNC_TASKS_DIGEST: &str = "FILL";
+const ASYNC_TASKS_DIGEST: &str = "950be11fa751bdac4510b7fb2c16ed6d9c642fd8c1d0ea93e8ee5fcb84249c0f";
 
 /// The text without `//` comments (doc comments included) and with whitespace collapsed to
 /// single spaces between tokens.

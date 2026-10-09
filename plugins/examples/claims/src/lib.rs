@@ -103,11 +103,12 @@ fn name_of_owner(owner: u128) -> String {
         .unwrap_or_else(|| "another player".to_owned())
 }
 
-/// Owners may do anything on their land; everyone else nothing.
+/// Owners may do anything on their land; everyone else nothing. Where claims overlap, every
+/// owner's say counts (the order the cell recorded them in does not matter).
 fn guard(player: u128, cell: u64, x: i32, z: i32) -> Verdict {
-    match claim_at(cell, x, z) {
-        Some(c) if c.owner != player => refusal(&c),
-        _ => Verdict::Allow,
+    match claims_in(cell).into_iter().find(|c| c.contains(x, z) && c.owner != player) {
+        Some(c) => refusal(&c),
+        None => Verdict::Allow,
     }
 }
 
