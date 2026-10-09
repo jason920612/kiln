@@ -280,7 +280,7 @@ impl Living {
         BlockPos::containing(self.pos.x, self.pos.y, self.pos.z)
     }
 
-    fn dist_sqr(&self, x: f64, y: f64, z: f64) -> f64 {
+    pub fn dist_sqr(&self, x: f64, y: f64, z: f64) -> f64 {
         let (a, b, c) = (self.pos.x - x, self.pos.y - y, self.pos.z - z);
         a * a + b * b + c * c
     }
