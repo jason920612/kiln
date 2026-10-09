@@ -298,7 +298,64 @@ public class ContainerVectors {
         lecternScenarios(out);
         dispenserScenarios(out);
         crafterScenarios(out);
+        commandBlockScenarios(out);
         return out;
+    }
+
+    /** wp49: a command block of `kind` (facing east, powered from below at tick 2 unless said otherwise) at the origin. */
+    static String cb(String kind, boolean conditional, String command, String extra) {
+        return String.format(Locale.ROOT, "minecraft:%s[facing=east,conditional=%b]{Command:\"%s\"%s}", kind, conditional, command, extra.isEmpty() ? "" : "," + extra);
+    }
+
+    static Scenario cbScenario(String name, int ticks) {
+        return new Scenario("cb_" + name, ticks).state(0, 1, 0).state(1, 1, 0).state(2, 1, 0).state(3, 1, 0);
+    }
+
+    static void commandBlockScenarios(List<Scenario> out) {
+        String gold = "setblock ~ ~1 ~ minecraft:gold_block";
+        String iron = "setblock ~ ~1 ~ minecraft:iron_block";
+        String power = "setblock ~0 ~-1 ~0 minecraft:redstone_block";
+        // A plain command block: power makes it run, once for a rising edge.
+        out.add(cbScenario("basic", 14).container(0, 0, 0, cb("command_block", false, gold, "")).at(2, power));
+        out.add(cbScenario("two_pulses", 24).container(0, 0, 0, cb("command_block", false, gold, "")).at(2, power).at(5, "setblock ~0 ~-1 ~0 minecraft:air")
+                .at(8, power).at(14, "setblock ~0 ~1 ~0 minecraft:air"));
+        out.add(cbScenario("not_powered", 10).container(0, 0, 0, cb("command_block", false, gold, "")));
+        out.add(cbScenario("held_power", 20).container(0, 0, 0, cb("command_block", false, gold, "")).at(2, power).at(8, "setblock ~0 ~1 ~0 minecraft:air"));
+        // The scoreboard counts the runs.
+        String count = "scoreboard players add s n 1";
+        out.add(cbScenario("repeating_powered", 16).container(0, 0, 0, cb("repeating_command_block", false, count, "")).at(1, "scoreboard objectives add n dummy").at(2, power));
+        out.add(cbScenario("repeating_idle", 16).container(0, 0, 0, cb("repeating_command_block", false, count, "auto:1b")).at(1, "scoreboard objectives add n dummy"));
+        out.add(cbScenario("repeating_auto_kick", 16).container(0, 0, 0, cb("repeating_command_block", false, count, "auto:1b")).at(1, "scoreboard objectives add n dummy").at(3, power)
+                .at(5, "setblock ~0 ~-1 ~0 minecraft:air"));
+        // Chains: each block above its own.
+        out.add(cbScenario("chain", 16).container(0, 0, 0, cb("command_block", false, gold, "")).container(1, 0, 0, cb("chain_command_block", false, iron, "auto:1b"))
+                .container(2, 0, 0, cb("chain_command_block", false, gold, "auto:1b")).at(2, power));
+        out.add(cbScenario("chain_not_active", 16).container(0, 0, 0, cb("command_block", false, gold, "")).container(1, 0, 0, cb("chain_command_block", false, iron, ""))
+                .container(2, 0, 0, cb("chain_command_block", false, gold, "auto:1b")).at(2, power));
+        out.add(cbScenario("chain_conditional_after_failure", 16)
+                .container(0, 0, 0, cb("command_block", false, "execute if block ~ ~ ~ minecraft:diamond_block run setblock ~ ~1 ~ minecraft:gold_block", ""))
+                .container(1, 0, 0, cb("chain_command_block", true, iron, "auto:1b")).container(2, 0, 0, cb("chain_command_block", false, gold, "auto:1b")).at(2, power));
+        out.add(cbScenario("chain_conditional_after_success", 16).container(0, 0, 0, cb("command_block", false, gold, ""))
+                .container(1, 0, 0, cb("chain_command_block", true, iron, "auto:1b")).container(2, 0, 0, cb("chain_command_block", true, gold, "auto:1b")).at(2, power));
+        out.add(cbScenario("conditional_without_a_block_behind", 12).container(0, 0, 0, cb("command_block", true, gold, "")).at(2, power));
+        // The comparator reads the success count.
+        out.add(cbScenario("comparator", 14).container(0, 0, 0, cb("command_block", false, "execute as @e[type=!player] run say hi", "")).comparator(0, 0, -2, "south").at(2, power));
+        out.add(cbScenario("comparator_forks", 14).container(0, 0, 0, cb("command_block", false, "execute positioned ~ ~ ~ positioned ~1 ~ ~ positioned ~2 ~ ~ run setblock ~ ~2 ~ minecraft:gold_block", ""))
+                .comparator(0, 0, -2, "south").at(2, power));
+        // What the output says.
+        out.add(cbScenario("output_scoreboard", 10).container(0, 0, 0, cb("command_block", false, count, "")).at(1, "scoreboard objectives add n dummy").at(2, power));
+        out.add(cbScenario("output_failure", 10).container(0, 0, 0, cb("command_block", false, "foo bar", "")).at(2, power));
+        out.add(cbScenario("output_failure_in_command", 10).container(0, 0, 0, cb("command_block", false, "setblock ~ ~1 ~ minecraft:not_a_block", "")).at(2, power));
+        out.add(cbScenario("output_untracked", 10).container(0, 0, 0, cb("command_block", false, count, "TrackOutput:0b")).at(1, "scoreboard objectives add n dummy").at(2, power));
+        out.add(cbScenario("output_say", 10).container(0, 0, 0, cb("command_block", false, "say hello", "")).at(2, power));
+        out.add(cbScenario("output_leading_slash", 10).container(0, 0, 0, cb("command_block", false, "/setblock ~ ~1 ~ minecraft:gold_block", "")).at(2, power));
+        out.add(cbScenario("searge", 10).container(0, 0, 0, cb("command_block", false, "Searge", "")).at(2, power));
+        out.add(cbScenario("empty_command", 10).container(0, 0, 0, cb("command_block", false, "", "")).at(2, power));
+        // The block's own state: placed powered, the command changed, a rewritten block entity.
+        out.add(cbScenario("command_changed", 14).container(0, 0, 0, cb("command_block", false, gold, "")).at(2, power).at(6, "data merge block ~ ~ ~ {Command:\"" + iron + "\"}")
+                .at(7, "setblock ~0 ~-1 ~0 minecraft:air").at(8, power));
+        out.add(cbScenario("failed_then_works", 14).container(0, 0, 0, cb("command_block", false, "execute if block ~ ~1 ~ minecraft:gold_block run setblock ~1 ~1 ~ minecraft:iron_block", ""))
+                .at(2, power).at(5, "setblock ~0 ~-1 ~0 minecraft:air").at(6, "setblock ~ ~1 ~ minecraft:gold_block").at(7, power));
     }
 
     /**
@@ -837,6 +894,7 @@ public class ContainerVectors {
                 "enable-rcon=false",
                 "enable-query=false",
                 "spawn-monsters=false",
+                "enable-command-block=true",
                 "generate-structures=false",
                 "") + "\n");
         Path world = Path.of("world");
@@ -955,6 +1013,15 @@ public class ContainerVectors {
             }
             m.put("items", new ArrayList<>());
             m.put("hive", list);
+            return m;
+        }
+        // wp49: a command block is no Container: how often its command worked, whether it is powered, its condition met and
+        // always active, and the last output (without the time).
+        if (be instanceof net.minecraft.world.level.block.entity.CommandBlockEntity cb) {
+            String out = cb.getCommandBlock().getLastOutput().getString();
+            if (out.length() >= 11 && out.charAt(0) == '[' && out.charAt(9) == ']') out = out.substring(11);
+            m.put("items", new ArrayList<>());
+            m.put("cmd", List.of(cb.getCommandBlock().getSuccessCount(), cb.isPowered() ? 1 : 0, cb.wasConditionMet() ? 1 : 0, cb.isAutomatic() ? 1 : 0, out));
             return m;
         }
         if (!(be instanceof Container c)) return m;

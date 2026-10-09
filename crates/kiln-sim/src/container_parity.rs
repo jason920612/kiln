@@ -43,6 +43,12 @@ fn container_json(sim: &Sim, pos: BlockPos) -> Value {
                 m.insert("crafter".into(), json!([mask, cr.ticks, i32::from(cr.triggered)]));
             }
         }
+        // A command block: the success count, powered, condition met, always active, the last output.
+        crate::container::BeKind::CommandBlock => {
+            if let Some(d) = &c.command {
+                m.insert("cmd".into(), json!([d.success_count, i32::from(d.powered), i32::from(d.condition_met), i32::from(d.auto), d.last_plain.clone().unwrap_or_default()]));
+            }
+        }
         // A campfire: the four timers, then the four totals.
         crate::container::BeKind::Campfire => {
             let mut v: Vec<i32> = c.cooking.to_vec();
@@ -138,7 +144,9 @@ fn absolute(cmd: &str) -> String {
 
 /// Replays one scenario; returns (values compared, mismatches).
 fn run_scenario(line: &Value) -> (usize, Vec<String>) {
-    let mut sim = Sim::new(SimConfig::new(2, 3, None));
+    let mut config = SimConfig::new(2, 3, None);
+    config.enable_command_block = true;
+    let mut sim = Sim::new(config);
     let (msg, stats) = join(1, "Hoppers", 3);
     assert!(sim.step([msg, ToSim::Console("gamemode spectator Hoppers".into()), ToSim::Console(format!("tp Hoppers {} {} {}", BASE[0], BASE[1] + 8, BASE[2]))]));
     let mut client = Client::new(1, stats);

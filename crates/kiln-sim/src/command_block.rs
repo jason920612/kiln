@@ -43,6 +43,8 @@ pub(crate) struct Data {
     pub success_count: i32,
     /// `lastOutput`: the text of the last message, with the time it came.
     pub last_output: Option<Tag>,
+    /// `lastOutput` as plain text without its time (for tests; not saved).
+    pub last_plain: Option<String>,
     pub track_output: bool,
     pub update_last_execution: bool,
     /// `lastExecution`: the game time of the last run (-1: none).
@@ -60,6 +62,7 @@ impl Default for Data {
             command: String::new(),
             success_count: 0,
             last_output: None,
+            last_plain: None,
             track_output: true,
             update_last_execution: true,
             last_execution: -1,
@@ -81,6 +84,7 @@ impl Data {
             command: nbt.get("Command").and_then(Tag::as_str).unwrap_or("").to_owned(),
             success_count: nbt.get("SuccessCount").and_then(Tag::as_i64).map_or(0, |v| v as i32),
             last_output: if track_output { nbt.get("LastOutput").cloned() } else { None },
+            last_plain: None,
             track_output,
             update_last_execution,
             last_execution: if update_last_execution { nbt.get("LastExecution").and_then(Tag::as_i64).unwrap_or(-1) } else { -1 },
@@ -119,6 +123,7 @@ impl Data {
 pub(crate) struct Run {
     pub success: i32,
     pub output: Option<Tag>,
+    pub plain: Option<String>,
     pub track: bool,
 }
 
@@ -241,6 +246,7 @@ pub(crate) fn output(sim: &mut Sim, text: Text) {
     // `HH:mm:ss` (UTC: the server's time zone is not known here).
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) % 86400;
     let stamp = format!("[{:02}:{:02}:{:02}] ", secs / 3600, secs / 60 % 60, secs % 60);
+    run.plain = Some(crate::commands::console_text(&text));
     run.output = Some(Text::literal(stamp).append(text).to_nbt());
 }
 
@@ -393,6 +399,7 @@ impl Sim {
             self.cb(dim, pos, |l, bp| {
                 if let Some(d) = data(l, bp) {
                     d.last_output = Some(Tag::String("#itzlipofutzli".into()));
+                    d.last_plain = Some("#itzlipofutzli".into());
                     d.success_count = 1;
                 }
             });
@@ -400,13 +407,19 @@ impl Sim {
         }
         self.cb(dim, pos, |l, bp| data(l, bp).map(|d| d.success_count = 0));
         if self.config.enable_command_block && !command.is_empty() {
-            self.cb(dim, pos, |l, bp| data(l, bp).map(|d| d.last_output = None));
+            self.cb(dim, pos, |l, bp| {
+                data(l, bp).map(|d| {
+                    d.last_output = None;
+                    d.last_plain = None;
+                })
+            });
             let run = self.run_block_command(dim, pos, &command, track);
             self.cb(dim, pos, |l, bp| {
                 if let Some(d) = data(l, bp) {
                     d.success_count = run.success;
                     if track {
                         d.last_output = run.output.clone();
+                        d.last_plain = run.plain.clone();
                     }
                 }
             });
