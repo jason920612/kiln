@@ -404,6 +404,15 @@ impl EntityBox {
 
 /// The boxes of a region's players (not spectators) and entities.
 pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities) -> Vec<EntityBox> {
+    boxes(players, entities, false)
+}
+
+/// [`entity_boxes`] with what dispensers ask of the living things ([`Wear`]), for the phases in which they fire.
+pub(crate) fn entity_boxes_wear<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities) -> Vec<EntityBox> {
+    boxes(players, entities, true)
+}
+
+fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities, with_wear: bool) -> Vec<EntityBox> {
     let mut out: Vec<EntityBox> = players
         .filter(|p| p.game_mode != 3 && !p.dead)
         .map(|p| {
@@ -417,7 +426,7 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
                 prevents_rest: false,
                 player_source: Some(player_source(p)),
                 hanging: None,
-                wear: Some(crate::container::equip::wear_of_player(p)),
+                wear: with_wear.then(|| crate::container::equip::wear_of_player(p)),
             }
         })
         .collect();
@@ -425,7 +434,7 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
         let (min, max, blocks_building) = e.body();
         // Mobs are living entities (pressure plates, lightning targets).
         let living = e.phys.as_deref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
-        let wear = e.phys.as_deref().and_then(crate::container::equip::wear_of);
+        let wear = if with_wear { e.phys.as_deref().and_then(crate::container::equip::wear_of) } else { None };
         EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of), wear }
     }));
     out
