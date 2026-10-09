@@ -31,10 +31,12 @@ fn a_crop_over_a_powered_dispenser_pops_off_with_its_drop() {
     tick(&mut sim, &mut client, Vec::new());
     tick(&mut sim, &mut client, vec![ToSim::Console(format!("setblock {} {y} {z} minecraft:redstone_block", x + 1))]);
     let mut seen = Vec::new();
+    let mut blocks = Vec::new();
     for _ in 0..4 {
+        blocks.push(sim.block_at(x, y + 1, z));
         seen.push(sim.entity_nbt().iter().filter(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some("minecraft:item")).count());
         tick(&mut sim, &mut client, Vec::new());
     }
-    eprintln!("items per tick after the redstone block: {seen:?}");
+    eprintln!("items per tick after the redstone block: {seen:?}, the crop: {blocks:?} (air is {})", kiln_data::blocks::default_state::AIR);
     assert!(seen.iter().any(|&n| n > 0), "the seeds dropped: {seen:?}");
 }
