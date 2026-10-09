@@ -1,24 +1,24 @@
-/// Kiln plugin API 1.0 (design §11, `docs/plugin-api.md`). Frozen: see the semver policy in
-/// `docs/plugin-api.md` and the digest test (`kiln-plugin-host/tests/wit_freeze.rs`).
-///
-/// Threading contract: a plugin has exactly one `global` instance (serial phases: command
-/// registration, configuration, join/leave, plugin commands, global tasks) and, when it
-/// exports `region-hooks`, one instance per region (cancellable events at the vanilla points,
-/// batched observe events, tasks routed to the region). Region instances are bound to their
-/// region, never to a thread, and any barrier (split, merge, reload, a trap) may replace them:
-/// guest memory is only a cache. Persistent state lives in host-managed owned namespaces
-/// (`state`); the global instance hands a state blob across a hot reload (`on-disable`,
-/// `on-enable`).
-///
-/// There is no main thread and no synchronous call into another region. Everything a plugin
-/// does to the game (messages, HUD, teleports, items, menus, entities, blocks) is an *effect*:
-/// it is queued when the handler returns normally, applied at the next serial point in an
-/// order that does not depend on threads or the region layout, and answered with a ticket
-/// whose outcome arrives in `on-results` the next tick (with the `op-results` subscription).
-///
-/// No numeric registry ids are persisted or fixed: blocks, items, entity types, damage types
-/// and levels are per-run ids (`registry.key` gives the resource key, `registry.id` the id of
-/// a key).
+// Kiln plugin API 1.0 (design §11, `docs/plugin-api.md`). Frozen: see the semver policy in
+// `docs/plugin-api.md` and the digest test (`kiln-plugin-host/tests/wit_freeze.rs`).
+//
+// Threading contract: a plugin has exactly one `global` instance (serial phases: command
+// registration, configuration, join/leave, plugin commands, global tasks) and, when it
+// exports `region-hooks`, one instance per region (cancellable events at the vanilla points,
+// batched observe events, tasks routed to the region). Region instances are bound to their
+// region, never to a thread, and any barrier (split, merge, reload, a trap) may replace them:
+// guest memory is only a cache. Persistent state lives in host-managed owned namespaces
+// (`state`); the global instance hands a state blob across a hot reload (`on-disable`,
+// `on-enable`).
+//
+// There is no main thread and no synchronous call into another region. Everything a plugin
+// does to the game (messages, HUD, teleports, items, menus, entities, blocks) is an *effect*:
+// it is queued when the handler returns normally, applied at the next serial point in an
+// order that does not depend on threads or the region layout, and answered with a ticket
+// whose outcome arrives in `on-results` the next tick (with the `op-results` subscription).
+//
+// No numeric registry ids are persisted or fixed: blocks, items, entity types, damage types
+// and levels are per-run ids (`registry.key` gives the resource key, `registry.id` the id of
+// a key).
 package kiln:api@1.0.0;
 
 interface types {
