@@ -403,6 +403,10 @@ impl Kind for Camel {
         true
     }
 
+    fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
+        (slot == 7).then(|| std::mem::take(&mut st_mut(m).saddle))
+    }
+
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let s = st(m);
         if s.saddle.is_empty() { Vec::new() } else { vec![(7, s.saddle.clone())] }

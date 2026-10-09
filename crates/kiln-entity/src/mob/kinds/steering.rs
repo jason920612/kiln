@@ -127,7 +127,7 @@ pub fn on_equip_item(e: &mut Entity, level: &mut dyn EntityLevel, slot: Equipmen
 /// empty slot and life the caller has checked: whether the item is equippable there, and then the
 /// single item that went on.
 pub fn equip_on_target(e: &mut Entity, level: &mut dyn EntityLevel, stack: &ItemStack, slot: EquipmentSlot, sound: Option<&'static str>) -> Option<ItemStack> {
-    if stack.is_empty() || !super::horse::equippable_in_slot(stack, slot, e.type_name) {
+    if stack.is_empty() || !super::horse::equippable_in_slot(stack, slot, e.type_name) || !stack.get(kiln_item::keys::EQUIPPABLE).is_some_and(|q| q.equip_on_interact) {
         return None;
     }
     let mut one = stack.clone();

@@ -242,7 +242,7 @@ impl Kind for WanderingTrader {
         if spawn_egg || !mob::is_alive(e, m) || trading || m.baby() {
             return None;
         }
-        let done = Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None, ride: false, open_container: false };
+        let done = Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None, ride: false, open_container: false, sheared: None };
         if offers(e, m, level).is_empty() {
             return Some(done);
         }

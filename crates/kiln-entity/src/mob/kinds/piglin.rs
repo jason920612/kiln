@@ -1534,7 +1534,7 @@ impl Kind for Piglin {
         admire_gold_item(&mut brain.st.mem);
         stop_walking(m, &mut brain.st.mem);
         m.brain = Some(brain);
-        Some(Outcome { success: true, held: HeldChange::Consume(1), shear: None, player_sound: None, ride: false, open_container: false })
+        Some(Outcome { success: true, held: HeldChange::Consume(1), shear: None, player_sound: None, ride: false, open_container: false, sheared: None })
     }
 
     fn dimensions(&self, m: &MobData, base: (f32, f32, f32)) -> (f32, f32, f32) {

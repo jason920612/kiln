@@ -107,8 +107,8 @@ impl Kind for Pig {
             && let Some(one) = super::steering::equip_on_target(e, level, stack, EquipmentSlot::Saddle, Some("minecraft:entity.pig.saddle"))
         {
             st_mut(m).saddle.put_guaranteed(one);
-            // `ItemStack.split(1)`, whatever the game mode.
-            return Some(Outcome::success(HeldChange::Shrink(1)));
+            // `ItemStack.split(1)`; a creative player keeps the item (`Player.interactOn` restores the count).
+            return Some(Outcome::success(HeldChange::Consume(1)));
         }
         Some(Outcome::PASS)
     }
@@ -119,6 +119,15 @@ impl Kind for Pig {
         }
         st_mut(m).saddle.put_guaranteed(stack);
         true
+    }
+
+    fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
+        (slot == 7).then(|| std::mem::take(&mut st_mut(m).saddle.stack))
+    }
+
+    fn dimensions(&self, m: &MobData, base: (f32, f32, f32)) -> (f32, f32, f32) {
+        // `Pig.BABY_DIMENSIONS`.
+        if m.baby() { (0.45, 0.45, 0.40625) } else { base }
     }
 
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {

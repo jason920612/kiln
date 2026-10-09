@@ -757,24 +757,26 @@ impl Kind for Nautilus {
                 return Some(Outcome::success(held));
             }
             // The held item's own `interactLivingEntity`: a saddle and armor go on a tame, grown one.
-            let usable = mob::is_alive(e, m) && tame;
-            if usable && st(m).saddle.is_empty() && mob::item_name(stack) == "minecraft:saddle" {
-                let mut one = stack.clone();
-                one.set_count(1);
-                st_mut(m).saddle = one;
-                if !e.silent {
+            // (`Equippable.equipOnTarget`: `canUseSlot` is alive, grown and tame for both slots.)
+            if mob::is_alive(e, m) && tame {
+                use kiln_item::component::EquipmentSlot;
+                if st(m).saddle.is_empty() {
                     let sound = if st(m).under_water { "minecraft:entity.nautilus.saddle_underwater_equip" } else { "minecraft:entity.nautilus.saddle_equip" };
-                    level.emit(Event::Sound { pos: e.position(), sound, source: "neutral", volume: 1.0, pitch: 1.0 });
+                    if let Some(one) = super::steering::equip_on_target(e, level, stack, EquipmentSlot::Saddle, Some(sound)) {
+                        let s = st_mut(m);
+                        s.saddle = one;
+                        s.saddle_drop = 2.0;
+                        return Some(Outcome::success(HeldChange::Consume(1)));
+                    }
                 }
-                return Some(Outcome::success(HeldChange::Consume(1)));
-            }
-            if usable && st(m).body.is_empty() && super::horse::equippable_in_slot(stack, kiln_item::component::EquipmentSlot::Body, e.type_name) {
-                let mut one = stack.clone();
-                one.set_count(1);
-                let s = st_mut(m);
-                s.body = one;
-                s.body_drop = 2.0;
-                return Some(Outcome::success(HeldChange::Consume(1)));
+                if st(m).body.is_empty()
+                    && let Some(one) = super::steering::equip_on_target(e, level, stack, EquipmentSlot::Body, None)
+                {
+                    let s = st_mut(m);
+                    s.body = one;
+                    s.body_drop = 2.0;
+                    return Some(Outcome::success(HeldChange::Consume(1)));
+                }
             }
         }
         if tame && !who.sneaking && (stack.is_empty() || !self.is_food(stack.item())) && e.passengers.is_empty() {
@@ -789,6 +791,32 @@ impl Kind for Nautilus {
             return Some(Outcome::PASS);
         }
         Some(interact::animal_interact(e, m, level, who, stack))
+    }
+
+    fn set_extra_equipment(&self, m: &mut MobData, slot: u8, stack: ItemStack) -> bool {
+        let s = st_mut(m);
+        match slot {
+            6 => {
+                s.body = stack;
+                s.body_drop = 2.0;
+                true
+            }
+            7 => {
+                s.saddle = stack;
+                s.saddle_drop = 2.0;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
+        let s = st_mut(m);
+        match slot {
+            6 => Some(std::mem::take(&mut s.body)),
+            7 => Some(std::mem::take(&mut s.saddle)),
+            _ => None,
+        }
     }
 
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {

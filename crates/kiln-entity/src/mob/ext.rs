@@ -690,6 +690,16 @@ pub trait Kind: Sync + Send {
         let _ = (m, slot, stack);
         false
     }
+    /// `setItemSlot(slot, EMPTY)` for a slot past the six (shears take the piece off): the piece, if the type has one there.
+    fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
+        let _ = (m, slot);
+        None
+    }
+    /// `Mob.canShearEquipment` where it is not "no passenger" (a wolf: only its owner `player`).
+    fn can_shear_equipment(&self, m: &MobData, level: &dyn EntityLevel, player: i32) -> Option<bool> {
+        let _ = (m, level, player);
+        None
+    }
     /// A dispenser puts a chest on a pack animal (`AbstractChestedHorse`'s slot 499): whether it has one now.
     fn put_chest(&self, m: &mut MobData) -> bool {
         let _ = m;

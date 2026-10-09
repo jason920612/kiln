@@ -888,6 +888,15 @@ impl Kind for Equine {
         true
     }
 
+    fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
+        let s = st_mut(m);
+        match slot {
+            6 => Some(std::mem::take(&mut s.body)),
+            7 => Some(std::mem::take(&mut s.saddle)),
+            _ => None,
+        }
+    }
+
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let s = st(m);
         let mut out = Vec::new();
