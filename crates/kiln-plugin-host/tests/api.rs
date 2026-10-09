@@ -469,3 +469,69 @@ fn ids_made_up_by_plugins_are_prefixed_with_their_owner() {
     let EffectKind::OpenMenu { menu, .. } = &effects.iter().find(|e| matches!(e.kind, EffectKind::OpenMenu { .. })).unwrap().kind else { unreachable!() };
     assert!(menu.id.starts_with("shop:"));
 }
+
+/// What the new calls cost (release builds; run with `--nocapture` for the numbers). Each
+/// handler runs in both modes; the number is the best of 20 batches.
+#[test]
+fn call_costs_of_the_new_events() {
+    use std::time::Instant;
+    for mode in [kiln_plugin_host::ExecMode::Ordered, kiln_plugin_host::ExecMode::Strict] {
+        let loaded = ["noop", "claims", "shop", "homes", "arena", "gatekeeper"].iter().map(|id| examples::load(id, "").unwrap()).collect();
+        let cfg = RuntimeConfig {
+            mode,
+            registries: registries(),
+            call_budget: Duration::from_millis(200),
+            tick_budget: Duration::from_secs(3600),
+            tick_fuel: u64::MAX,
+            player_events_per_second: 0,
+            ..RuntimeConfig::default()
+        };
+        let mut rt = PluginRuntime::new(loaded, cfg).unwrap();
+        rt.sync_regions(0, [1]);
+        rt.set_online(vec![kiln_plugin_host::OnlinePlayer { uuid: ALICE, name: "Alice".into(), level: 0 }]);
+        let (a, b) = (alice(), bob());
+        let n = 20_000u32;
+        let measure = |rt: &mut PluginRuntime, name: &str, f: &mut dyn FnMut(&mut PluginRuntime)| {
+            for _ in 0..1000 {
+                f(rt);
+            }
+            rt.take_effects();
+            let mut per = Duration::MAX;
+            for _ in 0..20 {
+                let start = Instant::now();
+                for _ in 0..n / 20 {
+                    f(rt);
+                }
+                per = per.min(start.elapsed() / (n / 20));
+                rt.take_effects();
+            }
+            println!("{mode:?} {name}: {} ns per call", per.as_nanos());
+        };
+        // Alice claims x 0..16 (the claim block); the noop plugin allows every break at once.
+        rt.region_mut(0, 1).unwrap().block_place(&a, [8, 64, 8], [8, 63, 8], Some(GOLD));
+        measure(&mut rt, "block-break through noop + claims (outside any claim)", &mut |rt| {
+            rt.region_mut(0, 1).unwrap().block_break(&b, [90, 64, 90], 1);
+        });
+        measure(&mut rt, "block-break denied by claims (claim read, owner name lookup, message)", &mut |rt| {
+            let _ = rt.region_mut(0, 1).unwrap().block_break(&b, [8, 64, 8], 1);
+        });
+        let click = ContainerClick { menu: Some("shop:main"), container: "minecraft:generic_9x3", slot: 14, button: 0, kind: ClickKind::Left, clicked: None };
+        rt.player_joined(&a);
+        measure(&mut rt, "container click in the shop (atomic try-add + player data)", &mut |rt| {
+            rt.region_mut(0, 1).unwrap().container_click(&a, &click);
+        });
+        measure(&mut rt, "item use of the wand (a chat effect, a denial)", &mut |rt| {
+            rt.region_mut(0, 1).unwrap().item_use(&a, ItemRef { item: STICK, count: 1, tag: Some("shop:wand") }, false, None);
+        });
+        measure(&mut rt, "player damage heard by homes and claims (claim lookup, one state read)", &mut |rt| {
+            rt.region_mut(0, 1).unwrap().player_damage(&a, Some(&b), [50, 64, 50], 1, 2.0);
+        });
+        let arena = rt.plugin_index("arena").unwrap();
+        measure(&mut rt, "/arena other: a global command call", &mut |rt| {
+            rt.run_command(arena, Some(&a), "arena", "other");
+        });
+        measure(&mut rt, "/arena join: global command, event raised to the gatekeeper, four effects", &mut |rt| {
+            rt.run_command(arena, Some(&a), "arena", "join");
+        });
+    }
+}
