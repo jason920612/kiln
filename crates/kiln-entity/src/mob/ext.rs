@@ -782,6 +782,10 @@ pub trait Kind: Sync + Send {
         let _ = m;
         1.0
     }
+    /// `getVoicePitch` when it is a constant that draws nothing (happy ghasts: 1).
+    fn fixed_voice_pitch(&self) -> Option<f32> {
+        None
+    }
     /// `getVoicePitch` from the shared one (bats: 0.95 of it).
     fn voice_pitch(&self, m: &MobData, pitch: f32) -> f32 {
         let _ = m;

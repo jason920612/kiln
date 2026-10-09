@@ -323,8 +323,8 @@ impl Kind for HappyGhast {
         if m.baby() { 1.0 } else { 4.0 }
     }
 
-    fn voice_pitch(&self, _m: &MobData, _pitch: f32) -> f32 {
-        1.0
+    fn fixed_voice_pitch(&self) -> Option<f32> {
+        Some(1.0)
     }
 
     fn ambient_sound(&self, _e: &mut Entity, m: &MobData, _level: &dyn EntityLevel) -> Option<Option<&'static str>> {
