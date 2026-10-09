@@ -307,6 +307,8 @@ pub(crate) fn classify(e: &kiln_entity::Entity) -> EntityClass {
         EntityKind::FallingBlock(_) => EntityClass::NotAttackable,
         // `EndCrystal.hurtServer`: an attack breaks it.
         EntityKind::Ext(_) if e.type_name == "minecraft:end_crystal" => EntityClass::Mob,
+        // `Interaction.skipAttackInteraction` records the hit like a hanging entity takes one.
+        EntityKind::Ext(_) if e.type_name == "minecraft:interaction" => EntityClass::Hanging,
         EntityKind::Ext(_) if kiln_entity::ext_entity::hanging::is_hanging(e) => EntityClass::Hanging,
         EntityKind::Ext(_) if kiln_entity::spear::redirectable_projectile(e.type_name) => EntityClass::Redirectable,
         // A dying mob is attackable, but nothing hurts it (the hit sounds as no damage).
