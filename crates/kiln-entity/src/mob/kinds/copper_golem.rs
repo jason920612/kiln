@@ -250,7 +250,7 @@ impl Kind for CopperGolem {
 
     /// `thunderHit`: a struck golem is scraped one stage back, once per bolt.
     fn after_thunder_hit(&self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, bolt: i32) {
-        let Some(uuid) = level.entity(bolt).map(|b| b.uuid.as_u128()) else { return };
+        let Some(uuid) = level.entity(bolt).map(|b| b.uuid) else { return };
         let s = st_mut(m);
         if s.last_lightning != Some(uuid) {
             s.last_lightning = Some(uuid);

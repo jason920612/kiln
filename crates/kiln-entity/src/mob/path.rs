@@ -1,4 +1,4 @@
-m.nav.amphibious//! Pathfinding: `WalkNodeEvaluator` (and `AmphibiousNodeEvaluator`, `SwimNodeEvaluator`,
+//! Pathfinding: `WalkNodeEvaluator` (and `AmphibiousNodeEvaluator`, `SwimNodeEvaluator`,
 //! `FlyNodeEvaluator`), the A* `PathFinder` with vanilla's `BinaryHeap`, `Path`, and
 //! `GroundPathNavigation` / `WallClimberNavigation` (spiders) / `AmphibiousPathNavigation`
 //! (drowned) / `WaterBoundPathNavigation` (guardians) / `FlyingPathNavigation` (the wither).
@@ -1628,7 +1628,7 @@ fn can_update_path(e: &Entity, m: &MobData) -> bool {
 /// Water-bound, flying and amphibious navigation go to the block itself, ground navigation to
 /// the surface there.
 fn keeps_target_block(m: &MobData) -> bool {
-    m.nav.can_path_below_surface || m.nav.amphibious || m.nav.water_bound || m.nav.fly
+    m.nav.amphibious || m.nav.water_bound || m.nav.fly
 }
 
 /// Whether `createPath(pos)` keeps its target block: the above, or a ground navigation that may path
