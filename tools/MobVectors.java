@@ -1845,6 +1845,7 @@ public class MobVectors {
         scenariosDolphin(out);
         scenariosHappyGhast(out);
         scenariosCopperGolem(out);
+        scenariosSulfurCube(out);
         // -- wp33: mule breeding, jockeys, the undead mounts, projectile deflection
         scenariosWp33(out);
         scenariosSpears(out);
@@ -3227,8 +3228,167 @@ public class MobVectors {
         }
     }
 
+    // ---------------------------------------------------------- wp49: sulfur cubes
+    static String sulfurNbt(String item) {
+        return "{PersistenceRequired:1b,Size:1,equipment:{body:{id:\"" + item + "\",count:1}},drop_chances:{body:2.0f}}";
+    }
+
+    static Scenario sulfurWorld(String name, long mobSeed, long levelSeed, int ticks) {
+        Scenario s = new Scenario(name);
+        floor(s, 30, "minecraft:stone");
+        MobSpec m = new MobSpec("minecraft:sulfur_cube", 0.5, BY, 0.5, 30f, mobSeed);
+        m.nbt = "{PersistenceRequired:1b,Size:1}";
+        s.mobs.add(m);
+        s.player = new double[] {24.5, BY, 0.5};
+        s.playerCreative = true;
+        s.levelSeed = levelSeed;
+        s.ticks = ticks;
+        return s;
+    }
+
+    static void scenariosSulfurCube(List<Scenario> out) {
+        // Hopping about, grown and as a baby.
+        for (int seed = 1; seed <= 3; seed++) {
+            out.add(sulfurWorld("sulfur_idle_" + seed, 43000L + seed, 900 + seed, 500));
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = sulfurWorld("sulfur_baby_" + seed, 43100L + seed, 910 + seed, 400);
+            s.mobs.get(0).nbt = "{PersistenceRequired:1b,Size:0,Age:-2000}";
+            out.add(s);
+        }
+        // A ball of each kind, hit by a player who looks at it: where it flies, bounces and slides.
+        String[] items = {"minecraft:oak_planks", "minecraft:tnt", "minecraft:tube_coral_block", "minecraft:blue_ice", "minecraft:soul_sand", "minecraft:magma_block", "minecraft:white_wool",
+                "minecraft:dirt", "minecraft:amethyst_block", "minecraft:iron_block", "minecraft:red_mushroom_block", "minecraft:honeycomb_block"};
+        for (int i = 0; i < items.length; i++) {
+            Scenario s = sulfurWorld("sulfur_ball_" + i, 43200L + i, 920 + i, 260);
+            s.mobs.get(0).nbt = sulfurNbt(items[i]);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerCreative = false;
+            s.hurts.put(10, new double[] {0, 4.0});
+            s.hurts.put(120, new double[] {0, 7.0});
+            out.add(s);
+        }
+        // A ball against a wall, looked down on.
+        {
+            Scenario s = sulfurWorld("sulfur_ball_wall", 43300L, 940, 200);
+            s.mobs.get(0).nbt = sulfurNbt("minecraft:oak_planks");
+            for (int y = BY; y <= BY + 3; y++)
+                for (int z = -6; z <= 6; z++) block(s, -5, y, z, "minecraft:stone");
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = 25f;
+            s.playerCreative = false;
+            s.hurts.put(10, new double[] {0, 6.0});
+            out.add(s);
+        }
+        // A ball in a pool: it floats, bobbing.
+        {
+            Scenario s = new Scenario("sulfur_ball_pool");
+            poolWorld(s, 18, -10, -10, 10, 10, 6);
+            MobSpec m = new MobSpec("minecraft:sulfur_cube", 0.5, BY - 3, 0.5, 30f, 43400L);
+            m.nbt = sulfurNbt("minecraft:oak_planks");
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 950;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Swallowing: an item thrown down, or one given.
+        {
+            Scenario s = sulfurWorld("sulfur_swallow_item", 43500L, 960, 400);
+            s.actions.add(dropAt(3, "minecraft:dirt", 4.5, BY, 0.5));
+            out.add(s);
+        }
+        {
+            Scenario s = sulfurWorld("sulfur_swallow_given", 43510L, 961, 120);
+            s.player = new double[] {1.5, BY, 0.5};
+            s.playerCreative = false;
+            s.actions.add(interact(5, 0, "minecraft:dirt"));
+            s.actions.add(interact(10, 0, "minecraft:oak_planks"));
+            out.add(s);
+        }
+        {
+            Scenario s = sulfurWorld("sulfur_swallow_baby", 43520L, 962, 200);
+            s.mobs.get(0).nbt = "{PersistenceRequired:1b,Size:0,Age:-24000}";
+            s.actions.add(dropAt(3, "minecraft:dirt", 2.5, BY, 0.5));
+            s.player = new double[] {1.5, BY, 0.5};
+            s.playerCreative = false;
+            s.actions.add(interact(8, 0, "minecraft:dirt"));
+            out.add(s);
+        }
+        // Shearing the item out; the cube leaves the item alone for a while after.
+        {
+            Scenario s = sulfurWorld("sulfur_shear", 43600L, 970, 220);
+            s.mobs.get(0).nbt = sulfurNbt("minecraft:dirt");
+            s.player = new double[] {1.5, BY, 0.5};
+            s.playerCreative = false;
+            s.actions.add(interact(5, 0, "minecraft:shears"));
+            out.add(s);
+        }
+        // Tempted by the item in a player's hand.
+        {
+            Scenario s = sulfurWorld("sulfur_tempt", 43700L, 980, 300);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerMainHand = "minecraft:dirt";
+            out.add(s);
+        }
+        {
+            Scenario s = sulfurWorld("sulfur_tempt_baby", 43710L, 981, 300);
+            s.mobs.get(0).nbt = "{PersistenceRequired:1b,Size:0,Age:-24000}";
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerMainHand = "minecraft:slime_ball";
+            out.add(s);
+        }
+        // Feeding a baby grows it up.
+        {
+            Scenario s = sulfurWorld("sulfur_feed", 43720L, 982, 200);
+            s.mobs.get(0).nbt = "{PersistenceRequired:1b,Size:0,Age:-600}";
+            s.player = new double[] {1.5, BY, 0.5};
+            s.playerCreative = false;
+            s.actions.add(interact(5, 0, "minecraft:slime_ball"));
+            out.add(s);
+        }
+        // Killed: two babies.
+        {
+            Scenario s = sulfurWorld("sulfur_split", 43800L, 990, 80);
+            s.player = new double[] {1.5, BY, 0.5};
+            s.playerCreative = false;
+            s.hurts.put(5, new double[] {0, 20.0});
+            out.add(s);
+        }
+        // Lit with flint and steel: fuse, then the blast.
+        {
+            Scenario s = sulfurWorld("sulfur_tnt_lit", 43900L, 995, 160);
+            s.mobs.get(0).nbt = sulfurNbt("minecraft:tnt");
+            s.player = new double[] {1.5, BY, 0.5};
+            s.playerCreative = false;
+            s.actions.add(interact(5, 0, "minecraft:flint_and_steel"));
+            out.add(s);
+        }
+        // Set off by a blast: a short fuse (a charged creeper close by).
+        {
+            Scenario s = sulfurWorld("sulfur_tnt_blast", 43910L, 996, 200);
+            s.mobs.get(0).nbt = sulfurNbt("minecraft:tnt");
+            MobSpec c = new MobSpec("minecraft:creeper", 3.5, BY, 0.5, 90f, 43911L);
+            c.nbt = "{PersistenceRequired:1b,Fuse:3,ignited:1b}";
+            s.mobs.add(c);
+            out.add(s);
+        }
+    }
+
+    static Action dropAt(int tick, String item, double x, double y, double z) {
+        Action a = new Action(tick, "drop");
+        a.what = item;
+        a.x = x;
+        a.y = y;
+        a.z = z;
+        return a;
+    }
+
     // ---------------------------------------------------------- wp49: copper golems
-    static final String IRON = "{Slot:0b,id:\"minecraft:iron_ingot\",count:40}";
+    static final String IRON ="{Slot:0b,id:\"minecraft:iron_ingot\",count:40}";
     static final String GOLD = "{Slot:0b,id:\"minecraft:gold_ingot\",count:7}";
 
     static Scenario golemWorld(String name, long mobSeed, long levelSeed, int ticks) {
