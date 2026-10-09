@@ -419,6 +419,8 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 - 盔甲座落下的阻力用 `0.98f`（float）；之前用 double。
 - 容器向量的重放依賴 datapack（方塊被更新打掉時的戰利品表）與語言檔（`KILN_LANG`：指令方塊的最後輸出是原版的英文句子）；`parity_suites.py` 兩者都設了，單獨跑 `cargo test` 要自己設。
 
+效能（`sim_load --players 300 --groups 6 --ticks 600`，噪音地形、資料包開，同一台 VM 輪流跑）：wp49 前（`d77e20b9`）每 tick 平均 1.74～1.85 ms，wp49 後 2.03～2.13 ms（狀態雜湊兩者相同，`6354d84ec39048c6`），目標 5 ms 之內。多出的約 0.3 ms 來自原版本來就要做的事：伺服器端身體對每個移動封包做碰撞（`server_packet_move`，約 0.1 ms）、每 tick 的姿勢判斷（`update_pose`，約 0.1 ms，已改成只查一次方塊）、附魔位置效果與方塊實體的每 tick 檢查。量測時抓到並修掉的三處浪費：沒有任何地圖資料時不掃實體與玩家（原本每 tick 0.055 ms）、發射器要用的「穿裝備資訊」只替發射器附近的實體算、姿勢判斷在想要的姿勢放得下時少查一次碰撞。
+
 仍是 D 或 C 的（以及原因）：
 
 - **實體**：`mannequin`、`cushion`、`ominous_item_spawner` 三種沒有實作（存檔保留、不 tick、`/summon` 失敗）。不祥試煉刷怪磚的物品雨因缺 `ominous_item_spawner` 而不下。
