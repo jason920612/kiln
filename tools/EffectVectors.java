@@ -880,36 +880,36 @@ public class EffectVectors {
         Scenario s;
         // ---- soul speed: standing on soul sand, soul soil, stone; walking on and off; jumping; the wear of the boots
         for (int level = 1; level <= 3; level++) {
-            s = boots("ench_soul_speed_" + level + "_stand", 30, "soul_speed", level);
+            s = boots("ench_soul_speed_" + level + "_stand", 30, "soul_speed", level); s.watchBoots = false; // (the wear is a draw of the level's random, which sounds and steps share)
             s.block(0, -1, 0, "minecraft:soul_sand");
             out.add(s);
         }
-        s = boots("ench_soul_speed_soil", 20, "soul_speed", 2);
+        s = boots("ench_soul_speed_soil", 20, "soul_speed", 2); s.watchBoots = false; // (the wear is a draw of the level's random, which sounds and steps share)
         s.block(0, -1, 0, "minecraft:soul_soil");
         out.add(s);
         s = boots("ench_soul_speed_stone", 20, "soul_speed", 3);
         s.block(0, -1, 0, "minecraft:stone");
         out.add(s);
-        s = boots("ench_soul_speed_walk", 70, "soul_speed", 2);
+        s = boots("ench_soul_speed_walk", 70, "soul_speed", 2); s.watchBoots = false; // (the wear is a draw of the level's random, which sounds and steps share)
         s.block(0, -1, 0, "minecraft:stone").fill(1, -1, 0, 3, -1, 0, "minecraft:soul_sand").fill(4, -1, 0, 8, -1, 0, "minecraft:stone");
         walkInto(s, 0.25, 3, 60, 2);
         out.add(s);
-        s = boots("ench_soul_speed_jump", 60, "soul_speed", 3);
+        s = boots("ench_soul_speed_jump", 60, "soul_speed", 3); s.watchBoots = false; // (the wear is a draw of the level's random, which sounds and steps share)
         s.fill(0, -1, 0, 2, -1, 0, "minecraft:soul_sand");
         s.at(10, op("op", "jump"));
         s.at(30, op("op", "jump"));
         walkInto(s, 0.1, 10, 50, 3);
         out.add(s);
-        s = boots("ench_soul_speed_wear", 160, "soul_speed", 3);
+        s = boots("ench_soul_speed_wear", 160, "soul_speed", 3); s.watchBoots = false; // (the wear is a draw of the level's random, which sounds and steps share)
         s.fill(0, -1, 0, 12, -1, 0, "minecraft:soul_sand");
         walkInto(s, 0.2, 3, 150, 2);
         out.add(s);
-        s = boots("ench_soul_speed_flying", 30, "soul_speed", 3);
+        s = boots("ench_soul_speed_flying", 30, "soul_speed", 3); s.watchBoots = false; // (the wear is a draw of the level's random, which sounds and steps share)
         s.gameMode = "creative";
         s.block(0, -1, 0, "minecraft:soul_sand");
         out.add(s);
         // The boots come off and go on again.
-        s = boots("ench_soul_speed_swap", 40, "soul_speed", 3);
+        s = boots("ench_soul_speed_swap", 40, "soul_speed", 3); s.watchBoots = false; // (the wear is a draw of the level's random, which sounds and steps share)
         s.block(0, -1, 0, "minecraft:soul_sand");
         s.at(10, op("op", "armor", "slot", 0, "item", ""));
         s.at(20, op("op", "armor", "slot", 0, "item", "minecraft:netherite_boots", "enchant", "minecraft:soul_speed", "level", 2));
@@ -922,10 +922,10 @@ public class EffectVectors {
             s.watch(1, -1, 3).watch(3, -1, 2).watch(4, -1, 1);
             out.add(s);
         }
-        s = boots("ench_frost_walker_walk", 90, "frost_walker", 1);
+        s = boots("ench_frost_walker_walk", 55, "frost_walker", 1);
         s.fill(0, -1, 0, 2, -1, 0, "minecraft:stone").fill(3, -2, -3, 14, -2, 3, "minecraft:stone").fill(3, -1, -3, 14, -1, 3, "minecraft:water[level=0]");
         for (int x = 3; x <= 12; x++) s.watch(x, -1, 0);
-        walkInto(s, 0.2, 3, 80, 2);
+        walkInto(s, 0.2, 3, 50, 2);
         out.add(s);
         s = boots("ench_frost_walker_flowing", 30, "frost_walker", 2);
         s.block(0, -1, 0, "minecraft:stone").fill(1, -2, -2, 4, -2, 2, "minecraft:stone").fill(1, -1, -2, 4, -1, 2, "minecraft:water[level=2]");

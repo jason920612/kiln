@@ -155,7 +155,7 @@ pub(crate) fn frost_walker_disk(level: &mut RegionLevel, origin: BlockPos, radiu
             if dx * dx + dz * dz >= r2 {
                 continue;
             }
-            if !kiln_blocks::state::is(level.block(at), d::WATER) || !kiln_data::blocks_types::is_air(level.block(at.above())) {
+            if level.block(at) != d::WATER || !kiln_data::blocks_types::is_air(level.block(at.above())) {
                 continue;
             }
             let (min, max) = ([at.x as f64, at.y as f64, at.z as f64], [at.x as f64 + 1.0, at.y as f64 + 1.0, at.z as f64 + 1.0]);
