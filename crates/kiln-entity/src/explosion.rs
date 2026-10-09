@@ -79,6 +79,8 @@ pub struct BlockRules<'a> {
     /// `Explosion.getIndirectSourceEntity`: who the blast is credited to when the source entity
     /// is not enough to tell (a primed TNT's owner, the entity that lit a TNT minecart).
     pub causing: Option<i32>,
+    /// `ExplosionDamageCalculator.getKnockbackMultiplier` (1 when unset): a wind charge's 1.22.
+    pub knockback: Option<f32>,
 }
 
 /// [`explode`] with the source entity's block resistance override.
@@ -94,7 +96,7 @@ pub fn explode_with(
     damage: bool,
 ) -> Vec<BlockPos> {
     let wrapped = resistance.map(|f| move |state: u16, _above: u16, res: f32| f(state, res));
-    let rules = BlockRules { resistance: wrapped.as_ref().map(|f| f as &dyn Fn(u16, u16, f32) -> f32), should_explode: None, causing: None };
+    let rules = BlockRules { resistance: wrapped.as_ref().map(|f| f as &dyn Fn(u16, u16, f32) -> f32), should_explode: None, causing: None, knockback: None };
     explode_ruled(level, source, center, radius, fire, interaction, rules, damage)
 }
 
@@ -119,7 +121,7 @@ pub fn explode_ruled(
         })
     });
     let mut positions = exploded_positions(level, center, radius, rules);
-    hurt_entities(level, source, causing, center, radius, interaction, damage);
+    hurt_entities(level, source, causing, center, radius, interaction, damage, rules.knockback.unwrap_or(1.0));
     if interaction != Interaction::Keep {
         shuffle(&mut positions, level);
         for &pos in &positions {
@@ -247,7 +249,8 @@ fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, causing: O
 }
 
 /// `hurtEntities`: damage by exposure and distance, and knockback.
-fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, center: Vec3, radius: f32, interaction: Interaction, damage_entities: bool) {
+#[allow(clippy::too_many_arguments)]
+fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, center: Vec3, radius: f32, interaction: Interaction, damage_entities: bool, knockback_multiplier: f32) {
     if radius < 1.0e-5 {
         return;
     }
@@ -278,7 +281,9 @@ fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, causing: Opti
             let d = (1.0 - dist) * seen as f64;
             ((d * d + d) / 2.0 * 7.0 * r2 as f64 + 1.0) as f32
         };
-        let knockback = (1.0 - dist) * seen as f64;
+        // (`(1 - dist) * seen * multiplier * (1 - explosion_knockback_resistance)`.)
+        let resistance = crate::mob::data(e).map_or(0.0, |m| m.attrs.value(crate::mob::attributes::Attr::ExplosionKnockbackResistance));
+        let knockback = (1.0 - dist) * seen as f64 * knockback_multiplier as f64 * (1.0 - resistance);
         let push = dir.scale(knockback);
         let Some(mut e) = level.entity_mut(id).map(|e| std::mem::replace(e, placeholder())) else { continue };
         if damage_entities {

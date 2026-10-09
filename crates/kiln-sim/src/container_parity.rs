@@ -291,6 +291,29 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                 errors.push(format!("tick {tick} new entities: kiln {got}, vanilla {expected}"));
             }
         }
+        if line["track"].as_bool() == Some(true) {
+            // `ContainerVectors`: every entity but items and players: type, position, motion and health (-1: not living).
+            let mut got: Vec<(String, [f64; 3], [f64; 3], f64)> = Vec::new();
+            for t in sim.entity_nbt() {
+                let id = t.get("id").and_then(Tag::as_str).unwrap_or("");
+                if matches!(id, "minecraft:item" | "minecraft:player") {
+                    continue;
+                }
+                let triple = |key: &str| -> [f64; 3] {
+                    match t.get(key) {
+                        Some(Tag::List(l)) if l.len() == 3 => [l[0].as_f64().unwrap_or(0.0), l[1].as_f64().unwrap_or(0.0), l[2].as_f64().unwrap_or(0.0)],
+                        _ => [0.0; 3],
+                    }
+                };
+                got.push((id.to_owned(), triple("Pos"), triple("Motion"), t.get("Health").and_then(Tag::as_f64).unwrap_or(-1.0)));
+            }
+            got.sort_by(|a, b| a.0.cmp(&b.0).then(a.1[0].total_cmp(&b.1[0])).then(a.1[2].total_cmp(&b.1[2])).then(a.1[1].total_cmp(&b.1[1])));
+            let got = json!(got.iter().map(|g| json!([g.0, g.1[0], g.1[1], g.1[2], g.2[0], g.2[1], g.2[2], g.3])).collect::<Vec<_>>());
+            compared += 1;
+            if got != want["track"] {
+                errors.push(format!("tick {tick} tracked entities: kiln {got}, vanilla {}", want["track"]));
+            }
+        }
         if line["mobs"].as_bool() == Some(true) {
             // `ContainerVectors`: each living thing's type, what it wears (by slot) and whether it carries a chest.
             let mut got: Vec<String> = Vec::new();

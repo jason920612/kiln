@@ -139,6 +139,7 @@ pub const TYPES: &[&str] = &[
     "minecraft:dragon_fireball",
     "minecraft:wither_skull",
     "minecraft:breeze_wind_charge",
+    "minecraft:wind_charge",
     "minecraft:firework_rocket",
     // -- wp30: llamas
     "minecraft:llama_spit",
@@ -168,7 +169,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:firework_rocket" => firework::load(r),
         n if boat::is_boat(n) => boat::load(n, r),
         n if minecart::is_minecart(n) => minecart::load(n, r),
-        "minecraft:breeze_wind_charge" => wind_charge::load(r),
+        "minecraft:breeze_wind_charge" | "minecraft:wind_charge" => wind_charge::load(type_name, r),
         "minecraft:area_effect_cloud" => area_effect_cloud::load(r),
         "minecraft:evoker_fangs" => evoker_fangs::load(r),
         "minecraft:end_crystal" => end_crystal::load(r),

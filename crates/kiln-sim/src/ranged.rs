@@ -38,7 +38,7 @@ fn throwable(name: &str) -> Option<(Throwable, &'static str, f32, f32)> {
 
 /// Items whose `Item.use` this module handles.
 pub(crate) fn handles(name: &str) -> bool {
-    throwable(name).is_some() || name == "minecraft:bow"
+    throwable(name).is_some() || name == "minecraft:bow" || name == "minecraft:wind_charge"
 }
 
 /// `Item.use` for the items of [`handles`]; `off_hand`: which hand. The player is alive and
@@ -51,6 +51,10 @@ pub(crate) fn use_item(p: &mut Player, level: &mut RegionLevel, off_hand: bool, 
     let name = stack.item_name();
     if let Some((kind, sound, speed, roll)) = throwable(name) {
         throw(p, level, off_hand, &stack, kind, sound, speed, roll, spawns);
+        return;
+    }
+    if name == "minecraft:wind_charge" {
+        throw_wind_charge(p, level, off_hand, &stack, spawns);
         return;
     }
     if name == "minecraft:bow" {
@@ -138,6 +142,25 @@ fn throw(p: &mut Player, level: &mut RegionLevel, off_hand: bool, stack: &ItemSt
     }
     shoot_from_rotation(&mut e, p, p.rot[1], p.rot[0], roll, speed, 1.0);
     push_spawn(spawns, e);
+    p.award_stat(Stat::item(player_stats::USED, stack.item()), 1);
+    if !p.infinite_materials() {
+        let i = p.hand_index(off_hand);
+        p.inv.item_mut(i).shrink(1);
+        p.inv.times_changed += 1;
+    }
+    p.apply_use_cooldown(stack);
+}
+
+/// `WindChargeItem.use`: a wind charge from the eyes (speed 1.5, inaccuracy 1), the throw sound
+/// (the level's random for the pitch), the item counted as used and one taken, `use_cooldown`.
+fn throw_wind_charge(p: &mut Player, level: &mut RegionLevel, off_hand: bool, stack: &ItemStack, spawns: &mut Vec<Spawn>) {
+    let seed = projectile_seed(level, p, spawns.len() as u64);
+    let eye = p.eye_position();
+    let mut e = kiln_entity::ext_entity::wind_charge::new_thrown(Some((p.entity_id, p.uuid.as_u128())), Vec3::new(p.pos[0], eye[1], p.pos[2]), seed);
+    shoot_from_rotation(&mut e, p, p.rot[1], p.rot[0], 0.0, 1.5, 1.0);
+    push_spawn(spawns, e);
+    let pitch = 0.4 / (level.random().next_float() * 0.4 + 0.8);
+    p.sound_for_all("minecraft:entity.wind_charge.throw", SoundSource::Neutral, 0.5, pitch);
     p.award_stat(Stat::item(player_stats::USED, stack.item()), 1);
     if !p.infinite_materials() {
         let i = p.hand_index(off_hand);

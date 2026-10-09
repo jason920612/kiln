@@ -16,6 +16,13 @@ use crate::projectile::Hit;
 use kiln_proto::nbt::Tag;
 
 pub const TYPE: &str = "minecraft:breeze_wind_charge";
+/// The wind charge a player throws or a dispenser shoots (`WindCharge`).
+pub const PLAYER_TYPE: &str = "minecraft:wind_charge";
+
+/// Either kind of wind charge (`AbstractWindCharge`).
+pub fn is_wind_charge(type_name: &str) -> bool {
+    type_name == TYPE || type_name == PLAYER_TYPE
+}
 
 #[derive(Clone, Debug)]
 pub struct WindCharge {
@@ -26,13 +33,35 @@ pub struct WindCharge {
     pub has_been_shot: bool,
     /// `AbstractHurtingProjectile.accelerationPower`: 0 until a player deflects the charge.
     pub acceleration_power: f64,
+    /// `WindCharge` (thrown), not `BreezeWindCharge`.
+    pub player: bool,
+    /// `WindCharge.noDeflectTicks`: a thrown charge cannot be deflected for its first 5 ticks.
+    pub no_deflect_ticks: i32,
 }
 
 /// `new BreezeWindCharge(breeze, level)` at `pos` (the breeze's firing height), owned by
 /// `owner`; the caller shoots it (`Projectile.shoot`) and adds it.
 pub fn new(id: i32, owner: i32, owner_uuid: u128, pos: Vec3, seed: i64) -> Entity {
-    let x = WindCharge { owner: Some(owner), owner_uuid: Some(owner_uuid), left_owner: false, has_been_shot: false, acceleration_power: 0.0 };
+    let x = WindCharge { owner: Some(owner), owner_uuid: Some(owner_uuid), left_owner: false, has_been_shot: false, acceleration_power: 0.0, player: false, no_deflect_ticks: 0 };
     let mut e = Entity::new(TYPE, id, 0, EntityKind::Ext(Box::new(x)), seed);
+    set_pos(&mut e, pos);
+    e.set_old_pos_and_rot();
+    e
+}
+
+/// `new WindCharge(player, level, x, y, z)` (or the dispenser's, ownerless): at `pos`; the caller shoots it
+/// (`Projectile.shoot`) and adds it.
+pub fn new_thrown(owner: Option<(i32, u128)>, pos: Vec3, seed: i64) -> Entity {
+    let x = WindCharge {
+        owner: owner.map(|o| o.0),
+        owner_uuid: owner.map(|o| o.1),
+        left_owner: false,
+        has_been_shot: false,
+        acceleration_power: 0.0,
+        player: true,
+        no_deflect_ticks: 5,
+    };
+    let mut e = Entity::new(PLAYER_TYPE, 0, 0, EntityKind::Ext(Box::new(x)), seed);
     set_pos(&mut e, pos);
     e.set_old_pos_and_rot();
     e
@@ -45,24 +74,33 @@ fn set_pos(e: &mut Entity, p: Vec3) {
     e.set_bounding_box(Aabb::new(p.x - w, p.y - 0.15000000596046448, p.z - w, p.x + w, p.y - 0.15000000596046448 + h, p.z + w));
 }
 
-pub fn load(r: &mut Input) -> Option<Box<dyn EntityExt>> {
+pub fn load(type_name: &str, r: &mut Input) -> Option<Box<dyn EntityExt>> {
+    let player = type_name == PLAYER_TYPE;
     Some(Box::new(WindCharge {
         owner: None,
         owner_uuid: r.uuid("Owner"),
         left_owner: r.bool_or("leftOwner", false),
         has_been_shot: r.bool_or("HasBeenShot", false),
-        acceleration_power: r.num("acceleration_power").unwrap_or(0.0),
+        // (`AbstractHurtingProjectile.readAdditionalSaveData`: 0.1 unless saved.)
+        acceleration_power: r.num("acceleration_power").unwrap_or(0.1),
+        player,
+        no_deflect_ticks: if player { 5 } else { 0 },
     }))
 }
 
-/// The wind burst at `center` from charge `source`.
-pub fn burst(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3) {
+/// The wind burst at `center` from charge `source`: radius 3 for a breeze's charge; 1.2, with the
+/// knockback multiplied by 1.22, for a thrown one.
+pub fn burst(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3, player: bool) {
     // The wind calculator (`SimpleExplosionDamageCalculator` with `#blocks_wind_charge_explosions`
     // immune): blocks have no resistance at all (the rays go through them, so they draw the
     // level random as long as vanilla's), except those of the tag (3600000).
     let resist = |state: u16, _res: f32| if crate::mob::kinds::wolf::block_in_tag(state, "minecraft:blocks_wind_charge_explosions") { 3600000.0 } else { -0.3 };
-    crate::explosion::explode_with(level, source, center, 3.0, false, crate::explosion::Interaction::TriggerBlock, Some(&resist), false);
-    level.emit(Event::Sound { pos: center, sound: "minecraft:entity.breeze.wind_burst", source: "hostile", volume: 1.0, pitch: 1.0 });
+    let wrapped = |state: u16, _above: u16, res: f32| resist(state, res);
+    let rules = crate::explosion::BlockRules { resistance: Some(&wrapped), knockback: player.then_some(1.22), ..Default::default() };
+    let radius = if player { 1.2 } else { 3.0 };
+    crate::explosion::explode_ruled(level, source, center, radius, false, crate::explosion::Interaction::TriggerBlock, rules, false);
+    let sound = if player { "minecraft:entity.wind_charge.wind_burst" } else { "minecraft:entity.breeze.wind_burst" };
+    level.emit(Event::Sound { pos: center, sound, source: "hostile", volume: 1.0, pitch: 1.0 });
 }
 
 impl WindCharge {
@@ -87,7 +125,7 @@ impl WindCharge {
         let mut hit = None;
         for id in level.entities_in(&area, EntityFilter::Any, e.id) {
             let Some(t) = level.entity(id) else { continue };
-            if !crate::projectile::can_be_hit_by_projectile(t) || Some(id) == owner || t.no_physics || t.type_name == TYPE {
+            if !crate::projectile::can_be_hit_by_projectile(t) || Some(id) == owner || t.no_physics || is_wind_charge(t.type_name) {
                 continue;
             }
             if let Some(p) = t.bounding_box().inflate_all(margin as f64).clip(from, to) {
@@ -113,7 +151,7 @@ impl WindCharge {
     }
 
     fn on_hit(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
-        level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: TYPE, owner: self.owner, hit });
+        level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: e.type_name, owner: self.owner, hit });
         match hit {
             Hit::Entity { id, .. } => {
                 let source = DamageSource { kind: DamageKind::WindCharge, attacker: self.owner, direct: Some(e.id), pos: Some(e.position()), attacker_is_player: self.owner.is_some_and(|o| level.player(o).is_some()) };
@@ -126,12 +164,12 @@ impl WindCharge {
                         *slot = t2;
                     }
                 }
-                burst(level, Some(e.id), e.position());
+                burst(level, Some(e.id), e.position(), self.player);
             }
             Hit::Block { face, location, .. } => {
                 let (dx, dy, dz) = face.step();
                 let at = location.add(dx as f64 * 0.25, dy as f64 * 0.25, dz as f64 * 0.25);
-                burst(level, Some(e.id), at);
+                burst(level, Some(e.id), at, self.player);
             }
         }
         e.discard();
@@ -143,12 +181,14 @@ impl EntityExt for WindCharge {
 
     /// `AbstractWindCharge.tick` → `AbstractHurtingProjectile.tick` (no acceleration, inertia 1).
     fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {
+        // (`WindCharge.tick`: counts the no-deflect ticks down after the projectile tick, below.)
+        let counting = self.no_deflect_ticks > 0;
         // `applyInertia`: inertia 1 in the air (`getInertia`) and in water (`getLiquidInertia` of
         // `AbstractWindCharge` is the same), plus the acceleration a player's deflection gave it.
         let v = e.delta;
         e.delta = (v + v.normalize().scale(self.acceleration_power)).scale(1.0);
         if crate::math::floor(e.y()) > level.max_y() + 30 {
-            burst(level, Some(e.id), e.position());
+            burst(level, Some(e.id), e.position(), self.player);
             e.discard();
             return;
         }
@@ -175,6 +215,9 @@ impl EntityExt for WindCharge {
         {
             self.on_hit(e, level, hit);
         }
+        if counting && self.no_deflect_ticks > 0 {
+            self.no_deflect_ticks -= 1;
+        }
     }
 
     fn save(&self, _e: &Entity, o: &mut Output) {
@@ -188,6 +231,9 @@ impl EntityExt for WindCharge {
 
     /// `AIM_DEFLECT` by a player (`onDeflection(true)`: the acceleration starts at 0.1).
     fn aim_deflect(&mut self, e: &mut Entity, by: (i32, u128), look: Vec3) -> bool {
+        if self.no_deflect_ticks > 0 {
+            return false;
+        }
         e.delta = look;
         e.needs_sync = true;
         self.owner = Some(by.0);
