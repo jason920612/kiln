@@ -602,21 +602,30 @@ impl ContainerBe {
     pub fn components(&self) -> Vec<kiln_item::component::Component> {
         use kiln_item::component::{Component, ItemContainerContents, LockCode, SeededContainerLoot};
         let mut out = Vec::new();
+        // `BannerBlockEntity.collectImplicitComponents`: the pattern layers, then the name (the components the item
+        // brought that the block entity did not read come with `components`).
+        if self.kind == BeKind::Banner {
+            let layers = self.extra.iter().find(|(k, _)| k == "patterns").map(|(_, v)| v.clone());
+            if let Some(layers) = layers.and_then(|t| <kiln_item::component::BannerPatternLayers as kiln_item::component::ComponentValue>::from_value(&kiln_item::Value::from_nbt(&t)).ok()) {
+                out.push(Component::BannerPatterns(layers));
+            }
+        }
         if let Some(name) = self.custom_name.clone().and_then(kiln_item::Text::from_nbt) {
             out.push(Component::CustomName(name));
+        }
+        if self.kind == BeKind::Banner
+            && let Some((_, rest)) = self.extra.iter().find(|(k, _)| k == "components")
+        {
+            let holder = Tag::Compound(vec![("id".into(), Tag::String("minecraft:stone".into())), ("count".into(), Tag::Int(1)), ("components".into(), rest.clone())]);
+            if let Ok(stack) = ItemStack::from_nbt(&holder) {
+                out.extend(stack.patch().added().cloned());
+            }
         }
         if let Some(lock) = self.lock.as_ref().and_then(|t| <LockCode as kiln_item::component::ComponentValue>::from_value(&kiln_item::Value::from_nbt(t)).ok()) {
             out.push(Component::Lock(lock));
         }
         if let Some(h) = &self.hive {
             out.extend(h.components());
-        }
-        // `BannerBlockEntity.collectImplicitComponents`: the pattern layers.
-        if self.kind == BeKind::Banner {
-            let layers = self.extra.iter().find(|(k, _)| k == "patterns").map(|(_, v)| v.clone());
-            if let Some(layers) = layers.and_then(|t| <kiln_item::component::BannerPatternLayers as kiln_item::component::ComponentValue>::from_value(&kiln_item::Value::from_nbt(&t)).ok()) {
-                out.push(Component::BannerPatterns(layers));
-            }
         }
         // `DecoratedPotBlockEntity.collectImplicitComponents`: the sherds (the container follows below).
         if self.kind == BeKind::DecoratedPot {
