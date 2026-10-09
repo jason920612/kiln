@@ -15,7 +15,7 @@ pub const PARENT_AGE_AFTER_BREEDING: i32 = 6000;
 /// `AgeableMob.aiStep` and `Animal.aiStep` after `Mob.aiStep`: the forced-age particles, growing
 /// up (or the breeding cooldown running out), the age lock particles, then love mode counting
 /// down with its heart particles (only their random draws matter here).
-pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &dyn crate::level::EntityLevel) {
+pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn crate::level::EntityLevel) {
     if m.forced_age_timer > 0 {
         if m.forced_age_timer % 4 == 0 {
             super::random_point(e, 1.0);
@@ -25,9 +25,9 @@ pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &dyn crate::level::Entity
     if super::is_alive(e, m) {
         let age = m.age;
         if age < 0 && !m.age_locked {
-            super::set_age_in(e, m, age + 1, Some(level));
+            super::set_age_in(e, m, age + 1, Some(&mut *level));
         } else if age > 0 {
-            super::set_age_in(e, m, age - 1, Some(level));
+            super::set_age_in(e, m, age - 1, Some(&mut *level));
         }
     }
     if m.age_lock_timer > 0 {

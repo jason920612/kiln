@@ -171,6 +171,14 @@ impl Kind for HappyGhast {
         Some(make_brain(random))
     }
 
+    /// `adultGhastSetup`: `getBrain().stopAll` (before the memories go).
+    fn age_boundary_reached_in(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        if !m.baby() && let Some(mut b) = m.brain.take() {
+            b.stop_all(e, m, level);
+            m.brain = Some(b);
+        }
+    }
+
     fn age_boundary_reached(&self, _e: &mut Entity, m: &mut MobData) {
         if m.baby() {
             self.baby_setup(m);

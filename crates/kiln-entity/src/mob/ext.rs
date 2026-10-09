@@ -833,6 +833,10 @@ pub trait Kind: Sync + Send {
     fn age_boundary_reached(&self, e: &mut Entity, m: &mut MobData) {
         let _ = (e, m);
     }
+    /// The part of `ageBoundaryReached` that needs the level (a happy ghast stops its brain).
+    fn age_boundary_reached_in(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let _ = (e, m, level);
+    }
     /// `shouldDiscardFriction`: in the air the motion is kept, without drag (a long-jumping goat).
     fn discard_friction(&self, m: &MobData) -> bool {
         let _ = m;
