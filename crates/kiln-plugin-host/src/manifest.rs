@@ -5,8 +5,12 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-/// What a plugin may link against. `state`, `env`, `registry` and `log` are always linked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The API major version this host links (`kiln:api@1`).
+pub const API_MAJOR: u32 = 1;
+
+/// What a plugin may link against. `state`, `event`, `env`, `registry` and `log` are always
+/// linked.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Capability {
     /// `kiln:api/chat`: send chat to players.
     PlayerMessage,
@@ -16,15 +20,47 @@ pub enum Capability {
     Scheduler,
     /// WASI preopens the plugin's own data directory (`/data`).
     FsData,
+    /// `kiln:api/hud`: titles, action bar, sidebar, boss bars.
+    PlayerHud,
+    /// `kiln:api/players`: teleport, game mode, heal, kick.
+    PlayerControl,
+    /// `kiln:api/inventory`: give, take, clear, menus.
+    Inventory,
+    /// `kiln:api/entities`: spawn and remove the plugin's own entities.
+    EntityControl,
+    /// `kiln:api/blocks`: set blocks in the cell of the call.
+    WorldWrite,
+    /// `kiln:api/events`: raise events to other plugins.
+    EventsRaise,
+    /// `async-tasks` world: HTTP requests to this host (`http:example.com`).
+    Http(String),
+    /// `async-tasks` world: timers.
+    Timers,
+    /// `async-tasks` world: the plugin's simple key-value storage.
+    Storage,
 }
 
 impl Capability {
     fn parse(s: &str) -> Result<Self> {
+        if let Some(host) = s.strip_prefix("http:") {
+            if host.is_empty() || host.contains('/') {
+                bail!("capability `{s}`: expected `http:<host>`");
+            }
+            return Ok(Capability::Http(host.to_ascii_lowercase()));
+        }
         Ok(match s {
             "player.message" => Capability::PlayerMessage,
             "command.register" => Capability::CommandRegister,
             "scheduler" => Capability::Scheduler,
             "fs.data" => Capability::FsData,
+            "player.hud" => Capability::PlayerHud,
+            "player.control" => Capability::PlayerControl,
+            "inventory" => Capability::Inventory,
+            "entity.control" => Capability::EntityControl,
+            "world.write" => Capability::WorldWrite,
+            "events.raise" => Capability::EventsRaise,
+            "timers" => Capability::Timers,
+            "storage" => Capability::Storage,
             // Declared in the design but not in this WIT: refuse rather than ignore.
             other => bail!("unknown or unsupported capability `{other}`"),
         })
@@ -37,22 +73,38 @@ pub enum EventKind {
     BlockBreak,
     BlockPlace,
     EntityInteract,
+    /// A player hits an entity.
+    EntityAttack,
+    /// A player is about to take damage.
+    PlayerDamage,
+    /// The held item is used (only tagged items, unless the filter's `items` say otherwise).
+    ItemUse,
+    /// A click in a container screen (the plugin's own menus, and vanilla containers with
+    /// the filter's `vanilla`).
+    ContainerClick,
     Chat,
     Command,
+    /// Events other plugins raise (`events.raise`).
+    Custom,
     Observe,
     Join,
     Leave,
-    /// Results of the plugin's atomic operations, the tick after they applied.
+    /// Results of the plugin's atomic operations and effects, the tick after they applied.
     OpResults,
 }
 
 impl EventKind {
-    pub const ALL: [EventKind; 9] = [
+    pub const ALL: [EventKind; 14] = [
         EventKind::BlockBreak,
         EventKind::BlockPlace,
         EventKind::EntityInteract,
+        EventKind::EntityAttack,
+        EventKind::PlayerDamage,
+        EventKind::ItemUse,
+        EventKind::ContainerClick,
         EventKind::Chat,
         EventKind::Command,
+        EventKind::Custom,
         EventKind::Observe,
         EventKind::Join,
         EventKind::Leave,
@@ -64,8 +116,13 @@ impl EventKind {
             "block-break" => EventKind::BlockBreak,
             "block-place" => EventKind::BlockPlace,
             "entity-interact" => EventKind::EntityInteract,
+            "entity-attack" => EventKind::EntityAttack,
+            "player-damage" => EventKind::PlayerDamage,
+            "item-use" => EventKind::ItemUse,
+            "container-click" => EventKind::ContainerClick,
             "chat" => EventKind::Chat,
             "command" => EventKind::Command,
+            "custom" => EventKind::Custom,
             "observe" => EventKind::Observe,
             "join" => EventKind::Join,
             "leave" => EventKind::Leave,
@@ -81,11 +138,42 @@ impl EventKind {
 
     /// Cancellable events: rate-limited per player and subject to the failure policy.
     pub fn is_cancellable(self) -> bool {
-        matches!(self, EventKind::BlockBreak | EventKind::BlockPlace | EventKind::EntityInteract | EventKind::Chat | EventKind::Command)
+        !matches!(self, EventKind::Custom | EventKind::Observe | EventKind::Join | EventKind::Leave | EventKind::OpResults)
     }
 
     pub fn index(self) -> usize {
         self as usize
+    }
+}
+
+/// What an `observe` subscription receives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObserveKinds(pub u8);
+
+impl ObserveKinds {
+    pub const BLOCK_BROKEN: u8 = 1;
+    pub const BLOCK_PLACED: u8 = 2;
+    pub const PLAYER_DIED: u8 = 4;
+    pub const PLAYER_SPAWNED: u8 = 8;
+    /// Without `kinds`: block changes only (what the first versions of the API sent).
+    pub const DEFAULT: ObserveKinds = ObserveKinds(Self::BLOCK_BROKEN | Self::BLOCK_PLACED);
+
+    pub fn has(self, bit: u8) -> bool {
+        self.0 & bit != 0
+    }
+
+    fn parse(names: &[String]) -> Result<ObserveKinds> {
+        let mut bits = 0;
+        for n in names {
+            bits |= match n.as_str() {
+                "block-broken" => Self::BLOCK_BROKEN,
+                "block-placed" => Self::BLOCK_PLACED,
+                "player-died" => Self::PLAYER_DIED,
+                "player-spawned" => Self::PLAYER_SPAWNED,
+                other => bail!("unknown observed kind `{other}`"),
+            };
+        }
+        Ok(ObserveKinds(bits))
     }
 }
 
@@ -116,8 +204,16 @@ pub struct Filter {
     /// Block keys or `#tags` the event's block must match (block-break, and observe, where
     /// the batch keeps only matching block changes).
     pub blocks: Vec<String>,
-    /// Entity type keys or `#tags` (entity-interact).
+    /// Entity type keys or `#tags` (entity-interact, entity-attack).
     pub entities: Vec<String>,
+    /// Item keys or `#tags` (item-use): items to deliver besides the plugin's tagged ones;
+    /// `*` delivers every item.
+    pub items: Vec<String>,
+    /// Event names (custom): `<plugin>:<name>`.
+    pub names: Vec<String>,
+    /// container-click: also deliver clicks in vanilla containers (the plugin's own menus
+    /// always arrive).
+    pub vanilla: bool,
     /// The event's position must be inside.
     pub area: Option<Area>,
     /// Actors with at least this permission level are not subject to the subscription (an
@@ -136,12 +232,16 @@ pub struct Subscription {
     pub event: EventKind,
     pub policy: FailPolicy,
     pub filter: Filter,
+    /// For `observe`: which observed kinds.
+    pub observe: ObserveKinds,
 }
 
 #[derive(Clone, Debug)]
 pub struct Manifest {
     pub id: String,
     pub version: String,
+    /// The API major version the plugin was written for.
+    pub api: u32,
     pub capabilities: Vec<Capability>,
     pub subscriptions: Vec<Subscription>,
     /// The `[config]` table, values as strings.
@@ -154,6 +254,8 @@ struct Raw {
     id: String,
     #[serde(default)]
     version: String,
+    #[serde(default)]
+    api: Option<String>,
     #[serde(default)]
     capabilities: Vec<String>,
     #[serde(default)]
@@ -172,6 +274,14 @@ struct RawSub {
     blocks: Vec<String>,
     #[serde(default)]
     entities: Vec<String>,
+    #[serde(default)]
+    items: Vec<String>,
+    #[serde(default)]
+    names: Vec<String>,
+    #[serde(default)]
+    vanilla: bool,
+    #[serde(default)]
+    kinds: Vec<String>,
     #[serde(default)]
     area: Option<RawArea>,
     #[serde(default)]
@@ -195,6 +305,13 @@ impl Manifest {
         let raw: Raw = toml::from_str(text).context("plugin.toml")?;
         if raw.id.is_empty() || !raw.id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_') {
             bail!("plugin id `{}` must be lowercase letters, digits, `-` or `_`", raw.id);
+        }
+        let api = match raw.api.as_deref() {
+            None => API_MAJOR,
+            Some(v) => v.split('.').next().and_then(|m| m.parse().ok()).with_context(|| format!("api `{v}`: expected a version like `1`"))?,
+        };
+        if api != API_MAJOR {
+            bail!("plugin {} is written for API {api}, this host links API {API_MAJOR}", raw.id);
         }
         let capabilities = raw.capabilities.iter().map(|c| Capability::parse(c)).collect::<Result<Vec<_>>>()?;
         let mut subscriptions = Vec::new();
@@ -222,14 +339,28 @@ impl Manifest {
                 }
                 None => None,
             };
-            let filter = Filter { blocks: s.blocks, entities: s.entities, area, bypass_permission: s.bypass_permission };
-            if !filter.entities.is_empty() && event != EventKind::EntityInteract {
-                bail!("`entities` filters only apply to entity-interact");
+            let filter =
+                Filter { blocks: s.blocks, entities: s.entities, items: s.items, names: s.names, vanilla: s.vanilla, area, bypass_permission: s.bypass_permission };
+            if !filter.entities.is_empty() && !matches!(event, EventKind::EntityInteract | EventKind::EntityAttack) {
+                bail!("`entities` filters only apply to entity-interact and entity-attack");
             }
             if !filter.blocks.is_empty() && !matches!(event, EventKind::BlockBreak | EventKind::Observe) {
                 bail!("`blocks` filters only apply to block-break and observe");
             }
-            subscriptions.push(Subscription { event, policy, filter });
+            if !filter.items.is_empty() && event != EventKind::ItemUse {
+                bail!("`items` filters only apply to item-use");
+            }
+            if !filter.names.is_empty() && event != EventKind::Custom {
+                bail!("`names` filters only apply to custom");
+            }
+            if filter.vanilla && event != EventKind::ContainerClick {
+                bail!("`vanilla` only applies to container-click");
+            }
+            if !s.kinds.is_empty() && event != EventKind::Observe {
+                bail!("`kinds` only applies to observe");
+            }
+            let observe = if s.kinds.is_empty() { ObserveKinds::DEFAULT } else { ObserveKinds::parse(&s.kinds)? };
+            subscriptions.push(Subscription { event, policy, filter, observe });
         }
         let config = raw
             .config
@@ -242,11 +373,19 @@ impl Manifest {
                 (k, v)
             })
             .collect();
-        Ok(Manifest { id: raw.id, version: raw.version, capabilities, subscriptions, config })
+        Ok(Manifest { id: raw.id, version: raw.version, api, capabilities, subscriptions, config })
     }
 
     pub fn has(&self, cap: Capability) -> bool {
         self.capabilities.contains(&cap)
+    }
+
+    /// The hosts the plugin may fetch from (`http:<host>`).
+    pub fn http_hosts(&self) -> impl Iterator<Item = &str> {
+        self.capabilities.iter().filter_map(|c| match c {
+            Capability::Http(h) => Some(h.as_str()),
+            _ => None,
+        })
     }
 
     pub fn subscription(&self, event: EventKind) -> Option<&Subscription> {
@@ -277,6 +416,12 @@ mod tests {
             event = "entity-interact"
             entities = ["minecraft:cow"]
             area = { x = 100, z = -3, radius = 5 }
+            [[subscribe]]
+            event = "observe"
+            kinds = ["player-died", "player-spawned"]
+            [[subscribe]]
+            event = "container-click"
+            vanilla = true
             [config]
             radius = 16
             chaos = "trap"
@@ -296,6 +441,9 @@ mod tests {
         assert_eq!(m.config["radius"], "16");
         assert_eq!(m.config["chaos"], "trap");
         assert!(m.has(Capability::PlayerMessage) && m.has(Capability::Scheduler));
+        let obs = m.subscription(EventKind::Observe).unwrap().observe;
+        assert!(obs.has(ObserveKinds::PLAYER_DIED) && obs.has(ObserveKinds::PLAYER_SPAWNED) && !obs.has(ObserveKinds::BLOCK_BROKEN));
+        assert!(m.subscription(EventKind::ContainerClick).unwrap().filter.vanilla);
     }
 
     #[test]
@@ -306,5 +454,18 @@ mod tests {
         assert!(Manifest::parse("id = \"x\"\n[[subscribe]]\nevent = \"chat\"\nblocks = [\"minecraft:stone\"]").is_err());
         assert!(Manifest::parse("id = \"x\"\n[[subscribe]]\nevent = \"block-break\"\nentities = [\"minecraft:cow\"]").is_err());
         assert!(Manifest::parse("id = \"x\"\n[[subscribe]]\nevent = \"block-break\"\narea = { x = 1, radius = 3 }").is_err());
+        assert!(Manifest::parse("id = \"x\"\n[[subscribe]]\nevent = \"chat\"\nvanilla = true").is_err());
+        assert!(Manifest::parse("id = \"x\"\n[[subscribe]]\nevent = \"chat\"\nkinds = [\"player-died\"]").is_err());
+        assert!(Manifest::parse("id = \"x\"\n[[subscribe]]\nevent = \"observe\"\nkinds = [\"nothing\"]").is_err());
+    }
+
+    #[test]
+    fn api_major_must_match_and_http_hosts_parse() {
+        assert!(Manifest::parse("id = \"x\"\napi = \"1.4\"").is_ok());
+        assert!(Manifest::parse("id = \"x\"\napi = \"2\"").is_err());
+        assert!(Manifest::parse("id = \"x\"\napi = \"soon\"").is_err());
+        let m = Manifest::parse("id = \"x\"\ncapabilities = [\"http:API.example.com\", \"timers\"]").unwrap();
+        assert_eq!(m.http_hosts().collect::<Vec<_>>(), ["api.example.com"]);
+        assert!(Manifest::parse("id = \"x\"\ncapabilities = [\"http:\"]").is_err());
     }
 }
