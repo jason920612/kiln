@@ -167,7 +167,7 @@ fn run_claims(steps: Vec<ClaimStep>) {
         for cx in ((c.x - 8) >> 7)..=((c.x + 8) >> 7) {
             for cz in ((c.z - 8) >> 7)..=((c.z + 8) >> 7) {
                 let data = rt.cell_value(CellKey { dim: 0, x: cx, z: cz }, "claims", "claims").unwrap_or_default();
-                let copies = data.chunks_exact(32).filter(|r| r[..16] == uuid(c.owner).to_le_bytes() && r[16..20] == (c.x - 8).to_le_bytes() && r[24..28] == (c.z - 8).to_le_bytes()).count();
+                let copies = data.chunks_exact(32).filter(|r| r[..16] == uuid(c.owner).to_le_bytes() && r[16..20] == (c.x - 8).to_le_bytes() && r[20..24] == (c.z - 8).to_le_bytes()).count();
                 assert_eq!(copies, 1, "claim at ({}, {}) in cell ({cx}, {cz})", c.x, c.z);
             }
         }
