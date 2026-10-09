@@ -117,7 +117,12 @@ pub fn set_size(e: &mut Entity, m: &mut MobData, size: i32, update_health: bool)
 }
 
 pub fn new_state(m: &mut MobData) -> Option<Box<dyn MobExt>> {
-    let c = Cube { size: 1, target_squish: 0.0, squish: 0.0, o_squish: 0.0, was_on_ground: false, move_y_rot: 0.0, jump_delay: 0, move_aggressive: false, sulfur: None };
+    new_state_with(m, None)
+}
+
+/// [`new_state`] for a type with state of its own (the sulfur cube's).
+pub fn new_state_with(m: &mut MobData, sulfur: Option<Box<super::sulfur_cube::Sulfur>>) -> Option<Box<dyn MobExt>> {
+    let c = Cube { size: 1, target_squish: 0.0, squish: 0.0, o_squish: 0.0, was_on_ground: false, move_y_rot: 0.0, jump_delay: 0, move_aggressive: false, sulfur };
     m.nav.can_float = true;
     Some(Box::new(c))
 }

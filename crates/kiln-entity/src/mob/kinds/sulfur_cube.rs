@@ -563,11 +563,7 @@ impl Kind for SulfurCube {
     }
 
     fn new_state(&self, m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
-        let mut c = slime::new_state(m)?;
-        if let Some(cube) = c.as_any_mut().downcast_mut::<Cube>() {
-            cube.sulfur = Some(Box::new(Sulfur::new()));
-        }
-        Some(c)
+        slime::new_state_with(m, Some(Box::new(Sulfur::new())))
     }
 
     /// `AbstractCubeMob.registerGoals` and `addBehaviourGoals`: tempt and the search for items.
