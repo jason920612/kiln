@@ -595,6 +595,10 @@ fn run_case(line: &Value) -> Vec<String> {
                 let id = sim.players[&1].containers.counter;
                 inbox.push(ToSim::Packet(1, PlayIn::ContainerButtonClick { container_id: id, button_id: i32_of(&step["button"]) }));
             }
+            "menu_slot_state" => {
+                let id = sim.players[&1].containers.counter;
+                inbox.push(ToSim::Packet(1, PlayIn::ContainerSlotStateChanged { slot: i32_of(&step["slot"]), container_id: id, enabled: step["enabled"].as_bool().unwrap() }));
+            }
             "menu_click" => {
                 let m = sim.players[&1].open_menu.as_ref().unwrap_or(&sim.players[&1].menu);
                 let input = [

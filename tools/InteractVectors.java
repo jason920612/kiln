@@ -1042,6 +1042,152 @@ public class InteractVectors {
         out.add(c);
     }
 
+    /** wp49: crafters: put up facing the way the player looks, and their screen (slots that switch off, the result that only shows). */
+    static void crafters49(List<Case> out) {
+        Case c;
+        // ---- put up: the front is where the player's back is, the top follows the way he faces
+        for (float pitch : new float[] {0f, 60f, -60f, 89f, -89f}) {
+            for (float yaw : new float[] {0f, 90f, 180f, -90f, 45f, 140f}) {
+                c = new Case("crafter_place_" + (int) pitch + "_" + (int) yaw).watch(2, 100, 0);
+                c.yaw = yaw;
+                c.pitch = pitch;
+                c.cmd("setblock 2 99 0 minecraft:stone");
+                c.slot("h0", stack("minecraft:crafter", 2)).step(useOn(2, 99, 0, 1, 0));
+                out.add(c);
+            }
+        }
+        // Put onto power it is triggered at once.
+        c = new Case("crafter_place_powered").watch(2, 100, 0);
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 1 minecraft:redstone_block");
+        c.slot("h0", stack("minecraft:crafter", 2)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        // ---- the screen
+        String planks = "{Items:[{Slot:0b,id:\"minecraft:oak_planks\",count:1},{Slot:1b,id:\"minecraft:oak_planks\",count:1},{Slot:3b,id:\"minecraft:oak_planks\",count:2},{Slot:4b,id:\"minecraft:oak_planks\",count:1}]}";
+        String at = "minecraft:crafter[orientation=north_up,crafting=false,triggered=false]";
+        c = blockCase("crafter_open_empty", at).menus();
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("crafter_open_recipe", at + planks).menus();
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("crafter_open_disabled", at + "{Items:[{Slot:1b,id:\"minecraft:dirt\",count:3}],disabled_slots:[I;2,5,8]}").menus();
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("crafter_open_powered", "minecraft:crafter[orientation=north_up,crafting=false,triggered=true]" + planks).menus();
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("crafter_open_sneaking_with_item", at).menus();
+        c.sneaking = true;
+        c.slot("h0", stack("minecraft:stone", 3));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("crafter_open_spectator", at + planks).menus();
+        c.gameMode = "spectator";
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        // Switching slots off and on.
+        c = blockCase("crafter_slot_off", at).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_slot_state", "slot", 2, "enabled", false));
+        out.add(c);
+        c = blockCase("crafter_slot_off_then_on", at).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_slot_state", "slot", 2, "enabled", false)).step(op("op", "menu_slot_state", "slot", 2, "enabled", true));
+        out.add(c);
+        c = blockCase("crafter_slot_off_full_slot", at + planks).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_slot_state", "slot", 3, "enabled", false));
+        out.add(c);
+        c = blockCase("crafter_slot_off_outside", at).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_slot_state", "slot", 12, "enabled", false)).step(op("op", "menu_slot_state", "slot", 45, "enabled", false));
+        out.add(c);
+        c = blockCase("crafter_slot_off_already_off", at + "{disabled_slots:[I;4]}").menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_slot_state", "slot", 4, "enabled", false));
+        out.add(c);
+        // Items in and out. (Menu slots: the crafter's 0-8, the player's main 9-35, the hotbar 36-44, the result 45.)
+        c = blockCase("crafter_put_item_in", at).menus();
+        c.slot("h0", stack("minecraft:oak_planks", 8));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(click(4, 0, 0)).step(click(4, 1, 0));
+        out.add(c);
+        c = blockCase("crafter_put_item_in_right_click", at).menus();
+        c.slot("h0", stack("minecraft:oak_planks", 8));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(click(4, 1, 0)).step(click(4, 1, 0)).step(click(5, 1, 0));
+        out.add(c);
+        c = blockCase("crafter_put_item_in_disabled_slot", at + "{disabled_slots:[I;4]}").menus();
+        c.slot("h0", stack("minecraft:oak_planks", 8));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(click(4, 0, 0));
+        out.add(c);
+        c = blockCase("crafter_recipe_by_hand", at).menus();
+        c.slot("h0", stack("minecraft:oak_planks", 8));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(click(0, 1, 0)).step(click(1, 1, 0)).step(click(3, 1, 0)).step(click(4, 1, 0));
+        out.add(c);
+        c = blockCase("crafter_shift_click_in", at).menus();
+        c.slot("h0", stack("minecraft:oak_planks", 70)).slot("m10", stack("minecraft:dirt", 20));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 1)).step(click(10, 0, 1));
+        out.add(c);
+        c = blockCase("crafter_shift_click_in_skips_disabled", at + "{disabled_slots:[I;0,1,2]}").menus();
+        c.slot("h0", stack("minecraft:oak_planks", 4));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 1));
+        out.add(c);
+        c = blockCase("crafter_shift_click_out", at + planks).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(3, 0, 1)).step(click(0, 0, 1));
+        out.add(c);
+        c = blockCase("crafter_take_item", at + planks).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(3, 0, 0)).step(click(40, 0, 0));
+        out.add(c);
+        c = blockCase("crafter_hotbar_swap", at + planks).menus();
+        c.slot("h2", stack("minecraft:stone", 5));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(3, 2, 2)).step(click(8, 2, 2));
+        out.add(c);
+        c = blockCase("crafter_swap_into_disabled", at + "{disabled_slots:[I;8]}").menus();
+        c.slot("h2", stack("minecraft:stone", 5));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(8, 2, 2));
+        out.add(c);
+        c = blockCase("crafter_double_click", at + planks).menus();
+        c.slot("h0", stack("minecraft:oak_planks", 10));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(click(36, 0, 6));
+        out.add(c);
+        c = blockCase("crafter_drag", at).menus();
+        c.slot("h0", stack("minecraft:oak_planks", 9));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(click(-999, 0, 5)).step(click(0, 1, 5)).step(click(1, 1, 5)).step(click(2, 1, 5)).step(click(-999, 2, 5));
+        out.add(c);
+        c = blockCase("crafter_drag_over_disabled", at + "{disabled_slots:[I;1]}").menus();
+        c.slot("h0", stack("minecraft:oak_planks", 9));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(click(-999, 0, 5)).step(click(0, 1, 5)).step(click(1, 1, 5)).step(click(2, 1, 5)).step(click(-999, 2, 5));
+        out.add(c);
+        // The result only shows.
+        c = blockCase("crafter_result_click", at + planks).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(45, 0, 0)).step(click(45, 1, 0));
+        out.add(c);
+        c = blockCase("crafter_result_shift_click", at + planks).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(45, 0, 1));
+        out.add(c);
+        c = blockCase("crafter_result_carried_on_it", at + planks).menus();
+        c.slot("h0", stack("minecraft:crafting_table", 2));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(click(45, 0, 0));
+        out.add(c);
+        c = blockCase("crafter_result_hotbar_swap", at + planks).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(45, 0, 2));
+        out.add(c);
+        c = blockCase("crafter_result_throw", at + planks).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(45, 0, 4)).step(click(45, 1, 4));
+        out.add(c);
+        c = blockCase("crafter_result_double_click", at + planks).menus();
+        c.slot("h0", stack("minecraft:crafting_table", 2));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(click(36, 0, 6));
+        out.add(c);
+        c = blockCase("crafter_result_clone_creative", at + planks).menus();
+        c.gameMode = "creative";
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(45, 2, 3));
+        out.add(c);
+        c = blockCase("crafter_close_returns_cursor", at).menus();
+        c.slot("h0", stack("minecraft:oak_planks", 8));
+        c.step(useOn(2, 100, 0, 1, 0)).step(click(36, 0, 0)).step(op("op", "menu_close"));
+        out.add(c);
+    }
+
+    /** A click on the open menu (`ContainerInput` ordinal: 0 pickup, 1 quick move, 2 swap, 3 clone, 4 throw, 5 quick craft, 6 pickup all). */
+    static Map<String, Object> click(int slot, int button, int input) {
+        return op("op", "menu_click", "slot", slot, "button", button, "input", input);
+    }
+
     static Case hiveCase(String name, String block) {
         Case c = new Case(name);
         c.cmd("setblock 2 99 0 minecraft:stone").late("setblock 2 100 0 " + block).watch(2, 100, 0);
@@ -2401,6 +2547,8 @@ public class InteractVectors {
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
             // wp49: a click on a menu button (`ServerboundContainerButtonClickPacket`) of the player's open menu.
             case "menu_button" -> p.connection.handleContainerButtonClick(new ServerboundContainerButtonClickPacket(p.containerMenu.containerId, (int) s.get("button")));
+            // wp49: a crafter's slot switched off or on from its screen.
+            case "menu_slot_state" -> p.connection.handleContainerSlotStateChanged(new net.minecraft.network.protocol.game.ServerboundContainerSlotStateChangedPacket((int) s.get("slot"), p.containerMenu.containerId, (boolean) s.get("enabled")));
             // wp49: the player closes the menu.
             case "menu_close" -> p.connection.handleContainerClose(new ServerboundContainerClosePacket(p.containerMenu.containerId));
             // wp49: the player starts breaking the block (it goes at once in creative or with a tool that breaks it in a tick).
@@ -2769,6 +2917,7 @@ public class InteractVectors {
             maps49(all);
             vaults49(all);
             trials49(all);
+            crafters49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {
