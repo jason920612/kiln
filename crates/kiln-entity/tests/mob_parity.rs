@@ -806,6 +806,23 @@ fn replay(s: &Value) -> Result<usize, String> {
                 }
             }
         }
+        // wp50: the items a click dropped (shorn equipment) appear where vanilla's did.
+        {
+            let recorded: Vec<Vec3> = s["spawned"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some("minecraft:item") && x["pos"].is_array())
+                .map(|x| vec3(&x["pos"]))
+                .collect();
+            let got: Vec<Vec3> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item").map(|e| e.position()).collect();
+            if s.get("equip_trace").is_some() {
+                let bits = |v: &[Vec3]| v.iter().map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]).collect::<Vec<_>>();
+                if bits(&got) != bits(&recorded) {
+                    return Err(format!("tick {tick}: items appeared at {got:?} (kiln) vs {recorded:?} (vanilla)"));
+                }
+            }
+        }
         // Mobs that appeared get the harness's pinned random and head/body yaw, in the order the
         // harness finds them (`getEntities` over its box: entity sections, then insertion).
         let fresh: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| mob::data(e).is_some()).map(|e| e.id).filter(|id| !ids.contains(id)).collect();
