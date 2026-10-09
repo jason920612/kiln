@@ -594,6 +594,22 @@ fn apply_op(ns: &mut BTreeMap<String, GlobalValue>, ticket: u64, op: wit::Atomic
             }
             (c.key, applied)
         }
+        wit::AtomicOp::TryAdd(t) => {
+            // A missing key counts as 0; a byte value is not a number.
+            let current = match ns.get(&t.key) {
+                Some(GlobalValue::Int(v)) => Some(*v),
+                Some(GlobalValue::Bytes(_)) => None,
+                None => Some(0),
+            };
+            let applied = match current.and_then(|v| v.checked_add(t.delta)) {
+                Some(next) if next >= t.floor => {
+                    ns.insert(t.key.clone(), GlobalValue::Int(next));
+                    true
+                }
+                _ => false,
+            };
+            (t.key, applied)
+        }
         wit::AtomicOp::Append((key, bytes)) => {
             let applied = match ns.get_mut(&key) {
                 Some(GlobalValue::Bytes(v)) => {
@@ -2291,8 +2307,8 @@ impl PluginRuntime {
                 None => {
                     let handle = task.handle;
                     let id = task.id;
-                    let actor = player.as_ref().map(|p| (p.uuid, p.name.clone(), p.operator));
-                    self.global_call(task.plugin, actor.as_ref().map(|(u, n, o)| Actor { uuid: *u, name: n, operator: *o }).as_ref(), |store, g, player| {
+                    let actor = player.as_ref().map(|p| Actor { uuid: p.uuid, name: &p.name, operator: p.operator, info: p.info });
+                    self.global_call(task.plugin, actor.as_ref(), |store, g, player| {
                         g.call_on_task(store, wit::TaskEvent { handle, id, player, cell: None })
                     });
                 }
