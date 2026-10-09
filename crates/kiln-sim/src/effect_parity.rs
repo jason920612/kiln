@@ -405,8 +405,8 @@ fn run_scenario(line: &Value) -> Vec<String> {
                 // (`EffectVectors.BASE`; the player's own offset is `dy`.)
                 let got = sim.block_at(at(0), 100 + at(1), at(2)).map(kiln_blocks::state::state_string).unwrap_or_default();
                 let want = state.as_str().unwrap().to_owned();
-                // (Water that flows is not what these look at: Kiln's level ticks, the recorded one stands still.)
-                let both_flowing = got.starts_with("minecraft:water[") && want.starts_with("minecraft:water[");
+                // (Flowing water is only looked at for not freezing: Kiln's level ticks and lets it flow or dry, the recorded one stands still.)
+                let both_flowing = want.starts_with("minecraft:water[") && !want.contains("level=0") && !got.contains("frosted_ice");
                 eq(&format!("block {w}"), if both_flowing { want.clone() } else { got }, want);
             }
         }
