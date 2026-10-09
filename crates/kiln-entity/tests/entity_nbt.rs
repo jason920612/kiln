@@ -51,6 +51,46 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
+/// The entries of an entity data list (index, serializer, value), the values that hold NBT (text components, item
+/// stacks) with the order of their keys taken out: the game writes compounds in the order of its hash maps and item
+/// components in the order of an identity hash.
+fn entries(mut bytes: &[u8]) -> Vec<(u8, i32, String)> {
+    use kiln_proto::codec::Reader;
+    let mut out = Vec::new();
+    while !bytes.is_empty() {
+        let mut r = Reader::new(bytes);
+        let index = r.u8().unwrap();
+        let serializer = r.varint().unwrap();
+        let before = r.remaining();
+        let value = match serializer {
+            0 | 8 => hex(r.bytes(1).unwrap()),
+            1 | 14 => hex(&{
+                let v = r.varint().unwrap();
+                v.to_le_bytes()
+            }),
+            3 => hex(r.bytes(4).unwrap()),
+            39 => hex(r.bytes(12).unwrap()),
+            40 => hex(r.bytes(16).unwrap()),
+            5 => {
+                let rest = r.rest();
+                let (tag, used) = kiln_proto::nbt::read_network(rest).unwrap();
+                r = Reader::new(&rest[used..]);
+                canon(&tag)
+            }
+            7 => {
+                let stack = kiln_item::ItemStack::read_optional(&mut r).unwrap();
+                canon(&stack.to_nbt())
+            }
+            other => panic!("serializer {other}"),
+        };
+        let used = bytes.len() - r.remaining();
+        let _ = before;
+        out.push((index, serializer, value));
+        bytes = &bytes[used..];
+    }
+    out
+}
+
 fn no_owner(_: i32) -> Option<u128> {
     None
 }
@@ -95,8 +135,16 @@ fn data_entities_match_vanilla() {
         if let EntityKind::Ext(x) = &e.kind {
             x.entity_data(&e, &mut d);
         }
-        let got = hex(d.entries());
-        let want_meta: String = v["meta"].as_array().unwrap().iter().map(|m| m.as_str().unwrap()).filter(|m| u8::from_str_radix(&m[..2], 16).unwrap() >= 8).collect();
+        let got = entries(d.entries());
+        let want_bytes: Vec<u8> = v["meta"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m.as_str().unwrap())
+            .filter(|m| u8::from_str_radix(&m[..2], 16).unwrap() >= 8)
+            .flat_map(|m| (0..m.len()).step_by(2).map(|i| u8::from_str_radix(&m[i..i + 2], 16).unwrap()).collect::<Vec<_>>())
+            .collect();
+        let want_meta = entries(&want_bytes);
         if got != want_meta {
             errors.push(format!("entity data\n    kiln    {got}\n    vanilla {want_meta}"));
         }

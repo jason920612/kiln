@@ -147,7 +147,8 @@ fn decompose(m: [f32; 16]) -> Option<([f32; 3], [f32; 4], [f32; 3], [f32; 4])> {
     if f != 1.0 {
         return None;
     }
-    Some(([at(0, 3), at(1, 3), at(2, 3)], [0.0, 0.0, 0.0, 1.0], [at(0, 0), at(1, 1), at(2, 2)], [0.0, 0.0, 0.0, 1.0]))
+    // (The decomposition leaves the right rotation with negative zeros.)
+    Some(([at(0, 3), at(1, 3), at(2, 3)], [0.0, 0.0, 0.0, 1.0], [at(0, 0), at(1, 1), at(2, 2)], [-0.0, -0.0, -0.0, 1.0]))
 }
 
 /// `Brightness.CODEC`: block and sky light, 0 to 15 each.
@@ -160,8 +161,13 @@ fn brightness(tag: &Tag) -> Option<i32> {
     Some((b as i32) << 4 | (s as i32) << 20)
 }
 
+/// Whether two vectors differ in a bit (a negative zero is not a zero: `Vector3f.equals` compares floats like `Float.compare`).
+fn differs(a: &[f32], b: &[f32]) -> bool {
+    a.iter().zip(b).any(|(x, y)| x.to_bits() != y.to_bits())
+}
+
 fn vec_tag(v: &[f32]) -> Tag {
-    Tag::List(v.iter().map(|&f| Tag::Float(f)).collect())
+    Tag::List(v.iter().map(|&f| Tag::Float(f + 0.0)).collect())
 }
 
 /// A block state as the game's codec reads it: a block id (its default state), or `{id, properties}` where an
@@ -318,16 +324,16 @@ impl EntityExt for DisplayEntity {
         if c.pos_rot_duration != n.pos_rot_duration {
             d.set(display::POS_ROT_INTERPOLATION_DURATION, &DataValue::Int(c.pos_rot_duration));
         }
-        if c.translation != n.translation {
+        if differs(&c.translation, &n.translation) {
             d.set(display::TRANSLATION, &DataValue::Vector3(c.translation));
         }
-        if c.scale != n.scale {
+        if differs(&c.scale, &n.scale) {
             d.set(display::SCALE, &DataValue::Vector3(c.scale));
         }
-        if c.left_rotation != n.left_rotation {
+        if differs(&c.left_rotation, &n.left_rotation) {
             d.set(display::LEFT_ROTATION, &DataValue::Quaternion(c.left_rotation));
         }
-        if c.right_rotation != n.right_rotation {
+        if differs(&c.right_rotation, &n.right_rotation) {
             d.set(display::RIGHT_ROTATION, &DataValue::Quaternion(c.right_rotation));
         }
         if c.billboard != n.billboard {
