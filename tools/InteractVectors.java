@@ -1056,6 +1056,17 @@ public class InteractVectors {
                 out.add(c);
             }
         }
+        // Other blocks that face the way the player looks, not the way the face he clicked would have them.
+        for (String item : new String[] {"dispenser", "dropper", "observer", "piston", "sticky_piston", "barrel", "command_block", "chain_command_block", "repeating_command_block"}) {
+            for (float[] look : new float[][] {{0f, 0f}, {90f, 0f}, {135f, -50f}, {200f, 30f}, {0f, 80f}, {45f, -80f}}) {
+                c = new Case("crafter_look_" + item + "_" + (int) look[0] + "_" + (int) look[1]).watch(2, 100, 0);
+                c.yaw = look[0];
+                c.pitch = look[1];
+                c.cmd("setblock 2 99 0 minecraft:stone");
+                c.slot("h0", stack("minecraft:" + item, 2)).step(useOn(2, 99, 0, 1, 0));
+                out.add(c);
+            }
+        }
         // Put onto power it is triggered at once.
         c = new Case("crafter_place_powered").watch(2, 100, 0);
         c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 1 minecraft:redstone_block");
