@@ -994,7 +994,7 @@ impl Minecart {
         let is_rail_state = |s: u16| crate::ext_entity::minecart::rail_shape(s).is_some();
         let resistance = |state: u16, above: u16, res: f32| if primed && (is_rail_state(state) || is_rail_state(above)) { 0.0 } else { res };
         let should = |state: u16, above: u16| !(primed && (is_rail_state(state) || is_rail_state(above)));
-        let rules = crate::explosion::BlockRules { resistance: Some(&resistance), should_explode: Some(&should), causing };
+        let rules = crate::explosion::BlockRules { resistance: Some(&resistance), should_explode: Some(&should), causing, knockback: None };
         crate::explosion::explode_ruled(level, Some(e.id), centre, radius, false, crate::explosion::Interaction::Tnt, rules, true);
         e.discard();
     }
