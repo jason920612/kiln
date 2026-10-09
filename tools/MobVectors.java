@@ -8627,8 +8627,86 @@ public class MobVectors {
         return s;
     }
 
+    /// wp50: equipment clicks on the other mounts (horses, donkeys, camels, nautiluses, the happy ghast) and on wolves.
+    static void scenariosWp50Mounts(List<Scenario> out) {
+        String saddle = "equipment:{saddle:{id:\"minecraft:saddle\",count:1}}";
+        // Horses: tame and not, saddle and armor by hand, shears.
+        for (String kind : new String[] {"horse", "donkey", "camel", "llama"}) {
+            String land = kind.equals("camel") ? "minecraft:sand" : "minecraft:grass_block";
+            for (boolean tame : new boolean[] {true, false}) {
+                String tag = "eq50_" + kind + (tame ? "_tame" : "_wild");
+                String base = "{NoAI:1b,PersistenceRequired:1b" + (tame ? ",Tame:1b" : "");
+                long seed = 52000L + kind.length() * 100 + (tame ? 7 : 0);
+                MobSpec a = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                a.nbt = base + "}";
+                Scenario s1 = eqClick(tag + "_saddle", a, "minecraft:saddle", false, false, 40);
+                floor(s1, 16, land);
+                out.add(s1);
+                if (!kind.equals("llama")) {
+                    MobSpec b = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                    b.nbt = base + "}";
+                    Scenario s2 = eqClick(tag + "_armor", b, kind.equals("camel") ? "minecraft:iron_horse_armor" : "minecraft:iron_horse_armor", false, false, 40);
+                    floor(s2, 16, land);
+                    out.add(s2);
+                } else {
+                    MobSpec b = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                    b.nbt = base + "}";
+                    Scenario s2 = eqClick(tag + "_carpet", b, "minecraft:red_carpet", false, false, 40);
+                    floor(s2, 16, land);
+                    out.add(s2);
+                }
+                MobSpec c = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                c.nbt = base + "," + saddle + "}";
+                Scenario s3 = eqClick(tag + "_shears", c, "minecraft:shears", false, false, 40);
+                floor(s3, 16, land);
+                out.add(s3);
+            }
+        }
+        // Nautiluses (in a pool): tame ones take a saddle and armor; shears take them off.
+        for (String kind : new String[] {"nautilus", "zombie_nautilus"}) {
+            double W = BY - 3;
+            String tame = "{PersistenceRequired:1b," + owner() + "}";
+            String armored = "equipment:{body:{id:\"minecraft:iron_nautilus_armor\",count:1}},drop_chances:{body:2.0f}";
+            long seed = 53000L + kind.length();
+            for (String[] c : new String[][] {
+                    {"saddle", "minecraft:saddle", "", "survival"}, {"saddle_creative", "minecraft:saddle", "", "creative"},
+                    {"armor", "minecraft:iron_nautilus_armor", "", "survival"}, {"armor_gold", "minecraft:golden_nautilus_armor", "", "survival"},
+                    {"shears_saddle", "minecraft:shears", saddle, "survival"}, {"shears_armor", "minecraft:shears", armored, "survival"},
+                    {"shears_both", "minecraft:shears", saddle + "," + armored, "survival"}}) {
+                MobSpec m = new MobSpec("minecraft:" + kind, 0.5, W, 0.5, 30f, seed++);
+                m.nbt = tame.substring(0, tame.length() - 1) + (c[2].isEmpty() ? "" : "," + c[2]) + "}";
+                Scenario s = eqClick("eq50_" + kind + "_" + c[0], m, c[1], c[3].equals("creative"), false, 60);
+                poolWorld(s, 14, -6, -6, 6, 6, 5);
+                out.add(s);
+            }
+            // A wild one takes nothing by hand.
+            MobSpec w = new MobSpec("minecraft:" + kind, 0.5, W, 0.5, 30f, seed++);
+            w.nbt = "{PersistenceRequired:1b}";
+            Scenario sw = eqClick("eq50_" + kind + "_wild_saddle", w, "minecraft:saddle", false, false, 40);
+            poolWorld(sw, 14, -6, -6, 6, 6, 5);
+            out.add(sw);
+        }
+        // The happy ghast: a harness goes on by hand, shears take it off.
+        for (String item : new String[] {"minecraft:white_harness", "minecraft:shears"}) {
+            MobSpec g = new MobSpec("minecraft:happy_ghast", 0.5, BY + 1, 0.5, 30f, 54000L + item.length());
+            g.nbt = "{NoAI:1b,PersistenceRequired:1b" + (item.endsWith("shears") ? ",equipment:{body:{id:\"minecraft:red_harness\",count:1}}" : "") + "}";
+            Scenario s = eqClick("eq50_ghast_" + item.substring(10), g, item, false, false, 40);
+            floor(s, 16, "minecraft:stone");
+            out.add(s);
+        }
+        // Wolves: armor by hand (the owner), shears.
+        for (String item : new String[] {"minecraft:wolf_armor", "minecraft:shears"}) {
+            MobSpec w = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 30f, 55000L + item.length());
+            w.nbt = "{NoAI:1b,PersistenceRequired:1b," + owner() + (item.endsWith("shears") ? ",equipment:{body:{id:\"minecraft:wolf_armor\",count:1}}" : "") + "}";
+            Scenario s = eqClick("eq50_wolf_" + item.substring(10), w, item, false, false, 40);
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+        }
+    }
+
     static void scenariosWp50(List<Scenario> out) {
         scenariosWp50Saddles(out);
+        scenariosWp50Mounts(out);
     }
 
     static void scenariosWp50Saddles(List<Scenario> out) {
