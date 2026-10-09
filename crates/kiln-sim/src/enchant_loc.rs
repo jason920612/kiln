@@ -49,7 +49,6 @@ impl Player {
             self.loc_last_pos = Some(now);
             self.run_location_changed(block);
         }
-        self.soul_speed_tick(block);
     }
 
     /// `LivingEntity.checkFallDamage`: a landing runs the effects too.
@@ -103,13 +102,15 @@ impl Player {
         }
     }
 
-    /// Soul speed's `tick` effects: every fifth tick of walking on soul blocks, soul particles (and now and then
-    /// a sound).
-    fn soul_speed_tick(&mut self, block: BlockAt) {
+    /// `EnchantmentHelper.tickEffects`, the start of `LivingEntity.baseTick`: soul speed's `tick` effects. Every tick
+    /// the sound's `random_chance` draws from the level's random (it is the first term of its requirements); every
+    /// fifth tick of walking on soul blocks there are soul particles, and now and then a sound.
+    pub(crate) fn tick_enchant_effects(&mut self, block: BlockAt) {
         let boots = self.worn(EquipmentSlot::Feet);
         if enchant_level(boots, "minecraft:soul_speed") == 0 {
             return;
         }
+        let sound = self.level_rng.next_float() < 0.35;
         if self.tick_count % 5 != 0 || self.flag_flying() || !self.on_ground || self.speed_h < 1.0e-5 {
             return;
         }
@@ -120,8 +121,8 @@ impl Player {
         if let Some(soul) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:soul") {
             use kiln_proto::packets::world_fx;
             let (w, _, _) = self.dimensions();
-            let x = self.pos[0] + (self.level_rng.next_double() - 0.5) * w as f64;
-            let z = self.pos[2] + (self.level_rng.next_double() - 0.5) * w as f64;
+            let x = self.pos[0] + (self.entity_rng.next_double() - 0.5) * w as f64;
+            let z = self.pos[2] + (self.entity_rng.next_double() - 0.5) * w as f64;
             let pkt = world_fx::level_particles(&world_fx::LevelParticles {
                 particle: world_fx::Particle { kind: soul, options: world_fx::ParticleOptions::None },
                 override_limiter: false,
@@ -135,8 +136,8 @@ impl Player {
             self.send(pkt);
         }
         // `PlaySoundEffect`: 35% of the time, at a pitch from 0.6 to 1.
-        if self.level_rng.next_float() < 0.35 {
-            let pitch = 0.6 + self.level_rng.next_float() * 0.4;
+        if sound {
+            let pitch = 0.6 + self.entity_rng.next_float() * 0.4;
             self.sound_for_all("minecraft:particle.soul_escape", kiln_proto::packets::world_fx::SoundSource::Players, 0.6, pitch);
         }
     }

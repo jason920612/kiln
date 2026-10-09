@@ -791,6 +791,8 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
         let bp = kiln_entity::math::BlockPos::new(at[0], at[1], at[2]);
         p.omen_raid_full = crate::raid::raid_at_view(&env.blocks.raids, bp).is_some_and(|r| r.omen_level >= 5);
     }
+    // `LivingEntity.baseTick` starts with the enchantments' `tick` effects.
+    p.tick_enchant_effects(&block);
     p.base_tick(&block, env.min_y, &env.border, &mut ctx);
     // `LivingEntity.baseTick`: a new block position runs the location-changed enchantments.
     p.tick_location_changed(&block);
