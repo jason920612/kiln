@@ -287,8 +287,8 @@ impl bindings::kiln::api::log::Host for TaskState {
 
 impl http::Host for TaskState {}
 
-impl http::HostWithStore for HasSelf<TaskState> {
-    async fn fetch<T>(store: &Accessor<T, Self>, req: http::Request) -> wasmtime::Result<Result<http::Response, http::HttpError>> {
+impl<U: 'static> http::HostWithStore<U> for HasSelf<TaskState> {
+    async fn fetch(store: &Accessor<U, Self>, req: http::Request) -> wasmtime::Result<Result<http::Response, http::HttpError>> {
         let allowed = store.with(|mut a| {
             let s = a.get();
             match url_host(&req.url) {
@@ -307,8 +307,8 @@ impl http::HostWithStore for HasSelf<TaskState> {
 
 impl timers::Host for TaskState {}
 
-impl timers::HostWithStore for HasSelf<TaskState> {
-    async fn sleep<T>(store: &Accessor<T, Self>, ticks: u32) -> wasmtime::Result<()> {
+impl<U: 'static> timers::HostWithStore<U> for HasSelf<TaskState> {
+    async fn sleep(store: &Accessor<U, Self>, ticks: u32) -> wasmtime::Result<()> {
         let (granted, mut rx) = store.with(|mut a| {
             let s = a.get();
             (s.timers, s.tick.clone())
@@ -328,15 +328,15 @@ impl timers::HostWithStore for HasSelf<TaskState> {
 
 impl storage::Host for TaskState {}
 
-impl storage::HostWithStore for HasSelf<TaskState> {
-    async fn get<T>(store: &Accessor<T, Self>, key: String) -> wasmtime::Result<Option<Vec<u8>>> {
-        let st = store.with(|mut a| a.get().storage.clone()).context("the plugin has no `storage` capability")?;
+impl<U: 'static> storage::HostWithStore<U> for HasSelf<TaskState> {
+    async fn get(store: &Accessor<U, Self>, key: String) -> wasmtime::Result<Option<Vec<u8>>> {
+        let st = store.with(|mut a| a.get().storage.clone()).ok_or_else(|| wasmtime::format_err!("the plugin has no `storage` capability"))?;
         let v = st.kv.lock().unwrap().get(&key).cloned();
         Ok(v)
     }
 
-    async fn put<T>(store: &Accessor<T, Self>, key: String, val: Vec<u8>) -> wasmtime::Result<bool> {
-        let st = store.with(|mut a| a.get().storage.clone()).context("the plugin has no `storage` capability")?;
+    async fn put(store: &Accessor<U, Self>, key: String, val: Vec<u8>) -> wasmtime::Result<bool> {
+        let st = store.with(|mut a| a.get().storage.clone()).ok_or_else(|| wasmtime::format_err!("the plugin has no `storage` capability"))?;
         if key.len() > MAX_KEY || val.len() > MAX_BODY {
             return Ok(false);
         }
@@ -349,8 +349,8 @@ impl storage::HostWithStore for HasSelf<TaskState> {
         Ok(true)
     }
 
-    async fn delete<T>(store: &Accessor<T, Self>, key: String) -> wasmtime::Result<()> {
-        let st = store.with(|mut a| a.get().storage.clone()).context("the plugin has no `storage` capability")?;
+    async fn delete(store: &Accessor<U, Self>, key: String) -> wasmtime::Result<()> {
+        let st = store.with(|mut a| a.get().storage.clone()).ok_or_else(|| wasmtime::format_err!("the plugin has no `storage` capability"))?;
         let mut kv = st.kv.lock().unwrap();
         if kv.remove(&key).is_some() {
             st.save(&kv);
