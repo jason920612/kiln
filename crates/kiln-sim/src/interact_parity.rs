@@ -454,7 +454,8 @@ fn run_case(line: &Value) -> Vec<String> {
         sim.trial_configs = std::sync::Arc::new(crate::mob_spawner::TrialConfigs::load(&work.join("generated")));
     }
     let (msg, stats) = join(1, "Interact", view);
-    assert!(sim.step([msg]));
+    // (The vectors' server spawns no monsters from its first tick: `spawn-monsters=false`.)
+    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_monsters false".into())]));
     let mut client = Client::new(1, stats.clone());
     for _ in 0..5 {
         let mut inbox = Vec::new();

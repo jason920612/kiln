@@ -224,10 +224,6 @@ pub(crate) fn align_offset(level: &impl kiln_blocks::Level, pos: kiln_blocks::Bl
 /// here; `finalize` runs `finalizeSpawn` with the given context when set).
 pub(crate) fn spawn(kind: MobKind, pos: [f64; 3], yaw: Option<f32>, finalize: Option<Finalize>) -> Spawn {
     let t = kiln_data::entities::by_name(kind.type_name()).expect("mob type");
-    if std::env::var_os("KILN_DBG_SPAWN").is_some() {
-        eprintln!("DBG spawn {:?} at {:?}
-{}", kind, pos, std::backtrace::Backtrace::force_capture());
-    }
     Spawn { kind: t, pos, vel: [0.0; 3], body: Body::Mob { kind, yaw, finalize } }
 }
 
