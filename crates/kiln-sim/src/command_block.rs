@@ -9,7 +9,7 @@ use crate::commands::CommandSource;
 use crate::container::BeKind;
 use crate::{DimId, Player, Sim};
 use kiln_blocks::{BlockId, BlockPos, Direction, Level, TickPriority, schedule_block_tick, state};
-use kiln_command::Text;
+use kiln_command::{Source as _, Text};
 use kiln_data::block_logic::{self as logic, BlockClass as C};
 use kiln_proto::nbt::Tag;
 use std::sync::Arc;
