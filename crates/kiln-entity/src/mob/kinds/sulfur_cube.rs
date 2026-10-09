@@ -775,6 +775,14 @@ impl Kind for SulfurCube {
         (has_body(m) || sul(m).from_bucket).then_some(false)
     }
 
+    fn set_extra_equipment(&self, m: &mut MobData, slot: u8, stack: ItemStack) -> bool {
+        if slot != 6 {
+            return false;
+        }
+        set_body(m, stack);
+        true
+    }
+
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let s = sul(m);
         if s.body.is_empty() { Vec::new() } else { vec![(6, s.body.clone())] }

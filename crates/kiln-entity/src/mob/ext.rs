@@ -669,6 +669,17 @@ pub trait Kind: Sync + Send {
     }
     /// Equipment beyond the six hand and armor slots, as (`EquipmentSlot` ordinal, stack): a
     /// horse's saddle (7).
+    /// `setItemSlot` and `setGuaranteedDrop` for the slots past the six (`BODY` is 6, `SADDLE` 7) when a
+    /// dispenser puts a piece on: whether the type has the slot.
+    fn set_extra_equipment(&self, m: &mut MobData, slot: u8, stack: ItemStack) -> bool {
+        let _ = (m, slot, stack);
+        false
+    }
+    /// A dispenser puts a chest on a pack animal (`AbstractChestedHorse`'s slot 499): whether it has one now.
+    fn put_chest(&self, m: &mut MobData) -> bool {
+        let _ = m;
+        false
+    }
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let _ = m;
         Vec::new()

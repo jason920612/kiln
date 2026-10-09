@@ -278,6 +278,16 @@ impl Kind for Strider {
         Some(out)
     }
 
+    fn set_extra_equipment(&self, m: &mut MobData, slot: u8, stack: ItemStack) -> bool {
+        if slot != 7 {
+            return false;
+        }
+        let s = st_mut(m);
+        s.saddle = stack;
+        s.saddle_drop = 2.0;
+        true
+    }
+
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let s = st(m);
         if s.saddle.is_empty() { Vec::new() } else { vec![(7, s.saddle.clone())] }

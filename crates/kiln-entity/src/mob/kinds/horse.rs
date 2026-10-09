@@ -860,6 +860,34 @@ impl Kind for Equine {
         Some(out)
     }
 
+    fn set_extra_equipment(&self, m: &mut MobData, slot: u8, stack: ItemStack) -> bool {
+        let s = st_mut(m);
+        match slot {
+            6 => {
+                s.body = stack;
+                s.body_drop = 2.0;
+                true
+            }
+            7 => {
+                s.saddle = stack;
+                s.saddle_drop = 2.0;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn put_chest(&self, m: &mut MobData) -> bool {
+        if !self.chested() {
+            return false;
+        }
+        if !st(m).chest {
+            st_mut(m).chest = true;
+            self.create_inventory(m);
+        }
+        true
+    }
+
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let s = st(m);
         let mut out = Vec::new();

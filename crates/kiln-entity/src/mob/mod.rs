@@ -16,6 +16,7 @@ pub mod breed;
 pub mod ext;
 pub mod fly;
 pub mod control;
+pub mod dispense;
 pub mod convert;
 pub mod effects;
 pub mod goals;

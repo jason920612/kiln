@@ -394,6 +394,16 @@ impl Kind for HappyGhast {
         e.y_rot_o = yaw;
     }
 
+    fn set_extra_equipment(&self, m: &mut MobData, slot: u8, stack: ItemStack) -> bool {
+        if slot != 6 {
+            return false;
+        }
+        let s = st_mut(m);
+        s.body = stack;
+        s.body_drop = 2.0;
+        true
+    }
+
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let s = st(m);
         if s.body.is_empty() { Vec::new() } else { vec![(6, s.body.clone())] }

@@ -111,6 +111,18 @@ impl ArmorStand {
         !matches!(slot, EquipmentSlot::Body | EquipmentSlot::Saddle) && !self.is_disabled(slot)
     }
 
+    /// `canEquipWithDispenser` of the slot: the stand can use it and it is empty.
+    pub fn dispenser_accepts(&self, slot: EquipmentSlot) -> bool {
+        self.can_use_slot(slot) && self.item(slot).is_empty()
+    }
+
+    /// `setItemSlot` of a dispensed piece (the sound and game event are left out).
+    pub fn dispenser_put(&mut self, slot: EquipmentSlot, stack: ItemStack) {
+        if let Some(i) = index_of(slot) {
+            self.equipment[i] = stack;
+        }
+    }
+
     /// `LivingEntity.getEquipmentSlotForItem`.
     fn slot_for_item(&self, stack: &ItemStack) -> EquipmentSlot {
         match stack.get(keys::EQUIPPABLE) {

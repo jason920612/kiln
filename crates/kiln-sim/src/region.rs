@@ -603,6 +603,10 @@ impl RegionWork<'_> {
                         crate::container::open::recheck_openers(&mut level, &self.players, &golems, pos);
                     }
                 }
+                let ops = std::mem::take(&mut level.out.dispenses);
+                if !ops.is_empty() {
+                    crate::container::equip::apply(ops, self.entities, &mut self.players, &mut level.out.spawns);
+                }
                 blocks::tick_pistons(&mut level, &ticking);
                 crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
             }
@@ -689,6 +693,10 @@ impl RegionWork<'_> {
                 actor: None,
             };
             crate::container::tick_block_entities(&mut level, &mut items, &ticking);
+            let ops = std::mem::take(&mut level.out.dispenses);
+            if !ops.is_empty() {
+                crate::container::equip::apply(ops, items.entities_mut(), &mut self.players, &mut level.out.spawns);
+            }
             crate::bell::requests(&mut level, items.entities_mut());
             crate::beehive::anger_requests(&mut level, items.entities_mut(), &self.players);
             crate::bell::tick(&mut level, items.entities_mut(), &ticking);
@@ -1523,6 +1531,7 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
         prevents_rest: false,
         player_source: None,
         hanging: None,
+        wear: None,
     };
     let origin = [at.x as f64, at.y as f64, at.z as f64];
     let others = bodies.iter().filter(|b| b.conn != Some(p.conn));

@@ -148,7 +148,7 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
     config.enable_command_block = true;
     let mut sim = Sim::new(config);
     let (msg, stats) = join(1, "Hoppers", 3);
-    assert!(sim.step([msg, ToSim::Console("gamemode spectator Hoppers".into()), ToSim::Console(format!("tp Hoppers {} {} {}", BASE[0], BASE[1] + 8, BASE[2]))]));
+    assert!(sim.step([msg, ToSim::Console("gamemode spectator Hoppers".into()), ToSim::Console("difficulty easy".into()), ToSim::Console(format!("tp Hoppers {} {} {}", BASE[0], BASE[1] + 8, BASE[2]))]));
     let mut client = Client::new(1, stats);
     for _ in 0..8 {
         let mut inbox = Vec::new();

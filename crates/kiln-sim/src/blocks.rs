@@ -368,6 +368,28 @@ pub(crate) struct EntityBox {
     pub player_source: Option<kiln_entity::vibration::EventSource>,
     /// A hanging entity (item frame, painting): its facing and type.
     pub hanging: Option<(kiln_entity::math::Direction, &'static str)>,
+    /// What a dispenser asks of a living thing (a player, an armor stand, a mob).
+    pub wear: Option<Wear>,
+}
+
+/// What a dispenser needs to know of a living thing in front of it (`LivingEntity.canEquipWithDispenser`).
+#[derive(Clone, Copy)]
+pub(crate) struct Wear {
+    pub id: i32,
+    pub type_name: &'static str,
+    /// Alive and not a spectator.
+    pub open: bool,
+    /// A bit per `EquipmentSlot` ordinal that it can use and that is empty, for equipment a dispenser puts on.
+    pub accepts: u8,
+    /// A mob's facts.
+    pub mob: Option<kiln_entity::mob::dispense::Facts>,
+}
+
+/// What a dispenser did to a living thing, to be carried out once the entities can be changed.
+pub(crate) enum DispenseOp {
+    Equip { id: i32, slot: kiln_item::component::EquipmentSlot, stack: kiln_item::ItemStack },
+    Chest { id: i32 },
+    Swallow { id: i32, stack: kiln_item::ItemStack },
 }
 
 impl EntityBox {
@@ -391,6 +413,7 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
                 prevents_rest: false,
                 player_source: Some(player_source(p)),
                 hanging: None,
+                wear: Some(crate::container::equip::wear_of_player(p)),
             }
         })
         .collect();
@@ -398,7 +421,8 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
         let (min, max, blocks_building) = e.body();
         // Mobs are living entities (pressure plates, lightning targets).
         let living = e.phys.as_deref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
-        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of) }
+        let wear = e.phys.as_deref().and_then(crate::container::equip::wear_of);
+        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of), wear }
     }));
     out
 }
@@ -444,6 +468,8 @@ pub(crate) struct BlockOut {
     pub bell_events: Vec<BlockPos>,
     /// Block states changed so far (whatever the flags).
     pub edits: u64,
+    /// What dispensers did to living things in front of them.
+    pub dispenses: Vec<DispenseOp>,
 }
 
 /// A block entity's effect on the players whose box meets `min..max`.

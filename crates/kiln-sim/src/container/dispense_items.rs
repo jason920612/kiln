@@ -10,7 +10,7 @@ use crate::entities::{Body, Spawn};
 use kiln_blocks::{BlockPos, Direction, Effect, Level, flags, state};
 use kiln_data::block_logic::{self as logic, BlockClass as C};
 use kiln_inventory::stack::StackExt;
-use kiln_item::ItemStack;
+use kiln_item::{ItemStack, keys};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
 
 /// What a behaviour did: the stack for the slot, and `Some(success)` for the optional behaviours.
@@ -88,8 +88,26 @@ pub(super) fn behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Bl
         "minecraft:carved_pumpkin" => carved_pumpkin(level, pos, facing, target, stack),
         "minecraft:wither_skeleton_skull" => wither_skull(level, pos, facing, target, stack),
         "minecraft:brush" => brush(level, rng, target, stack),
+        "minecraft:chest" => {
+            let mut stack = stack;
+            if super::equip::dispense_chest(level, pos, facing, &mut stack) {
+                return Ok(ok(stack));
+            }
+            return Err(stack);
+        }
         n if n.ends_with("_spawn_egg") => spawn_egg(level, rng, pos, facing, target, stack),
-        _ => return Err(stack),
+        // `DispenserBlock.getDefaultDispenseMethod`: anything that can be worn, then what a sulfur cube swallows.
+        _ => {
+            let mut stack = stack;
+            if stack.get(keys::EQUIPPABLE).is_some() {
+                if super::equip::dispense_equipment(level, pos, facing, &mut stack) {
+                    return Ok(Done { stack, success: None });
+                }
+            } else if kiln_inventory::tags::contains("minecraft:item", "minecraft:sulfur_cube_swallowable", stack.item()) && super::equip::dispense_swallow(level, pos, facing, &mut stack) {
+                return Ok(Done { stack, success: None });
+            }
+            return Err(stack);
+        }
     })
 }
 
