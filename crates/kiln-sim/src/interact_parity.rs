@@ -515,7 +515,7 @@ fn run_case(line: &Value) -> Vec<String> {
     assert!(sim.step([]));
     // The recorded level's clock stands at 100 as each scenario begins.
     // (A level that ticks whole has made the tick of its setup by then.)
-    let start = line["clock"].as_u64().unwrap_or(100);
+    let start = line["clock"].as_i64().unwrap_or(100);
     while sim.game_time() < start {
         assert!(sim.step([]));
     }
