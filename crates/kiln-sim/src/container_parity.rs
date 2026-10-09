@@ -266,7 +266,7 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                     if pending_entities.contains(&e.id) {
                         let r = |v: f64| (v * 10000.0).round() / 10000.0;
                         // (A primed TNT hops a random way at its making: only where it is to a tenth is compared.)
-                        let t = |v: f64| if e.kind.name == "minecraft:tnt" { (v * 10.0).round() / 10.0 } else { r(v) };
+                        let t = |v: f64| if e.kind.name == "minecraft:tnt" || e.kind.name == "minecraft:sulfur_cube" { (v * 10.0).round() / 10.0 } else { r(v) };
                         let shot = matches!(
                             e.kind.name,
                             "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:egg" | "minecraft:snowball" | "minecraft:splash_potion" | "minecraft:lingering_potion" | "minecraft:experience_bottle" | "minecraft:small_fireball" | "minecraft:wind_charge" | "minecraft:firework_rocket"

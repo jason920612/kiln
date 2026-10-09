@@ -562,7 +562,7 @@ public class ContainerVectors {
         out.add(dispense("carved_pumpkin_iron_golem", "carved_pumpkin", 2).block(1, -1, 0, "minecraft:iron_block").block(1, -2, 0, "minecraft:iron_block")
                 .block(1, -1, 1, "minecraft:iron_block").block(1, -1, -1, "minecraft:iron_block"));
         // Equipment on whoever stands in front.
-        for (String[] eq : new String[][] {{"iron_helmet", "zombie"}, {"iron_chestplate", "zombie"}, {"iron_boots", "skeleton"}, {"elytra", "zombie"}, {"carved_pumpkin", "zombie"}, {"saddle", "horse"}, {"leather_horse_armor", "horse"}, {"saddle", "pig"}, {"diamond_helmet", "armor_stand"}}) {
+        for (String[] eq : new String[][] {{"iron_helmet", "zombie"}, {"iron_chestplate", "zombie"}, {"iron_boots", "skeleton"}, {"elytra", "zombie"}, {"carved_pumpkin", "zombie"}, {"saddle", "horse"}, {"leather_horse_armor", "horse"}, {"saddle", "strider"}, {"diamond_helmet", "armor_stand"}}) {
             Scenario s = dispense("equip_" + eq[0] + "_on_" + eq[1], eq[0], 2).block(1, -1, 0, "minecraft:stone");
             out.add(mob(s, eq[1], 1.5, 0, 0.5, eq[1].equals("horse") || eq[1].equals("pig") ? "Tame:1b" : ""));
         }
@@ -1260,7 +1260,7 @@ public class ContainerVectors {
                         if (e instanceof net.minecraft.world.entity.item.ItemEntity || e instanceof net.minecraft.world.entity.player.Player) continue;
                         if (seenEntities.add(e.getUUID())) {
                             // (A primed TNT hops a random way at its making: only where it is to a tenth is compared.)
-                            double q = e instanceof net.minecraft.world.entity.item.PrimedTnt ? 10.0 : 10000.0;
+                            double q = e instanceof net.minecraft.world.entity.item.PrimedTnt || e.getType() == net.minecraft.world.entity.EntityTypes.SULFUR_CUBE ? 10.0 : 10000.0;
                             // (A shot thing is spread by its own unseeded random: only that it is there is compared.)
                             if (e instanceof net.minecraft.world.entity.projectile.Projectile) {
                                 fresh.add(List.of(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(), 0.0, 0.0, 0.0));
