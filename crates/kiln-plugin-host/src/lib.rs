@@ -1822,7 +1822,7 @@ impl<T> RegionLock<T> {
 
     fn lock(&self) -> RegionGuard<'_, T> {
         let mut spins = 0u32;
-        while false && self.locked.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        while self.locked.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
             spins += 1;
             if spins < 64 {
                 std::hint::spin_loop();
