@@ -29,6 +29,7 @@ pub static KIND: Dolphin = Dolphin;
 /// one degree at most (`getMaxHeadXRot`, `getMaxHeadYRot`).
 static INFO: Info = Info {
     category: Category::WaterCreature,
+    ageable: true,
     head: (1, 1, 10),
     ambient_interval: 120,
     ..Info::misc("minecraft:dolphin", &[(MaxHealth, 10.0), (MovementSpeed, 1.2000000476837158), (AttackDamage, 3.0)])
