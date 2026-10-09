@@ -230,8 +230,10 @@ impl EntityExt for Cushion {
 
     /// `BlockAttachedEntity.tick`: every 100 ticks the fire check, then the support check.
     fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {
+        // (`ticksSinceLastCheck++ >= 100`: the check is the 101st tick.)
+        let before = self.since_check;
         self.since_check += 1;
-        if self.since_check >= 100 {
+        if before >= 100 {
             self.since_check = 0;
             self.destroy_if_in_fire(e, level);
             if !e.is_removed() && !survives(&*level, e) {

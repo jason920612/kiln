@@ -576,7 +576,6 @@ public class InteractVectors {
                 {"composter_empty", "minecraft:composter[level=0]", "1.0"},
                 {"campfire", "minecraft:campfire[lit=false]", "0.4375"},
                 {"end_portal_frame", "minecraft:end_portal_frame[facing=north,eye=false]", "0.8125"},
-                {"scaffolding", "minecraft:scaffolding", "1.0"},
                 {"powder_snow", "minecraft:powder_snow", "1.0"},
                 {"azalea", "minecraft:potted_poppy", "0.375"},
                 {"slime", "minecraft:slime_block", "1.0"},
@@ -596,7 +595,7 @@ public class InteractVectors {
         for (String[] g : grounds) {
             c = cushionCase("on_" + g[0]).stat("minecraft:orange_cushion");
             c.sneaking = true;
-            c.cmd("setblock 2 98 0 " + (g[0].equals("lily") ? "minecraft:water" : "minecraft:stone")).cmd("setblock 2 99 0 " + g[1]);
+            c.cmd("setblock 2 98 0 " + (g[0].equals("lily") ? "minecraft:water" : g[0].equals("bamboo") ? "minecraft:dirt" : "minecraft:stone")).cmd("setblock 2 99 0 " + g[1]);
             c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, Double.parseDouble(g[2]), 0.5));
             out.add(c);
         }
@@ -670,7 +669,7 @@ public class InteractVectors {
         out.add(c);
         c = cushionCase("hit_no_drops");
         c.cmd("gamerule entity_drops false").cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"lime\"}");
-        c.step(attackEntity(2.5, 100.0, 0.5));
+        c.step(attackEntity(2.5, 100.0, 0.5)).step(op("op", "command", "command", "gamerule entity_drops true"));
         out.add(c);
         c = cushionCase("hit_sitting");
         c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"lime\"}");

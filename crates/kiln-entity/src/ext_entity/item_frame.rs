@@ -241,8 +241,10 @@ impl EntityExt for ItemFrame {
 
     /// `BlockAttachedEntity.tick`: every 100 ticks the wall must still be there.
     fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {
+        // (`ticksSinceLastCheck++ >= 100`: the check is the 101st tick.)
+        let before = self.since_check;
         self.since_check += 1;
-        if self.since_check >= 100 {
+        if before >= 100 {
             self.since_check = 0;
             if !e.is_removed() && !self.survives(e, &hanging::LevelWorld { level: &*level, e }) {
                 e.discard();

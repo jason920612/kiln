@@ -44,8 +44,10 @@ impl EntityExt for LeashKnot {
 
     /// `BlockAttachedEntity.tick`: every 100 ticks the fence must still be there.
     fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {
+        // (`ticksSinceLastCheck++ >= 100`: the check is the 101st tick.)
+        let before = self.since_check;
         self.since_check += 1;
-        if self.since_check >= 100 {
+        if before >= 100 {
             self.since_check = 0;
             if !e.is_removed() && !has_tag(level.block(block_of(e)), BlockTag::Fences) {
                 e.discard();
