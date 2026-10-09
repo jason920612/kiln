@@ -221,7 +221,7 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
         _ if logic::is_instance(d, C::FenceBlock) || logic::is_instance(d, C::IronBarsBlock) => {
             connect::cross_placement(level, c.waterlogged(d), pos)
         }
-        C::WallTorchBlock | C::RedstoneWallTorchBlock | C::LadderBlock => {
+        C::WallTorchBlock | C::RedstoneWallTorchBlock | C::LadderBlock | C::WallBannerBlock => {
             let here = level.block(pos.relative(c.face.opposite()));
             if class == C::LadderBlock && !c.replace_clicked && state::same_block(here, d) && state::get_dir(here, "facing") == Some(c.face) {
                 return None;

@@ -532,6 +532,18 @@ impl ContainerBe {
             }
         }
         out.extend(self.extra.iter().cloned());
+        if self.kind == BeKind::Banner {
+            // The saved form always holds `components`; vanilla's compound lists `components`, `CustomName`, then `patterns`.
+            if !out.iter().any(|(k, _)| k == "components") {
+                out.push(("components".into(), Tag::Compound(Vec::new())));
+            }
+            out.sort_by_key(|(k, _)| match k.as_str() {
+                "components" => 0,
+                "CustomName" => 1,
+                "patterns" => 2,
+                _ => 3,
+            });
+        }
         Tag::Compound(out)
     }
 

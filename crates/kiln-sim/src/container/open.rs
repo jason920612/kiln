@@ -887,7 +887,9 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
     }
     // `BannerBlockEntity.applyImplicitComponents`: the pattern layers (the name is read above).
     if c.kind == BeKind::Banner {
-        c.extra.retain(|(k, _)| k != "patterns");
+        c.extra.retain(|(k, _)| k != "patterns" && k != "components");
+        // `BlockEntity.applyComponents`: what the block entity did not read stays in `components`.
+        c.extra.push(("components".into(), leftover_components(stack, &["minecraft:banner_patterns", "minecraft:custom_name"])));
         if let Some(layers) = stack.get(keys::BANNER_PATTERNS).filter(|l| !l.0.is_empty()) {
             c.extra.push(("patterns".into(), <kiln_item::component::BannerPatternLayers as kiln_item::component::ComponentValue>::to_value(layers).to_nbt()));
         }
@@ -926,6 +928,16 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
         // The chunk's copy is what the update packet clients get is made of (a decorated pot shows its sherds).
         sync_chunk_copy(level, pos);
     }
+}
+
+/// The components the item added that the block entity did not read (`BlockEntity.applyComponents`: what is left of the patch).
+fn leftover_components(stack: &ItemStack, read: &[&str]) -> Tag {
+    let all = stack.to_nbt();
+    let kept = match all.get("components") {
+        Some(Tag::Compound(fields)) => fields.iter().filter(|(k, _)| !k.starts_with('!') && !read.contains(&k.as_str()) && !matches!(k.as_str(), "minecraft:block_entity_data" | "minecraft:block_state")).cloned().collect(),
+        _ => Vec::new(),
+    };
+    Tag::Compound(kept)
 }
 
 /// Writes the live block entity at `pos` into its chunk (the copy that is saved and sent to clients).
