@@ -3,7 +3,7 @@
 
 use crate::{Player, Sim};
 use bytes::Bytes;
-use kiln_data::entities::{data, pose, types::PLAYER};
+use kiln_data::entities::{data, types::PLAYER};
 use kiln_link::ConnId;
 use kiln_proto::packets::entity::metadata::{HumanoidArm, shared_flags};
 use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, PlayerInfoActions, PlayerInfoEntry};

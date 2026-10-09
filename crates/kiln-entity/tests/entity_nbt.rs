@@ -4,7 +4,6 @@
 //! the box vanilla's stands in.
 
 use kiln_entity::EntityKind;
-use kiln_entity::ext_entity::EntityExt as _;
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets::entity::EntityData;
 use serde_json::Value;

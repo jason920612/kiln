@@ -1542,7 +1542,6 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn trial_eject(&mut self, table: &str, pos: BlockPos) -> bool {
-        use kiln_javamath::random::RandomSource;
         let loot = self.level.env().loot.clone();
         let (Some(loot), Some(id)) = (loot, kiln_item::ident::Identifier::parse(table)) else { return false };
         let p = kb(pos);

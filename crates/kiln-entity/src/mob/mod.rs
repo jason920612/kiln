@@ -1171,7 +1171,7 @@ pub fn set_age(e: &mut Entity, m: &mut MobData, age: i32) {
 }
 
 /// `set_age` with the level at hand, so a baby that grows is moved clear of blocks.
-pub fn set_age_in(e: &mut Entity, m: &mut MobData, age: i32, mut level: Option<&mut dyn EntityLevel>) {
+pub fn set_age_in(e: &mut Entity, m: &mut MobData, age: i32, level: Option<&mut dyn EntityLevel>) {
     let old = m.age;
     m.age = age;
     if (old < 0) != (age < 0) {

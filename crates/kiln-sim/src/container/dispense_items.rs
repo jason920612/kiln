@@ -7,7 +7,7 @@
 use super::dispense::{dispense_position, spawn_item};
 use crate::blocks::RegionLevel;
 use crate::entities::{Body, Spawn};
-use kiln_blocks::{BlockPos, Direction, Effect, Level, flags, state};
+use kiln_blocks::{BlockPos, Direction, Effect, Level, state};
 use kiln_data::block_logic::{self as logic, BlockClass as C};
 use kiln_inventory::stack::StackExt;
 use kiln_item::{ItemStack, keys};

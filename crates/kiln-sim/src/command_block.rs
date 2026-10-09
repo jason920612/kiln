@@ -6,7 +6,6 @@
 
 use crate::blocks::RegionLevel;
 use crate::commands::CommandSource;
-use crate::container::BeKind;
 use crate::{DimId, Player, Sim};
 use kiln_blocks::{BlockId, BlockPos, Direction, Level, TickPriority, schedule_block_tick, state};
 use kiln_command::{Source as _, Text};

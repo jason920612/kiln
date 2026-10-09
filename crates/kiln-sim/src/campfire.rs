@@ -14,7 +14,6 @@ use kiln_blocks::{BlockPos, Effect, Level, state};
 use kiln_world::Blocks;
 use kiln_data::block_logic::{self as logic, BlockClass as C};
 use kiln_inventory::recipe::{CookingKind, Recipe};
-use kiln_inventory::stack::StackExt;
 use kiln_item::ItemStack;
 
 pub(crate) fn is_campfire(s: u16) -> bool {

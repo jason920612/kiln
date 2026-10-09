@@ -73,7 +73,7 @@ SUITES = {
     "explore_maps": (["-p", "kiln-sim", "--lib", "exploration_map_parity"], {"KILN_EXPLORE_VECTORS": vec("wp49/explore/maps.jsonl")}),
     "initial_mobs": (["-p", "kiln-sim", "--test", "initial_mobs"], {"KILN_INITIAL_MOB_VECTORS": ":".join(vec(f"wp49/initial/{n}.jsonl") for n in ("mobs0", "mobs1", "mobs2", "mobs2b", "mobs3", "mobs4", "mobs12345"))}),
     "interact49": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp49/interact/*.jsonl"}),
-    "container49": (["-p", "kiln-sim", "--lib", "parity"], {"KILN_CONTAINER_VECTORS": "wp49/container/*.jsonl"}),
+    "container49": (["-p", "kiln-sim", "--lib", "parity"], {"KILN_CONTAINER_VECTORS": "wp49/container/*.jsonl", "KILN_LANG": vec("generated/assets/minecraft/lang/en_us.json")}),
 }
 
 SUMMARY = re.compile(r"(test result:|skipped|parity|match|scenarios|vectors|rounds|chunks|sequences|cases|agree|mismatch|diverg)", re.I)

@@ -520,7 +520,7 @@ impl CustomGoal for EnterHiveGoal {
     fn flags(&self) -> u8 {
         0
     }
-    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
         let Some(hive) = st(m).hive_pos else { return false };
         let near = Vec3::new(hive.x as f64 + 0.5, hive.y as f64 + 0.5, hive.z as f64 + 0.5).distance_to_sqr(e.position()) < 4.0;
         if wants_to_enter_hive(e, m, level) && near && let Some(b) = beehive(e, m, level) {

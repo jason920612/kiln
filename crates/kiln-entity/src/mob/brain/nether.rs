@@ -6,7 +6,7 @@
 //! `StrollToPoi`, `StrollAroundPoi`, `Mount`, `DismountOrSkipMounting`, `CrossbowAttack`,
 //! `InteractWithDoor`) in vanilla's order of conditions and random draws.
 
-use super::memory::{GlobalPos, Tracker, Val, WalkTarget};
+use super::memory::{Tracker, Val, WalkTarget};
 use super::util::{self, uniform};
 use super::{Behavior, Control, Cx, Mem, Sensor, Shot, ShotBehavior, Status, Timed, shot};
 use crate::behavior_boilerplate;
