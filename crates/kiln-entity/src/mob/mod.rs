@@ -1353,6 +1353,22 @@ pub(crate) fn put(e: &mut Entity, m: Box<MobData>) {
     e.kind = EntityKind::Mob(m);
 }
 
+/// `FoodOnAStickItem.use` on the vehicle `e` of the player `rider` using the stick `item`: the
+/// durability the boost costs when the stick steers `e` (it is `ItemSteerable` of that stick, the
+/// player is the one steering) and a boost began; `None` otherwise.
+pub fn boost_with_stick(e: &mut Entity, item: &str, rider: &crate::level::PlayerView) -> Option<i32> {
+    if !matches!(e.kind, EntityKind::Mob(_)) || e.passengers.first() != Some(&rider.id) {
+        return None;
+    }
+    let mut m = take(e);
+    let damage = m.kind.ext().and_then(|k| {
+        let (stick, damage) = k.stick()?;
+        (stick == item && k.steerable_by(&m, rider) && k.boost(e, &mut m)).then_some(damage)
+    });
+    put(e, m);
+    damage
+}
+
 /// One `ItemStack.onUseTick` of a charging spear for the mob `e`, on its own (tests drive the
 /// weapon without the rest of the mob's tick).
 #[doc(hidden)]

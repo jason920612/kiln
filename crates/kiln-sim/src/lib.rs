@@ -78,6 +78,7 @@ mod enchant_loc;
 mod entities;
 mod entity_world;
 mod fishing;
+mod steer;
 mod gametest;
 mod profiles;
 mod generation;

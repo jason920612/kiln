@@ -202,6 +202,17 @@ impl RegionWork<'_> {
                 p.ack_block_changes = p.ack_block_changes.max(sequence);
                 continue;
             }
+            // A carrot or fungus on a stick boosts the mount it steers.
+            if let PlayIn::UseItem { hand, sequence, .. } = pkt
+                && self.stick_use(conn, &pkt)
+            {
+                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                let off = hand == kiln_proto::packets::serverbound::Hand::Off;
+                crate::steer::use_stick(self.entities, &mut level, &mut self.players, i, off, &mut self.out.spawns, &mut self.out.deaths);
+                let p = &mut *self.players[i];
+                p.ack_block_changes = p.ack_block_changes.max(sequence);
+                continue;
+            }
             // Riding: the steered mount moves, the jump key makes it rear.
             if let PlayIn::MoveVehicle { pos, rot, on_ground } = pkt {
                 entities::move_vehicle(self.entities, &mut self.players, i, pos, rot, on_ground, env.game_time);
@@ -368,6 +379,13 @@ impl RegionWork<'_> {
         let PlayIn::UseItem { hand, .. } = pkt else { return false };
         let off = *hand == kiln_proto::packets::serverbound::Hand::Off;
         self.index_of(conn).is_some_and(|i| !self.players[i].dead && self.players[i].game_mode != 3 && crate::fishing::holds_rod(self.players[i], off))
+    }
+
+    /// A Use Item with a steering stick in that hand, from a living player.
+    fn stick_use(&self, conn: ConnId, pkt: &PlayIn) -> bool {
+        let PlayIn::UseItem { hand, .. } = pkt else { return false };
+        let off = *hand == kiln_proto::packets::serverbound::Hand::Off;
+        self.index_of(conn).is_some_and(|i| !self.players[i].dead && self.players[i].game_mode != 3 && self.players[i].vehicle.is_some() && crate::steer::holds_stick(self.players[i], off))
     }
 
     /// A run of [`is_player_packet`] packets: grouped by player (each keeps its order) and
