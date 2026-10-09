@@ -1389,6 +1389,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn set_container_items(&mut self, pos: BlockPos, items: Vec<kiln_item::ItemStack>) {
+        use kiln_inventory::Container as _;
         let Some(l) = self.level.region() else { return };
         let p = kb(pos);
         if let Some(c) = l.blocks.containers.get_mut(p) {
