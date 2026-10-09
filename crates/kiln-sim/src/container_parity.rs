@@ -269,7 +269,7 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                         let t = |v: f64| if e.kind.name == "minecraft:tnt" { (v * 10.0).round() / 10.0 } else { r(v) };
                         let shot = matches!(
                             e.kind.name,
-                            "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:egg" | "minecraft:snowball" | "minecraft:splash_potion" | "minecraft:lingering_potion" | "minecraft:experience_bottle"
+                            "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:egg" | "minecraft:snowball" | "minecraft:splash_potion" | "minecraft:lingering_potion" | "minecraft:experience_bottle" | "minecraft:small_fireball" | "minecraft:wind_charge" | "minecraft:firework_rocket"
                         );
                         if shot {
                             reported.push((e.kind.name.to_owned(), 0.0, 0.0, 0.0));
