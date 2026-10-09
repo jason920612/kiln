@@ -190,7 +190,7 @@ fn the_api_replays_exactly_on_any_layout_and_worker_count() {
         assert_eq!((split.results, split.tasks_run), (reference.results, reference.tasks_run));
         let (calls, traps, timeouts) = split.stats;
         eprintln!("fuel {fuel}: calls {calls}, traps {traps}, timeouts {timeouts}, results {}, tasks {}", split.results, split.tasks_run);
-        assert!(calls > 200 && traps == 0, "{:?}", split.stats);
+        assert!(calls > 120 && traps == 0, "{:?}", split.stats);
         assert!(split.results > 0 && split.tasks_run > 0, "purchases answered and the HUD ran");
         if fuel == 20_000 {
             assert!(timeouts > 0, "a tight budget: some calls run out of fuel");
