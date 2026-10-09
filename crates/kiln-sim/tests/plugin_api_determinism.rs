@@ -180,7 +180,7 @@ fn run(workers: usize, unified: bool, chaos: Option<u64>, fuel: u64) -> Outcome 
 
 #[test]
 fn the_api_replays_exactly_on_any_layout_and_worker_count() {
-    for fuel in [2_000_000u64, 20_000] {
+    for fuel in [2_000_000u64, 2_000] {
         let reference = run(1, true, None, fuel);
         let split = run(4, false, Some(7), fuel);
         assert_eq!(split.hashes, reference.hashes, "state hashes, fuel {fuel}");
@@ -192,7 +192,7 @@ fn the_api_replays_exactly_on_any_layout_and_worker_count() {
         eprintln!("fuel {fuel}: calls {calls}, traps {traps}, timeouts {timeouts}, results {}, tasks {}", split.results, split.tasks_run);
         assert!(calls > 120 && traps == 0, "{:?}", split.stats);
         assert!(split.results > 0 && split.tasks_run > 0, "purchases answered and the HUD ran");
-        if fuel == 20_000 {
+        if fuel == 2_000 {
             assert!(timeouts > 0, "a tight budget: some calls run out of fuel");
         }
     }
