@@ -121,6 +121,7 @@ impl Kind for Dolphin {
     fn new_state(&self, m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
         m.maluses.push((path::PathType::Water, 0.0));
         m.nav.water_bound = true;
+        m.nav.allow_breaching = true;
         m.can_pick_up_loot = true;
         m.air_supply_max = TOTAL_AIR_SUPPLY;
         Some(Box::new(State { got_fish: false, moistness: TOTAL_MOISTNESS, treasure: None }))
@@ -618,7 +619,7 @@ impl CustomGoal for JumpGoal {
             e.set_x_rot(x + 0.2 * mth::wrap_degrees(0.0 - x));
         } else if v.length() > 9.999999747378752E-6 {
             let h = v.horizontal_distance();
-            let angle = mth::atan2(-v.y, h) * 57.2957763671875;
+            let angle = kiln_javamath::atan::atan2(-v.y, h) * 57.2957763671875;
             e.set_x_rot(angle as f32);
         }
     }
