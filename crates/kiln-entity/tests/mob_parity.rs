@@ -789,7 +789,7 @@ fn replay(s: &Value) -> Result<usize, String> {
             && let Some(e) = ids.get(k).and_then(|&id| level.entity(id))
         {
             let m = mob::data(e).unwrap();
-            eprintln!("dbg tick {tick} op {:?} wanted {:?} yaw {} head {} body {} pos {:?} delta {:?} ground {} brain {:?} rnd {} ambient {} noaction {} goals {:?} path {:?}", m.mov.operation, m.mov.wanted, e.y_rot, m.y_head_rot, m.y_body_rot, e.position(), e.delta, e.on_ground, m.brain_trace(), e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
+            eprintln!("dbg tick {tick} w {} h {} op {:?} wanted {:?} yaw {} head {} body {} pos {:?} delta {:?} ground {} brain {:?} rnd {} ambient {} noaction {} goals {:?} path {:?}", e.width, e.height, m.mov.operation, m.mov.wanted, e.y_rot, m.y_head_rot, m.y_body_rot, e.position(), e.delta, e.on_ground, m.brain_trace(), e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
         }
         if std::env::var_os("KILN_MOB_DEBUG_ENTS").is_some() {
             for i in 0..level.len() {
