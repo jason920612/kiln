@@ -515,7 +515,7 @@ interface global-hooks {
 
 /// Exports of region instances (optional).
 interface region-hooks {
-    use types.{init-info, block-event, place-event, entity-event, damage-event, chat-event, command-event, item-use-event, container-click-event, custom-event, decision, chat-verdict, observed, task-event, op-result};
+    use types.{init-info, player, block-event, place-event, entity-event, damage-event, chat-event, command-event, item-use-event, container-click-event, custom-event, decision, chat-verdict, observed, task-event, op-result};
 
     /// After each instantiation (a region instance may be replaced at any barrier).
     init: func(info: init-info);
