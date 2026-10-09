@@ -42,7 +42,7 @@ fn canon(t: &Tag) -> String {
             v.sort();
             format!("{{{}}}", v.join(","))
         }
-        Tag::List(items) => format!("[{}]", items.iter().map(canon).collect::<Vec<_>>().join(",")),
+        Tag::List(items) => format!("[{}]", items.iter().map(|t| canon(t.unwrap_list_element())).collect::<Vec<_>>().join(",")),
         other => format!("{other:?}"),
     }
 }
