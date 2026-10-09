@@ -8,9 +8,9 @@ publish.workspace = true
 [features]
 default = ["async-tasks"]
 # The `async-tasks` world (WASI 0.3 component-model async): HTTP, timers and storage for a
-# plugin's second component. It builds wasmtime with component-model async, which makes every
-# call into a plugin about 13 ns dearer (a trivial handler: 87 ns without, 100 ns with), so
-# builds that want the lean hot path turn it off.
+# plugin's second component. Off, the build leaves out wasmtime's component-model async, tokio
+# and ureq, and plugins that ship a tasks component are not loaded (no measurable difference
+# on the call path: a trivial handler costs 110 ns with it and 109 ns without).
 async-tasks = ["wasmtime/component-model-async", "dep:tokio", "dep:ureq", "dep:futures"]
 
 [dependencies]

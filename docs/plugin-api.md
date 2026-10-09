@@ -153,8 +153,8 @@ host 把同情境中訂閱 `custom` 的其他實例從槽位「借」進它的 s
   新世代自己決定要不要重送（範例 `webhook` 重送）。舊世代的完成結果丟棄。測試：`a_reload_interrupts_jobs_and_the_new_generation_submits_them_again`。
 - **strict 模式**：這個 world 不可用（結果取決於牆鐘）——工作立刻失敗，deterministic。
 - **預算**：元件用 epoch 中斷每 5 ms 讓出，所以迴圈不停的任務只會吃自己那條執行緒，不會擋 tick；每個實例 64 MiB 記憶體上限。目前沒有逐工作的 CPU 上限。
-- **編譯期選項**：cargo feature `async-tasks`（kiln-plugin-host，預設開）。它讓 wasmtime 以 component-model-async 編譯，使每次進入插件的呼叫
-  貴約 13 ns（見 §8）；要精簡熱路徑的建置用 `--no-default-features`，有 `tasks` 元件的插件就不會載入（附原因）。
+- **編譯期選項**：cargo feature `async-tasks`（kiln-plugin-host，預設開）。關掉（`--no-default-features`）就不編入 wasmtime 的 component-model async、tokio、ureq，
+  有 `tasks` 元件的插件不會載入（log 附原因）。對熱路徑沒有可量到的差別（立刻返回的處理器：開 110 ns、關 109 ns，見 §8），所以預設開；這是給想要最小依賴樹的建置。
 - **誠實的邊界**：Rust 工具鏈沒有 `wasm32-wasip3` target，所以 guest 以 `wasm32-wasip2` 建置，用 wit-bindgen 的 async ABI（`async func`）
   說話；world 不匯入 `wasi:*@0.3` 的介面（沒有 `wasi:sockets`／`wasi:http`），網路只透過 Kiln 自己的 `http`。host 端 WASI p2 以 async linker 提供給 std 需要的部分。
 
@@ -183,9 +183,29 @@ host 把同情境中訂閱 `custom` 的其他實例從槽位「借」進它的 s
 
 ## 8. 量測
 
-VM（12 vCPU，release，20 批取最佳；同機前後對照）。完整數字與方法在 `docs/design-v2-regionized.md` §11.7。
+VM（12 vCPU，release，每個數字取 20 批最佳；另一個人同時在這台機器上建置時數字會膨脹 10–30%，所以前後對照一律交錯跑、取最小）。
+指令：`cargo test --release -p kiln-plugin-host --test api call_costs -- --nocapture`（新呼叫）、`--test examples call_overhead -- --nocapture`（既有）。
 
-見該節。
+| 呼叫 | 成本 |
+| --- | --- |
+| 立刻返回的處理器（`noop`，一個 `block-break`） | main（wp49）87 ns → 本分支 110 ns（strict 同） |
+| spawn-protection 允許（讀一次 cell） | 179 → 214 ns |
+| spawn-protection 拒絕（cell 讀寫＋訊息） | 757 → 840 ns |
+| 聊天改寫 | 841 → 880 ns |
+| host 端過濾掉的事件 | 5 ns（不變） |
+| `block-break` 經過 `noop` 與 `claims` 兩個插件（領地外） | 約 0.42 µs |
+| `claims` 拒絕（讀領地、查玩家名單、訊息） | 約 1.1 µs |
+| 商店的 `container-click`（`try-add`＋玩家資料） | 約 1.5 µs |
+| 魔杖的 `item-use`（一個聊天動作、拒絕） | 約 0.76 µs |
+| `player-damage`（`homes` 與 `claims` 兩個插件） | 約 0.58 µs |
+| 全域指令呼叫（`/arena other`） | 約 0.47 µs |
+| `/arena join`（全域指令＋向 gatekeeper 發出事件＋四個動作） | 約 1.85 µs |
+| 新的 region 實例組（兩個插件） | 約 49 µs（不變） |
+
+老實說：熱路徑每次呼叫比 wp49 貴約 20 ns（87 → 110 ns，約 25%）。它來自把 `RegionPlugins` 改成可共用的控制代碼（玩家身上的傷害閘門要用：
+一個比較交換加一個釋放存入）、`cancellable` 一般化成多玩家／多種事件（較大的事件資訊、每次呼叫多推兩個玩家欄位）、可能借實例給發出事件的插件
+的檢查。`async-tasks` 的 cargo feature 開或關沒有可量到的差別（110 vs 109 ns）。絕對值仍在 slice 1 紀錄的 123 ns 附近以下；要再省可以讓沒有傷害閘門的
+region 走無鎖路徑（見缺口）。
 
 ## 9. 缺口
 
@@ -194,5 +214,6 @@ VM（12 vCPU，release，20 批取最佳；同機前後對照）。完整數字�
 - `entity-attack` 只管非玩家實體；打玩家走 `player-damage`。
 - 選單只有 `generic_9xN` 的箱子樣式；一般容器的點擊事件在 `vanilla = true` 時送出，拖曳（drag）每個封包送一次，拒絕就重送整個畫面。
 - 動作都是序列點套用，不在 region 工作內並行套用（成本低、順序確定；若某插件一個 tick 數千個方塊編輯，會佔序列點的時間）。
+- 每次呼叫比 wp49 貴約 20 ns（§8）；沒有傷害閘門訂閱者的 region 可以走無鎖路徑，尚未做。
 - `take` 依物品 key 計，不分標籤。
 - `async-tasks`：strict 不可用；沒有逐工作 CPU 上限；一個插件一個實例；不支援 `wasi:*@0.3` 介面。
