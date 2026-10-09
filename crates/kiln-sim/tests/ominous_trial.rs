@@ -67,7 +67,7 @@ fn an_ominous_trial_hangs_item_spawners_over_the_player_and_throws_their_items()
         g[1] + 1,
         g[2]
     ));
-    let (mut spawners, mut shot, mut seen_spawner_at) = (0usize, 0usize, None);
+    let (mut spawners, mut shot, mut seen_spawner_at, mut edges, mut before) = (0usize, 0usize, None, 0usize, 0usize);
     for tick in 0..900 {
         w.ticks(1);
         let now = w.count("minecraft:ominous_item_spawner");
@@ -75,12 +75,14 @@ fn an_ominous_trial_hangs_item_spawners_over_the_player_and_throws_their_items()
             seen_spawner_at = Some(tick);
         }
         spawners = spawners.max(now);
-        if tick % 100 == 0 {
-            eprintln!("tick {tick}: be {:?} mobs {}", w.sim.block_entity_nbt(g[0] + 3, g[1] + 1, g[2]).map(|t| format!("{t:?}").chars().skip(300).take(900).collect::<String>()), w.sim.mobs().len());
+        if now > before {
+            edges += 1;
         }
+        before = now;
         shot = shot.max(w.count("minecraft:arrow") + w.count("minecraft:lingering_potion") + w.count("minecraft:small_fireball") + w.count("minecraft:wind_charge"));
     }
-    eprintln!("first item spawner at tick {seen_spawner_at:?}, at most {spawners} at once, {shot} projectiles");
+    eprintln!("first item spawner at tick {seen_spawner_at:?}, {edges} of them, at most {spawners} at once, {shot} projectiles");
     assert!(seen_spawner_at.is_some(), "the ominous trial hung an item spawner over the player");
+    assert!(edges >= 3, "they keep coming ({edges} in 900 ticks: one every 160 ticks plus 60 to 120 to throw)");
     assert!(shot > 0, "the items were thrown (projectiles flew)");
 }
