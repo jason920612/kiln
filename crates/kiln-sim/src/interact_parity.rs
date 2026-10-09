@@ -474,6 +474,14 @@ fn run_case(line: &Value) -> Vec<String> {
         let pos: Vec<f64> = line["pos"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
         sim.players.get_mut(&2).unwrap().pos = [pos[0] + 0.5, pos[1], pos[2]];
     }
+    // The recorded level's clock stands at 100 as each scenario begins: the setup commands come just before
+    // (a block they place that would not last, a kelp plant without support, is ticked as little as in the
+    // vectors' frozen level).
+    while sim.game_time() < 98 {
+        let mut idle = Vec::new();
+        client.tick(None, &mut idle);
+        assert!(sim.step(idle));
+    }
     // (The vectors were recorded without announcements of advancements; with a datapack Kiln has them.)
     let mut console: Vec<ToSim> = vec![ToSim::Console("gamerule minecraft:show_advancement_messages false".into())];
     if line["op"].as_bool() == Some(true) {
