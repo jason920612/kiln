@@ -863,6 +863,12 @@ impl MapStore {
         self.maps.get_mut(&id)
     }
 
+    /// Whether no map was ever made in this world (`MapIndex.lastMapId` unset) and none is in memory: no
+    /// map data can exist, so nothing carrying or framing a map has anything to do.
+    pub(crate) fn none_yet(&self) -> bool {
+        self.maps.is_empty() && self.last_id < 0
+    }
+
     /// The frames the maps in memory mark: (map id, level, block position, frame entity id).
     pub(crate) fn frame_markers(&self) -> Vec<(i32, String, [i32; 3], i32)> {
         self.maps.iter().flat_map(|(id, m)| m.frames.values().map(move |f| (*id, m.dimension.clone(), f.pos, f.entity_id))).collect()

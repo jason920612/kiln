@@ -71,11 +71,14 @@ impl Player {
     /// `Player.updatePlayerPose`; `fits` tells whether the player's box in a pose touches no
     /// collision (`canPlayerFitWithinBlocksAndEntitiesWhen`).
     pub(crate) fn update_player_pose(&mut self, fits: &dyn Fn(i32) -> bool) {
-        if !fits(pose::SWIMMING) {
+        let desired = self.desired_pose();
+        // (Every pose but sleeping has a box that holds the swimming one: where the desired pose fits, so does that,
+        // and one look at the blocks answers both.)
+        let direct = desired != pose::SLEEPING && self.game_mode != 3 && self.vehicle.is_none() && fits(desired);
+        if !direct && !fits(pose::SWIMMING) {
             return;
         }
-        let desired = self.desired_pose();
-        let new = if self.game_mode == 3 || self.vehicle.is_some() || fits(desired) {
+        let new = if direct || self.game_mode == 3 || self.vehicle.is_some() || fits(desired) {
             desired
         } else if fits(pose::CROUCHING) {
             pose::CROUCHING

@@ -547,7 +547,8 @@ impl RegionWork<'_> {
     /// ticks, random ticks, block events and moving pistons in chunks near players.
     fn tick_blocks(&mut self, env: &Env, ticking: &Ticking) {
         let dt = std::time::Instant::now();
-        let bodies = blocks::entity_boxes_wear(self.players.iter().map(|p| &**p), self.entities);
+        let spots = self.blocks.containers.dispensers();
+        let bodies = blocks::entity_boxes_wear(self.players.iter().map(|p| &**p), self.entities, &spots);
         let dt = crate::diag::lap("b.bodies", dt);
         let mut out = BlockOut::default();
         if let Some(h) = self.plugins.as_mut() {
@@ -686,7 +687,8 @@ impl RegionWork<'_> {
         if self.blocks.containers.len() == 0 && self.blocks.sculk.len() == 0 {
             return;
         }
-        let bodies = blocks::entity_boxes_wear(self.players.iter().map(|p| &**p), self.entities);
+        let spots = self.blocks.containers.dispensers();
+        let bodies = blocks::entity_boxes_wear(self.players.iter().map(|p| &**p), self.entities, &spots);
         let mut out = BlockOut::default();
         let mut items = crate::container::hopper::EntityItems::new(self.entities);
         {

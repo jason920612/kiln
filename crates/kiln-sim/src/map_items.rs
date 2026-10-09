@@ -131,6 +131,10 @@ pub(crate) fn has_ceiling(dim: crate::DimId) -> bool {
 }
 
 /// Filled-map ids in the stack list (all slots of the inventory).
+fn has_map(p: &Player) -> bool {
+    p.inv.items.iter().chain(p.inv.equipment.iter()).any(|s| !s.is_empty() && maps::map_id_of(s).is_some())
+}
+
 fn map_ids(p: &Player) -> Vec<i32> {
     p.inv.items.iter().chain(p.inv.equipment.iter()).filter_map(|s| if s.is_empty() { None } else { maps::map_id_of(s) }).collect()
 }
@@ -144,9 +148,14 @@ impl crate::Sim {
     /// carries notes the player, a map in a hand redraws the part of the world around the player, and
     /// what changed is sent.
     pub(crate) fn tick_maps(&mut self) {
+        let none_yet = self.maps.lock().unwrap_or_else(|e| e.into_inner()).none_yet();
+        // (Without any map data there is nothing for the frames to mark or send: skip looking at the entities.)
+        if none_yet && !self.players.values().any(has_map) {
+            return;
+        }
         let frames = self.map_frames();
         let marked = self.maps.lock().unwrap_or_else(|e| e.into_inner()).frame_markers();
-        if frames.is_empty() && marked.is_empty() && !self.players.values().any(|p| !map_ids(p).is_empty()) {
+        if frames.is_empty() && marked.is_empty() && !self.players.values().any(has_map) {
             return;
         }
         let viewers: std::collections::HashMap<uuid::Uuid, Viewer> = self

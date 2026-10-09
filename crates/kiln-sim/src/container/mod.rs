@@ -786,6 +786,11 @@ fn kind_of(be: &BlockEntity) -> Option<BeKind> {
 }
 
 impl Containers {
+    /// Where the region's dispensers and droppers are.
+    pub fn dispensers(&self) -> Vec<BlockPos> {
+        self.map.iter().filter(|(_, c)| matches!(c.kind, BeKind::Dispenser | BeKind::Dropper)).map(|(p, _)| *p).collect()
+    }
+
     /// A chunk entered the region: its containers are decoded.
     pub fn chunk_loaded(&mut self, pos: ChunkPos, chunk: &Chunk) {
         for ((x, y, z), be) in chunk.block_entities() {

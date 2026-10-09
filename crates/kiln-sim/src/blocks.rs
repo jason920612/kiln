@@ -404,29 +404,38 @@ impl EntityBox {
 
 /// The boxes of a region's players (not spectators) and entities.
 pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities) -> Vec<EntityBox> {
-    boxes(players, entities, false)
+    boxes(players, entities, &[])
 }
 
-/// [`entity_boxes`] with what dispensers ask of the living things ([`Wear`]), for the phases in which they fire.
-pub(crate) fn entity_boxes_wear<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities) -> Vec<EntityBox> {
-    boxes(players, entities, true)
+/// [`entity_boxes`] with what dispensers ask of the living things ([`Wear`]), for the phases in which they fire:
+/// only for the ones near a dispenser or dropper (`spots`; none, none of them).
+pub(crate) fn entity_boxes_wear<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities, spots: &[BlockPos]) -> Vec<EntityBox> {
+    boxes(players, entities, spots)
 }
 
-fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities, with_wear: bool) -> Vec<EntityBox> {
+fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities, spots: &[BlockPos]) -> Vec<EntityBox> {
+    // Whether a box can meet the block in front of a dispenser at one of the spots.
+    let near = |min: [f64; 3], max: [f64; 3]| {
+        spots.iter().any(|s| {
+            let (lo, hi) = ([s.x as f64 - 1.0, s.y as f64 - 1.0, s.z as f64 - 1.0], [s.x as f64 + 2.0, s.y as f64 + 2.0, s.z as f64 + 2.0]);
+            (0..3).all(|i| min[i] < hi[i] && max[i] > lo[i])
+        })
+    };
     let mut out: Vec<EntityBox> = players
         .filter(|p| p.game_mode != 3 && !p.dead)
         .map(|p| {
             let h = p.dimensions().1 as f64;
+            let (min, max) = ([p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3], [p.pos[0] + 0.3, p.pos[1] + h, p.pos[2] + 0.3]);
             EntityBox {
-                min: [p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3],
-                max: [p.pos[0] + 0.3, p.pos[1] + h, p.pos[2] + 0.3],
+                min,
+                max,
                 living: true,
                 blocks_building: true,
                 conn: Some(p.conn),
                 prevents_rest: false,
                 player_source: Some(player_source(p)),
                 hanging: None,
-                wear: with_wear.then(|| crate::container::equip::wear_of_player(p)),
+                wear: (!spots.is_empty() && near(min, max)).then(|| crate::container::equip::wear_of_player(p)),
             }
         })
         .collect();
@@ -434,7 +443,7 @@ fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Ent
         let (min, max, blocks_building) = e.body();
         // Mobs are living entities (pressure plates, lightning targets).
         let living = e.phys.as_deref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
-        let wear = if with_wear { e.phys.as_deref().and_then(crate::container::equip::wear_of) } else { None };
+        let wear = if !spots.is_empty() && near(min, max) { e.phys.as_deref().and_then(crate::container::equip::wear_of) } else { None };
         EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of), wear }
     }));
     out
