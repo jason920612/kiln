@@ -101,6 +101,8 @@ pub(crate) fn item_use_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
         fire_charge(p, level, pos, face, s, off_hand)
     } else if name == "minecraft:flint_and_steel" {
         light(p, level, pos, s, "minecraft:item.flintandsteel.use")
+    } else if name == crate::brush::ITEM {
+        crate::brush::use_on(p, level, off_hand)
     } else {
         return false;
     };

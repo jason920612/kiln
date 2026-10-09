@@ -423,7 +423,7 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         // `LecternBlock.getMenuProvider`: only with a book.
         BeKind::Lectern if state::get_bool(s, "has_book") => single(Menu::lectern),
         BeKind::Lectern => return None,
-        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot => return None,
+        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable => return None,
     })
 }
 
@@ -482,7 +482,7 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
         return Some(true);
     }
     // (A jukebox has no menu: its own `useWithoutItem` takes the disc out.)
-    if matches!(level.blocks.containers.get(pos)?.kind, BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot) {
+    if matches!(level.blocks.containers.get(pos)?.kind, BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable) {
         return None;
     }
     if let Some(provider) = container_provider(level, pos, s) {

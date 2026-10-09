@@ -245,6 +245,8 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_on_place(level, s, pos, old),
         C::SnifferEggBlock if !state::same_block(old, s) => misc::sniffer_egg_on_place(level, s, pos),
         C::FrogspawnBlock => misc::frogspawn_on_place(level, s, pos),
+        // `BrushableBlock.onPlace`: the brushing and the fall are checked in 2 ticks.
+        C::BrushableBlock => crate::level::schedule_block_tick(level, pos, BlockId::of(s), 2, crate::ticks::TickPriority::Normal),
         C::TurtleEggBlock => misc2::turtle_egg_on_place(level, pos),
         C::TripWireBlock => tripwire::wire_on_place(level, s, pos, old),
         C::TargetBlock => misc3::target_on_place(level, s, pos, old),
@@ -325,6 +327,11 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
             farming::tick(level, s, pos);
         }
         C::DriedGhastBlock => misc2::dried_ghast_tick(level, s, pos),
+        // `BrushableBlock.tick`: the brushing fades (the block entity's), then the block falls if it can.
+        C::BrushableBlock => {
+            level.block_entity_tick(pos, s);
+            misc::falling_tick(level, s, pos);
+        }
         C::TripWireBlock => tripwire::wire_tick(level, pos),
         C::TripWireHookBlock => tripwire::hook_tick(level, s, pos),
         C::TargetBlock => misc3::target_tick(level, s, pos),

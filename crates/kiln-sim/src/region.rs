@@ -348,6 +348,21 @@ impl RegionWork<'_> {
         }
     }
 
+    /// `BrushItem.onUseTick` for the players brushing this tick: the view must be on a block, every tenth tick it is brushed.
+    fn brushes(&mut self, env: &Env) {
+        for i in 0..self.players.len() {
+            let Some(ticks) = self.players[i].brush_ticks.take() else { continue };
+            if self.players[i].dead {
+                continue;
+            }
+            let bodies = Vec::new();
+            let mut out = BlockOut::default();
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            crate::brush::use_tick(&mut *self.players[i], &mut level, ticks, &mut self.out.spawns);
+            blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+        }
+    }
+
     /// A Use Item with a fishing rod in that hand, from a living player.
     fn rod_use(&self, conn: ConnId, pkt: &PlayIn) -> bool {
         let PlayIn::UseItem { hand, .. } = pkt else { return false };
@@ -463,6 +478,7 @@ impl RegionWork<'_> {
         }
         self.spin_attacks(env);
         self.kinetic_attacks(env);
+        self.brushes(env);
         mark(&mut self.out.times, 1);
         // Which chunks each player lacks is its own business (a window); sending them needs
         // the chunks' packet caches, so that part runs in connection order here.

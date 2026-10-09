@@ -71,6 +71,8 @@ pub(crate) enum BeKind {
     Vault,
     /// Nine slots, some of them switched off, and the recipe they make (`CrafterBlockEntity`).
     Crafter,
+    /// The item buried in suspicious sand or gravel, and how far it is brushed (`BrushableBlockEntity`).
+    Brushable,
 }
 
 impl BeKind {
@@ -100,6 +102,7 @@ impl BeKind {
             "lectern" => BeKind::Lectern,
             "vault" => BeKind::Vault,
             "crafter" => BeKind::Crafter,
+            "brushable_block" => BeKind::Brushable,
             _ => return None,
         })
     }
@@ -115,7 +118,7 @@ impl BeKind {
             BeKind::Jukebox => 1,
             BeKind::Campfire => 4,
             BeKind::ChiseledBookshelf => 6,
-            BeKind::DecoratedPot | BeKind::Lectern => 1,
+            BeKind::DecoratedPot | BeKind::Lectern | BeKind::Brushable => 1,
             BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault => 0,
         }
     }
@@ -130,7 +133,7 @@ impl BeKind {
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault)
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::Brushable)
     }
 
     /// `getDefaultName` translation key.
@@ -158,6 +161,7 @@ impl BeKind {
             BeKind::Lectern => "container.lectern",
             BeKind::Vault => "block.minecraft.vault",
             BeKind::Crafter => "container.crafter",
+            BeKind::Brushable => "block.minecraft.suspicious_sand",
         }
     }
 }
@@ -296,6 +300,8 @@ pub(crate) struct ContainerBe {
     pub vault: Option<Box<crate::vault::Vault>>,
     /// A crafter's switched-off slots and countdown.
     pub crafter: Option<Box<crafter::Crafter>>,
+    /// How far a suspicious block has been brushed.
+    pub brushable: Option<Box<crate::brush::Brushable>>,
     /// Changed since its NBT was last written into the chunk.
     pub dirty: bool,
     /// Saved fields not modeled here (`components`, ...).
@@ -340,7 +346,7 @@ impl ContainerBe {
             list.stacks = vec![book];
         }
         // `DecoratedPotBlockEntity.loadAdditional`: its one item is saved as `item`.
-        if kind == BeKind::DecoratedPot {
+        if kind == BeKind::DecoratedPot || kind == BeKind::Brushable {
             let item = if loot_table.is_some() { None } else { nbt.get("item").and_then(|t| ItemStack::from_nbt(t).ok()) };
             list.stacks = vec![item.filter(|s| !s.is_empty()).unwrap_or_else(ItemStack::empty)];
         }
@@ -385,6 +391,7 @@ impl ContainerBe {
             hive: (kind == BeKind::Beehive).then(|| Box::new(crate::beehive::Hive::load(nbt))),
             vault: (kind == BeKind::Vault).then(|| Box::new(crate::vault::Vault::load(nbt))),
             crafter: (kind == BeKind::Crafter).then(|| Box::new(crafter::Crafter::load(nbt))),
+            brushable: (kind == BeKind::Brushable).then(Default::default),
             dirty: false,
             extra,
         };
@@ -422,7 +429,7 @@ impl ContainerBe {
                 }
             }
             // `sherds` is kept in `extra`; then the loot table or the item.
-            BeKind::DecoratedPot => match &self.loot_table {
+            BeKind::DecoratedPot | BeKind::Brushable => match &self.loot_table {
                 Some(table) => {
                     out.push(("LootTable".into(), Tag::String(table.clone())));
                     if self.loot_seed != 0 {
@@ -947,6 +954,7 @@ pub(crate) fn scheduled_tick(level: &mut RegionLevel, pos: BlockPos, s: u16) {
     match logic::block_class(s) {
         C::DispenserBlock | C::DropperBlock => dispense::dispense_from(level, pos, s),
         C::CrafterBlock => crafter::dispense_from(level, pos, s),
+        C::BrushableBlock => crate::brush::check_reset(level, pos, s),
         _ => level.out.rechecks.push(pos),
     }
 }

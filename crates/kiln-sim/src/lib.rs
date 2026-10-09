@@ -29,6 +29,7 @@ mod commands;
 mod consume;
 mod buckets;
 mod beehive;
+mod brush;
 mod vault;
 mod decorated_pot;
 mod lectern;
@@ -478,6 +479,8 @@ struct Player {
     swing_wire_duration: i32,
     /// Ticks of use of a `kinetic_weapon` this tick (for [`spear::kinetic_attack`]).
     kinetic_ticks: Option<i32>,
+    /// Ticks of use of a brush this tick, for [`brush::use_tick`] (the level's part of `BrushItem.onUseTick`).
+    brush_ticks: Option<i32>,
     /// `LivingEntity.recentKineticEnemies`: the entities a charging weapon touched and when.
     recent_stabs: Vec<(i32, i64)>,
     /// Latest tab-completion request, answered once per tick.
@@ -3468,6 +3471,7 @@ impl Sim {
             swing_kind: kiln_proto::packets::entity::swing::WHACK,
             swing_wire_duration: kiln_proto::packets::entity::swing::DEFAULT_DURATION,
             kinetic_ticks: None,
+            brush_ticks: None,
             recent_stabs: Vec::new(),
             pending_suggestion: None,
             teleport_id: 1,
