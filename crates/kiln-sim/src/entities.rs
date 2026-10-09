@@ -2832,7 +2832,7 @@ pub(crate) fn interact_mob(
         // `Entity.startRiding`: a rider that sits on another vehicle gets off it first.
         if let Some(old) = sim.players[i].vehicle {
             let at = sim.index(old);
-            remove_rider(sim, at, pid);
+            remove_rider(&mut sim, at, pid);
         }
         let first_is_player = phys.passengers.first().is_some_and(|f| sim.views.iter().any(|v| v.id == *f));
         kiln_entity::ride::add_passenger(&mut phys, pid, true, first_is_player);
@@ -2846,7 +2846,7 @@ pub(crate) fn interact_mob(
         p.started_riding();
         // `Cushion.interact`: the sit sound once the player sits.
         if kiln_entity::ext_entity::cushion::is_cushion(&phys) {
-            phys.play_sound(&mut *sim, "minecraft:entity.cushion.sit", 1.0, 1.0);
+            phys.play_sound(&mut sim, "minecraft:entity.cushion.sit", 1.0, 1.0);
         }
     }
     let seen = out.success.then(|| kiln_entity::level::Seen::of(&phys));
