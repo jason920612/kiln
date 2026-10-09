@@ -1156,7 +1156,7 @@ struct Handles {
 }
 
 /// A region's instances, one per plugin that exports `region-hooks`.
-pub struct RegionPlugins {
+struct RegionInner {
     set: Arc<PluginSet>,
     shared: Arc<Shared>,
     dim: u32,
@@ -1192,9 +1192,9 @@ fn region_failed<R>(set: &PluginSet, shared: &Shared, insts: &mut [Option<Inst>]
     insts[i] = None;
 }
 
-impl RegionPlugins {
-    fn new(set: Arc<PluginSet>, shared: Arc<Shared>, dim: u32) -> RegionPlugins {
-        let mut r = RegionPlugins { insts: (0..set.plugins.len()).map(|_| None).collect(), set, shared, dim, observed: Vec::new(), calls: 0 };
+impl RegionInner {
+    fn new(set: Arc<PluginSet>, shared: Arc<Shared>, dim: u32) -> RegionInner {
+        let mut r = RegionInner { insts: (0..set.plugins.len()).map(|_| None).collect(), set, shared, dim, observed: Vec::new(), calls: 0 };
         for i in 0..r.insts.len() {
             ensure(&r.set, &r.shared, &mut r.insts, i);
         }
@@ -1216,7 +1216,7 @@ impl RegionPlugins {
         mut f: impl FnMut(usize, &RegionGuest, &mut Store<HostState>, Handles) -> wasmtime::Result<R>,
         mut decide: impl FnMut(R, Option<Vec<Span>>) -> Option<Verdict>,
     ) -> Verdict {
-        let RegionPlugins { set, shared, insts, calls, .. } = self;
+        let RegionInner { set, shared, insts, calls, .. } = self;
         let set: &Arc<PluginSet> = &*set;
         let subs = set.subscribers(kind);
         if subs.is_empty() {
@@ -1579,7 +1579,7 @@ impl RegionPlugins {
             return;
         }
         let observed = std::mem::take(&mut self.observed);
-        let RegionPlugins { set, shared, insts, calls, dim, .. } = self;
+        let RegionInner { set, shared, insts, calls, dim, .. } = self;
         let subs: Vec<usize> = set.subscribers(EventKind::Observe).to_vec();
         for i in subs {
             let sub = set.plugins[i].manifest.subscription(EventKind::Observe).expect("subscription");
@@ -1656,7 +1656,7 @@ impl RegionPlugins {
 
     /// A task or results delivery in this region's instance of plugin `i` (B0).
     fn run_in(&mut self, i: usize, player: Option<&PlayerAt>, cell: Option<CellKey>, f: RegionCall) -> bool {
-        let RegionPlugins { set, shared, insts, calls, .. } = self;
+        let RegionInner { set, shared, insts, calls, .. } = self;
         if !ensure(set, shared, insts, i) {
             return false;
         }
@@ -1700,6 +1700,172 @@ impl RegionPlugins {
     /// Calls made since the last call (the runtime adds them to its statistics).
     fn take_calls(&mut self) -> u64 {
         std::mem::take(&mut self.calls)
+    }
+}
+
+struct RegionShared {
+    inner: Mutex<RegionInner>,
+    /// Bit `EventKind::index()` set: some plugin has instances here that subscribed to it.
+    subs: std::sync::atomic::AtomicU32,
+}
+
+/// A region's plugin instances, one per plugin that exports `region-hooks`. A handle: clones
+/// share the instances, which sit behind a lock that is taken per event and never contended
+/// (one thread works a region at a time). The handle lets a player carry the damage gate of
+/// its region ([`RegionPlugins::player_damage`] is called from inside the damage code).
+#[derive(Clone)]
+pub struct RegionPlugins(Arc<RegionShared>);
+
+fn subscription_mask(set: &PluginSet) -> u32 {
+    EventKind::ALL.iter().filter(|k| !set.subscribers(**k).is_empty()).fold(0, |m, k| m | 1 << k.index())
+}
+
+impl RegionPlugins {
+    fn new(set: Arc<PluginSet>, shared: Arc<Shared>, dim: u32) -> RegionPlugins {
+        let mask = subscription_mask(&set);
+        let inner = RegionInner::new(set, shared, dim);
+        RegionPlugins(Arc::new(RegionShared { inner: Mutex::new(inner), subs: std::sync::atomic::AtomicU32::new(mask) }))
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, RegionInner> {
+        self.0.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Whether any plugin has handlers here for `kind` (a lock-free check: callers skip the
+    /// bookkeeping of events nobody wants).
+    pub fn subscribed(&self, kind: EventKind) -> bool {
+        self.0.subs.load(Ordering::Relaxed) & (1 << kind.index()) != 0
+    }
+
+    /// A player breaks (starts or finishes breaking) `block` at `pos` in this region's level.
+    pub fn block_break(&self, actor: &Actor, pos: [i32; 3], block: u32) -> Verdict {
+        if !self.subscribed(EventKind::BlockBreak) {
+            return Verdict::Allow;
+        }
+        self.lock().block_break(actor, pos, block)
+    }
+
+    /// `pos` is where the block (or fluid) would go, `against` the clicked block; `item` the
+    /// item id in the hand used.
+    pub fn block_place(&self, actor: &Actor, pos: [i32; 3], against: [i32; 3], item: Option<u32>) -> Verdict {
+        if !self.subscribed(EventKind::BlockPlace) {
+            return Verdict::Allow;
+        }
+        self.lock().block_place(actor, pos, against, item)
+    }
+
+    /// A player right-clicks an entity. Handlers may read and write the entity's data.
+    pub fn entity_interact(&self, actor: &Actor, entity: &mut EntityRef) -> Verdict {
+        if !self.subscribed(EventKind::EntityInteract) {
+            return Verdict::Allow;
+        }
+        self.lock().entity_interact(actor, entity)
+    }
+
+    /// A player hits an entity. Handlers may read and write the entity's data.
+    pub fn entity_attack(&self, actor: &Actor, entity: &mut EntityRef) -> Verdict {
+        if !self.subscribed(EventKind::EntityAttack) {
+            return Verdict::Allow;
+        }
+        self.lock().entity_attack(actor, entity)
+    }
+
+    /// A player is about to take `amount` damage of damage type `cause` at `pos`; `attacker`
+    /// is the player responsible, if any.
+    pub fn player_damage(&self, victim: &Actor, attacker: Option<&Actor>, pos: [i32; 3], cause: u32, amount: f32) -> Verdict {
+        if !self.subscribed(EventKind::PlayerDamage) {
+            return Verdict::Allow;
+        }
+        self.lock().player_damage(victim, attacker, pos, cause, amount)
+    }
+
+    /// The held item is used: on the block at `target`, or in the air.
+    pub fn item_use(&self, actor: &Actor, item: ItemRef, off_hand: bool, target: Option<[i32; 3]>) -> Verdict {
+        if !self.subscribed(EventKind::ItemUse) {
+            return Verdict::Allow;
+        }
+        self.lock().item_use(actor, item, off_hand, target)
+    }
+
+    /// A click in a container screen.
+    pub fn container_click(&self, actor: &Actor, click: &ContainerClick) -> Verdict {
+        if !self.subscribed(EventKind::ContainerClick) {
+            return Verdict::Allow;
+        }
+        self.lock().container_click(actor, click)
+    }
+
+    /// A vanilla or plugin command a player is about to run (`command` without the slash).
+    pub fn command(&self, actor: &Actor, command: &str) -> Verdict {
+        if !self.subscribed(EventKind::Command) {
+            return Verdict::Allow;
+        }
+        self.lock().command(actor, command)
+    }
+
+    /// A chat message: cancelled, rewritten (the last rewrite wins) or passed.
+    pub fn chat(&self, actor: &Actor, message: &str) -> ChatOutcome {
+        if !self.subscribed(EventKind::Chat) {
+            return ChatOutcome::Pass;
+        }
+        self.lock().chat(actor, message)
+    }
+
+    /// Whether any plugin wants observe batches (callers can skip the bookkeeping).
+    pub fn observing(&self) -> bool {
+        self.subscribed(EventKind::Observe)
+    }
+
+    /// Whether any plugin wants observed events of `kind` (an [`ObserveKinds`] bit).
+    pub fn observing_kind(&self, bit: u8) -> bool {
+        self.observing() && self.lock().observing_kind(bit)
+    }
+
+    /// Notes a block broken (`broken`) or placed by `actor`, for the next observe batch.
+    pub fn observe_block(&self, broken: bool, actor: &Actor, pos: [i32; 3], block: u32) {
+        if self.observing() {
+            self.lock().observe_block(broken, actor, pos, block);
+        }
+    }
+
+    /// Notes a player's death for the next observe batch.
+    pub fn observe_death(&self, actor: &Actor, pos: [i32; 3], cause: u32, killer: Option<u128>) {
+        if self.observing() {
+            self.lock().observe_death(actor, pos, cause, killer);
+        }
+    }
+
+    /// Notes a player appearing in this region's level.
+    pub fn observe_spawn(&self, actor: &Actor, pos: [i32; 3], reason: SpawnReason) {
+        if self.observing() {
+            self.lock().observe_spawn(actor, pos, reason);
+        }
+    }
+
+    /// Sends the observations of this phase to observe subscribers.
+    pub fn flush_observed(&self) {
+        if self.observing() {
+            self.lock().flush_observed();
+        }
+    }
+
+    fn run_in(&self, i: usize, player: Option<&PlayerAt>, cell: Option<CellKey>, f: RegionCall) -> bool {
+        self.lock().run_in(i, player, cell, f)
+    }
+
+    fn swap(&self, set: Arc<PluginSet>, i: usize) {
+        let mask = subscription_mask(&set);
+        let mut inner = self.lock();
+        inner.swap(set, i);
+        self.0.subs.store(mask, Ordering::Relaxed);
+    }
+
+    fn take_calls(&self) -> u64 {
+        self.lock().take_calls()
+    }
+
+    fn peek_calls(&self) -> u64 {
+        self.lock().calls
     }
 }
 
@@ -2075,7 +2241,7 @@ impl PluginRuntime {
 
     /// Every statistic by name, with the calls regions made since the last B0.
     pub fn stat_values(&self) -> Vec<(&'static str, u64)> {
-        let local: u64 = self.regions.values().map(|r| r.calls).sum();
+        let local: u64 = self.regions.values().map(RegionPlugins::peek_calls).sum();
         self.shared.stats.get().iter().map(|&(k, v)| (k, if k == "calls" { v + local } else { v })).collect()
     }
 
@@ -2086,7 +2252,7 @@ impl PluginRuntime {
 
     /// Adds the regions' call counts to the shared statistics.
     fn fold_calls(&mut self) {
-        let n: u64 = self.regions.values_mut().map(RegionPlugins::take_calls).sum();
+        let n: u64 = self.regions.values().map(RegionPlugins::take_calls).sum();
         self.shared.stats.calls.fetch_add(n, Ordering::Relaxed);
     }
 
