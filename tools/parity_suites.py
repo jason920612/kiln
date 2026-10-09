@@ -65,6 +65,15 @@ SUITES = {
     "interact": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": vec("wp45/interact/vectors.jsonl")}),
     "structure_spawns": (["-p", "kiln-sim", "--lib", "structure_spawns"], {"KILN_STRUCTURE_SPAWN_VECTORS": vec("wp45/spawn/structure_spawns.jsonl")}),
     "entity_parity_wp45": (["-p", "kiln-entity", "--test", "parity"], {"KILN_PARITY": "1", "KILN_ENTITY_VECTORS": vec("wp45/entity/vectors.jsonl")}),
+    # wp49 suites: recorded by the tools/*Vectors.java harnesses into <work>/wp49 (docs/parity-coverage.md). The
+    # interact and container directories hold one file per harness case group; each file is its own run
+    # (`interact49:<file>`), the mobs are folded into m6-mobs2/vectors.jsonl (the mob_parity suite).
+    "entity_nbt": (["-p", "kiln-entity", "--test", "entity_nbt"], {"KILN_ENTITY_NBT_VECTORS": vec("wp49/entities/nbt.jsonl")}),
+    "bubble": (["-p", "kiln-blocks", "--lib", "block_parity"], {"KILN_BLOCK_VECTORS": vec("wp49/block/bubble.jsonl")}),
+    "explore_maps": (["-p", "kiln-sim", "--lib", "exploration_map_parity"], {"KILN_EXPLORE_VECTORS": vec("wp49/explore/maps.jsonl")}),
+    "initial_mobs": (["-p", "kiln-sim", "--test", "initial_mobs"], {"KILN_INITIAL_MOB_VECTORS": ":".join(vec(f"wp49/initial/{n}.jsonl") for n in ("mobs0", "mobs1", "mobs2", "mobs2b", "mobs3", "mobs4", "mobs12345"))}),
+    "interact49": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp49/interact/*.jsonl"}),
+    "container49": (["-p", "kiln-sim", "--lib", "parity"], {"KILN_CONTAINER_VECTORS": "wp49/container/*.jsonl"}),
 }
 
 SUMMARY = re.compile(r"(test result:|skipped|parity|match|scenarios|vectors|rounds|chunks|sequences|cases|agree|mismatch|diverg)", re.I)
@@ -102,6 +111,15 @@ def main():
     bad = 0
     for n in names:
         cargo_args, env = SUITES[n]
+        # A value with a `*` is a glob (relative to WORK) of vector files: one run per file.
+        globbed = [(k, v) for k, v in env.items() if "*" in v]
+        if globbed:
+            key, pattern = globbed[0]
+            for f in sorted(WORK.glob(pattern)):
+                if f.name == "all.jsonl":
+                    continue
+                bad += run(f"{n}-{f.stem}", cargo_args, {**env, key: str(f)}, out, not args.no_data) != 0
+            continue
         bad += run(n, cargo_args, env, out, not args.no_data) != 0
     sys.exit(1 if bad else 0)
 
