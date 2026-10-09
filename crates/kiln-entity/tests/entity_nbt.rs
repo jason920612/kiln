@@ -146,7 +146,7 @@ fn data_entities_match_vanilla() {
             .collect();
         let want_meta = entries(&want_bytes);
         if got != want_meta {
-            errors.push(format!("entity data\n    kiln    {got}\n    vanilla {want_meta}"));
+            errors.push(format!("entity data\n    kiln    {got:?}\n    vanilla {want_meta:?}"));
         }
         let b = e.bounding_box();
         let bx: Vec<f64> = v["box"].as_array().unwrap().iter().map(f).collect();
