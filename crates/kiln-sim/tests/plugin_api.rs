@@ -175,7 +175,7 @@ fn the_shop_menu_is_locked_and_sells() {
     let (kind, _) = g.sim.open_menu(1).expect("the menu opens again");
     assert_eq!(kind, "minecraft:generic_9x3");
     g.received(0);
-    g.click(0, 1, 16, ContainerInput::Pickup);
+    g.click(0, 2, 16, ContainerInput::Pickup);
     g.ticks(3);
     assert!(g.got_text(0, "Bought Magic wand"), "the purchase went through");
     assert!(g.inventory_has(0, "minecraft:stick"), "the wand");
@@ -197,7 +197,7 @@ fn the_shop_menu_is_locked_and_sells() {
 fn claims_protect_land_and_players() {
     let mut g = Game::new("api-claims", &["claims"], &[], &["Dora", "Eli"]);
     g.console("gamemode creative Dora");
-    g.console("gamemode survival Eli");
+    g.console("gamemode creative Eli");
     g.console("tp Dora 300 -60 300");
     g.console("tp Eli 305 -60 300");
     g.ticks(12);
