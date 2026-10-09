@@ -1290,7 +1290,12 @@ fn use_on_block(
     // `BlockState.useItemOn` of blocks that react to the item itself (either hand).
     // (`ServerPlayerGameMode.useItemOn` does not ask whether the player may build: pots, campfires and
     // composters work in adventure mode.)
-    if !(p.sneaking && have_something) && !held.is_empty() {
+    // (A copper golem statue reacts to an empty hand too: `useItemOn` turns its pose.)
+    let statue = matches!(
+        kiln_data::block_logic::block_class(level.block(bp)),
+        kiln_data::block_logic::BlockClass::CopperGolemStatueBlock | kiln_data::block_logic::BlockClass::WeatheringCopperGolemStatueBlock
+    );
+    if !(p.sneaking && have_something) && (!held.is_empty() || statue) {
         let used = held.clone();
         if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, cursor, !main_hand, spawns) {
             let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
