@@ -2703,8 +2703,8 @@ fn baby_variant(m: &MobData, sound: &'static str) -> &'static str {
         return sound;
     }
     let Some((ty, event)) = sound.strip_prefix("minecraft:entity.").and_then(|r| r.split_once('.')) else { return sound };
-    // (A baby wolf has its set whatever the variant of the adult's.)
-    let ty = ty.strip_prefix("wolf_").map_or(ty, |_| "wolf");
+    // (A baby wolf or cat has its set whatever the sound variant of the adult's.)
+    let ty = ["wolf", "cat"].into_iter().find(|b| ty.strip_prefix(b).is_some_and(|r| r.starts_with('_'))).unwrap_or(ty);
     let name = format!("minecraft:entity.baby_{ty}.{event}");
     kiln_item::registry::SOUND_EVENT.id(&name).and_then(|id| kiln_item::registry::SOUND_EVENT.name(id)).unwrap_or(sound)
 }
