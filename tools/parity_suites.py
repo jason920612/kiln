@@ -103,6 +103,9 @@ SUITES = {
     }),
     "support55": (["-p", "kiln-blocks", "--lib", "block_parity"], {"KILN_BLOCK_VECTORS": vec("wp55/support/support55.jsonl")}),
     "interact55": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp55/interact/*.jsonl"}),
+    # (wp55 also: the voices of the sound variants -- voice55_* scenarios -- are folded into m6-mobs2/vectors.jsonl (backup .pre-wp55), and the
+    # entity sound packets of goats, frogs, allays, breezes, sniffers and copper golems are compared in their own recording.)
+    "mob_esound55": (["-p", "kiln-entity", "--test", "mob_parity"], {"KILN_MOB_VECTORS": vec("wp55/mobs/esound55.jsonl")}),
     "plugin_compat": (["-p", "kiln-plugin-host", "--test", "api_compat", "--test", "wit_freeze"], {}),
 }
 
