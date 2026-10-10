@@ -212,14 +212,6 @@ pub fn equip_item_if_possible(e: &mut Entity, m: &mut MobData, level: &mut dyn E
 
 /// `Mob.aiStep`'s loop over the item entities within reach (1 x 0 x 1): each one the mob wants is picked up.
 pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-    if std::env::var_os("KILN_PICKUP_DEBUG").is_some() {
-        let area = e.bounding_box().inflate(1.0, 0.0, 1.0);
-        let big = e.bounding_box().inflate(6.0, 3.0, 6.0);
-        let near = level.entities_in(&big, EntityFilter::Item, e.id);
-        let bbs: Vec<_> = near.iter().filter_map(|&i| level.entity(i).map(|x| (i, x.bounding_box(), matches!(&x.kind, EntityKind::Item(d) if d.pickup_delay > 0)))).collect();
-        let any: Vec<_> = level.entities_in(&big, EntityFilter::Any, e.id).iter().filter_map(|&i| level.entity(i).map(|x| (i, x.type_name, x.bounding_box().min_x, x.bounding_box().min_y))).collect();
-        eprintln!("PDBG t={} {:?} items={:?} near={:?} any={:?}", level.game_time(), m.kind, level.entities_in(&area, EntityFilter::Item, e.id), bbs, any);
-    }
     if !m.can_pick_up_loot || !super::is_alive(e, m) || m.dead || !level.mob_griefing() {
         return;
     }
