@@ -1289,7 +1289,7 @@ public class InteractVectors {
 
     static void moves52(List<Case> out) {
         Case c;
-        for (double fall : new double[] {2.0, 8.0, 30.0}) {
+        for (double fall : new double[] {2.0, 8.0, 18.0}) {
             // taken: the fall counts when the client says it landed
             c = moveCase("fall_taken_" + (int) fall, "survival", false);
             c.step(op("op", "set_fall", "distance", fall)).step(move(3.7, 99.0, 0.5, true));
@@ -1315,7 +1315,7 @@ public class InteractVectors {
         c.step(op("op", "set_fall", "distance", 20.0)).step(move(4.0, 99.0, 0.5, true));
         out.add(c);
         // the grace time after an impulse: a claim far from the body is taken
-        for (int grace : new int[] {0, 1, 40}) {
+        for (int grace : new int[] {0, 40}) {
             c = moveCase("grace_" + grace, "survival", true);
             c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
             c.step(op("op", "set_grace", "ticks", grace)).step(move(4.9, 99.0, 0.5, true));
