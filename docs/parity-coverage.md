@@ -524,13 +524,34 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
   生物端的事件只有「發出」沒有與原版比對 tick。
 - **村民與襲擊者的非旗幟撿拾**：村民（`Villager.pickUpItem`／`wantsToPickUp`，只撿食物與種子進背包）與襲擊者（`Raider.pickUpItem`、掠奪者的 `wantsItem`）在 Kiln 沒有撿起一般物品的路徑，通用撿拾也跳過它們。
 - **撿拾不送 `take_item_entity` 封包**：生物撿起物品時原版送 `ClientboundTakeItemEntityPacket`（客戶端看到物品飛向生物），Kiln 的生物撿拾（包含豬布林）只讓物品消失。
-- **cushion 活塞推動、mannequin 落地方塊音效**：**不是 harness 的問題**。InteractVectors 從 wp50 起就有 `tick_cushions`（每步 tick 一次，或 `ticks` 次）並 tick mannequin，封包也錄音效；缺的是 Kiln 本身：
-  (1) 活塞根本不推實體——`PistonMovingBlockEntity.moveCollidedEntities` 沒有實作（玩家、生物、掉落物、cushion 都不會被活塞推或夾），cushion 被推時該有的 `BlockAttachedEntity.move(PISTON)` 破壞也就沒發生；
-  (2) Kiln 沒有任何方塊 `SoundType` 的表（`kiln-data` 沒有），所以玩家與生物的 `LivingEntity.playBlockFallSound`（摔傷時的方塊落地音）、方塊腳步聲、放置音都不會出——重播時 `no_pitch` 的 scenario 乾脆略過所有 `block.*` 音效。
-  兩者都不是「便宜地擴充 harness」能解決的，要先做成一個子系統（活塞推實體要和原版逐 tick 比對碰撞與位移；方塊音效要先從 `Blocks.java` 抽出 `SoundType` 表）。
+- **cushion 活塞推動、mannequin 落地方塊音效**：**不是 harness 的問題**，缺的是 Kiln 本身（活塞不推實體、沒有方塊 `SoundType` 表）。**wp54 已做，見 6.7。**
 - 命令回饋的 `show_entity` 懸停事件、實體 NBT 的兩處存檔欄位差異（見 6.5）。
 
 外掛 API 的修正見 `docs/plugin-api.md` §5、§10。
+
+
+### 6.7 wp54（`wp54-pistons-sounds`）：活塞推實體、方塊 SoundType 與伺服器端方塊音效
+
+wp53 查出兩個「缺的是 Kiln 本身」的子系統，這一輪做掉。向量在 `work/wp54/`（`interact/piston54.jsonl`、`interact/sound54.jsonl`、`interact/mannequin54.jsonl`），
+`tools/parity_suites.py` 新增 `interact54`；生物的步伐／落地音效併入 `work/m6-mobs2/vectors.jsonl` 的 `sound_trace`（原檔備份為 `.pre-wp54`）。
+
+| 項目 | 內容 | 原版向量 | 驗證端 |
+|---|---|---|---|
+| 活塞推實體 | 新模組 `kiln-entity/src/piston.rs` 與 `kiln-sim/src/entities/piston.rs`，逐行對 `PistonMovingBlockEntity`：`tick` 的順序（先 `moveCollidedEntities` 再 `moveStuckEntities`）、`getCollisionShape`（延伸的底座＋被推的方塊，依 `getExtendedProgress` 位移，帶 NOCLIP）、`PistonMath.getMovementArea`、`moveByPositionAndProgress`、`fixEntityWithinPistonBase`、`Entity.limitPistonMovement`（每軸每 tick ±0.51，以遊戲時間為鍵）、`getPistonPushReaction`（`area_effect_cloud`、`display`、`interaction`、`marker`、`ominous_item_spawner` 與 marker 盔甲座不被推）；黏液塊把 `canSimulateMovement` 的實體沿軸向設速度、蜜塊拖著站在上面的 `PUSH_PULL` 實體；`BlockAttachedEntity.move` 對 cushion／物品展示框／畫／拴繩結：被推時破壞並掉落；殼（shulker）生物的 `setPos` 吸附到方塊；船的地面摩擦把移動中的活塞方塊算進去。伺服器的 tick 順序也改成原版的：方塊 tick、流體、方塊事件、**實體，然後才是方塊實體（活塞）**。玩家：伺服器端的「幻影」身體（`PhantomLevel`）有活塞，活塞推到玩家時照原版送位置（動量／傳送）封包，飛行機器上的乘客也一樣 | `piston54` 112（石頭／黏液塊／蜜塊 × 前推／上推 × 豬、掉落物、船、礦車、盔甲座、牛、羊、村民、雞、史萊姆、苦力怕；玩家 × 前／上／後／下；黏液連鎖、夾擠；`spot_*`：8 個起點位置 × 三種方塊；盔甲座向下；cushion、物品展示框、畫；shulker） | `interact_parity`（`piston54` 112／112，逐 tick 實體位置、速度與封包） |
+| 方塊 SoundType 表 | `ExtractBlockLogic` 從原版抽出每個方塊狀態的 `SoundType`（音量、音高、破壞／踩踏／放置／敲擊／摔落五種音效），`xtask codegen` 產出 `kiln-data/src/gen/sound_types.rs`，`block_sounds::sound_type(state)`；依屬性才變的方塊（破裂的裝飾罐、…）另外記 | – （每個音效名檢查是原版 `sound_event` 登錄） | `kiln-data` 單元測試 3 個；下列的重播 |
+| 伺服器的方塊音效 | **放置**：`BlockItem.place` 用 `getPlaceSound`（音量 `(v+1)/2`、音高 `×0.8`），不送給放置者本人；**踩踏**：`Entity.applyMovementEmissionAndPlaySound`／`vibrationAndSoundEffectsFromBlock` 全面重寫（`nextStep`、`getMovementEmission`、玩家飛行與蹲在地上無音效、`Player.playStepSound` 的組合方塊／靜音方塊／方塊內，水中與游泳）；**摔落**：`LivingEntity.playBlockFallSound` 只在傷害 > 0 時，位置在腳下 0.2 格；玩家自己聽不到自己的（`Player.playSound` 排除本人）；蜜塊的 `fallOn` 在受傷後再播一次方塊的摔落音。**破壞／敲擊音效是客戶端用自己的表播的**（伺服器只送 level event），所以沒有伺服器端的東西可比。每種實體類型怎麼踩（`StepRow`：發射條件、聲源、固定音效、幼體音效、摔落音效）由 `InteractVectors --step-sounds` 在原版內對每個生物類型呼叫 `playStepSound` 後產生（`tools/gen_step_sounds.py` → `gen/step_sounds.rs`）；另外龜（`nextStep` +0.15）、潛地獸（+0.6）、伏守衛（+0.55）、馬（木頭、雪、騎乘時的奔馳計數器與鼻息）、銅傀儡（依氧化）、硫磺方塊（吞了東西就不出聲）、殺手兔（hostile 聲源） | `sound54` 314（每種 `SoundType` 取一個代表方塊 × 摔 6／12 格、走 8 步、蹲走；薄方塊在上面（地毯、雪、青苔、發光地衣）；每個可放的物品的放置音）；`mannequin54` 20（mannequin 摔在各種方塊上，110 格高）；`mob_parity` 的 `sound_trace`（每 tick 玩家聽得到的步伐／摔落音，位置照封包量化到 1/8 格） | `interact_parity`（`sound54` 314／314，`mannequin54` 20／20）、`mob_parity`（`sound_trace`） |
+
+驗證（VM，release，`--no-fail-fast`）：見本節末的結果表。`mob_parity` 在 1375 個 scenario 中 790 個帶著原版 `sound_trace` 比對步伐與摔落音（另外 585 個是依賴隨機的情節——戰利品、生成時機——重錄後軌跡和舊檔不同，保留舊檔、不比聲音）。
+
+這一輪找到、**沒有修**的缺口：
+
+- **放置規則**：Kiln 讓玩家放原版不給放的方塊（地面上的懸掛告示牌、沒有水的海草、孢子花、垂根、棚蕈、絆線鉤）；竹子的放置規則沒有；`fill` 不會讓失去支撐的方塊掉落。
+- **方塊實體預設資料**：`potent_sulfur` 的倒數、棚架 `align_items_to_bottom`、shulker 盒的 `Items`、刷怪磚的 `spawn_data`。
+- **物品被推進方塊裡時的隨機推出**（`Entity.moveTowardsClosestSpace` 的亂數）：Kiln 的方向與原版相同但亂數序列不一定相同。
+- **生物變種的音效**（豬、牛、雞、狼的變種有各自的 step／hurt 組）、騎乘者與幼體的少數組合；玩家游泳的水花音有亂數。
+- **長跳落地音**（山羊、青蛙的 `playSound(null, mob, …)` 是 entity sound 封包，harness 沒錄），重播時從比較中濾掉。
+- **shulker 盒**：盒子的蓋子動畫與推動只做到方塊的部分，盒子被推時蓋內實體的處理沒有逐 tick 向量。
+- **自走飛行機器帶乘客**：只驗證了單次推動，沒有完整的自走機器向量（需要搜尋能自走的紅石配置）。
 
 
 ## 7. 重跑
@@ -574,6 +595,11 @@ java ... tools/MobVectors.java work/wp52/mobs/wolf52.jsonl eqwolf               
 java ... tools/InteractVectors.java work/wp53/interact/adv53.jsonl "adv53_.*"        # 蜂巢進度（InteractVectors 的篩選字串是整串比對的 regex，或 name 的一部分）；place52 的 7 個：篩選 "place52_(hopper|brewing|spawner|op_spawner).*"
 java ... tools/ContainerVectors.java work/wp53/container/c53.jsonl dispenser_equip50_wolf_armor_on_armored_wolf
 java ... tools/MobVectors.java work/wp53/mobs/pickup53.jsonl pickup53_              # 併入 work/m6-mobs2/vectors.jsonl 前先備份（.pre-wp53）；PICKUP_DEBUG=1 印出撿拾條件
+# wp54 的向量（InteractVectors 的篩選字串是 name 的一部分；步伐音效表：--step-sounds，產生器 tools/gen_step_sounds.py）
+java ... tools/InteractVectors.java work/wp54/interact/piston54.jsonl piston54       # 活塞推實體
+java ... tools/InteractVectors.java work/wp54/interact/sound54.jsonl sound54         # 方塊音效：摔、走、放置
+java ... tools/InteractVectors.java work/wp54/interact/mannequin54.jsonl mannequin54 # mannequin 落地（cwd 是輸出目錄的 server）
+java ... tools/MobVectors.java work/wp54/mobs/vectors_sounds.jsonl                   # 整套重錄，多一個 sound_trace；只把 trace 相同的 scenario 的 sound_trace 併回 m6-mobs2/vectors.jsonl（.pre-wp54）
 # 外掛 1.0 guest：sh crates/kiln-plugin-host/tests/fixtures/compat10/build.sh（要 wasm32-wasip2 target）；cargo test -p kiln-plugin-host --test api_compat --test wit_freeze
 # 與原版互載、指令對跑
 python tools/admin_check.py --kiln-exe target/release/kiln
