@@ -179,6 +179,13 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     if let Some(new) = farming::update_shape(level, s, pos, dir, neighbor_state) {
         return new;
     }
+    // `HangingMossBlock.updateShape`: without its anchor it goes on the next tick; the tip follows the moss below.
+    if class == C::HangingMossBlock {
+        if !support::can_survive(level, s, pos) {
+            crate::level::schedule_block_tick(level, pos, BlockId::of(s), 1, crate::ticks::TickPriority::Normal);
+        }
+        return state::set_bool(s, "tip", !state::same_block(level.block(pos.below()), s));
+    }
     if let Some(new) = support::pop_off(level, s, pos, dir, neighbor_state) {
         return new;
     }
@@ -339,6 +346,12 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
             farming::tick(level, s, pos);
         }
         C::DriedGhastBlock => misc2::dried_ghast_tick(level, s, pos),
+        // `HangingMossBlock.tick`: it breaks (and drops) when nothing holds it.
+        C::HangingMossBlock => {
+            if !support::can_survive(level, s, pos) {
+                crate::destroy_block(level, pos, true, crate::level::flags::LIMIT);
+            }
+        }
         // `BrushableBlock.tick`: the brushing fades (the block entity's), then the block falls if it can.
         C::BrushableBlock => {
             level.block_entity_tick(pos, s);

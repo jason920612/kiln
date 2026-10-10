@@ -146,13 +146,6 @@ pub(crate) fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, 
                 s
             }
         }
-        C::HangingMossBlock => {
-            if !support::can_survive(level, s, pos) {
-                d::AIR
-            } else {
-                state::set_bool(s, "tip", !state::same_block(level.block(pos.below()), s))
-            }
-        }
         C::MultifaceBlock => {
             if !(Direction::ALL.iter().any(|&f| state::get_bool(s, f.name()))) {
                 d::AIR
@@ -180,7 +173,7 @@ pub(crate) fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, 
 
 /// `MossyCarpetBlock.hasFaces`: a side that is not none.
 fn mossy_carpet_faces(s: u16) -> bool {
-    Direction::HORIZONTAL.iter().any(|d| state::get(s, d.name()) != Some("none"))
+    state::get_bool(s, "bottom") || Direction::HORIZONTAL.iter().any(|d| state::get(s, d.name()) != Some("none"))
 }
 
 /// `MossyCarpetBlock.canSupportAtFace`.
