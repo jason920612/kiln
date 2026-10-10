@@ -8,6 +8,7 @@ use super::{MAINHAND, MobData, MobKind, kinds};
 use crate::entity::{Entity, EntityKind};
 use crate::level::{EntityFilter, EntityLevel};
 use kiln_item::ItemStack;
+use kiln_javamath::random::RandomSource;
 use kiln_item::component::EquipmentSlot;
 
 /// `EquipmentSlot.BODY` as `dispense::equip` numbers it (the six `Mob` slots come first, then the body, then the saddle).

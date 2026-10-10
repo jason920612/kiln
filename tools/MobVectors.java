@@ -8717,6 +8717,75 @@ public class MobVectors {
         scenariosWp50Mounts(out);
         scenariosWp52Wolf(out);
         scenariosWp52Eggs(out);
+        scenariosWp53Pickup(out);
+    }
+
+    // ------------------------------------------------------------------ wp53: Mob.aiStep picks up what lies at its feet
+
+    /// A mob that picks up loot (`CanPickUpLoot`), `extra` NBT, an item entity of `item` at its feet; the equipment is traced.
+    static Scenario pickup(String name, String mob, String extra, String item) {
+        long seed = 53000L + Math.abs(name.hashCode() % 1000);
+        MobSpec m = new MobSpec("minecraft:" + mob, 0.5, BY, 0.5, 30f, seed);
+        m.nbt = "{NoAI:1b,PersistenceRequired:1b,CanPickUpLoot:1b" + (extra.isEmpty() ? "" : "," + extra) + "}";
+        Scenario s = new Scenario("pickup53_" + name);
+        s.mobs.add(m);
+        MobSpec it = new MobSpec("minecraft:item", 0.9, BY, 0.5, 0f, 0);
+        it.mainHand = item;
+        s.others.add(it);
+        s.player = new double[] {9.5, BY, 5.5};
+        s.playerCreative = true;
+        s.traceEquip = true;
+        s.levelSeed = 700 + Math.abs(name.hashCode() % 300);
+        s.ticks = 30;
+        floor(s, 16, "minecraft:grass_block");
+        return s;
+    }
+
+    static String worn(String slot, String item) {
+        return "equipment:{" + slot + ":{id:\"" + item + "\",count:1}}";
+    }
+
+    static void scenariosWp53Pickup(List<Scenario> out) {
+        String binding = "equipment:{head:{id:\"minecraft:leather_helmet\",count:1,components:{\"minecraft:enchantments\":{\"minecraft:binding_curse\":1}}}}";
+        // Armor: onto bare, over worse, not over better, not over a curse of binding (then into the empty hand).
+        out.add(pickup("zombie_helmet", "zombie", "", "minecraft:iron_helmet"));
+        out.add(pickup("zombie_chest", "zombie", "", "minecraft:diamond_chestplate"));
+        out.add(pickup("zombie_better", "zombie", worn("head", "minecraft:leather_helmet"), "minecraft:iron_helmet"));
+        out.add(pickup("zombie_worse", "zombie", worn("head", "minecraft:diamond_helmet"), "minecraft:leather_helmet"));
+        out.add(pickup("zombie_same", "zombie", worn("head", "minecraft:iron_helmet"), "minecraft:iron_helmet"));
+        out.add(pickup("zombie_binding", "zombie", binding, "minecraft:diamond_helmet"));
+        // Weapons and what a hand holds.
+        out.add(pickup("zombie_sword", "zombie", "", "minecraft:iron_sword"));
+        out.add(pickup("zombie_sword_over_sword", "zombie", worn("mainhand", "minecraft:wooden_sword"), "minecraft:iron_sword"));
+        out.add(pickup("zombie_sword_under_sword", "zombie", worn("mainhand", "minecraft:diamond_sword"), "minecraft:wooden_sword"));
+        out.add(pickup("zombie_stick", "zombie", "", "minecraft:stick"));
+        out.add(pickup("zombie_glow_ink", "zombie", "", "minecraft:glow_ink_sac"));
+        out.add(pickup("zombie_spear", "zombie", "", "minecraft:iron_spear"));
+        out.add(pickup("drowned_spear", "drowned", "", "minecraft:iron_spear"));
+        out.add(pickup("drowned_trident", "drowned", worn("mainhand", "minecraft:iron_sword"), "minecraft:trident"));
+        out.add(pickup("husk_boots", "husk", "", "minecraft:iron_boots"));
+        out.add(pickup("zombified_piglin_glow_ink", "zombified_piglin", "", "minecraft:glow_ink_sac"));
+        out.add(pickup("zombified_piglin_sword", "zombified_piglin", worn("mainhand", "minecraft:golden_sword"), "minecraft:iron_sword"));
+        // Skeletons like bows; a wither skeleton does not.
+        out.add(pickup("skeleton_sword_over_bow", "skeleton", worn("mainhand", "minecraft:bow"), "minecraft:iron_sword"));
+        out.add(pickup("skeleton_bow_over_sword", "skeleton", worn("mainhand", "minecraft:iron_sword"), "minecraft:bow"));
+        out.add(pickup("skeleton_helmet", "skeleton", "", "minecraft:iron_helmet"));
+        out.add(pickup("skeleton_spear", "skeleton", "", "minecraft:iron_spear"));
+        out.add(pickup("wither_skeleton_bow", "wither_skeleton", "", "minecraft:bow"));
+        out.add(pickup("wither_skeleton_sword", "wither_skeleton", "", "minecraft:iron_sword"));
+        // Others that were told to: a cow wears a helmet, a pig a saddle.
+        out.add(pickup("cow_helmet", "cow", "", "minecraft:iron_helmet"));
+        out.add(pickup("pig_saddle", "pig", "", "minecraft:saddle"));
+        out.add(pickup("pig_baby_saddle", "pig", "Age:-24000", "minecraft:saddle"));
+        out.add(pickup("creeper_apple", "creeper", "", "minecraft:apple"));
+        // Wolves: body armor on a tame wolf that wears none; with armor on, the second goes to the mouth; horse armor is not for wolves.
+        out.add(pickup("wolf_armor_bare", "wolf", owner(), "minecraft:wolf_armor"));
+        out.add(pickup("wolf_armor_wild", "wolf", "", "minecraft:wolf_armor"));
+        out.add(pickup("wolf_armor_worn", "wolf", owner() + "," + wolfArmor(0), "minecraft:wolf_armor"));
+        out.add(pickup("wolf_armor_over_damaged", "wolf", owner() + "," + wolfArmor(30), "minecraft:wolf_armor"));
+        out.add(pickup("wolf_horse_armor", "wolf", owner(), "minecraft:iron_horse_armor"));
+        out.add(pickup("wolf_helmet", "wolf", owner(), "minecraft:iron_helmet"));
+        out.add(pickup("wolf_baby_armor", "wolf", owner() + ",Age:-24000", "minecraft:wolf_armor"));
     }
 
     // ------------------------------------------------------------------ wp52: a spawn egg used on a mob of its own type
