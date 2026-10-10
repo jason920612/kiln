@@ -377,7 +377,7 @@ pub(crate) fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, d0: u16) -> Opt
                 None
             };
             tip.map(|tip| {
-                let thickness = speleothem::thickness(level, d0, pos, tip, !c.sneaking);
+                let thickness = crate::behaviour::speleothem_thickness(level, d0, pos, tip, !c.sneaking);
                 let s = state::set(state::set_dir(d0, "vertical_direction", tip), "thickness", thickness);
                 c.waterlogged(s)
             })
