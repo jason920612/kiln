@@ -262,8 +262,8 @@ impl Entity {
                 self.play_own_sound(level, sound, 1.0, 1.0);
             }
             "minecraft:copper_golem" => {
-                let sound = ["minecraft:entity.copper_golem.step", "minecraft:entity.copper_golem_exposed.step", "minecraft:entity.copper_golem_weathered.step", "minecraft:entity.copper_golem_oxidized.step"]
-                    [self.step_hint.weather.min(3) as usize];
+                let sound = ["minecraft:entity.copper_golem.step", "minecraft:entity.copper_golem.step", "minecraft:entity.copper_golem_weathered.step", "minecraft:entity.copper_golem_oxidized.step"]
+                    [match self.step_hint.weather { 0 | 1 => 0, 2 => 2, _ => 3 }];
                 self.play_own_sound(level, sound, 1.0, 1.0);
             }
             "minecraft:sulfur_cube" => {

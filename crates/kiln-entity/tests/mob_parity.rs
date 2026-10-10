@@ -868,6 +868,9 @@ fn replay(s: &Value) -> Result<usize, String> {
             if let kiln_entity::level::Event::Sound { pos, sound, source, volume, pitch } = &ev
                 && let Some(p) = player
                 && is_footing(sound)
+                // The landing of a long jump (goat, frog) is `playSound(null, mob, ...)`: an entity sound packet, which
+                // the recording of the vanilla side does not take.
+                && !(*volume == 2.0 && (sound.ends_with("goat.step") || sound.ends_with("frog.step")))
             {
                 let range = if *volume > 1.0 { 16.0 * *volume as f64 } else { 16.0 };
                 if pos.distance_to_sqr(p.pos) < range * range {
