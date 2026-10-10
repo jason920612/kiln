@@ -22,7 +22,7 @@ use std::path::PathBuf;
 
 /// `kiln:api@1.1.0`, `wit/kiln-api.wit`. (1.0.0 was `7b3032b84e8a93cd0ddff0b9662b262f0d5c3328f08806565f3adeafa72667df`; 1.1 only adds:
 /// the `world-read` and `move-hooks` interfaces, the `move-event` record, and the imports and exports of the worlds for them.)
-const KILN_API_DIGEST: &str = "260ea48cc9d0088e048144021edf597ce2b5540a61294a09b41e5a6a76254a01";
+const KILN_API_DIGEST: &str = "3258ddd7349dcde9ed1d20b037435872a48e84b990c2f27a2d4eca1edc5ed6f4";
 /// The package version that digest belongs to: the two change together.
 const KILN_API_VERSION: &str = "1.1.0";
 /// `wit/async-tasks.wit` (unstable until WASI 0.3 is).
@@ -108,6 +108,7 @@ fn declarations(text: &str) -> std::collections::BTreeMap<String, Vec<String>> {
                     current.clear();
                 }
             }
+            ";" if depth == 0 => head.clear(),
             ";" if depth == 1 => {
                 out.get_mut(&name).unwrap().push(current.join(" "));
                 current.clear();
