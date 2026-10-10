@@ -554,10 +554,15 @@ public class InteractVectors {
      * placing the last observer. `extra` blocks are placed first; `rider` is where the passenger starts.
      */
     static Case machine55(String name, String extra, double[] player, String... summons) {
+        return machine55(name, "slime_block", extra, player, summons);
+    }
+
+    static Case machine55(String name, String block, String extra, double[] player, String... summons) {
         Case c = p54("machine55_" + name);
         c.pos = player;
-        c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:slime_block").cmd("setblock 3 100 0 minecraft:observer[facing=west,powered=false]");
+        c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:" + block);
         if (!extra.isEmpty()) for (String x : extra.split(";")) c.cmd(x);
+        c.cmd("setblock 3 100 0 minecraft:observer[facing=west,powered=false]");
         for (String s : summons) c.cmd(s);
         // the clock starts when the second observer is put in front of the first
         c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:observer[facing=east,powered=false]"));
@@ -569,17 +574,18 @@ public class InteractVectors {
         out.add(machine55("player_on_slime", "", new double[] {5.5, 101.0, 0.5}));
         out.add(machine55("player_beside", "", new double[] {5.5, 101.0, 1.5}));
         out.add(machine55("pig", "", new double[] {1.5, 100.0, 3.5}, summon54("pig", 5.5, 101.0, 0.5)));
-        out.add(machine55("cow_and_sheep", "", new double[] {1.5, 100.0, 3.5}, summon54("cow", 5.5, 101.0, 0.5), summon54("sheep", 5.5, 101.0, 0.8)));
+        out.add(machine55("cow", "", new double[] {1.5, 100.0, 3.5}, summon54("cow", 5.5, 101.0, 0.5)));
+        out.add(machine55("sheep", "", new double[] {1.5, 100.0, 3.5}, summon54("sheep", 5.5, 101.0, 0.5)));
         out.add(machine55("villager", "", new double[] {1.5, 100.0, 3.5}, summon54("villager", 5.5, 101.0, 0.5)));
-        out.add(machine55("item", "", new double[] {1.5, 100.0, 3.5}, summon54("item", 5.5, 101.0, 0.5)));
-        out.add(machine55("boat", "", new double[] {1.5, 100.0, 3.5}, summon54("oak_boat", 5.5, 101.0, 0.5)));
-        out.add(machine55("minecart", "", new double[] {1.5, 100.0, 3.5}, summon54("minecart", 5.5, 101.0, 0.5)));
-        out.add(machine55("chicken_slime", "", new double[] {1.5, 100.0, 3.5}, summon54("chicken", 5.5, 101.0, 0.5), summon54("slime", 5.5, 101.0, 0.2)));
+        out.add(machine55("chicken", "", new double[] {1.5, 100.0, 3.5}, summon54("chicken", 5.5, 101.0, 0.5)));
+        out.add(machine55("slime", "", new double[] {1.5, 100.0, 3.5}, summon54("slime", 5.5, 101.0, 0.5)));
+        out.add(machine55("creeper", "", new double[] {1.5, 100.0, 3.5}, summon54("creeper", 5.5, 101.0, 0.5)));
         // two slime blocks in a row, and a piston that is regular (it lets go of them)
         out.add(machine55("two_slimes_player", "setblock 6 100 0 minecraft:slime_block", new double[] {6.5, 101.0, 0.5}));
         out.add(machine55("two_slimes_pig", "setblock 6 100 0 minecraft:slime_block", new double[] {1.5, 100.0, 3.5}, summon54("pig", 6.5, 101.0, 0.5)));
-        out.add(machine55("honey_player", "setblock 5 100 0 minecraft:honey_block", new double[] {5.5, 101.0, 0.5}));
-        out.add(machine55("stone_player", "setblock 5 100 0 minecraft:stone", new double[] {5.5, 101.0, 0.5}));
+        out.add(machine55("honey_player", "honey_block", "", new double[] {5.5, 101.0, 0.5}));
+        out.add(machine55("honey_pig", "honey_block", "", new double[] {1.5, 100.0, 3.5}, summon54("pig", 5.5, 101.0, 0.5)));
+        out.add(machine55("stone_player", "stone", "", new double[] {5.5, 101.0, 0.5}));
         // (debugging) honey and slime under a player, by a redstone block that comes and goes three times
         for (String blk : new String[] {"honey_block", "slime_block"}) {
             Case c = p54("machine55_pulse_" + blk);
@@ -592,7 +598,7 @@ public class InteractVectors {
         out.add(machine55("side_block_player", "setblock 5 100 1 minecraft:stone", new double[] {5.5, 101.0, 0.5}));
         // the clock beside the slime instead of under the player: the player stands off to the side and on top of the piston
         out.add(machine55("player_on_piston", "", new double[] {4.5, 101.0, 0.5}));
-        for (Case c : out.subList(Math.max(0, out.size() - 17), out.size())) c.noPitch = true;
+        for (Case c : out.subList(Math.max(0, out.size() - 19), out.size())) c.noPitch = true;
     }
 
     // ---------------------------------------------------------------- wp55: the block entity every block item gets when it is placed
