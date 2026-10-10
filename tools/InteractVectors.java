@@ -564,6 +564,8 @@ public class InteractVectors {
         if (!extra.isEmpty()) for (String x : extra.split(";")) c.cmd(x);
         c.cmd("setblock 3 100 0 minecraft:observer[facing=west,powered=false]");
         for (String s : summons) c.cmd(s);
+        // (what stands there settles first, as in `piston54`'s honey cases)
+        for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
         // the clock starts when the second observer is put in front of the first
         c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:observer[facing=east,powered=false]"));
         for (int i = 0; i < 90; i++) c.step(op("op", "idle"));
