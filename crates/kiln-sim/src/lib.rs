@@ -559,6 +559,8 @@ struct Player {
     saturation: f32,
     /// Distance fallen since last on the ground.
     fall_distance: f64,
+    /// The block at the feet (`floor(y - 0.2)`) when a landing is checked: `LivingEntity.playBlockFallSound` plays its fall sound.
+    landing_block: u16,
     /// `Entity.mainSupportingBlockPos`, `onGroundNoBlocks` and `wasTouchingWater` (the landing
     /// block of a fall is found through the first, the water state decides the second's reset).
     main_supporting_block: Option<kiln_entity::math::BlockPos>,
@@ -3634,6 +3636,7 @@ impl Sim {
             food: joining.food,
             saturation: joining.saturation,
             fall_distance: 0.0,
+            landing_block: 0,
             main_supporting_block: None,
             on_ground_no_blocks: false,
             was_touching_water: false,

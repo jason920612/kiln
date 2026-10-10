@@ -211,6 +211,7 @@ impl Player {
             if self.fall_distance > 0.0 {
                 // `LivingEntity.checkFallDamage`: landing is a change of block for the enchantments.
                 self.loc_landed = true;
+                self.landing_block = blocks(BlockPos::new(self.pos[0].floor() as i32, (self.pos[1] - 0.20000000298023224).floor() as i32, self.pos[2].floor() as i32)).unwrap_or(0);
                 self.fall_on(state, pos, ctx);
             }
             self.reset_fall_distance();
@@ -295,6 +296,11 @@ impl Player {
             self.reset_impulse_context();
             let sound = if damage > 4 { "minecraft:entity.player.big_fall" } else { "minecraft:entity.player.small_fall" };
             self.queue_sound(sound, 1.0, 1.0);
+            // `LivingEntity.playBlockFallSound`: the block at the feet lands with a sound of its own.
+            if !kiln_data::blocks_types::is_air(self.landing_block) {
+                let t = kiln_data::block_sounds::sound_type(self.landing_block);
+                self.queue_sound(t.fall_sound, t.volume * 0.5, t.pitch * 0.75);
+            }
             self.hurt(damage as f32, &cause.into(), ctx);
             return true;
         }

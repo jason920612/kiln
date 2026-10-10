@@ -4906,6 +4906,18 @@ public class InteractVectors {
         server.submit(() -> command("gamerule block_drops true")).get();
         // The mock player earns advancements as it uses things; their announcements are not what these vectors are about.
         server.submit(() -> command("gamerule show_advancement_messages false")).get();
+        // wp54: what every living thing sounds like when it takes a step (not a scenario: `--step-sounds` as the filter).
+        if ("--step-sounds".equals(filter)) {
+            server.submit(() -> {
+                try {
+                    stepDump(outPath);
+                } catch (Throwable t) {
+                    t.printStackTrace();
+                }
+            }).get();
+            server.halt(false);
+            System.exit(0);
+        }
         List<Case> all = new ArrayList<>();
         server.submit(() -> {
             equip(all);
@@ -4979,6 +4991,83 @@ public class InteractVectors {
         }
         server.halt(false);
         System.exit(0);
+    }
+
+    /**
+     * wp54: for every living entity type: its `getMovementEmission`, what `playStepSound` makes a listener hear on a stone
+     * floor (twice: a random pitch shows), what its fall sounds are, and the sound source.
+     */
+    static void stepDump(Path out) throws Exception {
+        ServerLevel level = server.overworld();
+        command("fill -8 98 -8 8 110 8 minecraft:air");
+        command("fill -8 99 -8 8 99 8 minecraft:stone");
+        ServerPlayer obs = mockPlayer("Obs");
+        obs.snapTo(2.5, 100.0, 2.5, 0f, 0f);
+        obs.connection.resetPosition();
+        drain(obs);
+        BlockPos below = new BlockPos(0, 99, 0);
+        BlockState stone = net.minecraft.world.level.block.Blocks.STONE.defaultBlockState();
+        List<String> lines = new ArrayList<>();
+        for (net.minecraft.world.entity.EntityType<?> type : BuiltInRegistries.ENTITY_TYPE) {
+            String id = BuiltInRegistries.ENTITY_TYPE.getKey(type).toString();
+            net.minecraft.world.entity.Entity e;
+            try {
+                e = type.create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+            } catch (Throwable t) {
+                continue;
+            }
+            if (!(e instanceof net.minecraft.world.entity.LivingEntity le) || e instanceof net.minecraft.world.entity.player.Player) continue;
+            e.snapTo(0.5, 100.0, 0.5, 0f, 0f);
+            level.addFreshEntity(e);
+            Method step = null;
+            for (Class<?> k = e.getClass(); k != null && step == null; k = k.getSuperclass()) {
+                try {
+                    step = k.getDeclaredMethod("playStepSound", BlockPos.class, BlockState.class);
+                } catch (NoSuchMethodException ex) {
+                    // up the class chain
+                }
+            }
+            step.setAccessible(true);
+            Method emission = null;
+            for (Class<?> k = e.getClass(); k != null && emission == null; k = k.getSuperclass()) {
+                try {
+                    emission = k.getDeclaredMethod("getMovementEmission");
+                } catch (NoSuchMethodException ex) {
+                    // up the class chain
+                }
+            }
+            emission.setAccessible(true);
+            List<Object> samples = new ArrayList<>();
+            for (int i = 0; i < 2; i++) {
+                drain(obs);
+                try {
+                    step.invoke(e, below, stone);
+                } catch (Throwable t) {
+                    samples.add("error " + t);
+                    continue;
+                }
+                List<Object> heard = new ArrayList<>();
+                for (Object o : packets(obs)) if (o instanceof Map<?, ?> m && "sound".equals(m.get("t"))) heard.add(op("name", m.get("name"), "source", m.get("source"), "volume", m.get("volume"), "pitch", m.get("pitch")));
+                samples.add(heard);
+            }
+            String fall = "null";
+            try {
+                Method fs = net.minecraft.world.entity.LivingEntity.class.getDeclaredMethod("getFallSounds");
+                fs.setAccessible(true);
+                Object f = fs.invoke(le);
+                var small = (net.minecraft.sounds.SoundEvent) f.getClass().getMethod("small").invoke(f);
+                var big = (net.minecraft.sounds.SoundEvent) f.getClass().getMethod("big").invoke(f);
+                fall = "[\"" + small.location() + "\",\"" + big.location() + "\"]";
+            } catch (Throwable t) {
+                // none
+            }
+            lines.add("{\"type\":\"" + id + "\",\"emission\":\"" + emission.invoke(e) + "\",\"fall\":" + fall + ",\"steps\":" + toJson(samples) + "}");
+            e.discard();
+        }
+        try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(out))) {
+            for (String l : lines) w.println(l);
+        }
+        System.out.println("InteractVectors: wrote the step sounds of " + lines.size() + " types to " + out);
     }
 
     static void writeServerFiles() throws Exception {
