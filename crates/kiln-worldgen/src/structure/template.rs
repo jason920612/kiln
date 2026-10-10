@@ -430,12 +430,35 @@ impl Template {
             let rotation = fields.iter().find(|(k, _)| k == "Rotation").and_then(|(_, v)| v.as_list()).map(|l| l.to_vec());
             let yaw = rotation.as_ref().and_then(|l| l.first()).and_then(|t| t.as_f64()).unwrap_or(0.0) as f32;
             let pitch = rotation.as_ref().and_then(|l| l.get(1)).and_then(|t| t.as_f64()).unwrap_or(0.0) as f32;
-            let turned = entity_rotate(yaw, rot) + (entity_mirror(yaw, m) - yaw);
+            let mut turned = entity_rotate(yaw, rot) + (entity_mirror(yaw, m) - yaw);
+            // A hanging entity turns its direction too (`HangingEntity.rotate`/`mirror`), and hangs in the block its new place is in
+            // (`snapTo` -> `setPos`; the saved `block_pos` is the old place's).
+            let id = fields.iter().find(|(k, _)| k == "id").and_then(|(_, v)| v.as_str()).map(str::to_owned).unwrap_or_default();
+            let hanging_key = match id.as_str() {
+                "minecraft:item_frame" | "minecraft:glow_item_frame" => Some("Facing"),
+                "minecraft:painting" => Some("facing"),
+                _ => None,
+            };
+            let hanging_block = [pos[0].floor() as i32, pos[1].floor() as i32, pos[2].floor() as i32];
+            if let Some(key) = hanging_key
+                && let Some(slot) = fields.iter_mut().find(|(k, _)| k == key)
+                && let Some(value) = slot.1.as_i64()
+            {
+                // The direction as the horizontal index (south, west, north, east); the item frame's data value has down and up in front.
+                let item_frame = key == "Facing";
+                let horizontal = if item_frame { [None, None, Some(2), Some(0), Some(1), Some(3)].get(value as usize).copied().flatten() } else { Some(value.rem_euclid(4) as i32) };
+                let (f, h) = hanging_turn(horizontal, rot, m);
+                turned = f;
+                if let Some(h) = h {
+                    let written = if item_frame { [3, 4, 2, 5][h as usize] } else { i64::from(h) };
+                    slot.1 = Tag::Byte(written as i8);
+                }
+            }
             for (k, v) in fields.iter_mut() {
                 match k.as_str() {
                     "Pos" => *v = Tag::List(pos.iter().map(|&c| Tag::Double(c)).collect()),
                     "Rotation" => *v = Tag::List(vec![Tag::Float(turned), Tag::Float(pitch)]),
-                    "block_pos" => *v = Tag::IntArray(vec![bp.x, bp.y, bp.z]),
+                    "block_pos" => *v = Tag::IntArray(if hanging_key.is_some() { hanging_block.to_vec() } else { vec![bp.x, bp.y, bp.z] }),
                     _ => {}
                 }
             }
@@ -445,6 +468,40 @@ impl Template {
             r.add_entity(pos[0], pos[2], Tag::Compound(fields));
         }
     }
+}
+
+/// `HangingEntity.rotate(rotation)`: the new horizontal direction (index of south, west, north, east; `None` for one that
+/// points up or down, which stays) and the yaw it returns, for the entity facing `direction`.
+fn hanging_rotate(direction: Option<i32>, r: Rotation, yaw_of_vertical: f32) -> (Option<i32>, f32) {
+    let direction = direction.map(|h| match r {
+        Rotation::Clockwise180 => (h + 2) % 4,
+        Rotation::CounterClockwise90 => (h + 3) % 4,
+        Rotation::Clockwise90 => (h + 1) % 4,
+        Rotation::None => h,
+    });
+    let yaw = wrap_degrees(direction.map_or(yaw_of_vertical, |h| (h * 90) as f32));
+    // (The table pairs a counter-clockwise turn of the direction with +90 and a clockwise one with +270.)
+    let f = match r {
+        Rotation::Clockwise180 => yaw + 180.0,
+        Rotation::CounterClockwise90 => yaw + 90.0,
+        Rotation::Clockwise90 => yaw + 270.0,
+        Rotation::None => yaw,
+    };
+    (direction, f)
+}
+
+/// `rotate` then `mirror` of a hanging entity, as `StructureTemplate.placeEntities` adds them up: the final direction and yaw.
+fn hanging_turn(direction: Option<i32>, r: Rotation, m: Mirror) -> (f32, Option<i32>) {
+    let (d1, f1) = hanging_rotate(direction, r, 0.0);
+    // `Mirror.getRotation(direction)`: a mirror across the axis the entity faces along turns it around.
+    let mirror_rotation = match (m, d1) {
+        (Mirror::LeftRight, Some(h)) if h % 2 == 0 => Rotation::Clockwise180,
+        (Mirror::FrontBack, Some(h)) if h % 2 == 1 => Rotation::Clockwise180,
+        _ => Rotation::None,
+    };
+    let (d2, f2) = hanging_rotate(d1, mirror_rotation, 0.0);
+    let y_rot = d2.map_or(0.0, |h| (h * 90) as f32);
+    (f1 + (f2 - y_rot), d2)
 }
 
 /// `Mth.wrapDegrees(float)`.
