@@ -1870,6 +1870,20 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     {
         crate::prof!("mob", "apply_effects_from_blocks");
         e.apply_effects_from_blocks(level);
+        // The hurts of fire and lava it met (`Entity.lavaHurt`: the burn sound after a hurt that went through).
+        for action in std::mem::take(&mut e.inside.deferred) {
+            match action {
+                crate::inside::Action::FireHurt(damage) => {
+                    hurt(e, m, level, DamageSource::of(DamageKind::InFire), damage);
+                }
+                crate::inside::Action::LavaHurt if !m.kind.fire_immune() => {
+                    if hurt(e, m, level, DamageSource::of(DamageKind::Lava), 4.0) {
+                        e.lava_hurt_sound(level);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
     // Freezing.
     if !e.is_in_powder_snow {
