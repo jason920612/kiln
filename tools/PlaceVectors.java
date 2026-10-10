@@ -286,6 +286,9 @@ public class PlaceVectors {
                 }
         BlockState[] before = snapshot(p);
         player.snapTo(8.5, 300.0, 8.5, c.yaw, c.pitch);
+        // (`Direction.orderedByNearest` reads the head's yaw)
+        player.setYHeadRot(c.yaw);
+        player.setYBodyRot(c.yaw);
         player.setShiftKeyDown(c.sneak);
         Map<String, Object> results = new LinkedHashMap<>();
         Vec3 loc = new Vec3(O.getX() + c.cursor[0], O.getY() + c.cursor[1], O.getZ() + c.cursor[2]);
