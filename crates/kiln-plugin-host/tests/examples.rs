@@ -203,6 +203,9 @@ fn strict_mode_budgets_are_fuel_and_the_environment_is_seeded() {
         assert_eq!(r.block_break(&a, near(71), STONE), Verdict::Deny(None));
     }
     assert_eq!(stat(&rt, "timeouts"), 3);
+    // (Strict mode demotes at the next B0, not in the middle of a tick whose regions work in parallel.)
+    assert!(!rt.is_demoted(0));
+    rt.begin_tick();
     assert!(rt.is_demoted(0));
 
     let roll = |seed: u64, ticks: usize| {
