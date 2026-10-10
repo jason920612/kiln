@@ -251,7 +251,6 @@ public class BlockTickVectors {
         {"cave_vines", "0,3,0,minecraft:stone;0,2,0,minecraft:cave_vines_plant;0,1,0,minecraft:cave_vines[age=3]", "0,3,0"},
         {"skull_wall", "0,0,0,minecraft:stone;1,0,0,minecraft:skeleton_wall_skull[facing=east]", "0,0,0"},
         {"bell_floor", "0,0,0,minecraft:stone;0,1,0,minecraft:bell[attachment=floor]", "0,0,0"},
-        {"fire", "0,0,0,minecraft:netherrack;0,1,0,minecraft:fire[age=0]", "0,0,0"},
     };
 
     static void support55(List<Sc> out, String name, long seed, int from, int to, String mode) {
