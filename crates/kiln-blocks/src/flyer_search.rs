@@ -438,3 +438,44 @@ fn flyer_dump() {
     });
     println!("{} runs, {} intact and still changing", runs.load(std::sync::atomic::Ordering::Relaxed), kept.load(std::sync::atomic::Ordering::Relaxed));
 }
+
+/// Every 2 x `len` grid of air, slime, sticky pistons (east, west) and observers (east, west, north, south).
+#[test]
+#[ignore]
+fn flyer_search4() {
+    let len: usize = std::env::var("KILN_FLYER_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+    let threads: usize = std::env::var("KILN_FLYER_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
+    // kinds as in `cell`: air, slime, sticky east, sticky west, observer east, west, north, south
+    const MAP: [usize; 8] = [0, 1, 2, 3, 6, 7, 8, 9];
+    let total = 8usize.pow((2 * len) as u32);
+    let found = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|sc| {
+        for t in 0..threads {
+            let found = &found;
+            sc.spawn(move || {
+                let mut n = t;
+                while n < total {
+                    let mut cells = vec![0usize; 2 * len];
+                    let mut m = n;
+                    for c in cells.iter_mut() {
+                        *c = MAP[m % 8];
+                        m /= 8;
+                    }
+                    n += threads;
+                    let (a, b) = cells.split_at(len);
+                    let has = |ks: &[usize]| cells.iter().any(|c| ks.contains(c));
+                    if !has(&[2, 3]) || !has(&[6, 7, 8, 9]) || !has(&[1]) || cells.iter().filter(|&&c| c != 0).count() < 4 {
+                        continue;
+                    }
+                    if let Some((x, y)) = run2([a, b], 120)
+                        && (y - x).abs() >= 3
+                    {
+                        found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        println!("flies {} blocks: row0 {:?} row1 {:?} (0 air, 1 slime, 2/3 sticky east/west, 6/7/8/9 observer east/west/north/south)", y - x, a, b);
+                    }
+                }
+            });
+        }
+    });
+    println!("{} layouts fly", found.load(std::sync::atomic::Ordering::Relaxed));
+}
