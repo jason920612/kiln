@@ -174,6 +174,15 @@ impl Kind for Cat {
         Some(Some(sound(m, "stray_ambient")))
     }
 
+    /// `Cat.getHurtSound` / `getDeathSound`: the sound set of its sound variant.
+    fn hurt_sound_for(&self, m: &MobData) -> Option<&'static str> {
+        Some(sound(m, "hurt"))
+    }
+
+    fn death_sound_for(&self, m: &MobData) -> Option<&'static str> {
+        Some(sound(m, "death"))
+    }
+
     fn can_attack(&self, m: &MobData, level: &dyn EntityLevel, t: &goals::Living) -> bool {
         !(t.player && tame::get(m).and_then(|x| x.owner).is_some_and(|u| level.player(t.id).is_some_and(|p| p.uuid == u)))
     }

@@ -245,6 +245,11 @@ impl Kind for Wolf {
         Some(sound(m, "hurt"))
     }
 
+    /// `Wolf.getDeathSound`: the set of its sound variant.
+    fn death_sound_for(&self, m: &MobData) -> Option<&'static str> {
+        Some(sound(m, "death"))
+    }
+
     /// `Wolf.actuallyHurt`: wolf armor takes the blow (a damage type the armor does not stop goes through): the armor wears by
     /// the damage, and cracks, with a sound and scute particles, when it gets to a worse level.
     fn override_actually_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> bool {
