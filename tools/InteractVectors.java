@@ -558,6 +558,8 @@ public class InteractVectors {
             c.gameMode = "creative";
             c.op = true;
             c.slot("h0", stack(item));
+            // (the level ticks the block entity once, as Kiln's replay does)
+            c.ticking();
             c.step(useOn(2, 99, 0, 1, 0));
             out.add(c);
         }

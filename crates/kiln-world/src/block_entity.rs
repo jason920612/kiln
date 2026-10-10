@@ -105,6 +105,36 @@ impl BlockEntity {
             fields.push(("is_waxed".into(), Tag::Byte(0)));
             fields.push(("components".into(), Tag::Compound(Vec::new())));
         }
+        // What a new block entity saves before anything has happened to it (read off the 26.3 `saveAdditional`s).
+        let int = |k: &str, v: i32| (k.to_owned(), Tag::Int(v));
+        match name {
+            // `PotentSulfurBlockEntity.waitingCountdown`.
+            "minecraft:potent_sulfur" => fields.push(int("countdown", -1)),
+            // `ShelfBlockEntity`: its three slots start empty, and the items stand in the middle.
+            "minecraft:shelf" => {
+                fields.push(("Items".into(), Tag::List(Vec::new())));
+                fields.push(("align_items_to_bottom".into(), Tag::Byte(0)));
+            }
+            // `ComparatorBlockEntity.output`.
+            "minecraft:comparator" => fields.push(int("OutputSignal", 0)),
+            // `BeaconBlockEntity.levels` (clients are told it).
+            "minecraft:beacon" => fields.push(int("Levels", 0)),
+            "minecraft:test_block" => {
+                fields.push(("message".into(), Tag::String(String::new())));
+                fields.push(("mode".into(), Tag::String("start".into())));
+                fields.push(("powered".into(), Tag::Byte(0)));
+            }
+            "minecraft:test_instance_block" => fields.push((
+                "data".into(),
+                Tag::Compound(vec![
+                    ("ignore_entities".into(), Tag::Byte(0)),
+                    ("rotation".into(), Tag::String("none".into())),
+                    ("size".into(), Tag::IntArray(vec![0, 0, 0])),
+                    ("status".into(), Tag::String("cleared".into())),
+                ]),
+            )),
+            _ => {}
+        }
         Self { kind, nbt: Tag::Compound(fields) }
     }
 
