@@ -5,7 +5,7 @@
 //!   handler asks `world::block` for it (the host copied the blocks around the event for the call);
 //! - permission nodes (`perm`): `/lockbox grant <uuid>` and `/lockbox revoke <uuid>` (operators)
 //!   change who has `lockbox.bypass`; the check works in every context from the global snapshot;
-//! - `player-moved`: a per-player step counter (`steps:<uuid>` in the global namespace).
+//! - `player-moved`: a per-player step counter (`steps` in the player's data).
 //!
 //! A lock lives in the **cell** namespace of the chest (`lock:x:y:z` holds the owner), so the
 //! decision is made from data the event's own region owns.
@@ -13,8 +13,8 @@
 use kiln_plugin_sdk::registry::{self, Kind};
 use kiln_plugin_sdk::state::{self, Scope};
 use kiln_plugin_sdk::{
-    BlockEvent, CommandSpec, InitInfo, Observed, PlaceEvent, Player, Plugin, Span, Text, Verdict, export_plugin, perm, uuid_from_u128, uuid_string,
-    uuid_u128, world,
+    BlockEvent, CommandSpec, InitInfo, Observed, PlaceEvent, Player, Plugin, Span, Text, Verdict, export_plugin, perm, uuid_from_u128, uuid_u128,
+    world,
 };
 use std::sync::Mutex;
 
@@ -111,7 +111,7 @@ impl Plugin for Lockbox {
     fn on_observe(events: Vec<Observed>) {
         for ev in events {
             if let Observed::PlayerMoved(m) = ev {
-                state::add(&format!("steps:{}", uuid_string(&m.player.uuid)), 1);
+                state::bump(Scope::Player(m.player.handle), "steps", 1);
             }
         }
     }
