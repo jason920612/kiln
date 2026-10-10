@@ -896,6 +896,12 @@ public class MobVectors {
                 for (int i = 0; i < initial; i++) equipTrace.append(',').append(equipSig((Mob) tracked.get(i)));
                 equipTrace.append(']');
             }
+            if (System.getenv("PICKUP_DEBUG") != null && tick % 10 == 0) {
+                Mob m0 = (Mob) tracked.get(0);
+                Entity it0 = tracked.size() > initial ? tracked.get(initial) : null;
+                System.out.println("PDBG " + s.name + " t" + tick + " cpl=" + m0.canPickUpLoot() + " grief=" + level.getGameRules().get(net.minecraft.world.level.gamerules.GameRules.MOB_GRIEFING) + " alive=" + m0.isAlive() + " dead=" + get(m0, "dead")
+                        + " item=" + it0 + (it0 instanceof net.minecraft.world.entity.item.ItemEntity ie ? " delay=" + get(ie, "pickupDelay") + " hasDelay=" + ie.hasPickUpDelay() : "") + " bb=" + m0.getBoundingBox().inflate(1, 0, 1) + " itembb=" + (it0 == null ? "" : it0.getBoundingBox()));
+            }
             // wp49 copper golems: per chest its openers and a signature of its slots, then what each mob holds.
             if (!chestBes.isEmpty()) {
                 if (tick > 0) chestTrace.append(',');
