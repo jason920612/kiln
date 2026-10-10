@@ -446,6 +446,64 @@ public class InteractVectors {
 
     static final String LAYERS = "banner_patterns=[{pattern:\"minecraft:stripe_downright\",color:\"red\"},{pattern:\"minecraft:circle\",color:\"blue\"},{pattern:\"minecraft:border\",color:\"black\"}]";
 
+    // ---------------------------------------------------------------- wp52: an item's components in the block entity it is placed as
+
+    static void placeComponents52(List<Case> out) {
+        Case c;
+        String dia = "[{slot:0,item:{id:\"minecraft:diamond\",count:3}},{slot:4,item:{id:\"minecraft:stick\",count:20}}]";
+        String[][] items = {
+                {"head_profile", "minecraft:player_head[profile={name:\"Notch\"}]"},
+                {"head_plain", "minecraft:player_head"},
+                {"skull_named", "minecraft:skeleton_skull[custom_name='\"Bones\"']"},
+                {"head_note", "minecraft:zombie_head[note_block_sound=\"minecraft:block.note_block.bell\"]"},
+                {"chest_named", "minecraft:chest[custom_name='\"Box\"']"},
+                {"chest_container", "minecraft:chest[container=" + dia + "]"},
+                {"chest_loot", "minecraft:chest[container_loot={loot_table:\"minecraft:chests/simple_dungeon\",seed:5L}]"},
+                {"chest_lock", "minecraft:chest[lock={components:{\"minecraft:custom_name\":'\"key\"'}}]"},
+                {"barrel_container", "minecraft:barrel[container=" + dia + ",custom_name='\"B\"']"},
+                {"shulker", "minecraft:shulker_box[container=" + dia + "]"},
+                {"shulker_red_named", "minecraft:red_shulker_box[container=" + dia + ",custom_name='\"Red\"']"},
+                {"dispenser", "minecraft:dispenser[container=" + dia + "]"},
+                {"hopper_named", "minecraft:hopper[custom_name='\"H\"']"},
+                {"furnace_named", "minecraft:furnace[custom_name='\"F\"']"},
+                {"brewing_named", "minecraft:brewing_stand[custom_name='\"Brew\"']"},
+                {"enchanting_named", "minecraft:enchanting_table[custom_name='\"Ench\"']"},
+                {"beacon_named", "minecraft:beacon[custom_name='\"Light\"']"},
+                {"decorated_pot", "minecraft:decorated_pot[pot_decorations=[\"minecraft:brick\",\"minecraft:arms_up_pottery_sherd\",\"minecraft:brick\",\"minecraft:skull_pottery_sherd\"]]"},
+                {"decorated_pot_container", "minecraft:decorated_pot[container=[{slot:0,item:{id:\"minecraft:diamond\",count:3}}]]"},
+                {"beehive_bees", "minecraft:beehive[bees=[{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:100,ticks_in_hive:5}]]"},
+                {"bee_nest_bees", "minecraft:bee_nest[bees=[{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:100,ticks_in_hive:5}],block_state={honey_level:\"3\"}]"},
+                {"lectern", "minecraft:lectern"},
+                {"crafter", "minecraft:crafter[custom_name='\"Craft\"']"},
+                {"trapped_chest", "minecraft:trapped_chest[container=" + dia + "]"},
+                {"ender_chest_named", "minecraft:ender_chest[custom_name='\"E\"']"},
+                {"sign_named", "minecraft:oak_sign[custom_name='\"S\"']"},
+                {"bed_color", "minecraft:red_bed"},
+                {"chest_bed_data", "minecraft:chest[block_entity_data={id:\"minecraft:chest\",Items:[{Slot:1b,id:\"minecraft:stone\",count:2}]}]"},
+                {"chest_bed_data_custom", "minecraft:chest[block_entity_data={id:\"minecraft:chest\",CustomName:'\"Data\"'}]"},
+                {"spawner_data", "minecraft:spawner[block_entity_data={id:\"minecraft:mob_spawner\",SpawnData:{entity:{id:\"minecraft:zombie\"}},Delay:5s}]"},
+        };
+        for (String[] it : items) {
+            for (String mode : new String[] {"survival", "creative"}) {
+                c = blockCase("place52_" + it[0] + "_" + mode, "minecraft:air");
+                c.gameMode = mode;
+                c.slot("h0", parsed(it[1]));
+                c.step(useOn(2, 99, 0, 1, 0));
+                out.add(c);
+            }
+        }
+        // an operator in creative mode may place a block entity's data (survival and non-operators may not)
+        for (String[] it : new String[][] {{"chest_bed_data", "minecraft:chest[block_entity_data={id:\"minecraft:chest\",Items:[{Slot:1b,id:\"minecraft:stone\",count:2}]}]"},
+                {"spawner_data", "minecraft:spawner[block_entity_data={id:\"minecraft:mob_spawner\",SpawnData:{entity:{id:\"minecraft:zombie\"}},Delay:5s}]"}}) {
+            c = blockCase("place52_op_" + it[0], "minecraft:air");
+            c.gameMode = "creative";
+            c.op = true;
+            c.slot("h0", parsed(it[1]));
+            c.step(useOn(2, 99, 0, 1, 0));
+            out.add(c);
+        }
+    }
+
     static void banners50(List<Case> out) {
         Case c;
         // ---- placing: a standing banner on the stone, a wall banner on its side; the block entity carries the layers, name and the rest.
@@ -4490,6 +4548,7 @@ public class InteractVectors {
             books(all);
             picks(all);
             pickEntities52(all);
+            placeComponents52(all);
             cakes(all);
             blocks49(all);
             frames49(all);
