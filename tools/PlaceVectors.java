@@ -314,7 +314,8 @@ public class PlaceVectors {
                         i++;
                     }
             if (!changes.isEmpty()) {
-                awaitLight();
+                // (only what reads the light needs it settled before the next item)
+                if (lightSensitive(item)) awaitLight();
                 // the default state of the item's block at P, nothing else: `1`
                 if (changes.size() == 1) {
                     @SuppressWarnings("unchecked")
@@ -346,6 +347,11 @@ public class PlaceVectors {
         line.put("light", light);
         line.put("r", results);
         return toJson(line);
+    }
+
+    static boolean lightSensitive(BlockItem item) {
+        var b = item.getBlock();
+        return b instanceof net.minecraft.world.level.block.MushroomBlock || b instanceof net.minecraft.world.level.block.CropBlock || b instanceof net.minecraft.world.level.block.PitcherCropBlock;
     }
 
     static void awaitLight() {
@@ -412,6 +418,7 @@ public class PlaceVectors {
         for (net.minecraft.world.item.Item it : BuiltInRegistries.ITEM) {
             if (it instanceof BlockItem bi && !(it instanceof net.minecraft.world.item.PlaceOnWaterBlockItem)) items.add(bi);
         }
+        items.sort(Comparator.comparing((BlockItem i) -> !lightSensitive(i)));
         List<String> lines = new ArrayList<>();
         List<String> names = new ArrayList<>();
         for (BlockItem i : items) names.add(BuiltInRegistries.ITEM.getKey(i).toString());
@@ -420,13 +427,19 @@ public class PlaceVectors {
         if (!mode.equals("self")) ctxs.addAll(sharedContexts());
         if (!mode.equals("shared")) ctxs.addAll(selfContexts(items));
         System.out.println("PlaceVectors: " + items.size() + " items, " + ctxs.size() + " contexts");
+        PrintWriter out = new PrintWriter(Files.newBufferedWriter(outPath));
+        out.println(lines.get(0));
+        out.flush();
         int[] id = {0};
         long t0 = System.currentTimeMillis();
         for (Ctx c : ctxs) {
             int n = id[0]++;
             server.submit(() -> {
                 try {
-                    lines.add(run(c, n, items));
+                    String l = run(c, n, items);
+                    out.println(l);
+                    out.flush();
+                    lines.add(l);
                 } catch (Throwable t) {
                     t.printStackTrace();
                     lines.add("{\"id\":" + n + ",\"error\":" + toJson(t.toString()) + "}");

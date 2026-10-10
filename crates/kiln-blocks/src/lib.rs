@@ -29,6 +29,8 @@ pub mod weather;
 pub mod fire;
 #[cfg(test)]
 mod block_parity;
+#[cfg(test)]
+mod place_parity;
 
 pub use behaviour::piston::{MovingPiston, MovingPistons, tick_moving_pistons};
 pub use fluid::FluidType;
