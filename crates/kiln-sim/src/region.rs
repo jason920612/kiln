@@ -1608,7 +1608,6 @@ fn handle_move(
     on_ground: bool,
 ) -> bool {
     let now = env.game_time;
-    if std::env::var_os("KILN_MOVE_TRACE").is_some() { eprintln!("MOVE awaiting={:?} load={} pos={:?} at={:?} to={:?} tick={}", p.awaiting_teleport, p.load_timeout, p.pos, p.position_this_tick, pos, now); }
     if movement::invalid(pos, rot) {
         p.disconnect("Invalid movement");
         return false;

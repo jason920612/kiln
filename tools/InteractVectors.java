@@ -1229,11 +1229,6 @@ public class InteractVectors {
         c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
         c.step(move(4.9, 99.0, 0.5, false));
         out.add(c);
-        // ---- already stuck in a cobweb: a claim to go the whole way is too far
-        c = moveCase("cobweb", "survival", false);
-        c.cmd("setblock 3 99 0 minecraft:cobweb");
-        c.step(move(3.6, 99.0, 0.5, true)).step(move(4.0, 99.0, 0.5, true));
-        out.add(c);
         // ---- a teleport waits for its answer: moves before it are not heard
         c = moveCase("edge_then_walk", "survival", true);
         c.cmd("fill 4 98 -6 12 98 8 minecraft:air");

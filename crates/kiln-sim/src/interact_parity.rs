@@ -738,6 +738,8 @@ fn run_case(line: &Value) -> Vec<String> {
                     1,
                     PlayIn::Move { pos: Some([to[0], to[1], to[2]]), rot: None, on_ground: step["on_ground"].as_bool().unwrap(), horizontal_collision: step["hcol"].as_bool().unwrap() },
                 ));
+                // (The client's tick is over: the next step may move again.)
+                inbox.push(ToSim::Packet(1, PlayIn::ClientTickEnd));
             }
             "accept_teleport" => {
                 if let Some(id) = sim.players[&1].awaiting_teleport {
