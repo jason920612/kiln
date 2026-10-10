@@ -159,7 +159,7 @@ fn equippable_slot(stack: &ItemStack) -> Option<usize> {
 
 /// `getApproximateAttributeWith`: the base of a piglin's attribute with the item's modifiers of
 /// that slot (`ItemAttributeModifiers.compute`).
-fn approximate_attribute(m: &MobData, stack: &ItemStack, attr: Attr, slot: usize) -> f64 {
+pub(crate) fn approximate_attribute(m: &MobData, stack: &ItemStack, attr: Attr, slot: usize) -> f64 {
     use kiln_item::component::{AttributeOperation, EquipmentSlotGroup as G};
     let base = m.attrs.get(attr).map_or(0.0, |a| a.base);
     let Some(mods) = stack.get(kiln_item::keys::ATTRIBUTE_MODIFIERS) else { return base };
@@ -178,7 +178,9 @@ fn approximate_attribute(m: &MobData, stack: &ItemStack, attr: Attr, slot: usize
             G::Legs => slot == mob::LEGS,
             G::Chest => slot == mob::CHEST,
             G::Head => slot == mob::HEAD,
-            G::Armor => slot >= mob::FEET,
+            G::Armor => (mob::FEET..=mob::HEAD).contains(&slot) || slot == 6,
+            G::Body => slot == 6,
+            G::Saddle => slot == 7,
             _ => false,
         };
         if !fits {
@@ -195,7 +197,7 @@ fn approximate_attribute(m: &MobData, stack: &ItemStack, attr: Attr, slot: usize
 }
 
 /// `Mob.canReplaceEqualItem`.
-fn can_replace_equal_item(candidate: &ItemStack, current: &ItemStack) -> bool {
+pub(crate) fn can_replace_equal_item(candidate: &ItemStack, current: &ItemStack) -> bool {
     let enchants = |s: &ItemStack| s.get(kiln_item::keys::ENCHANTMENTS).map_or(0, |e| e.0.len());
     let (a, b) = (enchants(candidate), enchants(current));
     if a != b {

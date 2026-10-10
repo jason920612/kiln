@@ -728,6 +728,11 @@ pub trait Kind: Sync + Send {
         let _ = m;
         Vec::new()
     }
+    /// The drop chance of what the type wears beyond the six slots (`DropChances.byEquipment`; vanilla's default 0.085).
+    fn extra_drop_chance(&self, m: &MobData, slot: u8) -> f32 {
+        let _ = (m, slot);
+        0.085
+    }
     /// The equipment beyond the six slots that `dropCustomDeathLoot` looks at (`BODY`, then `SADDLE`),
     /// taken off the mob as (stack, drop chance).
     fn take_extra_equipment_for_drop(&self, m: &mut MobData) -> Vec<(ItemStack, f32)> {

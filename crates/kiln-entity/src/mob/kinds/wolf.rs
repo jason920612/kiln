@@ -302,6 +302,10 @@ impl Kind for Wolf {
         (slot == 6).then(|| std::mem::take(&mut st_mut(m).body))
     }
 
+    fn extra_drop_chance(&self, m: &MobData, _slot: u8) -> f32 {
+        st(m).body_drop
+    }
+
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let body = &st(m).body;
         if body.is_empty() { Vec::new() } else { vec![(6, body.clone())] }

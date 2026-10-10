@@ -25,6 +25,7 @@ pub mod interact;
 pub mod kinds;
 pub mod mth;
 pub mod path;
+pub mod pickup;
 pub mod persist;
 pub mod random_pos;
 pub mod species;
