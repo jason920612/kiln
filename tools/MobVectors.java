@@ -8804,6 +8804,8 @@ public class MobVectors {
                     Scenario s = new Scenario("pushout55_" + n);
                     MobSpec it = new MobSpec("minecraft:item", 3.0 + dx, BY + dy, 3.0 + dz, 0f, 5500L + n);
                     it.mainHand = "minecraft:stick";
+                    // (a motion, even none, pins the item's random to the seed)
+                    it.motion = new double[] {0, 0, 0};
                     s.others.add(it);
                     s.player = new double[] {12.5, BY, 12.5};
                     s.playerCreative = true;
