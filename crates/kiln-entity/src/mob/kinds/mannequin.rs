@@ -66,6 +66,7 @@ fn pose_name(p: i32) -> &'static str {
         pose::SWIMMING => "swimming",
         pose::FALL_FLYING => "fall_flying",
         pose::SLEEPING => "sleeping",
+        pose::DYING => "dying",
         _ => "standing",
     }
 }
@@ -108,6 +109,16 @@ impl Kind for Mannequin {
         Some(Outcome::PASS)
     }
 
+    fn effective_ai(&self, m: &MobData) -> bool {
+        !st(m).immovable
+    }
+
+    /// `LivingEntity.die`: the pose is `DYING`.
+    fn die(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn crate::level::EntityLevel, _source: &crate::mob::DamageSource) {
+        st_mut(m).pose = pose::DYING;
+        crate::mob::refresh_dimensions(e, m);
+    }
+
     fn despawns(&self) -> bool {
         false
     }
@@ -123,6 +134,7 @@ impl Kind for Mannequin {
             pose::CROUCHING => (0.6, 1.5, 1.27),
             pose::SWIMMING | pose::FALL_FLYING => (0.6, 0.6, 0.4),
             pose::SLEEPING => (0.2, 0.2, 0.2),
+            pose::DYING => (0.2, 0.2, 1.62),
             _ => (0.6, 1.8, 1.62),
         }
     }

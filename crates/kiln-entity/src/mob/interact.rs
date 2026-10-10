@@ -70,9 +70,10 @@ fn is(stack: &ItemStack, name: &str) -> bool {
 
 /// `Player.interactOn` for a mob: the mob's own handler first, then the held item's.
 pub fn interact(e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Outcome {
-    // A mannequin is no `Mob`: no name tag, lead or shears (`Mob.checkAndHandleImportantInteractions`).
+    // A mannequin is no `Mob`: no lead or shears (`Mob.checkAndHandleImportantInteractions`); a name tag still names it
+    // (`NameTagItem.interactLivingEntity`).
     if super::data(e).is_some_and(|m| !m.kind.is_mob()) {
-        return Outcome::PASS;
+        return name_tag(e, stack).unwrap_or(Outcome::PASS);
     }
     // `Mob.checkAndHandleImportantInteractions`: a named name tag names the mob before anything else reacts.
     if let Some(out) = name_tag(e, stack) {
@@ -201,7 +202,9 @@ fn name_tag(e: &mut Entity, stack: &ItemStack) -> Option<Outcome> {
     if !alive || m.health <= 0.0 {
         return None;
     }
-    m.persistence_required = true;
+    if m.kind.is_mob() {
+        m.persistence_required = true;
+    }
     e.extra.retain(|(k, _)| k != "CustomName");
     e.extra.push(("CustomName".into(), name));
     Some(Outcome::success(HeldChange::Consume(1)))

@@ -1860,7 +1860,7 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             k.tick_ridden(e, m, level, &r);
         }
         e.delta = Vec3::ZERO;
-    } else if !m.no_ai && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
+    } else if !m.no_ai && m.kind.ext().is_none_or(|k| k.effective_ai(m)) && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
         crate::prof!("mob", "travel");
         travel(e, m, level, input);
     }

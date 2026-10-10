@@ -646,6 +646,12 @@ pub trait Kind: Sync + Send {
         let _ = m;
         self.info().head.1
     }
+    /// `isEffectiveAi` (and so `isControlledByLocalInstance`): false for a mob that does not move at all, gravity and
+    /// push included (an immovable mannequin).
+    fn effective_ai(&self, m: &MobData) -> bool {
+        let _ = m;
+        true
+    }
     /// `isImmobile` beyond dying (a grazing or rearing horse): no AI and no input this tick.
     fn is_immobile(&self, m: &MobData) -> bool {
         let _ = m;

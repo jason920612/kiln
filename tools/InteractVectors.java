@@ -812,7 +812,8 @@ public class InteractVectors {
         c.step(op("op", "tick_cushions", "ticks", 15));
         out.add(c);
         c = mannequinCase("water", at);
-        c.cmd("setblock 2 99 0 minecraft:water").cmd("setblock 2 100 0 minecraft:water");
+        // (A pool closed all round: the replay's water would flow, the recorded level's does not.)
+        c.cmd("fill 1 98 -1 3 102 1 minecraft:stone").cmd("fill 2 99 0 2 101 0 minecraft:water");
         c.step(op("op", "tick_cushions", "ticks", 30));
         out.add(c);
         c = mannequinCase("suffocate", "summon minecraft:mannequin 2.5 100 0.5");
@@ -3090,6 +3091,7 @@ public class InteractVectors {
         List<Object> out = new ArrayList<>();
         for (Object o : drain(p)) {
             if (o instanceof ClientboundSoundPacket s) {
+                if (recordNoPitch && soundName(s).startsWith("minecraft:block.")) continue;
                 out.add(op("t", "sound", "name", soundName(s), "source", s.getSource().getName(),
                         "pos", new double[] {s.getX(), s.getY(), s.getZ()}, "volume", s.getVolume(), "pitch", recordNoPitch ? 0.0f : s.getPitch()));
             } else if (o instanceof ClientboundOpenSignEditorPacket e) {
@@ -3201,12 +3203,12 @@ public class InteractVectors {
             rows.add(new Object[] {type, e.getX(), e.getY(), e.getZ(), e.getDirection().get3DDataValue(), item, rot, area});
         }
         // wp50: mannequins: [type, x, y, z, 0, "health,pose,hurtTime,deathTime,height,invulnerableTime", 0, 0].
-        for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 90, -16, 32, 120, 32))) {
+        for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 60, -16, 32, 330, 32))) {
             String state = String.format(java.util.Locale.ROOT, "%.4f,%s,%d,%d,%.4f,%d", mq.getHealth(), mq.getPose().getSerializedName(), mq.hurtTime, mq.deathTime, mq.getBbHeight(), invulnerableTime(mq));
             rows.add(new Object[] {BuiltInRegistries.ENTITY_TYPE.getKey(mq.getType()).toString(), mq.getX(), mq.getY(), mq.getZ(), 0, state, 0, 0});
         }
         // wp50: cushions: [type, x, y, z, 0, color, riders, the riders' seat height in ten thousandths].
-        for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 90, -16, 32, 120, 32))) {
+        for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) {
             long seat = 0;
             if (!cu.getPassengers().isEmpty()) {
                 var rider = cu.getPassengers().get(0);
@@ -3344,8 +3346,8 @@ public class InteractVectors {
             case "tick_cushions" -> {
                 if (c.noPitch) addAttackTicks(p, (int) s.get("ticks"));
                 for (int i = 0; i < (int) s.get("ticks"); i++) {
-                    for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 90, -16, 32, 120, 32))) cu.tick();
-                    for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 90, -16, 32, 120, 32))) mq.tick();
+                    for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) cu.tick();
+                    for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 60, -16, 32, 330, 32))) mq.tick();
                 }
             }
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
@@ -3625,8 +3627,8 @@ public class InteractVectors {
             step(p, c, s);
             if (c.tickCushions && !"tick_cushions".equals(s.get("op"))) {
                 if (c.noPitch) addAttackTicks(p, 1);
-                for (var cu : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 90, -16, 32, 120, 32))) cu.tick();
-                for (var mq : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 90, -16, 32, 120, 32))) mq.tick();
+                for (var cu : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) cu.tick();
+                for (var mq : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 60, -16, 32, 330, 32))) mq.tick();
             }
             if (c.watchMaps) mapTick(p);
             Map<String, Object> r = new LinkedHashMap<>();

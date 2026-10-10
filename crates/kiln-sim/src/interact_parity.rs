@@ -74,6 +74,10 @@ fn decode(pkt: &Bytes) -> Option<Value> {
         ids::SOUND => {
             let holder = r.varint().ok()?;
             let name = if holder == 0 { "?".to_owned() } else { kiln_data::builtin_entries("minecraft:sound_event")?.get(holder as usize - 1)?.to_string() };
+            // (A case without pitches records no block sounds either: mobs do not play the sound of the block they land on.)
+            if NO_PITCH.with(|n| n.get()) && name.starts_with("minecraft:block.") {
+                return None;
+            }
             let source = r.varint().ok()?;
             let (x, y, z) = (r.i32().ok()?, r.i32().ok()?, r.i32().ok()?);
             let (volume, pitch) = (r.f32().ok()?, r.f32().ok()?);
