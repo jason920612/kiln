@@ -1782,7 +1782,7 @@ impl RegionInner {
                                 killer: killer.map(host::wit_uuid),
                             }),
                             Seen::Moved { from } => {
-                                wit::Observed::PlayerMoved(wit::MoveEvent { player, level: dim_v, from: wit_pos(from), to: wit_pos(o.pos) })
+                                wit::Observed::PlayerMoved(wit::MoveEvent { player, level: dim_v, before: wit_pos(from), after: wit_pos(o.pos) })
                             }
                             Seen::Spawned(reason) => wit::Observed::PlayerSpawned(wit::SpawnEvent {
                                 player,
