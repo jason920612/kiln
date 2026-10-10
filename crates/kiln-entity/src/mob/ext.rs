@@ -372,6 +372,19 @@ pub trait Kind: Sync + Send {
     fn actually_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) {
         let _ = (e, m, level, source, amount);
     }
+    /// `getBreedOffspring` returns nothing (a parrot, a wandering trader): no baby from a spawn egg.
+    fn no_offspring(&self) -> bool {
+        false
+    }
+    /// `onOffspringSpawnedFromEgg(player, baby)`: what the type does when a spawn egg brought a baby of it (a fox trusts the player).
+    fn offspring_from_egg(&self, m: &mut MobData, baby: &mut Entity, level: &mut dyn EntityLevel, player: i32) {
+        let _ = (m, baby, level, player);
+    }
+    /// An `actuallyHurt` that does not call the shared one (a wolf's armor takes the blow): whether it dealt with `amount`.
+    fn override_actually_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> bool {
+        let _ = (e, m, level, source, amount);
+        false
+    }
     /// After the shared `hurtServer` (reinforcements, anger, ...), with its result.
     fn after_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32, hurt: bool) {
         let _ = (e, m, level, source, amount, hurt);
@@ -914,6 +927,11 @@ pub trait Kind: Sync + Send {
     fn hurt_sound_for(&self, m: &MobData) -> Option<&'static str> {
         let _ = m;
         None
+    }
+    /// `getHurtSound(source)` of a type whose sound depends on what hurt it (a wolf in armor).
+    fn hurt_sound_from(&self, m: &MobData, source: &DamageSource) -> Option<&'static str> {
+        let _ = source;
+        self.hurt_sound_for(m)
     }
     fn death_sound_for(&self, m: &MobData) -> Option<&'static str> {
         let _ = m;

@@ -174,6 +174,15 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
             let fx = kiln_entity::effect::Effect::named(what, a["duration"].as_i64().unwrap() as i32, a["amp"].as_i64().unwrap() as i32).unwrap();
             level.add_effect_instance(id, fx, None);
         }
+        // wp52 wolf armor: damage of the type `what` (`pos.x` of it), no attacker.
+        "hurt" => {
+            let id = ids[a["mob"].as_u64().unwrap() as usize];
+            let source = DamageSource::of(DamageKind::of_type(what));
+            let e = level.entity_mut(id).unwrap();
+            let mut e2 = std::mem::replace(e, kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+            mob::hurt_entity(&mut e2, level, source, pos.x as f32);
+            *level.entity_mut(id).unwrap() = e2;
+        }
         "splash" | "linger" => {
             // A potion entity at the spot (it takes an id, as vanilla's constructor does), broken
             // on a block hit there.
@@ -273,7 +282,7 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
                 mob::interact::HeldChange::Consume(_) if !who.creative => Some(0),
                 mob::interact::HeldChange::Fill(ref f) => Some(f.item()),
                 // `ItemStack.shrink(1)` of a stack of one, whatever the game mode.
-                mob::interact::HeldChange::Shrink(_) => Some(0),
+                mob::interact::HeldChange::Shrink(_) if !who.creative => Some(0),
                 _ => None,
             };
             if let Some(held) = held {
@@ -285,7 +294,7 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
             let mut after = stack.clone();
             match out.held {
                 mob::interact::HeldChange::Consume(n) if !who.creative => after.shrink(n),
-                mob::interact::HeldChange::Shrink(n) => after.shrink(n),
+                mob::interact::HeldChange::Shrink(n) if !who.creative => after.shrink(n),
                 mob::interact::HeldChange::Fill(f) => after = f,
                 mob::interact::HeldChange::Replace(r) => after = r,
                 _ => {}

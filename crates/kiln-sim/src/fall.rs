@@ -194,9 +194,17 @@ impl Player {
         if !self.was_touching_water && dy < 0.0 {
             self.fall_distance -= dy as f32 as f64;
         }
-        // `ServerPlayer.trackStartFallingPosition`.
+        // `ServerPlayer.trackStartFallingPosition`: a fall that begins at or below where an explosion hit has been "fall after explosion".
         if self.fall_distance > 0.0 && self.starting_to_fall.is_none() {
             self.starting_to_fall = Some(self.pos);
+            if let Some(impact) = self.explosion_impact {
+                if impact[1] <= self.pos[1] {
+                    let cause = self.explosion_cause.clone();
+                    self.fall_after_explosion(impact, cause.as_ref());
+                }
+                self.explosion_impact = None;
+                self.explosion_cause = None;
+            }
         }
         if on_ground {
             if self.fall_distance > 0.0 {
@@ -271,14 +279,62 @@ impl Player {
         if distance >= 2.0 {
             self.award_stat(*crate::player_stats::stat::FALL_ONE_CM, (distance * 100.0).round() as i32);
         }
+        // `LivingEntity.causeFallDamage`: the fall from the height of the last blast (or smash) does not count.
+        let mut distance = distance;
+        if let Some(impact) = self.impulse_pos {
+            distance = distance.min(impact[1] - self.pos[1]);
+            if distance <= 0.0 {
+                self.reset_impulse_context();
+            } else {
+                self.try_reset_impulse_context();
+            }
+        }
         let damage = self.calculate_fall_damage(distance, multiplier);
         if damage > 0 {
+            self.reset_impulse_context();
             let sound = if damage > 4 { "minecraft:entity.player.big_fall" } else { "minecraft:entity.player.small_fall" };
             self.queue_sound(sound, 1.0, 1.0);
             self.hurt(damage as f32, &cause.into(), ctx);
             return true;
         }
         false
+    }
+
+    /// `LivingEntity.setIgnoreFallDamageFromCurrentImpulse(ignore, pos)`: ignoring starts 40 ticks of grace and remembers the height.
+    pub(crate) fn set_ignore_fall_damage_from_impulse(&mut self, ignore: bool, pos: [f64; 3]) {
+        if ignore {
+            self.impulse_grace = self.impulse_grace.max(40);
+            self.impulse_pos = Some(pos);
+        } else {
+            self.impulse_grace = 0;
+        }
+    }
+
+    /// `LivingEntity.resetCurrentImpulseContext`.
+    pub(crate) fn reset_impulse_context(&mut self) {
+        self.impulse_grace = 0;
+        self.impulse_pos = None;
+    }
+
+    /// `LivingEntity.tryResetCurrentImpulseContext`: only once the grace time is over.
+    pub(crate) fn try_reset_impulse_context(&mut self) {
+        if self.impulse_grace == 0 {
+            self.reset_impulse_context();
+        }
+    }
+
+    /// `LivingEntity.isInPostImpulseGraceTime`.
+    pub(crate) fn in_post_impulse_grace(&self) -> bool {
+        self.impulse_grace > 0
+    }
+
+    /// `ServerPlayer.onExplosionHit(source)`: remembers where the blast was and what made it; a wind charge's blast starts the ignoring.
+    pub(crate) fn explosion_hit(&mut self, cause: Option<kiln_entity::level::Seen>) {
+        self.explosion_impact = Some(self.pos);
+        let wind = cause.as_ref().is_some_and(|c| c.type_name == "minecraft:wind_charge");
+        self.explosion_cause = cause;
+        let at = self.pos;
+        self.set_ignore_fall_damage_from_impulse(wind, at);
     }
 
     /// `LivingEntity.calculateFallDamage`.

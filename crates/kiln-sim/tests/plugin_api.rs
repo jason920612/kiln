@@ -1,4 +1,4 @@
-//! The 1.0 plugin API in the running simulation: HUD packets, locked menus and the shop,
+//! The plugin API (1.0, and the 1.1 additions: `world.read`, permission nodes, `player-moved`) in the running simulation: HUD packets, locked menus and the shop,
 //! land claims with PvP protection, homes, NPCs, an arena (events between plugins and block
 //! edits in the owning region), deaths and spawns.
 
@@ -365,4 +365,57 @@ fn the_arena_asks_the_gatekeeper_and_edits_blocks_in_its_cell() {
     g.ticks(4);
     let names: Vec<&str> = [(1000, 1000), (1001, 1000), (999, 1001)].iter().map(|&(x, z)| g.block_name([x, 80, z])).collect();
     assert_eq!(names, ["minecraft:smooth_stone", "minecraft:stone_bricks", "minecraft:smooth_stone"]);
+}
+
+/// 1.1: a `block-place` event names the clicked position, and `world-read.get-block` tells what is there; permission nodes
+/// (operators, and what `/lockbox grant` gives) let others through; `player-moved` counts the steps.
+#[test]
+fn lockbox_reads_the_clicked_block_checks_a_permission_node_and_counts_steps() {
+    let mut g = Game::new("api-lockbox", &["lockbox"], &[], &["Fay", "Gus"]);
+    g.console("gamemode creative Fay");
+    g.console("gamemode creative Gus");
+    g.console("tp Fay 300 -60 300");
+    g.console("tp Gus 303 -60 300");
+    g.ticks(12);
+    g.send(0, PlayIn::SetCreativeSlot { slot: 36, item: Some(stack("minecraft:chest", 1)) });
+    g.ticks(1);
+    // (Gus stays in creative mode: his breaks are instant, so a refusal is the plugin's.)
+    g.console("gamemode survival Fay");
+    g.ticks(1);
+    let f = g.ground(0);
+    let chest = [f[0] + 1, f[1] + 1, f[2]];
+    g.send(0, PlayIn::UseItemOn { hand: 0, pos: [f[0] + 1, f[1], f[2]], face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: 1 });
+    g.ticks(2);
+    assert_eq!(g.block_name(chest), "minecraft:chest", "the owner placed it");
+    // Gus clicks the chest with an empty hand (what block it is, only the window of blocks tells): refused, with the reason.
+    g.received(1);
+    g.send(1, PlayIn::UseItemOn { hand: 0, pos: chest, face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: 2 });
+    g.ticks(2);
+    assert!(g.got_text(1, "Locked by"), "told why");
+    // ...and cannot break it.
+    g.send(1, PlayIn::PlayerAction { action: 0, pos: chest, face: 1, sequence: 3 });
+    g.ticks(2);
+    assert_eq!(g.block_name(chest), "minecraft:chest", "not broken");
+    // Clicking an ordinary block next to it is not affected.
+    g.received(1);
+    let other = [f[0] + 3, f[1], f[2]];
+    g.send(1, PlayIn::UseItemOn { hand: 0, pos: other, face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: 4 });
+    g.ticks(2);
+    assert!(!g.got_text(1, "Locked by"), "other blocks are free");
+    // With the permission node (granted by an operator's command, applied at the next serial point) Gus can break it.
+    let uuid = Game::uuid(1).simple().to_string();
+    g.console(&format!("lockbox grant {uuid}"));
+    g.ticks(3);
+    g.send(1, PlayIn::PlayerAction { action: 0, pos: chest, face: 1, sequence: 5 });
+    g.ticks(2);
+    assert_eq!(g.block_name(chest), "minecraft:air", "the node lets him through");
+    // The step counter: every move across a block boundary is one `player-moved`, at most one per tick.
+    let before = g.sim.plugin_player_value(Game::uuid(0), "lockbox", "steps");
+    g.console("tp Fay 310 -60 310");
+    g.ticks(3);
+    g.console("tp Fay 320 -60 320");
+    g.ticks(3);
+    let after = g.sim.plugin_player_value(Game::uuid(0), "lockbox", "steps");
+    let steps = |v: Option<Vec<u8>>| v.map_or(0, |b| i64::from_le_bytes(b.try_into().unwrap()));
+    assert!(steps(after) >= steps(before) + 2, "two moves counted");
 }

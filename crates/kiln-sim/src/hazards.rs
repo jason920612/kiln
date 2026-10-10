@@ -137,6 +137,10 @@ impl Player {
     /// void, the on-fire flag, the air supply and the effects. `commonTick` ages the player.
     pub(crate) fn base_tick(&mut self, block: BlockAt, min_y: i32, border: &crate::world_state::BorderBox, ctx: &mut DamageCtx) {
         self.tick_count += 1;
+        // `LivingEntity.aiStep`: the grace time after an impulse runs down.
+        if self.impulse_grace > 0 {
+            self.impulse_grace -= 1;
+        }
         self.crouch_attr = self.is_crouching();
         // `Entity.baseTick`: powder snow sets the flag again while the player is in it.
         self.is_in_powder_snow = false;

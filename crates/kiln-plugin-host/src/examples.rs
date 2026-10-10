@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 /// Example crate directory names and their component file stems.
-pub const EXAMPLES: [(&str, &str); 15] = [
+pub const EXAMPLES: [(&str, &str); 16] = [
     ("arena", "arena"),
     ("chat-format", "chat_format"),
     ("claims", "claims"),
@@ -18,6 +18,7 @@ pub const EXAMPLES: [(&str, &str); 15] = [
     ("heartbeat", "heartbeat"),
     ("homes", "homes"),
     ("ledger", "ledger"),
+    ("lockbox", "lockbox"),
     ("noop", "noop"),
     ("npc", "npc"),
     ("petting", "petting"),

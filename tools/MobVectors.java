@@ -118,6 +118,10 @@ public class MobVectors {
                 Vec3 at = new Vec3(a.x, a.y, a.z);
                 potion.onHitAsPotion(level, stack, new net.minecraft.world.phys.BlockHitResult(at, net.minecraft.core.Direction.UP, BlockPos.containing(at), false));
             }
+            // wp52 wolf armor: damage of the type `what` (an id of the damage type registry), `x` of it, with no attacker.
+            case "hurt" -> ((LivingEntity) tracked.get(a.mob)).hurtServer(level,
+                    new net.minecraft.world.damagesource.DamageSource(level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.DAMAGE_TYPE)
+                            .getOrThrow(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DAMAGE_TYPE, Identifier.parse(a.what)))), (float) a.x);
             case "daytime" -> level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + (long) a.x);
             // wp28 creaking: the block at pos goes away: broken by the player (`what` = "player":
             // `playerWillDestroy`, then the block is removed), or replaced by air.
@@ -8711,6 +8715,192 @@ public class MobVectors {
     static void scenariosWp50(List<Scenario> out) {
         scenariosWp50Saddles(out);
         scenariosWp50Mounts(out);
+        scenariosWp52Wolf(out);
+        scenariosWp52Eggs(out);
+    }
+
+    // ------------------------------------------------------------------ wp52: a spawn egg used on a mob of its own type
+
+    static void scenariosWp52Eggs(List<Scenario> out) {
+        String[][] types = {
+                {"pig", ""}, {"cow", ""}, {"sheep", ""}, {"sheep", "Color:5b"}, {"chicken", ""}, {"rabbit", ""}, {"cat", ""}, {"ocelot", ""}, {"horse", ""}, {"horse", "Variant:515"},
+                {"donkey", ""}, {"mule", ""}, {"llama", ""}, {"trader_llama", ""}, {"mooshroom", ""}, {"fox", ""}, {"panda", ""}, {"goat", ""}, {"armadillo", ""}, {"camel", ""},
+                {"sniffer", ""}, {"polar_bear", ""}, {"bee", ""}, {"hoglin", ""}, {"strider", ""}, {"villager", ""}, {"wandering_trader", ""},
+                {"zombie", ""}, {"husk", ""}, {"zombie_villager", ""}, {"zombified_piglin", ""}, {"piglin", ""}, {"zoglin", ""},
+                {"skeleton", ""}, {"creeper", ""}, {"spider", ""}, {"enderman", ""}, {"iron_golem", ""}, {"wolf", ""}, {"wolf", "variant:\"minecraft:ashen\"," + owner()},
+                {"cow", "Age:-24000"}};
+        long seed = 60000L;
+        for (String[] t : types) {
+            MobSpec m = new MobSpec("minecraft:" + t[0], 0.5, BY, 0.5, 30f, seed++);
+            m.nbt = "{NoAI:1b,PersistenceRequired:1b" + (t[1].isEmpty() ? "" : "," + t[1]) + "}";
+            Scenario s = eqClick("eggbaby52_" + t[0] + (t[1].isEmpty() ? "" : "_" + Integer.toHexString(t[1].hashCode())), m, "minecraft:" + t[0] + "_spawn_egg", false, false, 40);
+            floor(s, 16, t[0].equals("strider") || t[0].equals("hoglin") || t[0].equals("zoglin") ? "minecraft:netherrack" : "minecraft:grass_block");
+            // (A panda's genes are drawn from the baby's own random, which Kiln stands in for with the parent's.)
+            s.diverges = t[0].equals("panda");
+            out.add(s);
+        }
+        // Another type's egg does nothing; creative keeps its egg; sneaking makes no difference.
+        {
+            MobSpec m = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 30f, seed++);
+            m.nbt = "{NoAI:1b,PersistenceRequired:1b}";
+            Scenario s = eqClick("eggbaby52_pig_cow_egg", m, "minecraft:cow_spawn_egg", false, false, 40);
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+            m = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 30f, seed++);
+            m.nbt = "{NoAI:1b,PersistenceRequired:1b}";
+            s = eqClick("eggbaby52_pig_creative", m, "minecraft:pig_spawn_egg", true, false, 40);
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+            m = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 30f, seed++);
+            m.nbt = "{NoAI:1b,PersistenceRequired:1b}";
+            s = eqClick("eggbaby52_pig_sneaking", m, "minecraft:pig_spawn_egg", false, true, 40);
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+        }
+    }
+
+    // ------------------------------------------------------------------ wp52: wolf armor
+
+    static String wolfArmor(int damage) {
+        return "equipment:{body:{id:\"minecraft:wolf_armor\",count:1" + (damage > 0 ? ",components:{\"minecraft:damage\":" + damage + "}" : "") + "}},drop_chances:{body:2.0f}";
+    }
+
+    /// A tame wolf (the player is its owner unless `other`) with `extra` NBT, the player holding `item`.
+    static Scenario wolfClick(String name, String item, String extra, boolean creative, boolean sneaking, boolean other, int age) {
+        MobSpec w = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 30f, 56000L + Math.abs(name.hashCode() % 1000));
+        String owner = other ? "Owner:[I;7,8,9,10]" : owner();
+        w.nbt = "{NoAI:1b,PersistenceRequired:1b," + owner + (extra.isEmpty() ? "" : "," + extra) + "}";
+        w.age = age;
+        Scenario s = eqClick("eqwolf52_" + name, w, item, creative, sneaking, 40);
+        floor(s, 16, "minecraft:grass_block");
+        return s;
+    }
+
+    static void scenariosWp52Wolf(List<Scenario> out) {
+        // Armor goes on the owner's grown wolf that wears none.
+        out.add(wolfClick("armor", "minecraft:wolf_armor", "", false, false, false, 0));
+        out.add(wolfClick("armor_creative", "minecraft:wolf_armor", "", true, false, false, 0));
+        out.add(wolfClick("armor_sneaking", "minecraft:wolf_armor", "", false, true, false, 0));
+        out.add(wolfClick("armor_not_owner", "minecraft:wolf_armor", "", false, false, true, 0));
+        out.add(wolfClick("armor_baby", "minecraft:wolf_armor", "", false, false, false, -24000));
+        out.add(wolfClick("armor_worn", "minecraft:wolf_armor", wolfArmor(10), false, false, false, 0));
+        out.add(wolfClick("armor_damaged", "minecraft:wolf_armor", "", false, false, false, 0));
+        out.add(wolfClick("armor_sitting", "minecraft:wolf_armor", "Sitting:1b", false, false, false, 0));
+        out.add(wolfClick("armor_other_item", "minecraft:iron_horse_armor", "", false, false, false, 0));
+        out.add(wolfClick("armor_helmet", "minecraft:iron_helmet", "", false, false, false, 0));
+        // An untamed wolf takes none.
+        {
+            MobSpec w = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 30f, 56500L);
+            w.nbt = "{NoAI:1b,PersistenceRequired:1b}";
+            Scenario s = eqClick("eqwolf52_armor_wild", w, "minecraft:wolf_armor", false, false, 40);
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+        }
+        // Shears take it off (the owner's; sneaking, or another player, do not).
+        out.add(wolfClick("shears", "minecraft:shears", wolfArmor(20), false, false, false, 0));
+        out.add(wolfClick("shears_creative", "minecraft:shears", wolfArmor(0), true, false, false, 0));
+        out.add(wolfClick("shears_sneaking", "minecraft:shears", wolfArmor(20), false, true, false, 0));
+        out.add(wolfClick("shears_not_owner", "minecraft:shears", wolfArmor(20), false, false, true, 0));
+        out.add(wolfClick("shears_bare", "minecraft:shears", "", false, false, false, 0));
+        // A scute mends a sitting wolf's damaged armor by an eighth of the durability.
+        for (int damage : new int[] {3, 8, 40, 64 - 1}) {
+            out.add(wolfClick("repair_" + damage, "minecraft:armadillo_scute", "Sitting:1b," + wolfArmor(damage), false, false, false, 0));
+        }
+        out.add(wolfClick("repair_standing", "minecraft:armadillo_scute", wolfArmor(40), false, false, false, 0));
+        out.add(wolfClick("repair_undamaged", "minecraft:armadillo_scute", "Sitting:1b," + wolfArmor(0), false, false, false, 0));
+        out.add(wolfClick("repair_not_owner", "minecraft:armadillo_scute", "Sitting:1b," + wolfArmor(40), false, false, true, 0));
+        out.add(wolfClick("repair_creative", "minecraft:armadillo_scute", "Sitting:1b," + wolfArmor(40), true, false, false, 0));
+        out.add(wolfClick("repair_wrong_item", "minecraft:iron_ingot", "Sitting:1b," + wolfArmor(40), false, false, false, 0));
+        out.add(wolfClick("repair_no_armor", "minecraft:armadillo_scute", "Sitting:1b", false, false, false, 0));
+        // A grown wolf (no armor) is fed, dyed, sat or stood as before; with armor on, too.
+        out.add(wolfClick("sit_worn", "minecraft:air", wolfArmor(0), false, false, false, 0));
+        out.add(wolfClick("dye_worn", "minecraft:blue_dye", wolfArmor(0), false, false, false, 0));
+        // Damage: the armor takes it (the wolf does not), cracks at some levels, and breaks.
+        String[] kinds = {"minecraft:generic", "minecraft:cactus", "minecraft:fall", "minecraft:in_fire", "minecraft:explosion"};
+        for (String kind : kinds) {
+            for (float amount : new float[] {1.0f, 2.5f, 6.0f}) {
+                MobSpec w = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 30f, 57000L + kind.length() * 10 + (long) (amount * 10));
+                w.nbt = "{NoAI:1b,PersistenceRequired:1b," + owner() + "," + wolfArmor(0) + "}";
+                Scenario s = new Scenario("hurtwolf52_" + kind.substring(10) + "_" + (int) (amount * 10));
+                s.mobs.add(w);
+                s.player = new double[] {3.5, BY, 0.5};
+                s.playerCreative = true;
+                s.traceEquip = true;
+                s.levelSeed = 600 + (int) (amount * 10);
+                Action a = new Action(5, "hurt");
+                a.mob = 0;
+                a.what = kind;
+                a.x = amount;
+                s.actions.add(a);
+                Action b = new Action(35, "hurt");
+                b.mob = 0;
+                b.what = kind;
+                b.x = amount;
+                s.actions.add(b);
+                s.ticks = 60;
+                floor(s, 16, "minecraft:grass_block");
+                out.add(s);
+            }
+        }
+        // The damage types the armor does not stop go through to the wolf.
+        for (String kind : new String[] {"minecraft:magic", "minecraft:drown", "minecraft:starve", "minecraft:freeze", "minecraft:wither", "minecraft:out_of_world", "minecraft:thorns", "minecraft:indirect_magic", "minecraft:dry_out", "minecraft:cramming", "minecraft:in_wall"}) {
+            MobSpec w = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 30f, 57500L + kind.length());
+            w.nbt = "{NoAI:1b,PersistenceRequired:1b," + owner() + "," + wolfArmor(0) + "}";
+            Scenario s = new Scenario("hurtwolf52_bypass_" + kind.substring(10));
+            s.mobs.add(w);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.traceEquip = true;
+            s.levelSeed = 650 + kind.length();
+            Action a = new Action(5, "hurt");
+            a.mob = 0;
+            a.what = kind;
+            a.x = 3.0;
+            s.actions.add(a);
+            s.ticks = 40;
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+        }
+        // Wearing down: starting from some damage, each hit tests the crack levels (4, 20 and 44 of 64) and the break.
+        for (int damage : new int[] {0, 1, 3, 16, 19, 20, 40, 43, 44, 58, 60, 62, 63}) {
+            MobSpec w = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 30f, 58000L + damage);
+            w.nbt = "{NoAI:1b,PersistenceRequired:1b," + owner() + "," + wolfArmor(damage) + "}";
+            Scenario s = new Scenario("hurtwolf52_wear_" + damage);
+            s.mobs.add(w);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.traceEquip = true;
+            s.levelSeed = 700 + damage;
+            for (int k = 0; k < 3; k++) {
+                Action a = new Action(5 + 25 * k, "hurt");
+                a.mob = 0;
+                a.what = "minecraft:generic";
+                a.x = 4.0;
+                s.actions.add(a);
+            }
+            s.ticks = 90;
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+        }
+        // Armor on, a wolf dies: the armor drops (a guaranteed drop).
+        {
+            MobSpec w = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 30f, 59000L);
+            w.nbt = "{NoAI:1b,PersistenceRequired:1b," + owner() + ",Health:3f," + wolfArmor(5) + "}";
+            Scenario s = new Scenario("hurtwolf52_dies");
+            s.mobs.add(w);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.traceEquip = true;
+            s.levelSeed = 750;
+            Action a = new Action(5, "hurt");
+            a.mob = 0;
+            a.what = "minecraft:magic";
+            a.x = 10.0;
+            s.actions.add(a);
+            s.ticks = 40;
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+        }
     }
 
     static void scenariosWp50Saddles(List<Scenario> out) {

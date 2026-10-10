@@ -191,7 +191,7 @@ impl ItemFrame {
     }
 
     /// The frame as an item, with the entity's custom name.
-    fn frame_item(&self, e: &Entity) -> ItemStack {
+    pub(crate) fn frame_item(&self, e: &Entity) -> ItemStack {
         let mut stack = ItemStack::of(if self.glow { "minecraft:glow_item_frame" } else { "minecraft:item_frame" }, 1).unwrap_or_default();
         if let Some(name) = e.extra.iter().find(|(k, _)| k == "CustomName").and_then(|(_, t)| kiln_item::Text::from_nbt(t.clone())) {
             stack.set(kiln_item::component::Component::CustomName(name));

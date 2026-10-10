@@ -231,6 +231,12 @@ impl RegionWork<'_> {
                 entities::riding_jump(self.entities, &mut self.players, i, data, &env.blocks);
                 continue;
             }
+            if let PlayIn::PickItemFromEntity { entity_id, .. } = pkt {
+                if !self.players[i].dead {
+                    entities::pick_item_from_entity(self.entities, self.players[i], entity_id);
+                }
+                continue;
+            }
             if let PlayIn::Interact { entity_id, hand, sneaking, location, .. } = pkt {
                 if let Some(h) = self.plugins.as_mut()
                     && crate::plugins::deny_interact(h, self.players[i], self.entities, entity_id)
@@ -576,6 +582,7 @@ impl RegionWork<'_> {
         let mut out = BlockOut::default();
         if let Some(h) = self.plugins.as_mut() {
             crate::plugins::watch_delayed_breaks(h, &self.players, self.cells);
+            crate::plugins::observe_moves(h, &mut self.players);
         }
         {
             let mut level = RegionLevel {
@@ -1009,7 +1016,15 @@ pub(crate) fn player_packet(
             // `player.onGround()` as the server holds it (its own body's, not the client's).
             let was_on_ground = p.on_ground;
             let y0 = p.pos[1];
-            if handle_move(p, cells, env, pos, rot, on_ground) {
+            let moved = handle_move(p, cells, env, pos, rot, on_ground);
+            // A move the server puts back (`moved wrongly`, a new collision) still has its fall checked at the place it came from
+            // (`doCheckFallDamage(0, 0, 0, onGround)` after the teleport).
+            if moved == Move::Rejected {
+                let mut ctx = damage_ctx(env, spawns, deaths);
+                let blocks = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z);
+                p.do_check_fall_damage([0.0; 3], on_ground, &blocks, &mut ctx);
+            }
+            if moved == Move::Taken {
                 // `setOnGroundWithMovement`: the client's own report of running into a wall.
                 p.horizontal_collision = horizontal_collision;
                 let feet = p.pos.map(|c| c.floor() as i32);
@@ -1508,7 +1523,17 @@ fn use_on_block(
         return;
     }
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
-    let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
+    let Some((placed_at, placed_state)) = placement::place(level, &item, &ctx) else { return };
+    // `BlockItem.updateBlockStateFromTag`: the item's `block_state` properties the block has are set (clients only).
+    if let Some(props) = placed_from.get(kiln_item::keys::BLOCK_STATE) {
+        let mut s = placed_state;
+        for (name, value) in &props.0 {
+            s = kiln_blocks::state::set(s, name, value);
+        }
+        if s != placed_state {
+            kiln_blocks::set_block(level, placed_at, s, kiln_blocks::flags::CLIENTS);
+        }
+    }
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
     // `CommandBlock.setPlacedBy` (after the item's block entity data, which only a game master may set).
     if kiln_data::block_logic::is_instance(level.block(placed_at), kiln_data::block_logic::BlockClass::CommandBlock) {
@@ -1603,7 +1628,18 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
     })
 }
 
-/// Returns whether the move was accepted.
+/// What became of a movement packet.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Move {
+    /// The claim was taken.
+    Taken,
+    /// The claim was put back (`moved wrongly`, into something new): the server's body moved, the player did not.
+    Rejected,
+    /// Not looked at (invalid, too fast, stale).
+    Dropped,
+}
+
+/// What the move came to.
 fn handle_move(
     p: &mut Player,
     world: &CellSet<Cell>,
@@ -1611,22 +1647,22 @@ fn handle_move(
     pos: Option<[f64; 3]>,
     rot: Option<[f32; 2]>,
     on_ground: bool,
-) -> bool {
+) -> Move {
     let now = env.game_time;
     if movement::invalid(pos, rot) {
         p.disconnect("Invalid movement");
-        return false;
+        return Move::Dropped;
     }
     if pos.is_some() {
         // The 26.3 client sends at most one position per client tick.
         if p.position_this_tick {
             p.disconnect("Invalid movement");
-            return false;
+            return Move::Dropped;
         }
         p.position_this_tick = true;
     }
     if p.load_timeout > 0 {
-        return false;
+        return Move::Dropped;
     }
     let rot = rot.map_or(p.rot, movement::normalize_rotation);
     if p.awaiting_teleport.is_some() {
@@ -1635,7 +1671,7 @@ fn handle_move(
         if now - p.teleport_sent > movement::TELEPORT_RESEND_TICKS {
             p.teleport(p.pos, rot, now);
         }
-        return false;
+        return Move::Dropped;
     }
     let to = pos.map_or(p.pos, movement::clamp_position);
     p.move_packets += 1;
@@ -1644,7 +1680,7 @@ fn handle_move(
         let d = [to[0] - p.first_good[0], to[1] - p.first_good[1], to[2] - p.first_good[2]];
         warn!("{} moved too quickly! {d:?}", p.name);
         p.teleport(p.pos, p.rot, now);
-        return false;
+        return Move::Dropped;
     }
     // `jumpFromGround` (when the server holds the player on the ground), then `move(PLAYER, delta)` of the server's body
     // (see the `phantom` module): what the packet did to the body stays whether the claim is taken or not.
@@ -1660,7 +1696,8 @@ fn handle_move(
     // spectator mode.
     let (dx, dz) = (to[0] - end[0], to[2] - end[2]);
     let sleeping = p.sleep.pos.is_some();
-    let wrongly = dx * dx + dz * dz > 0.0625 && !sleeping && p.game_mode != 1 && p.game_mode != 3;
+    // (`isInPostImpulseGraceTime`: a blast or a smash may fling the player further than the server's body went.)
+    let wrongly = dx * dx + dz * dz > 0.0625 && !sleeping && p.game_mode != 1 && p.game_mode != 3 && !p.in_post_impulse_grace();
     if wrongly {
         warn!("{} moved wrongly!", p.name);
     }
@@ -1674,13 +1711,13 @@ fn handle_move(
         if stuck_in_place || into_something {
             p.movements.truncate(moves_before);
             p.teleport(from, rot, now);
-            return false;
+            return Move::Rejected;
         }
     }
     p.pos = to;
     p.rot = rot;
     p.on_ground = on_ground;
-    true
+    Move::Taken
 }
 
 /// Start of a connection's tick: block change acks (after the block updates they

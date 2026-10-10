@@ -32,7 +32,7 @@ pub enum HeldChange {
     Fill(ItemStack),
     /// `hurtAndBreak(n)`: durability lost (none in creative).
     Damage(i32),
-    /// `ItemStack.shrink(n)`: taken in every game mode (a lead put on a mob).
+    /// `ItemStack.shrink(n)`: taken in every game mode but creative, where `Player.interactOn` gives the count back.
     Shrink(i32),
     /// `Player.setItemInHand`: the held stack becomes this (an armor stand's swap).
     Replace(ItemStack),
@@ -77,6 +77,11 @@ pub fn interact(e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, s
     }
     // `Mob.checkAndHandleImportantInteractions`: a named name tag names the mob before anything else reacts.
     if let Some(out) = name_tag(e, stack) {
+        level.emit(Event::GameEvent { event: "minecraft:entity_interact", pos: e.position(), entity: Some(who.id) });
+        return out;
+    }
+    // ... then a spawn egg of the mob's own type brings a baby of it.
+    if let Some(out) = spawn_egg_offspring(e, level, who, stack) {
         level.emit(Event::GameEvent { event: "minecraft:entity_interact", pos: e.position(), entity: Some(who.id) });
         return out;
     }
@@ -207,6 +212,45 @@ fn name_tag(e: &mut Entity, stack: &ItemStack) -> Option<Outcome> {
     }
     e.extra.retain(|(k, _)| k != "CustomName");
     e.extra.push(("CustomName".into(), name));
+    Some(Outcome::success(HeldChange::Consume(1)))
+}
+
+/// `Mob.checkAndHandleImportantInteractions` for a spawn egg of the mob's own type (`SpawnEggItem.spawnOffspringFromSpawnEgg`): the
+/// baby appears where the mob is (named like the egg), the egg is used up. `None`: not such an egg, or the type has no babies.
+fn spawn_egg_offspring(e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
+    if stack.is_empty() || super::item_name(stack).strip_suffix("_spawn_egg") != Some(e.type_name) {
+        return None;
+    }
+    super::data(e)?;
+    let mut m = super::take(e);
+    if !super::is_alive(e, &m) {
+        super::put(e, m);
+        return None;
+    }
+    let baby = super::breed::offspring_from_egg(e, &mut m, level);
+    let Some(mut baby) = baby else {
+        super::put(e, m);
+        return None;
+    };
+    // `applyComponentsFromItemStack`: the egg's name.
+    if let Some(name) = stack.get(kiln_item::keys::CUSTOM_NAME) {
+        baby.extra.retain(|(k, _)| k != "CustomName");
+        baby.extra.push(("CustomName".into(), name.nbt().clone()));
+    }
+    // `onOffspringSpawnedFromEgg`: a fox trusts the player; a zombie's baby may pick up loot.
+    if m.kind.is_zombie() {
+        let at = baby.position();
+        let effective = level.effective_difficulty(crate::math::BlockPos::containing(at.x, at.y, at.z));
+        let special = if effective < 2.0 { 0.0 } else if effective > 4.0 { 1.0 } else { (effective - 2.0) / 2.0 };
+        let loot = kiln_javamath::random::RandomSource::next_float(&mut e.random) < 0.55 * special;
+        if let Some(bm) = super::data_mut(&mut baby) {
+            bm.can_pick_up_loot = loot;
+        }
+    } else if let Some(k) = m.kind.ext() {
+        k.offspring_from_egg(&mut m, &mut baby, level, who.id);
+    }
+    level.add_entity(baby);
+    super::put(e, m);
     Some(Outcome::success(HeldChange::Consume(1)))
 }
 

@@ -1,0 +1,22 @@
+id = "lockbox"
+version = "0.1.0"
+api = "1"
+# `world.read`: the handler asks which block the player clicked (the place event only names its position).
+capabilities = ["command.register", "player.message", "world.read"]
+
+# Whoever places a chest, trapped chest or barrel owns it; nobody else can open or break it
+# unless they have the `lockbox.bypass` node (operators always do; the host lets them through).
+[[subscribe]]
+event = "block-break"
+policy = "fail-closed"
+bypass-permission = 4
+
+[[subscribe]]
+event = "block-place"
+policy = "fail-closed"
+bypass-permission = 4
+
+# A step counter per player: one tick of walking is at most one event.
+[[subscribe]]
+event = "observe"
+kinds = ["player-moved"]

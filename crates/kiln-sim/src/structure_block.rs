@@ -243,7 +243,7 @@ use crate::{ConnId, DimId, Sim};
 use kiln_blocks::{BlockPos, Level, state};
 use kiln_world::Blocks as _;
 use kiln_data::block_logic::{self as logic, BlockClass as C};
-use kiln_worldgen::structure::template::{BlockInfo, PlaceSettings, Template};
+use kiln_worldgen::structure::template::{BlockInfo, EntityInfo, PlaceSettings, Template};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -557,7 +557,7 @@ impl Sim {
     }
 
     /// `ServerGamePacketListenerImpl.handleJigsawGenerate`: `JigsawBlockEntity.generate`.
-    pub(crate) fn jigsaw_generate(&mut self, conn: ConnId, pos: [i32; 3], levels: i32, _keep_jigsaws: bool) {
+    pub(crate) fn jigsaw_generate(&mut self, conn: ConnId, pos: [i32; 3], levels: i32, keep_jigsaws: bool) {
         let Some(p) = self.players.get(&conn) else { return };
         if !p.can_use_gamemaster_blocks() {
             return;
@@ -582,7 +582,7 @@ impl Sim {
             _ => [1, 0, 0],
         };
         let at = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
-        let _ = self.place_generated_jigsaw(dim, &pool, &target, levels, at);
+        let _ = self.place_generated_jigsaw(dim, &pool, &target, levels, at, keep_jigsaws);
     }
 
     /// The serial phase of the structure blocks that were powered (`StructureBlock.trigger`).
@@ -633,7 +633,7 @@ impl Sim {
     }
 
     /// `StructureTemplate.fillFromWorld`: the blocks of the area (structure voids left out) with their block entities.
-    fn fill_from_world(&self, dim: DimId, origin: [i32; 3], size: [i32; 3], _with_entities: bool) -> Template {
+    fn fill_from_world(&self, dim: DimId, origin: [i32; 3], size: [i32; 3], with_entities: bool) -> Template {
         use kiln_worldgen::pos::BlockPos as WPos;
         let mut infos: Vec<BlockInfo> = Vec::new();
         for y in 0..size[1] {
@@ -649,7 +649,47 @@ impl Sim {
                 }
             }
         }
-        Template::from_world(size, infos, Vec::new())
+        let entities = if with_entities { self.entities_for_template(dim, origin, size) } else { Vec::new() };
+        Template::from_world(size, infos, entities)
+    }
+
+    /// `StructureTemplate.fillEntityList`: every entity but the players whose box meets the area, in the order the level's
+    /// entity sections give them (by section x, then z, then y; in a section the order they came in), each saved
+    /// (`Entity.save`: a passenger, which its vehicle carries, and an entity that is never saved leave an empty compound)
+    /// with its place relative to the area and the block it is in (a painting: the block it hangs on).
+    fn entities_for_template(&self, dim: DimId, origin: [i32; 3], size: [i32; 3]) -> Vec<EntityInfo> {
+        use kiln_entity::math::Aabb;
+        use kiln_worldgen::pos::BlockPos as WPos;
+        let area = Aabb::new(origin[0] as f64, origin[1] as f64, origin[2] as f64, (origin[0] + size[0]) as f64, (origin[1] + size[1]) as f64, (origin[2] + size[2]) as f64);
+        let owners = self.owner_uuids();
+        let owner = |id: i32| owners.get(&id).copied();
+        // (section key, entity id, info)
+        let mut found: Vec<((i32, u32, u32), i32, EntityInfo)> = Vec::new();
+        for region in self.dims[dim].regions.iter() {
+            let list = &region.part().0.list;
+            for (i, e) in list.iter().enumerate() {
+                if e.removed {
+                    continue;
+                }
+                let Some(phys) = e.phys.as_deref() else { continue };
+                if !area.intersects(&phys.bounding_box()) {
+                    continue;
+                }
+                let never_saved = matches!(e.kind.name, "minecraft:lightning_bolt" | "minecraft:fishing_bobber" | "minecraft:player");
+                let passenger = phys.vehicle.is_some_and(|v| list.binary_search_by_key(&v, |o| o.id).is_ok_and(|j| !list[j].removed));
+                let nbt = if never_saved || passenger { Tag::Compound(Vec::new()) } else { crate::entities::save_in(list, i, &owner) };
+                let rel = [e.pos[0] - origin[0] as f64, e.pos[1] - origin[1] as f64, e.pos[2] - origin[2] as f64];
+                let hanging = match (e.kind.name, nbt.get("block_pos")) {
+                    ("minecraft:painting", Some(Tag::IntArray(p))) if p.len() == 3 => Some(WPos::new(p[0] - origin[0], p[1] - origin[1], p[2] - origin[2])),
+                    _ => None,
+                };
+                let block_pos = hanging.unwrap_or_else(|| WPos::new(rel[0].floor() as i32, rel[1].floor() as i32, rel[2].floor() as i32));
+                let section = (((e.pos[0].floor() as i32) >> 4), (((e.pos[2].floor() as i32) >> 4) as u32) & 0x3F_FFFF, (((e.pos[1].floor() as i32) >> 4) as u32) & 0xF_FFFF);
+                found.push((section, e.id, EntityInfo { pos: rel, block_pos, nbt }));
+            }
+        }
+        found.sort_by_key(|(section, id, _)| (*section, *id));
+        found.into_iter().map(|(_, _, info)| info).collect()
     }
 
     /// `BlockEntity.saveWithId` of the block entity at `at`, as the template keeps it.

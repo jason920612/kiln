@@ -30,7 +30,7 @@ use kiln_command::dispatcher::{argument, literal};
 use kiln_link::{ConnId, PlayIn};
 use kiln_plugin_host::{
     Actor, ChatOutcome, ClickKind, ContainerClick, EntityData, EntityRef, EventKind, ExecMode, ItemRef,
-    OnlinePlayer, PlayerAt, PlayerInfo, PluginRuntime, RegionPlugins, Registries, RegistryKind, RuntimeConfig, Span, Verdict, World,
+    BlockWindow, OnlinePlayer, PlayerAt, PlayerInfo, PluginRuntime, RegionPlugins, Registries, RegistryKind, RuntimeConfig, Span, Verdict, World,
 };
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
@@ -195,6 +195,29 @@ fn registries() -> Arc<Registries> {
     .clone()
 }
 
+/// `world-read`: when a plugin that reads blocks is going to hear of the event, the blocks around `pos` are copied for it.
+fn provide_blocks(hook: &RegionHook, kind: EventKind, pos: [i32; 3], cells: &CellSet<Cell>) {
+    if hook.rp.wants_blocks(kind) {
+        hook.rp.provide_blocks(BlockWindow::new(pos, |x, y, z| cells.get_block(x, y, z).map_or(BlockWindow::UNLOADED, block_id)));
+    }
+}
+
+/// `player-moved`: a player whose block position changed since the last tick (a level change is a spawn, not a move).
+pub(crate) fn observe_moves(hook: &mut RegionHook, players: &mut [&mut Player]) {
+    if !hook.rp.observing_kind(kiln_plugin_host::ObserveKinds::PLAYER_MOVED) {
+        return;
+    }
+    for p in players.iter_mut() {
+        let now = (p.dim, p.pos.map(|c| c.floor() as i32));
+        if let Some((dim, before)) = p.plugin_block.replace(now)
+            && dim == now.0
+            && before != now.1
+        {
+            hook.rp.observe_move(&actor(p, &hook.ops), before, now.1);
+        }
+    }
+}
+
 /// The block registry id of a state.
 fn block_id(state: u16) -> u32 {
     static IDS: OnceLock<Vec<u32>> = OnceLock::new();
@@ -292,6 +315,7 @@ pub(crate) fn deny_packet(
                 return false;
             }
             let a = actor(p, &hook.ops);
+            provide_blocks(hook, EventKind::BlockBreak, pos, cells);
             match hook.rp.block_break(&a, pos, block_id(state)) {
                 Verdict::Allow => {
                     hook.watch.push(Watch { uuid: p.uuid, name: p.name.clone(), operator: a.operator, pos, before: state, broken: true });
@@ -319,6 +343,7 @@ pub(crate) fn deny_packet(
             }
             let (item, _) = held_item(p, hand);
             let a = actor(p, &hook.ops);
+            provide_blocks(hook, EventKind::BlockPlace, next, cells);
             match hook.rp.block_place(&a, next, pos, item) {
                 Verdict::Allow => {
                     for at in [pos, next] {
@@ -352,6 +377,7 @@ pub(crate) fn deny_packet(
             let Some((hit, before)) = bucket_target(p, [yaw, pitch], cells, name == "minecraft:bucket") else { return false };
             let target = if name == "minecraft:bucket" { hit } else { before };
             let a = actor(p, &hook.ops);
+            provide_blocks(hook, EventKind::BlockPlace, target, cells);
             match hook.rp.block_place(&a, target, hit, item) {
                 Verdict::Allow => {
                     hook.watch.push(Watch { uuid: p.uuid, name: p.name.clone(), operator: a.operator, pos: target, before: block(target), broken: false });

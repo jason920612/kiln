@@ -880,10 +880,23 @@ pub(crate) fn set_beacon(p: &mut Player, level: &mut RegionLevel, spawns: &mut V
 /// (`BlockEntity.applyComponentsFromItemStack`): custom name, lock, contents, loot table.
 pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stack: &ItemStack) {
     use kiln_item::keys;
-    let Some(c) = level.blocks.containers.get_mut(pos) else { return };
+    let Some(c) = level.blocks.containers.get_mut(pos) else {
+        apply_plain_components(level, pos, stack);
+        return;
+    };
     let mut touched = false;
     if let Some(name) = stack.get(keys::CUSTOM_NAME) {
-        c.custom_name = Some(name.nbt().clone());
+        // Only the block entities that are `Nameable` read it; for the others it stays in `components`.
+        if matches!(
+            c.kind,
+            BeKind::Chest | BeKind::TrappedChest | BeKind::Barrel | BeKind::ShulkerBox | BeKind::Hopper | BeKind::Dispenser | BeKind::Dropper | BeKind::Furnace(_)
+                | BeKind::BrewingStand | BeKind::Beacon | BeKind::Crafter | BeKind::Banner
+        ) {
+            c.custom_name = Some(name.nbt().clone());
+        } else if !matches!(c.kind, BeKind::DecoratedPot) {
+            c.extra.retain(|(k, _)| k != "components");
+            c.extra.push(("components".into(), Tag::Compound(vec![("minecraft:custom_name".into(), name.nbt().clone())])));
+        }
         touched = true;
     }
     if let Some(contents) = stack.get(keys::CONTAINER) {
@@ -936,6 +949,43 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
         // The chunk's copy is what the update packet clients get is made of (a decorated pot shows its sherds).
         sync_chunk_copy(level, pos);
     }
+}
+
+/// `BlockEntity.applyComponentsFromItemStack` for the block entities that are not containers: the skull reads its profile, name
+/// and note sound, the enchanting table its name; what is not read stays in `components`.
+fn apply_plain_components(level: &mut RegionLevel, pos: BlockPos, stack: &ItemStack) {
+    use kiln_world::Blocks as _;
+    let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
+    let Some(chunk) = level.cells.chunk_mut(kiln_world::ChunkPos::of_block(pos.x, pos.z)) else { return };
+    let Some(mut be) = chunk.block_entity(x, pos.y, z).cloned() else { return };
+    let all = stack.to_nbt();
+    let Some(Tag::Compound(items)) = all.get("components") else { return };
+    // (item component, the field it is read into)
+    let reads: &[(&str, &str)] = match kiln_world::block_entity::type_name(be.kind) {
+        "minecraft:skull" => &[("minecraft:profile", "profile"), ("minecraft:custom_name", "custom_name"), ("minecraft:note_block_sound", "note_block_sound")],
+        "minecraft:enchanting_table" => &[("minecraft:custom_name", "CustomName")],
+        _ => &[],
+    };
+    let Tag::Compound(fields) = &mut be.nbt else { return };
+    let mut left = Vec::new();
+    for (k, v) in items {
+        if k.starts_with('!') || matches!(k.as_str(), "minecraft:block_entity_data" | "minecraft:block_state") {
+            continue;
+        }
+        match reads.iter().find(|(c, _)| c == k) {
+            Some((_, field)) => {
+                fields.retain(|(f, _)| f != field);
+                fields.push(((*field).to_owned(), v.clone()));
+            }
+            None => left.push((k.clone(), v.clone())),
+        }
+    }
+    if left.is_empty() && !fields.iter().any(|(k, _)| k == "components") && reads.is_empty() {
+        return;
+    }
+    fields.retain(|(k, _)| k != "components");
+    fields.push(("components".into(), Tag::Compound(left)));
+    chunk.set_block_entity(x, pos.y, z, be);
 }
 
 /// The components the item added that the block entity did not read (`BlockEntity.applyComponents`: what is left of the patch).

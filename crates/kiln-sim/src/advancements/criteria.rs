@@ -187,6 +187,10 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:slide_down_block",
     "minecraft:avoid_vibration",
     "minecraft:kill_mob_near_sculk_catalyst",
+    "minecraft:target_hit",
+    "minecraft:player_sheared_equipment",
+    "minecraft:fall_after_explosion",
+    "minecraft:thrown_item_picked_up_by_player",
 ];
 
 fn err<T>(m: impl Into<String>) -> PResult<T> {
@@ -264,7 +268,7 @@ impl Criterion {
         let player = opt_cap(p, c, "player")?;
         let trigger = match trigger_id.trim_start_matches("minecraft:") {
             "impossible" => Trigger::Impossible,
-            "tick" | "location" | "slept_in_bed" | "hero_of_the_village" | "avoid_vibration" | "started_riding" => Trigger::Player,
+            "tick" | "location" | "slept_in_bed" | "hero_of_the_village" | "avoid_vibration" | "started_riding" | "voluntary_exile" => Trigger::Player,
             "inventory_changed" => {
                 let items = match c.get("items") {
                     Some(Json::Arr(list)) => list.iter().map(predicate::item_predicate).collect::<PResult<Vec<_>>>()?,

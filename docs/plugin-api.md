@@ -1,6 +1,6 @@
-# Kiln 插件 API（`kiln:api` 1.0）
+# Kiln 插件 API（`kiln:api` 1.1）
 
-本文件是 wp51 的成果：先質疑「插件到底需要什麼」，刪掉不需要的，再蓋出最簡單、能涵蓋剩下用途的 API。
+本文件是 wp51 的成果（1.0），wp52 在其上加了 1.1 的三項只增不破壞的補充（§10）：先質疑「插件到底需要什麼」，刪掉不需要的，再蓋出最簡單、能涵蓋剩下用途的 API。
 執行緒契約（設計文件 §11.2–§11.4）不變：沒有主執行緒、沒有同步的跨 region 呼叫、跨情境只用型別化原子操作、
 擁有權命名空間、失敗關閉（fail-closed）。實作現況與量測見 `docs/design-v2-regionized.md` §11.7；
 WIT 在 `wit/kiln-api.wit`（遊戲熱路徑）與 `wit/async-tasks.wit`（非同步工作）。
@@ -19,13 +19,13 @@ WIT 在 `wit/kiln-api.wit`（遊戲熱路徑）與 `wit/async-tasks.wit`（非�
 | 保護／領地 | 可取消：`block-break`、`block-place`（對方塊使用物品，含開箱、開門、倒水）、`entity-interact`、`entity-attack`、`player-damage` | cell 範圍資料（領地）、`deny-message`、`chat.send` | 保留。`entity-attack`、`player-damage` 是新增（動物保護、PvP 區） |
 | 經濟 | `join`／`leave`、`op-results`、指令 | global 原子操作（`add`、`compare-and-set`、`append`，新增 `try-add`：餘額不足就不套用）、玩家範圍資料、`chat.send`／`chat.tell` | 保留；`try-add` 是新增，因為「扣款但不得變負」用 CAS 迴圈在多 region 下會一直重試 |
 | 聊天／格式 | 可取消 `chat`（取消或改寫） | 玩家名稱、`global-get`（唯讀快照，例如前綴表） | 保留，不變 |
-| 權限 | 可取消 `command`、host 端 `bypass-permission` 過濾 | 無 | **部分刪除**：只保留「用指令事件否決」；不做權限節點提供者、不讓插件改 op 等級（見 §3） |
+| 權限 | 可取消 `command`、host 端 `bypass-permission` 過濾 | 無（1.1：SDK 的 `perm` 慣例，見 §10） | **部分刪除**：host 不做權限節點提供者、不讓插件改 op 等級（見 §3）；1.1 的結論是節點不需要新 host 呼叫，SDK 以全域命名空間＋ op 後備提供（§10） |
 | 小遊戲／競技場 | `player-died`、`player-spawned`（觀察）、`player-damage`、`custom`（插件互相詢問）、工作排程 | `teleport`、`set-game-mode`、`give`、`take`、`clear`、`heal`、`kill`、`set-blocks`（競技場還原）、HUD | 保留 |
 | 自訂物品／GUI／選單 | 可取消 `item-use`（右鍵手上的物品）、可取消 `container-click`（選單與一般容器） | `give`（名稱、說明、插件標籤、模型、閃光）、`open-menu`／`set-slot`／`close-menu` | 保留；選單一律鎖定（點擊不會搬動物品），插件只看到點擊 |
 | 計分板／HUD | 無（由玩家事件或工作驅動） | `title`、`action-bar`、`sidebar`、`bossbar`（逐玩家，不動伺服器計分板） | 保留；逐玩家虛擬側欄，不碰共享計分板 |
 | NPC | `entity-interact` | `entities.spawn`／`remove`（只能動自己生成的）、實體範圍資料 | 保留 |
-| 反作弊 | `player-died`／`player-damage`（觀察速率）、玩家狀態查詢 | `info`（位置、血量、模式、是否在地面…）、`for-player` 週期工作取樣、`kick` | **部分刪除**：不提供每次移動／封包 hook（見 §3）；改成「週期取樣玩家狀態」 |
-| 世界編輯 | 位置工作（`at-position`） | `set-blocks`（批次，限於呼叫所帶的 cell） | 保留寫入；**刪除** `get-block`（見 §3）；選區、結構檔讀寫在 guest 內自己做 |
+| 反作弊 | `player-died`／`player-damage`（觀察速率）、玩家狀態查詢 | `info`（位置、血量、模式、是否在地面…）、`for-player` 週期工作取樣、`kick` | **部分刪除**：不提供每次移動／封包 hook（見 §3）；改成「週期取樣玩家狀態」；1.1 加了節流過的 `player-moved`（方塊位置改變、每 tick 至多一次，§10） |
+| 世界編輯 | 位置工作（`at-position`） | `set-blocks`（批次，限於呼叫所帶的 cell） | 保留寫入；1.0 **刪除**了 `get-block`（§3），1.1 只加回「方塊事件周圍 9x9x9 的快照」（§10）；選區、結構檔讀寫在 guest 內自己做 |
 | 傳送／家 | 指令、`player-damage`（取消暖機） | `info`（目前位置）、`teleport`、`for-player` 工作、玩家範圍資料、`online` 目錄 | 保留 |
 | 記錄／稽核 | `block-break`／`block-place` 觀察批次、`join`／`leave` | `log`、`fs.data` | 保留，不變 |
 | 跨插件 API（Vault 之類） | `custom` | `events.raise`（同一情境內、同步、可取消） | 保留，用單一個 `custom` 事件做完 |
@@ -35,15 +35,20 @@ WIT 在 `wit/kiln-api.wit`（遊戲熱路徑）與 `wit/async-tasks.wit`（非�
 
 - **每次方塊更新、每次實體 tick 的 hook**：沒有任何上面的用途需要；成本是每 tick 幾萬次跨邊界。
 - **每次移動、封包層級 hook（`packet.observe`）**：反作弊的真實需求是「取樣玩家狀態」，`info` 加週期工作就夠，而且不會讓
-  guest 看到未驗證的封包。需要時以後加（只增，不破壞）。
+  guest 看到未驗證的封包。封包層級仍然不做。1.1 為「進出區域、步數」這類用途加了節流過的 `player-moved`（§10），
+  它不是封包 hook：host 每 tick 比對玩家的方塊位置，位置變了才排進觀察批次。
 - **權限節點系統與改 op 等級**：Kiln 只有 0–4 等級；插件要自己的權限節點，就用 `command` 事件否決加自己的玩家／global 資料。
-  讓插件改 op 等級等於讓任何插件取得全伺服器權限。
+  讓插件改 op 等級等於讓任何插件取得全伺服器權限。1.1 再問一次「節點需要新的 host 呼叫嗎」：不需要——節點要在任何情境（region、
+  global、別的玩家）被查，而 `global-get` 本來就是任何情境可讀的快照，授與／撤銷是原子操作；所以 1.1 只在 SDK 加 `perm`
+  慣例（§10），WIT 不動。跨插件查詢節點需要同步跨情境呼叫，仍然不做。
 - **同步的跨 region 呼叫、跨 region 讀取、共享 KV 的 get/put**：契約禁止（v1 已刪）。
 - **自訂世界生成、自訂配方、自訂附魔**：用 datapack，插件不需要。
 - **直接改共享計分板**：逐玩家虛擬側欄能做 HUD；共享計分板需要的人用 `/scoreboard`。
 - **`get-block`（讀事件之外的方塊）**：保護類插件需要的資料（領地）本來就在自己的 cell 資料裡；要把方塊讀進 guest 得把 region 的
-  cell 指標借給呼叫（要 `unsafe`），或每次事件預取一個方塊盒（每次幾 µs，全部插件付費）。兩者都不值得；世界編輯類在 guest 內
-  以觀察到的變更自己記帳。以後若需要，可用「位置工作回傳方塊快照」只增不破壞地加入。
+  cell 指標借給呼叫（要 `unsafe`），或每次事件預取一個方塊盒（每次幾 µs，全部插件付費）。1.0 兩者都不做；世界編輯類在 guest 內
+  以觀察到的變更自己記帳。**1.1 重新檢討**：真正缺的是 `block-place` 事件只給位置、不給「被點的方塊是什麼」（上鎖的箱子、
+  只能開的門）；所以 1.1 只加「host 在呼叫前複製事件位置周圍一個小方塊盒」，只在有訂閱者帶 `world.read` 時才付費（§10）。
+  讀事件範圍之外的方塊仍然刪除。
 - **從處理器同步取得其他玩家／實體的狀態**：只有事件帶的玩家、cell、實體可讀；其他人經 `online` 目錄取得名稱與 uuid，再用動作或訊息。
 - **「立即生效」的動作**：所有動作都排隊，在序列點（P 階段之後、指令之後、B0 的工作之後）依確定順序套用。處理器裡的 `teleport` 不會讓同一個
   處理器看到玩家已移動——這是故意的：處理器可以在 trap 時乾淨地放棄，動作不留下部分結果，也不需要跨 region 加鎖。
@@ -64,7 +69,7 @@ region 實例（每個 region 一個，綁 region 不綁執行緒）：
 | `on-container-click` | 可取消 | **新**：`ContainerClick`；插件選單一律鎖定（回傳值被忽略、點擊被吃掉、畫面重送），一般容器需 `vanilla = true` |
 | `on-chat` / `on-command` | 可取消 | 取消或改寫 |
 | `on-custom` | 可取消 | **新**：其他插件用 `events.raise` 發出的事件 |
-| `on-observe` | 批次 | 方塊破壞／放置；**新**：`player-died`（死亡訊息宣告的序列點）、`player-spawned`（加入、重生、換世界，玩家有 region 之後的第一個 B0） |
+| `on-observe` | 批次 | 方塊破壞／放置；**新**：`player-died`（死亡訊息宣告的序列點）、`player-spawned`（加入、重生、換世界，玩家有 region 之後的第一個 B0）；**1.1**：`player-moved`（方塊位置改變） |
 | `on-task` / `on-results(player, results)` | B0 | 工作與原子操作／動作／工作（job）的結果；**新**：結果帶著來源玩家 |
 
 global 實例（每個插件一個）：`init`、`on-enable`、`on-disable`、`on-join`、`on-leave`、`on-command`（註冊的指令）、`on-task`、
@@ -84,13 +89,14 @@ global 實例（每個插件一個）：`init`、`on-enable`、`on-disable`、`o
 | `inventory`（`inventory`，**新**） | `give`、`take`、`clear`、`open-menu`、`set-slot`、`close-menu` |
 | `entities`（`entity.control`，**新**） | `spawn`、`remove`（只能移除自己生成的） |
 | `blocks`（`world.write`，**新**） | `set-blocks`（限於呼叫所帶的 cell） |
+| `world-read`（`world.read`，**1.1**） | `get-block(x, y, z) -> option<block>`（只在 `block-break`／`block-place` 處理器裡，事件位置周圍 9x9x9） |
 | `events`（`events.raise`，**新**） | `raise(name, payload, actor) -> decision` |
 | `jobs`（manifest 有 `tasks`，**新**） | `submit(id, kind, payload) -> ticket`（給 `async-tasks` 元件，§6） |
 
 manifest（`plugin.toml`）：`id`、`version`、`api = "1"`（相容的 major；host 拒絕不支援的）、`capabilities`、`tasks = "tasks.wasm"`、
 `[[subscribe]] event = "..."`（`policy = fail-open|fail-closed`、`bypass-permission`、過濾器 `blocks`／`entities`／`items`／`names`／
 `vanilla`／`area`／`kinds`）、`[config]`。事件名稱：`block-break`、`block-place`、`entity-interact`、`entity-attack`、`player-damage`、
-`item-use`、`container-click`、`chat`、`command`、`custom`、`observe`、`join`、`leave`、`op-results`。
+`item-use`、`container-click`、`chat`、`command`、`custom`、`observe`、`join`、`leave`、`op-results`。`observe` 的 `kinds` 另有 `player-moved`（1.1）。
 
 ### 4.3 動作的語意（所有「寫入遊戲」的呼叫）
 
@@ -133,6 +139,10 @@ host 把同情境中訂閱 `custom` 的其他實例從槽位「借」進它的 s
 - manifest 的 `api = "1"`（預設 1）宣告相容的 major；host 拒絕載入它不支援的 major。
 - `async-tasks.wit` 依賴 WASI 0.3 的 component-model async，在其穩定前**不在 1.0 的承諾內**：它的形狀雜湊同樣被追蹤，但可在 1.x 內變動
   （changelog 註明）。
+- 1.1.0（wp52）：新介面 `world-read`、新記錄 `move-event`、`observed` 的新分支 `player-moved`、新 capability `world.read`、新 observe kind
+  `player-moved`；沒有改任何既有型別、函式或分支順序。`wit_freeze.rs` 同時追蹤摘要與套件版本。host 的版本相容仰賴 wasmtime 的 component linker
+  對介面名稱（`kiln:api/state@1.0.0` 之類）做 semver 相容比對——**尚未用真正以 1.0 WIT 建置的 guest 驗證**（examples 全都以 1.1 重建）。
+  `observed` 的 list 步幅由最大分支決定：`move-event`（64 位元組）小於 `death-event`（80），所以舊 guest 讀同一種批次不會走位。
 - 這個 PR 內從 0.2.0 → 1.0.0 的破壞性改動（遊戲內尚無外部插件，一次做完）：`on-results` 多了 `player` 參數；`entity-event` 與
   `damage-event` 帶 `cell`；`atomic-op`、`observed`、`registry.kind` 多了分支；介面 `chat` 多了 `tell`；`players` 有 `kill`。
 
@@ -179,6 +189,7 @@ host 把同情境中訂閱 `custom` 的其他實例從槽位「借」進它的 s
 | `arena` + `gatekeeper` | 插件間的 `events.raise`（global 與 region 兩種情境）、`set-blocks`（綁 cell）、`teleport`／`clear`／`give`／`set-game-mode`／`kill` |
 | `webhook` + `webhook-tasks` | `async-tasks` world：HTTP、計時器、儲存、重載後重送工作 |
 | `counter`、`heartbeat`、`ledger`、`petting`（既有） | 觀察、工作與重載、玩家間轉帳（性質測試）、實體資料 |
+| `lockbox` | **1.1**：`world.read`（被點的是不是箱子）、`perm` 權限節點（`lockbox.bypass`，`/lockbox grant|revoke`）、`player-moved` 步數計數 |
 | `noop` | 量測用：立刻返回的處理器 |
 
 ## 8. 量測
@@ -209,7 +220,8 @@ region 走無鎖路徑（見缺口）。
 
 ## 9. 缺口
 
-- 沒有 `get-block`（§3）；沒有權限節點；沒有每次移動的 hook。
+- 只有事件周圍 9x9x9 的 `get-block`（§10），沒有任意位置的讀取；沒有 host 端權限節點（SDK 的 `perm` 只是慣例，沒有指令樹整合）；沒有每次移動的 hook
+  （只有 `player-moved` 觀察，沒有可取消的移動、也沒有 `item-use`／實體事件的方塊盒）。
 - `player-damage` 的 `amount` 是進 `hurt` 時的原始傷害（護甲、冷卻、魔法減傷之前）；只有「這一下會打中」才會問插件。
 - `entity-attack` 只管非玩家實體；打玩家走 `player-damage`。
 - 選單只有 `generic_9xN` 的箱子樣式；一般容器的點擊事件在 `vanilla = true` 時送出，拖曳（drag）每個封包送一次，拒絕就重送整個畫面。
@@ -217,3 +229,20 @@ region 走無鎖路徑（見缺口）。
 - 每次呼叫比 wp49 貴約 20 ns（§8）；沒有傷害閘門訂閱者的 region 可以走無鎖路徑，尚未做。
 - `take` 依物品 key 計，不分標籤。
 - `async-tasks`：strict 不可用；沒有逐工作 CPU 上限；一個插件一個實例；不支援 `wasi:*@0.3` 介面。
+
+## 10. 1.1（wp52）：方塊讀取、權限節點、移動事件
+
+照同樣的方法（質疑、刪、簡化）逐項決定：
+
+| 項目 | 需要嗎 | 決定 |
+| --- | --- | --- |
+| 方塊讀取 | 需要，但只有一個窄用途：`block-place` 只給位置，保護類插件（上鎖的箱子、只能開的門）不知道被點的是什麼 | **加**，最簡單的形狀：介面 `world-read`（capability `world.read`），`get-block(x, y, z) -> option<block>`。host 在呼叫處理器**之前**複製事件位置周圍 9x9x9（半徑 4）的方塊到一個擁有的緩衝區（沒有借用、沒有 `unsafe`），超出盒子或區塊未載入回傳 none。只在 `block-break` 與 `block-place` 的處理器裡有（sim 的兩個呼叫點）；只有「某個訂閱者帶了 `world.read`」時 host 才複製（無鎖旗標檢查，其餘情況每個事件多一次原子讀取）。盒子沿用 `scheduler.at-position` 之外的做法：不跨 cell 借指標、不讀別的 region |
+| 權限節點 | 不需要新的 host 呼叫（§3） | **不加 WIT**；SDK 加 `perm::{has, grant, revoke}`：operator 一律有，其他玩家看 global 命名空間的 `perm:<uuid>:<node>`（任何情境都能讀的快照），授與／撤銷用原子操作。跨插件的節點查詢需要同步跨情境呼叫，不做；指令樹（`command-spec.permission`）仍是 0–4 |
+| 移動事件 | 需要的是「進出區域、步數、離開出生點」，不是每個封包 | **加**，節流在 host 端：observe 的新 kind `player-moved`（`move-event`：`before`、`after` 方塊位置），每個 tick 每位玩家至多一次（比對上一個 tick 的方塊位置，換世界不算移動——那是 `player-spawned`）。成本只在有訂閱者時才付；不能取消（要擋就用 `teleport` 動作），因此不碰「moved wrongly」的伺服器端驗證 |
+
+沒有加的：任意位置的 `get-block`、`item-use`／實體事件的方塊盒（呼叫點沒有 cell 集合可用，要的時候用 `block-place` 的位置）、可取消的移動事件、
+host 端權限節點。範例 `lockbox` 三項都用到；測試：`kiln-sim/tests/plugin_api.rs::lockbox_*`（箱子被點時用 `get-block` 判斷、授權後放行、步數）、
+`kiln-plugin-host/tests/wit_freeze.rs`（摘要與版本）。
+
+成本（未量測，估計）：沒有帶 `world.read` 的訂閱者時，每個方塊事件多一次 `AtomicU32` 讀取；有的時候，每個事件複製 729 個方塊（每個一次 `CellSet::get_block`，估計數 µs）。
+`player-moved` 沒有訂閱者時每 tick 每 region 一次旗標檢查。

@@ -1297,6 +1297,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         }
     }
 
+
     fn mob_griefing(&self) -> bool {
         self.level.env().mobs.griefing
     }
@@ -1880,6 +1881,27 @@ fn trail_packet(pos: Vec3, target: Vec3, color: i32, duration: i32) -> Option<Ne
     });
     // `overrideLimiter`: players within 512 blocks.
     Some(([pos.x, pos.y, pos.z], 512.0, pkt))
+}
+
+/// [`EntityLevel::item_particles`]'s packet: the option is an item stack template (item id, count 1, no component changes).
+fn item_packet(item: i32, pos: Vec3, count: i32, spread: Vec3, speed: f32) -> Option<NearPacket> {
+    use bytes::BufMut as _;
+    use kiln_proto::codec::WriteExt as _;
+    let kind = kiln_data::builtin_id("minecraft:particle_type", "minecraft:item")?;
+    let mut raw = bytes::BytesMut::new();
+    raw.put_varint(item);
+    raw.put_slice(&[1, 0, 0]);
+    let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+        particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Raw(&raw) },
+        override_limiter: false,
+        always_show: false,
+        pos: [pos.x, pos.y, pos.z],
+        offset: [spread.x as f32, spread.y as f32, spread.z as f32],
+        max_speed: [speed; 3],
+        count,
+        randomization: world_fx::ParticleRandomization::Default,
+    });
+    Some(([pos.x, pos.y, pos.z], 32.0, pkt))
 }
 
 /// [`EntityLevel::crumble_particles`]'s packet.
@@ -2713,6 +2735,27 @@ pub(crate) fn stab_mob(
 /// `i` of the region's players right-clicks entity `target` with the item in `hand` (0 main,
 /// 1 off). The held item changes as the mob says; sheared wool drops.
 #[allow(clippy::too_many_arguments)]
+/// `handlePickItemFromEntity`: the entity within reach gives what it is a pick of.
+pub(crate) fn pick_item_from_entity(entities: &Entities, p: &mut Player, target: i32) {
+    let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
+    if entities.list[idx].removed {
+        return;
+    }
+    let Some(phys) = entities.list[idx].phys.as_deref() else { return };
+    // `isWithinEntityInteractionRange(entity, 3.0)`.
+    let bb = phys.bounding_box();
+    let eye = p.eye_position();
+    let d = |v: f64, lo: f64, hi: f64| if v < lo { lo - v } else if v > hi { v - hi } else { 0.0 };
+    let (dx, dy, dz) = (d(eye[0], bb.min_x, bb.max_x), d(eye[1], bb.min_y, bb.max_y), d(eye[2], bb.min_z, bb.max_z));
+    let range = p.attribute(crate::combat::ENTITY_INTERACTION_RANGE) + 3.0;
+    if dx * dx + dy * dy + dz * dz >= range * range {
+        return;
+    }
+    if let Some(stack) = kiln_entity::ext_entity::pick_result(phys) {
+        p.try_pick_item(&stack);
+    }
+}
+
 pub(crate) fn interact_mob(
     entities: &mut Entities,
     level: &mut RegionLevel,
@@ -2857,11 +2900,18 @@ pub(crate) fn interact_mob(
     let level = level.into_region();
     let p = &mut *players[i];
     // `PlayerInteractTrigger`: the item as it was when the interaction used it.
-    if let Some(seen) = seen {
+    if let Some(seen) = seen.as_ref() {
         let used = if out.held == kiln_entity::mob::interact::HeldChange::None { kiln_item::ItemStack::empty() } else { stack.clone() };
-        let subject = crate::advancements::triggers::seen_subject(&seen, crate::DIMENSIONS[level.env.dim].0);
+        let subject = crate::advancements::triggers::seen_subject(seen, crate::DIMENSIONS[level.env.dim].0);
         p.fire_conds("minecraft:player_interacted_with_entity", None, |c, ok, loot| {
             c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, &used)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
+        });
+    }
+    // `Mob.shearItem`: `PlayerShearedEquipmentTrigger` with the piece that came off.
+    if let (Some(seen), Some(worn)) = (&seen, &out.sheared) {
+        let subject = crate::advancements::triggers::seen_subject(seen, crate::DIMENSIONS[level.env.dim].0);
+        p.fire_conds("minecraft:player_sheared_equipment", None, |c, ok, loot| {
+            c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, worn)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
         });
     }
     let index = kiln_inventory::inventory::equipment_index(slot, p.inv.selected);
@@ -2873,8 +2923,11 @@ pub(crate) fn interact_mob(
                 kiln_inventory::Container::item_mut(&mut p.inv, index).shrink(*n);
             }
         }
+        // (`Player.interactOn` gives a creative player's stack its count back after any click that did something.)
         HeldChange::Shrink(n) => {
-            kiln_inventory::Container::item_mut(&mut p.inv, index).shrink(*n);
+            if p.game_mode != 1 {
+                kiln_inventory::Container::item_mut(&mut p.inv, index).shrink(*n);
+            }
         }
         // `Player.setItemInHand`.
         HeldChange::Replace(stack) => {
@@ -3117,6 +3170,19 @@ fn carry_out(
     match event {
         Event::Sound { pos, sound, source, volume, pitch } => {
             send_sound(players, env, n, arr(pos), sound, source_of(source), volume, pitch);
+        }
+        Event::ExplosionHit { player, source } => {
+            let cause = source.and_then(|id| list.binary_search_by_key(&id, |e| e.id).ok()).and_then(|i| list[i].phys.as_deref()).map(kiln_entity::level::Seen::of);
+            if let Some(p) = players.iter_mut().find(|p| p.entity_id == player) {
+                p.explosion_hit(cause);
+            }
+        }
+        Event::ItemParticles { item, pos, count, spread, speed } => {
+            if let Some((at, range, pkt)) = item_packet(item, pos, count, spread, speed) {
+                for p in players.iter_mut().filter(|p| dist2(p.pos, at) < range * range) {
+                    p.send(pkt.clone());
+                }
+            }
         }
         Event::LevelEvent { event, pos, data } => level.effect(Effect::LevelEvent { id: event, pos: kb(pos), data }),
         Event::BlockExploded { pos, state, decay, radius, .. } => {
@@ -3497,6 +3563,16 @@ fn send_sound(
 /// is the region's, sorted by connection.
 pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
     arrow_pickups(entities, players);
+    // `ItemEntity.getOwner`: who threw the items on the ground (a mob, for the trigger).
+    let throwers: Vec<u128> = entities.list.iter().filter_map(|e| match e.phys.as_deref().map(|p| &p.kind) {
+        Some(EntityKind::Item(i)) if !e.removed && i.pickup_delay <= 0 => i.thrower,
+        _ => None,
+    }).collect();
+    let owners: Vec<(u128, kiln_entity::level::Seen)> = if throwers.is_empty() {
+        Vec::new()
+    } else {
+        entities.list.iter().filter(|o| !o.removed).filter_map(|o| o.phys.as_deref()).filter(|p| throwers.contains(&p.uuid)).map(|p| (p.uuid, kiln_entity::level::Seen::of(p))).collect()
+    };
     for e in &mut entities.list {
         if e.removed {
             continue;
@@ -3522,6 +3598,14 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
         }
         // `ItemEntity.playerTouch`.
         players[i].award_stat(crate::player_stats::Stat::item(crate::player_stats::PICKED_UP, picked), taken);
+        // `ServerPlayer.onItemPickup`: the thrower is told to the `thrown_item_picked_up_by_player` trigger.
+        if let Some((_, owner)) = item.thrower.and_then(|t| owners.iter().find(|(u, _)| *u == t)) {
+            let subject = crate::advancements::triggers::seen_subject(owner, crate::DIMENSIONS[players[i].dim].0);
+            let left = item.stack.clone();
+            players[i].fire_conds("minecraft:thrown_item_picked_up_by_player", None, |c, ok, loot| {
+                c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, &left)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
+            });
+        }
         let pkt = entity::take_item_entity(e.id, players[i].entity_id, taken);
         players[i].send(pkt.clone());
         for v in &e.seen_by {

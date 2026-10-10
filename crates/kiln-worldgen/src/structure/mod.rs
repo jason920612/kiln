@@ -284,6 +284,7 @@ impl Structures {
         target: &str,
         max_depth: i32,
         pos: BlockPos,
+        keep_jigsaws: bool,
     ) -> Option<Vec<Box<dyn Piece>>> {
         let (st, base) = self.structures.iter().enumerate().find_map(|(i, d)| d.kind.as_jigsaw().map(|j| (i, j)))?;
         let s = jigsaw::JigsawStructure {
@@ -318,6 +319,9 @@ impl Structures {
         let stub = jigsaw::placement::add_pieces(&s, &mut ctx, pos)?;
         let mut pieces: Vec<Box<dyn Piece>> = Vec::new();
         (stub.build)(&mut ctx, &mut pieces);
+        for p in pieces.iter_mut() {
+            p.keep_jigsaws(keep_jigsaws);
+        }
         (!pieces.is_empty()).then_some(pieces)
     }
 

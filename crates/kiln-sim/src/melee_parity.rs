@@ -149,7 +149,12 @@ fn decode(stats: &SinkStats) -> Decoded {
         } else if id == c::LEVEL_PARTICLES {
             let kind = r.varint().unwrap();
             let name = particle_names.get(kind as usize).copied().unwrap_or("?").to_owned();
-            // (Only options-free particles are looked at; the rest decode wrongly and mismatch.)
+            // (Only options-free particles are looked at, and item particles (their template: item, count, empty patch); the rest decode wrongly and mismatch.)
+            if name == "minecraft:item" {
+                for _ in 0..4 {
+                    r.varint().unwrap();
+                }
+            }
             let (_override, _always) = (r.bool().unwrap(), r.bool().unwrap());
             let pos = [r.f64().unwrap(), r.f64().unwrap(), r.f64().unwrap()];
             let offset = [r.f32().unwrap(), r.f32().unwrap(), r.f32().unwrap()];

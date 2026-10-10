@@ -30,6 +30,8 @@ pub enum Capability {
     EntityControl,
     /// `kiln:api/blocks`: set blocks in the cell of the call.
     WorldWrite,
+    /// `kiln:api/world-read` (1.1): read the blocks around a block event.
+    WorldRead,
     /// `kiln:api/events`: raise events to other plugins.
     EventsRaise,
     /// `async-tasks` world: HTTP requests to this host (`http:example.com`).
@@ -58,6 +60,7 @@ impl Capability {
             "inventory" => Capability::Inventory,
             "entity.control" => Capability::EntityControl,
             "world.write" => Capability::WorldWrite,
+            "world.read" => Capability::WorldRead,
             "events.raise" => Capability::EventsRaise,
             "timers" => Capability::Timers,
             "storage" => Capability::Storage,
@@ -155,6 +158,8 @@ impl ObserveKinds {
     pub const BLOCK_PLACED: u8 = 2;
     pub const PLAYER_DIED: u8 = 4;
     pub const PLAYER_SPAWNED: u8 = 8;
+    /// 1.1: a player's block position changed.
+    pub const PLAYER_MOVED: u8 = 16;
     /// Without `kinds`: block changes only (what the first versions of the API sent).
     pub const DEFAULT: ObserveKinds = ObserveKinds(Self::BLOCK_BROKEN | Self::BLOCK_PLACED);
 
@@ -170,6 +175,7 @@ impl ObserveKinds {
                 "block-placed" => Self::BLOCK_PLACED,
                 "player-died" => Self::PLAYER_DIED,
                 "player-spawned" => Self::PLAYER_SPAWNED,
+                "player-moved" => Self::PLAYER_MOVED,
                 other => bail!("unknown observed kind `{other}`"),
             };
         }

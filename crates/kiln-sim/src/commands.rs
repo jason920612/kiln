@@ -314,6 +314,13 @@ impl Sim {
         None
     }
 
+    /// The block changes [`Sim::with_level_held`] kept while data was loaded go out now (the block entity with them).
+    fn send_held_changes(&mut self, dim: crate::DimId, pos: [i32; 3], held: Vec<[i32; 3]>) {
+        if !held.is_empty() {
+            self.with_level_in(dim, pos, |level| level.out.changed.extend(held));
+        }
+    }
+
     /// Replaces the contents of the block entity at `pos` with `fields` (position and id kept)
     /// and sends Block Entity Data to players with the chunk if vanilla would. Returns whether
     /// the contents changed.
@@ -382,10 +389,16 @@ impl Sim {
         }
         if matches!(kiln_world::block_entity::type_name(old.kind), "minecraft:structure_block" | "minecraft:jigsaw") {
             // (The block and its data go to the clients together, once: `sendBlockUpdated`.)
+            let deferred = self.world.defer_be_packet;
             self.with_level_in(dim, pos, |l| {
                 crate::structure_block::loaded(l, kiln_blocks::BlockPos::new(x, y, z));
-                l.out.changed.push(pos);
+                if !deferred {
+                    l.out.changed.push(pos);
+                }
             });
+            return true;
+        }
+        if self.world.defer_be_packet {
             return true;
         }
         let Some((kind, tag)) = self.dims[dim].regions.block_entity_data(x, y, z) else { return true };
@@ -1342,8 +1355,13 @@ impl Host for Sim {
     fn set_block(&mut self, dimension: &str, pos: [i32; 3], state: u16, nbt: Option<&Tag>, flags: UpdateFlags) -> bool {
         let at = block_pos(pos);
         let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
-        let state_changed = self.with_level_in(dim, pos, |level| kiln_blocks::set_block(level, at, state, flags.0)).unwrap_or(false);
-        self.load_nbt(dim, pos, nbt) || state_changed
+        // (With data to load the changes wait for it: the clients get the block entity once, with its data.)
+        let (state_changed, held) = self.with_level_held(dim, pos, nbt.is_some(), |level| kiln_blocks::set_block(level, at, state, flags.0)).unwrap_or((false, Vec::new()));
+        self.world.defer_be_packet = held.contains(&pos);
+        let loaded = self.load_nbt(dim, pos, nbt);
+        self.world.defer_be_packet = false;
+        self.send_held_changes(dim, pos, held);
+        loaded || state_changed
     }
 
     /// `BlockInput.place`: the state shaped by its neighbours except for the properties the
@@ -1357,8 +1375,12 @@ impl Host for Sim {
             .map(|&p| (p.to_owned(), kiln_blocks::state::get(block.state, p).unwrap_or_default().to_owned()))
             .collect();
         let input = kiln_blocks::commands::BlockInput { state: block.state, defined };
-        let state_changed = self.with_level_in(dim, pos, |level| input.place(level, at, flags.0)).unwrap_or(false);
-        self.load_nbt(dim, pos, block.nbt.as_ref()) || state_changed
+        let (state_changed, held) = self.with_level_held(dim, pos, block.nbt.is_some(), |level| input.place(level, at, flags.0)).unwrap_or((false, Vec::new()));
+        self.world.defer_be_packet = held.contains(&pos);
+        let loaded = self.load_nbt(dim, pos, block.nbt.as_ref());
+        self.world.defer_be_packet = false;
+        self.send_held_changes(dim, pos, held);
+        loaded || state_changed
     }
 
     fn update_neighbours(&mut self, dimension: &str, pos: [i32; 3], old: u16) {
@@ -1895,7 +1917,7 @@ impl Host for Sim {
                 self.place_template(dim, id.as_str(), pos, *rotation, *mirror, *integrity, *seed, *strict)
             }
             Placement::Feature { id, .. } => self.place_generated_feature(dim, id.as_ref().map(|i| i.as_str()), pos),
-            Placement::Jigsaw { pool, target, max_depth } => self.place_generated_jigsaw(dim, pool.as_str(), target.as_str(), *max_depth, pos),
+            Placement::Jigsaw { pool, target, max_depth } => self.place_generated_jigsaw(dim, pool.as_str(), target.as_str(), *max_depth, pos, false),
             Placement::Structure(id) => self.place_generated_structure(dim, id.as_str(), pos),
         }
     }

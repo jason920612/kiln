@@ -2575,7 +2575,9 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
             return false;
         }
         let dealt = amount - m.last_hurt;
-        actually_hurt(e.id, m, source, dealt);
+        if !m.kind.ext().is_some_and(|k| k.override_actually_hurt(e, m, level, &source, dealt)) {
+            actually_hurt(e.id, m, source, dealt);
+        }
         if let Some(k) = m.kind.ext() {
             k.actually_hurt(e, m, level, &source, dealt);
         }
@@ -2584,7 +2586,9 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     } else {
         m.last_hurt = amount;
         m.damage_cooldown = 20;
-        actually_hurt(e.id, m, source, amount);
+        if !m.kind.ext().is_some_and(|k| k.override_actually_hurt(e, m, level, &source, amount)) {
+            actually_hurt(e.id, m, source, amount);
+        }
         if let Some(k) = m.kind.ext() {
             k.actually_hurt(e, m, level, &source, amount);
         }
@@ -2623,7 +2627,7 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
         die(e, m, level, source);
     } else if full {
         m.ambient_sound_time = -m.kind.ambient_sound_interval();
-        let sound = land_variant(e, m, baby_variant(m, m.kind.ext().and_then(|k| k.hurt_sound_for(m)).unwrap_or_else(|| m.kind.hurt_sound())));
+        let sound = land_variant(e, m, baby_variant(m, m.kind.ext().and_then(|k| k.hurt_sound_from(m, &source)).unwrap_or_else(|| m.kind.hurt_sound())));
         make_sound(e, m, level, sound);
     }
     m.last_damage_source = Some(source);

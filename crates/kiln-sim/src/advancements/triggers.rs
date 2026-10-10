@@ -200,7 +200,12 @@ impl Player {
 
     /// `RecipeCraftedTrigger.trigger`: the recipe and the stacks it took.
     pub(crate) fn recipe_crafted(&mut self, recipe: &str, ingredients: &[ItemStack]) {
-        self.fire("minecraft:recipe_crafted", None, |c, loot, _| match &c.trigger {
+        self.recipe_crafted_by("minecraft:recipe_crafted", recipe, ingredients);
+    }
+
+    /// `RecipeCraftedTrigger.trigger` of `trigger` (`recipe_crafted`, `crafter_recipe_crafted`).
+    pub(crate) fn recipe_crafted_by(&mut self, trigger: &str, recipe: &str, ingredients: &[ItemStack]) {
+        self.fire(trigger, None, |c, loot, _| match &c.trigger {
             Trigger::RecipeCrafted { recipes, ingredients: wanted } => {
                 if !recipes.iter().any(|r| r == recipe) {
                     return false;
@@ -486,6 +491,18 @@ impl Player {
         let (pos, dim) = (self.pos, crate::DIMENSIONS[self.dim].0);
         self.fire_conds(trigger, None, |c, _, _| {
             c.location("start_position").is_none_or(|l| criteria::location_matches(l, start, dim, None)) && c.distance("distance", start, pos)
+        });
+    }
+
+    /// `FallAfterExplosionTrigger.trigger`: a fall that began below where `cause` blew the player up; `start_position` and `distance`
+    /// are the blast's place and the way down from it.
+    pub(crate) fn fall_after_explosion(&mut self, impact: [f64; 3], cause: Option<&kiln_entity::level::Seen>) {
+        let (pos, dim) = (self.pos, crate::DIMENSIONS[self.dim].0);
+        let subject = cause.map(|s| seen_subject(s, dim));
+        self.fire_conds("minecraft:fall_after_explosion", None, |c, ok, _| {
+            c.location("start_position").is_none_or(|l| criteria::location_matches(l, impact, dim, None))
+                && c.distance("distance", impact, pos)
+                && c.cap("cause").is_none_or(|cap| subject.as_ref().is_some_and(|s| ok(cap, s)))
         });
     }
 

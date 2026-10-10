@@ -446,6 +446,64 @@ public class InteractVectors {
 
     static final String LAYERS = "banner_patterns=[{pattern:\"minecraft:stripe_downright\",color:\"red\"},{pattern:\"minecraft:circle\",color:\"blue\"},{pattern:\"minecraft:border\",color:\"black\"}]";
 
+    // ---------------------------------------------------------------- wp52: an item's components in the block entity it is placed as
+
+    static void placeComponents52(List<Case> out) {
+        Case c;
+        String dia = "[{slot:0,item:{id:\"minecraft:diamond\",count:3}},{slot:4,item:{id:\"minecraft:stick\",count:20}}]";
+        String[][] items = {
+                {"head_profile", "minecraft:player_head[profile={name:\"Notch\"}]"},
+                {"head_plain", "minecraft:player_head"},
+                {"skull_named", "minecraft:skeleton_skull[custom_name='\"Bones\"']"},
+                {"head_note", "minecraft:zombie_head[note_block_sound=\"minecraft:block.note_block.bell\"]"},
+                {"chest_named", "minecraft:chest[custom_name='\"Box\"']"},
+                {"chest_container", "minecraft:chest[container=" + dia + "]"},
+                {"chest_loot", "minecraft:chest[container_loot={loot_table:\"minecraft:chests/simple_dungeon\",seed:5L}]"},
+                {"chest_lock", "minecraft:chest[lock={components:{\"minecraft:custom_name\":'\"key\"'}}]"},
+                {"barrel_container", "minecraft:barrel[container=" + dia + ",custom_name='\"B\"']"},
+                {"shulker", "minecraft:shulker_box[container=" + dia + "]"},
+                {"shulker_red_named", "minecraft:red_shulker_box[container=" + dia + ",custom_name='\"Red\"']"},
+                {"dispenser", "minecraft:dispenser[container=" + dia + "]"},
+                {"hopper_named", "minecraft:hopper[custom_name='\"H\"']"},
+                {"furnace_named", "minecraft:furnace[custom_name='\"F\"']"},
+                {"brewing_named", "minecraft:brewing_stand[custom_name='\"Brew\"']"},
+                {"enchanting_named", "minecraft:enchanting_table[custom_name='\"Ench\"']"},
+                {"beacon_named", "minecraft:beacon[custom_name='\"Light\"']"},
+                {"decorated_pot", "minecraft:decorated_pot[pot_decorations={back:\"minecraft:brick\",left:\"minecraft:arms_up_pottery_sherd\",right:\"minecraft:brick\",front:\"minecraft:skull_pottery_sherd\"}]"},
+                {"decorated_pot_container", "minecraft:decorated_pot[container=[{slot:0,item:{id:\"minecraft:diamond\",count:3}}]]"},
+                {"beehive_bees", "minecraft:beehive[bees=[{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:100,ticks_in_hive:5}]]"},
+                {"bee_nest_bees", "minecraft:bee_nest[bees=[{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:100,ticks_in_hive:5}],block_state={honey_level:\"3\"}]"},
+                {"lectern", "minecraft:lectern"},
+                {"crafter", "minecraft:crafter[custom_name='\"Craft\"']"},
+                {"trapped_chest", "minecraft:trapped_chest[container=" + dia + "]"},
+                {"ender_chest_named", "minecraft:ender_chest[custom_name='\"E\"']"},
+                {"sign_named", "minecraft:oak_sign[custom_name='\"S\"']"},
+                {"bed_color", "minecraft:red_bed"},
+                {"chest_bed_data", "minecraft:chest[block_entity_data={id:\"minecraft:chest\",Items:[{Slot:1b,id:\"minecraft:stone\",count:2}]}]"},
+                {"chest_bed_data_custom", "minecraft:chest[block_entity_data={id:\"minecraft:chest\",CustomName:'\"Data\"'}]"},
+                {"spawner_data", "minecraft:spawner[block_entity_data={id:\"minecraft:mob_spawner\",SpawnData:{entity:{id:\"minecraft:zombie\"}},Delay:5s}]"},
+        };
+        for (String[] it : items) {
+            for (String mode : new String[] {"survival", "creative"}) {
+                c = blockCase("place52_" + it[0] + "_" + mode, "minecraft:air");
+                c.gameMode = mode;
+                c.slot("h0", parsed(it[1]));
+                c.step(useOn(2, 99, 0, 1, 0));
+                out.add(c);
+            }
+        }
+        // an operator in creative mode may place a block entity's data (survival and non-operators may not)
+        for (String[] it : new String[][] {{"chest_bed_data", "minecraft:chest[block_entity_data={id:\"minecraft:chest\",Items:[{Slot:1b,id:\"minecraft:stone\",count:2}]}]"},
+                {"spawner_data", "minecraft:spawner[block_entity_data={id:\"minecraft:mob_spawner\",SpawnData:{entity:{id:\"minecraft:zombie\"}},Delay:5s}]"}}) {
+            c = blockCase("place52_op_" + it[0], "minecraft:air");
+            c.gameMode = "creative";
+            c.op = true;
+            c.slot("h0", parsed(it[1]));
+            c.step(useOn(2, 99, 0, 1, 0));
+            out.add(c);
+        }
+    }
+
     static void banners50(List<Case> out) {
         Case c;
         // ---- placing: a standing banner on the stone, a wall banner on its side; the block entity carries the layers, name and the rest.
@@ -735,6 +793,24 @@ public class InteractVectors {
         c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"nonsense\"}").late("summon minecraft:cushion 3.5 100 0.5 {color:\"purple\"}");
         c.step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
+        // wp52: fluids in its cell and under it (the water is placed, it does not flow in a level that does not tick).
+        for (String fluid : new String[] {"minecraft:water", "minecraft:lava"}) {
+            c = cushionCase("tick_in_" + fluid.replaceAll("[^a-z0-9]", "_")); c.tickCushions = true; c.noPitch = true;
+            c.cmd("fill 1 99 -1 3 101 1 minecraft:stone hollow").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+            c.step(op("op", "command", "command", "setblock 2 100 0 " + fluid)).step(op("op", "tick_cushions", "ticks", 100));
+            out.add(c);
+            c = cushionCase("tick_support_" + fluid.replaceAll("[^a-z0-9]", "_")); c.tickCushions = true; c.noPitch = true;
+            c.cmd("fill 1 99 -1 3 101 1 minecraft:stone hollow").cmd("setblock 2 98 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+            c.step(op("op", "command", "command", "setblock 2 99 0 " + fluid)).step(op("op", "tick_cushions", "ticks", 100));
+            out.add(c);
+        }
+        // a piston head or a moving block in the cell
+        for (String block : new String[] {"minecraft:piston_head[facing=up,type=normal]", "minecraft:moving_piston[facing=up,type=normal]", "minecraft:honey_block", "minecraft:slime_block", "minecraft:glass", "minecraft:oak_trapdoor[half=top,open=false]"}) {
+            c = cushionCase("tick_with_" + block.replaceAll("[^a-z0-9]", "_")); c.tickCushions = true;
+            c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+            c.step(op("op", "command", "command", "setblock 2 100 0 " + block)).step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "tick_cushions", "ticks", 100));
+            out.add(c);
+        }
         c = cushionCase("tick_while_sitting"); c.tickCushions = true;
         c.late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
         c.step(useEntity(2.5, 100.0, 0.5, 0, false)).step(op("op", "tick_cushions", "ticks", 100));
@@ -873,7 +949,12 @@ public class InteractVectors {
 
     static Map<String, Object> setStructure(String update, String mode, String name, int[] off, int[] size, String mirror, String rotation, String metadata,
             boolean ignoreEntities, boolean strict, boolean showAir, boolean showBox, double integrity, long seed) {
-        return op("op", "set_structure", "pos", List.of(2, 100, 0), "update", update, "mode", mode, "name", name,
+        return setStructureAt(new int[] {2, 100, 0}, update, mode, name, off, size, mirror, rotation, metadata, ignoreEntities, strict, showAir, showBox, integrity, seed);
+    }
+
+    static Map<String, Object> setStructureAt(int[] at, String update, String mode, String name, int[] off, int[] size, String mirror, String rotation, String metadata,
+            boolean ignoreEntities, boolean strict, boolean showAir, boolean showBox, double integrity, long seed) {
+        return op("op", "set_structure", "pos", List.of(at[0], at[1], at[2]), "update", update, "mode", mode, "name", name,
                 "offset", List.of(off[0], off[1], off[2]), "size", List.of(size[0], size[1], size[2]), "mirror", mirror, "rotation", rotation,
                 "metadata", metadata, "ignore_entities", ignoreEntities, "strict", strict, "show_air", showAir, "show_box", showBox,
                 "integrity", integrity, "seed", seed);
@@ -910,6 +991,21 @@ public class InteractVectors {
                 .cmd("setblock 3 102 2 minecraft:oak_fence").cmd("setblock 3 101 2 minecraft:oak_fence")
                 .cmd("setblock 4 102 0 minecraft:jigsaw[orientation=east_up]{pool:\"minecraft:empty\",name:\"minecraft:a\",target:\"minecraft:b\",joint:\"aligned\",final_state:\"minecraft:stone\",placement_priority:3,selection_priority:2}")
                 .cmd("setblock 5 102 1 minecraft:structure_block[mode=data]{metadata:\"chest\",name:\"minecraft:x\"}");
+    }
+
+    /** wp52: entities in the cube x 3..5, y 100..102, z 0..2 (and two just outside it). */
+    static void entitiesContent(Case c, boolean rider) {
+        // (Summoned in the order of their places: the simulation numbers the entities of one tick that way, vanilla by when they came.)
+        c.cmd("setblock 3 100 0 minecraft:stone").cmd("setblock 5 101 2 minecraft:stone").cmd("setblock 5 102 1 minecraft:stone")
+                .cmd("summon minecraft:marker 3.2 102.0 2.2 {UUID:[I;1,0,0,5],data:{a:1b}}")
+                .cmd("summon minecraft:armor_stand 3.5 100.0 0.5 {UUID:[I;1,0,0,1],NoGravity:1b,ShowArms:1b}")
+                .cmd(rider ? "summon minecraft:minecart 4.5 100.0 1.5 {UUID:[I;1,0,0,2],NoGravity:1b,Passengers:[{id:\"minecraft:armor_stand\",UUID:[I;1,0,0,3],NoGravity:1b}]}" : "summon minecraft:minecart 4.5 100.0 1.5 {UUID:[I;1,0,0,2],NoGravity:1b}")
+                .cmd("summon minecraft:item 4.5 101.0 0.5 {UUID:[I;1,0,0,4],Item:{id:\"minecraft:stone\",count:3},Age:100s,PickupDelay:5s,NoGravity:1b}")
+                .cmd("summon minecraft:item_frame 5 101 1 {UUID:[I;1,0,0,9],Facing:2b,Item:{id:\"minecraft:stick\",count:1}}")
+                .cmd("summon minecraft:painting 5 102 0 {UUID:[I;1,0,0,10],facing:2b,variant:\"minecraft:kebab\"}")
+                .cmd("summon minecraft:armor_stand 5.9 100.0 0.5 {UUID:[I;1,0,0,6],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand 6.7 100.0 0.5 {UUID:[I;1,0,0,7],NoGravity:1b}")
+                .cmd("summon minecraft:pig 8.5 100.0 1.5 {UUID:[I;1,0,0,8],NoAI:1b,Silent:1b}");
     }
 
     static void structures50(List<Case> out) {
@@ -976,6 +1072,35 @@ public class InteractVectors {
         c = structCase("save_mixed_entities_flag", "wp50:mixed2");
         mixedContent(c);
         c.step(setStructure("SAVE_AREA", "SAVE", "wp50:mixed2", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        out.add(c);
+        // ---- wp52: the entities of the area (`fillEntityList`): not the players, a rider inside its vehicle, a painting by the block it hangs on
+        for (String ignore : new String[] {"with", "ignored"}) {
+            c = structCase("save_entities_" + ignore, "wp52:ents_" + ignore);
+            entitiesContent(c, true);
+            c.step(setStructure("SAVE_AREA", "SAVE", "wp52:ents_" + ignore, new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", ignore.equals("ignored"), false, false, true, 1.0, 0L));
+            out.add(c);
+        }
+        // the area reaches over section borders (the order of the entities is the order of the sections)
+        c = structCase("save_entities_sections", "wp52:sects");
+        c.cmd("setblock -3 100 -2 minecraft:stone")
+                .cmd("summon minecraft:armor_stand 3.5 100.0 -0.5 {UUID:[I;2,0,0,1],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand -1.5 100.0 -0.5 {UUID:[I;2,0,0,2],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand 3.5 100.0 0.5 {UUID:[I;2,0,0,3],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand -1.5 100.0 0.5 {UUID:[I;2,0,0,4],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand 3.9 100.0 0.5 {UUID:[I;2,0,0,5],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand 1.5 120.0 0.5 {UUID:[I;2,0,0,6],NoGravity:1b}");
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp52:sects", new int[] {-5, 0, -2}, new int[] {9, 3, 4}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        out.add(c);
+        // a template with entities comes back (the hanging ones, the stands and the items are what the vectors can see)
+        c = structCase("load_entities", "wp52:back");
+        entitiesContent(c, false);
+        c.cmd("setblock 2 100 6 minecraft:structure_block[mode=load]").watch(2, 100, 6);
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        c.step(setStructureAt(new int[] {2, 100, 6}, "UPDATE_DATA", "LOAD", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        c.step(setStructureAt(new int[] {2, 100, 6}, "LOAD_AREA", "LOAD", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        // turned and mirrored, the entities go with the blocks
+        c.step(setStructureAt(new int[] {2, 100, 6}, "LOAD_AREA", "LOAD", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "LEFT_RIGHT", "CLOCKWISE_90", "", false, false, false, true, 1.0, 0L));
+        c.stands();
         out.add(c);
         c = structCase("save_air", "wp50:air");
         c.step(structPacket("SAVE_AREA", "SAVE", "wp50:air"));
@@ -1233,6 +1358,48 @@ public class InteractVectors {
         c = moveCase("edge_then_walk", "survival", true);
         c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
         c.step(move(4.9, 99.0, 0.5, true)).step(move(3.6, 99.0, 0.5, true)).step(op("op", "accept_teleport")).step(move(3.6, 99.0, 0.5, true));
+        out.add(c);
+    }
+
+    // ---------------------------------------------------------------- wp52: a move that is put back still checks the fall; the grace time after an impulse
+
+    static void moves52(List<Case> out) {
+        Case c;
+        for (double fall : new double[] {2.0, 8.0, 18.0}) {
+            // taken: the fall counts when the client says it landed
+            c = moveCase("fall_taken_" + (int) fall, "survival", false);
+            c.step(op("op", "set_fall", "distance", fall)).step(move(3.7, 99.0, 0.5, true));
+            out.add(c);
+            // put back (into a wall): the fall is checked where the player is
+            c = moveCase("fall_rejected_" + (int) fall, "survival", false);
+            c.cmd("fill 4 99 -2 4 101 2 minecraft:stone");
+            c.step(op("op", "set_fall", "distance", fall)).step(move(4.0, 99.0, 0.5, true));
+            out.add(c);
+            c = moveCase("fall_rejected_air_" + (int) fall, "survival", false);
+            c.cmd("fill 4 99 -2 4 101 2 minecraft:stone");
+            c.step(op("op", "set_fall", "distance", fall)).step(move(4.0, 99.0, 0.5, false));
+            out.add(c);
+            // the edge of a sneaking player: the server's body stays, the claim is wrong
+            c = moveCase("fall_edge_" + (int) fall, "survival", true);
+            c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
+            c.step(op("op", "set_fall", "distance", fall)).step(move(4.9, 99.0, 0.5, true));
+            out.add(c);
+        }
+        // creative players take no fall damage, put back or not
+        c = moveCase("fall_rejected_creative", "creative", false);
+        c.cmd("fill 4 99 -2 4 101 2 minecraft:stone");
+        c.step(op("op", "set_fall", "distance", 20.0)).step(move(4.0, 99.0, 0.5, true));
+        out.add(c);
+        // the grace time after an impulse: a claim far from the body is taken
+        for (int grace : new int[] {0, 40}) {
+            c = moveCase("grace_" + grace, "survival", true);
+            c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
+            c.step(op("op", "set_grace", "ticks", grace)).step(move(4.9, 99.0, 0.5, true));
+            out.add(c);
+        }
+        c = moveCase("grace_into_wall", "survival", false);
+        c.cmd("fill 4 99 -2 4 101 2 minecraft:stone");
+        c.step(op("op", "set_grace", "ticks", 40)).step(move(4.0, 99.0, 0.5, true));
         out.add(c);
     }
 
@@ -3253,6 +3420,84 @@ public class InteractVectors {
         return op("op", "pick_block", "pos", List.of(x, y, z), "include", include);
     }
 
+    // ---------------------------------------------------------------- wp52: middle click on an entity (`handlePickItemFromEntity`)
+
+    static void pickEntities52(List<Case> out) {
+        Case c;
+        String[][] things = {
+                {"armor_stand", "summon minecraft:armor_stand 4 100 1 {NoGravity:1b}"},
+                {"item_frame_empty", "setblock 5 100 1 minecraft:stone|summon minecraft:item_frame 4 100 1 {Facing:5b}"},
+                {"item_frame_item", "setblock 5 100 1 minecraft:stone|summon minecraft:item_frame 4 100 1 {Facing:5b,Item:{id:\"minecraft:diamond\",count:3}}"},
+                {"glow_frame", "setblock 5 100 1 minecraft:stone|summon minecraft:glow_item_frame 4 100 1 {Facing:5b}"},
+                {"named_frame", "setblock 5 100 1 minecraft:stone|summon minecraft:item_frame 4 100 1 {Facing:5b,CustomName:'\"Fr\"'}"},
+                {"painting", "setblock 5 100 1 minecraft:stone|summon minecraft:painting 4 100 1 {facing:1b,variant:\"minecraft:kebab\"}"},
+                {"cushion_red", "setblock 4 99 1 minecraft:stone|summon minecraft:cushion 4.5 100 1.5 {Color:\"red\"}"},
+                {"cushion_white", "setblock 4 99 1 minecraft:stone|summon minecraft:cushion 4.5 100 1.5 {}"},
+                {"mannequin", "summon minecraft:mannequin 4.5 100 1.5 {}"},
+                {"end_crystal", "summon minecraft:end_crystal 4.5 100 1.5 {}"},
+                {"minecart", "summon minecraft:minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"chest_minecart", "summon minecraft:chest_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"hopper_minecart", "summon minecraft:hopper_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"furnace_minecart", "summon minecraft:furnace_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"tnt_minecart", "summon minecraft:tnt_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"command_minecart", "summon minecraft:command_block_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"spawner_minecart", "summon minecraft:spawner_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"oak_boat", "summon minecraft:oak_boat 4.5 100 1.5 {NoGravity:1b}"},
+                {"cherry_chest_boat", "summon minecraft:cherry_chest_boat 4.5 100 1.5 {NoGravity:1b}"},
+                {"bamboo_raft", "summon minecraft:bamboo_raft 4.5 100 1.5 {NoGravity:1b}"},
+                {"item", "summon minecraft:item 4.5 100 1.5 {Item:{id:\"minecraft:stone\",count:1},NoGravity:1b}"},
+                {"marker", "summon minecraft:marker 4.5 100 1.5 {}"},
+                {"snowball", "summon minecraft:snowball 4.5 100 1.5 {NoGravity:1b}"},
+                {"tnt", "summon minecraft:tnt 4.5 100 1.5 {NoGravity:1b,fuse:80}"},
+                {"pig", "summon minecraft:pig 4.5 100 1.5 {NoAI:1b}"},
+                {"cow", "summon minecraft:cow 4.5 100 1.5 {NoAI:1b}"},
+                {"wolf", "summon minecraft:wolf 4.5 100 1.5 {NoAI:1b}"},
+                {"zombie", "summon minecraft:zombie 4.5 100 1.5 {NoAI:1b}"},
+                {"villager", "summon minecraft:villager 4.5 100 1.5 {NoAI:1b}"},
+                {"iron_golem", "summon minecraft:iron_golem 4.5 100 1.5 {NoAI:1b}"},
+                {"creeper", "summon minecraft:creeper 4.5 100 1.5 {NoAI:1b}"},
+                {"slime", "summon minecraft:slime 4.5 100 1.5 {NoAI:1b,Size:1}"},
+                {"bat", "summon minecraft:bat 4.5 100 1.5 {NoAI:1b}"},
+                {"giant", "summon minecraft:giant 4.5 100 1.5 {NoAI:1b}"},
+                {"ender_dragon", "summon minecraft:ender_dragon 4.5 101 1.5 {NoAI:1b}"},
+                {"wither", "summon minecraft:wither 4.5 101 1.5 {NoAI:1b}"},
+                {"zombie_horse", "summon minecraft:zombie_horse 4.5 100 1.5 {NoAI:1b}"},
+                {"copper_golem", "summon minecraft:copper_golem 4.5 100 1.5 {NoAI:1b}"},
+        };
+        for (String[] t : things) {
+            c = new Case("pickent52_" + t[0]);
+            c.gameMode = "creative";
+            for (String cmd : t[1].split("\\|")) c.cmd(cmd);
+            c.step(op("op", "pick_entity", "pos", List.of(4.5, 100.0, 1.5), "include", false));
+            out.add(c);
+        }
+        // A survival player gets what he has: from the main inventory into the hotbar, or nothing.
+        for (String[] t : new String[][] {{"pig", "minecraft:pig_spawn_egg", "summon minecraft:pig 4.5 100 1.5 {NoAI:1b}"}, {"minecart", "minecraft:minecart", "summon minecraft:minecart 4.5 100 1.5 {NoGravity:1b}"}}) {
+            c = new Case("pickent52_survival_has_" + t[0]);
+            c.gameMode = "survival";
+            c.cmd(t[2]).slot("m20", stack(t[1], 4)).slot("h0", stack("minecraft:dirt"));
+            c.step(op("op", "pick_entity", "pos", List.of(4.5, 100.0, 1.5), "include", false));
+            out.add(c);
+            c = new Case("pickent52_survival_hasnt_" + t[0]);
+            c.gameMode = "survival";
+            c.cmd(t[2]).slot("h0", stack("minecraft:dirt"));
+            c.step(op("op", "pick_entity", "pos", List.of(4.5, 100.0, 1.5), "include", false));
+            out.add(c);
+        }
+        // Out of reach: nothing.
+        c = new Case("pickent52_far");
+        c.gameMode = "creative";
+        c.cmd("summon minecraft:pig 40.5 100 1.5 {NoAI:1b}");
+        c.step(op("op", "pick_entity", "pos", List.of(40.5, 100.0, 1.5), "include", false));
+        out.add(c);
+        // An item frame holding an item: the item (a second pick finds it in the hotbar).
+        c = new Case("pickent52_frame_twice");
+        c.gameMode = "creative";
+        c.cmd("setblock 5 100 1 minecraft:stone").cmd("summon minecraft:item_frame 4 100 1 {Facing:5b,Item:{id:\"minecraft:stick\",count:1}}");
+        c.step(op("op", "pick_entity", "pos", List.of(4.5, 100.0, 1.5), "include", false)).step(op("op", "pick_entity", "pos", List.of(4.5, 100.0, 1.5), "include", true));
+        out.add(c);
+    }
+
     static void picks(List<Case> out) {
         Case c;
         String[] modes = {"survival", "creative"};
@@ -3706,6 +3951,20 @@ public class InteractVectors {
                 String title = (String) s.get("title");
                 p.connection.handleEditBook(new ServerboundEditBookPacket((int) s.get("slot"), pages, Optional.ofNullable(title)));
             }
+            // wp52: middle click on the entity nearest to `pos`.
+            case "pick_entity" -> {
+                @SuppressWarnings("unchecked")
+                List<Double> at = (List<Double>) s.get("pos");
+                net.minecraft.world.entity.Entity target = null;
+                double bd = 1e18;
+                for (var e : server.overworld().getEntities((net.minecraft.world.entity.Entity) null, new AABB(at.get(0) - 8, at.get(1) - 8, at.get(2) - 8, at.get(0) + 8, at.get(1) + 8, at.get(2) + 8),
+                        en -> !(en instanceof net.minecraft.world.entity.player.Player))) {
+                    double d = e.position().distanceToSqr(at.get(0), at.get(1), at.get(2));
+                    if (d < bd) { bd = d; target = e; }
+                }
+                if (target == null) throw new IllegalStateException("no entity near " + at);
+                p.connection.handlePickItemFromEntity(new net.minecraft.network.protocol.game.ServerboundPickItemFromEntityPacket(target.getId(), (boolean) s.get("include")));
+            }
             case "pick_block" -> {
                 @SuppressWarnings("unchecked")
                 List<Integer> at = (List<Integer>) s.get("pos");
@@ -3770,6 +4029,9 @@ public class InteractVectors {
                 field(p.connection.getClass(), "firstGoodY").set(p.connection, p.getY());
                 field(p.connection.getClass(), "firstGoodZ").set(p.connection, p.getZ());
             }
+            // wp52: what the player has fallen so far, and the grace time after an impulse.
+            case "set_fall" -> p.fallDistance = ((Number) s.get("distance")).doubleValue();
+            case "set_grace" -> p.applyPostImpulseGraceTime(((Number) s.get("ticks")).intValue());
             case "accept_teleport" -> {
                 var at = (Vec3) get(p.connection, "awaitingPositionFromClient");
                 if (at != null) p.connection.handleAcceptTeleportPacket(new net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket((int) get(p.connection, "awaitingTeleport"), at.x, at.y, at.z, p.getYRot(), p.getXRot()));
@@ -4146,6 +4408,10 @@ public class InteractVectors {
         command("kill @e[type=minecraft:mannequin]");
         for (var mq : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-64, -64, -64, 64, 320, 64))) mq.discard();
         command("kill @e[type=minecraft:armor_stand]");
+        command("kill @e[type=minecraft:marker]");
+        command("kill @e[type=minecraft:minecart]");
+        // (wp52: whatever else a case summoned: carts, boats, crystals, primed TNT...)
+        command("kill @e[type=!minecraft:player]");
         command("kill @e[type=minecraft:falling_block]");
         command("kill @e[type=minecraft:item]");
         for (var bee : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.bee.Bee.class, new AABB(-64, -64, -64, 64, 320, 64))) bee.discard();
@@ -4281,6 +4547,8 @@ public class InteractVectors {
             signs(all);
             books(all);
             picks(all);
+            pickEntities52(all);
+            placeComponents52(all);
             cakes(all);
             blocks49(all);
             frames49(all);
@@ -4300,6 +4568,7 @@ public class InteractVectors {
             mannequins50(all);
             structures50(all);
             moves50(all);
+            moves52(all);
             cauldrons50(all);
             commandBlocks49(all);
         }).get();

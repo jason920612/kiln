@@ -329,6 +329,12 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
             return;
         }
         p.vel = with_y(p.vel, 0.009999999776482582);
+        // `calculateImpactPosition`: the height of the blast that is still being ignored, if it was below, else here.
+        let impact = match p.impulse_pos {
+            Some(i) if i[1] <= p.pos[1] => i,
+            _ => p.pos,
+        };
+        p.set_ignore_fall_damage_from_impulse(true, impact);
         p.send(entity::set_entity_motion(p.entity_id, p.vel));
         p.sync_velocity = false;
         let (at, fall) = (p.pos, p.fall_distance);
@@ -631,6 +637,8 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
             if push.x.is_finite() && push.y.is_finite() && push.z.is_finite() {
                 self.push(Victim::Player(t), push.x, push.y, push.z);
             }
+            // `Entity.onExplosionHit(source)`: not a wind charge's, so the ignoring stops (the blast's wielder is the source).
+            self.players[t].explosion_hit(None);
             let p = &*self.players[t];
             if !(p.game_mode == 1 && p.flying) {
                 knockbacks.push((t, Some([push.x, push.y, push.z])));

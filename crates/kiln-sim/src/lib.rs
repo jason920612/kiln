@@ -689,6 +689,16 @@ struct Player {
     /// `startingToFallPosition` (`fall_from_height`), `enteredNetherPosition`
     /// (`nether_travel`) and `enteredLavaOnVehiclePosition` (`ride_entity_in_lava`).
     starting_to_fall: Option<[f64; 3]>,
+    /// `LivingEntity.currentImpulseImpactPos` (saved as `current_explosion_impact_pos`) and
+    /// `currentImpulseContextResetGraceTime`: after a wind charge's blast or a mace's smash the fall from the impact height
+    /// does not hurt.
+    impulse_pos: Option<[f64; 3]>,
+    impulse_grace: i32,
+    /// The block the player was in when the plugins last looked (`player-moved` events).
+    plugin_block: Option<(DimId, [i32; 3])>,
+    /// `ServerPlayer.currentExplosionImpactPos` (`last_explosion_impact_pos`) and `currentExplosionCause`.
+    explosion_impact: Option<[f64; 3]>,
+    explosion_cause: Option<kiln_entity::level::Seen>,
     entered_nether: Option<[f64; 3]>,
     entered_lava_on_vehicle: Option<[f64; 3]>,
     /// `ServerPlayer.wardenSpawnTracker`.
@@ -2520,6 +2530,13 @@ impl Sim {
     /// sends what changed to everyone in the level who has the chunk and carries out the
     /// effects. `None` if the position's cell has no region (its chunk is not loaded).
     pub(crate) fn with_level_in<R>(&mut self, dim: DimId, pos: [i32; 3], f: impl FnOnce(&mut blocks::RegionLevel) -> R) -> Option<R> {
+        self.with_level_held(dim, pos, false, f).map(|(r, _)| r)
+    }
+
+    /// [`Self::with_level_in`] that, when `hold` is set, does not send the block changes `f` made but returns them: the caller
+    /// has more to do to the blocks (data to load) and sends them once afterwards (a `ChunkHolder` sends what a block has when the
+    /// tick's changes go out, not in between).
+    pub(crate) fn with_level_held<R>(&mut self, dim: DimId, pos: [i32; 3], hold: bool, f: impl FnOnce(&mut blocks::RegionLevel) -> R) -> Option<(R, Vec<[i32; 3]>)> {
         let env = self.block_env(dim);
         let Sim { dims, players, .. } = self;
         let d = &mut dims[dim];
@@ -2533,9 +2550,10 @@ impl Sim {
                 blocks::RegionLevel { cells: &mut *cells, blocks: &mut part.1, env: &env, out: &mut out, bodies: &bodies, actor: None };
             f(&mut level)
         };
+        let held = if hold { std::mem::take(&mut out.changed) } else { Vec::new() };
         let mut everyone: Vec<&mut Player> = players.values_mut().filter(|p| p.dim == dim).collect();
         blocks::finish(cells, out, &mut everyone, &mut d.spawns, &env);
-        Some(result)
+        Some((result, held))
     }
 
     /// Hands every region of every level its cells, its players (sorted by connection) and
@@ -3506,6 +3524,11 @@ impl Sim {
         let returning_vehicle = persist::returning_vehicle(joining.saved.raw().get("RootVehicle"));
         recipe_book.retain_existing(&self.rules);
         let warden_tracker = sculk::shrieker::WardenSpawnTracker::load(joining.saved.raw().get("warden_spawn_tracker"));
+        let (impulse_pos, explosion_impact) = (
+            persist::vec3_of(joining.saved.raw().get("current_explosion_impact_pos")),
+            persist::vec3_of(joining.saved.raw().get("last_explosion_impact_pos")),
+        );
+        let impulse_grace = joining.saved.raw().get("current_impulse_context_reset_grace_time").and_then(kiln_proto::nbt::Tag::as_i64).map_or(0, |v| v as i32);
         let mut player = Player {
             dim,
             conn: j.conn,
@@ -3681,6 +3704,11 @@ impl Sim {
             omen_village: false,
             omen_raid_full: false,
             starting_to_fall: None,
+            plugin_block: None,
+            impulse_pos,
+            impulse_grace,
+            explosion_impact,
+            explosion_cause: None,
             entered_nether: None,
             entered_lava_on_vehicle: None,
             warden_tracker,

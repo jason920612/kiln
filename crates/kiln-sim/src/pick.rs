@@ -8,7 +8,7 @@
 //!
 //! Not simulated: block entity data on the picked item (`include_data`, creative: the block
 //! entity's saved fields and components), the pot decorations, banner patterns of the block
-//! entity that `getCloneItemStack` carries over, and picking from entities.
+//! entity that `getCloneItemStack` carries over. (Picking from entities is `entities::pick_item_from_entity`.)
 
 use crate::Player;
 use kiln_blocks::BlockPos;

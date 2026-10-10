@@ -307,6 +307,8 @@ fn run_scenario(line: &Value) -> Vec<String> {
                 "use" => p.use_item(false, &block, &mut ctx),
                 // (`jump` is the shadow client's: its moves arrive as packets.)
                 "jump" | "velocity" => {}
+                // wp52: the impulse context at the height `y` above the floor.
+                "impulse" => p.set_ignore_fall_damage_from_impulse(a["ignore"].as_bool().unwrap(), [0.5, 100.0 + a["y"].as_f64().unwrap(), 0.5]),
                 // wp49: the boots change.
                 "armor" => {
                     let mut s = a["item"].as_str().filter(|i| !i.is_empty()).map(stack).unwrap_or_default();

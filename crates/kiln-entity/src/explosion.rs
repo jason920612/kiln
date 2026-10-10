@@ -301,6 +301,10 @@ fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, causing: Opti
         if let Some(slot) = level.entity_mut(id) {
             *slot = e;
         }
+        // `Entity.onExplosionHit(source)`: a player remembers where and by what it was hit.
+        if level.player(id).is_some() {
+            level.emit(crate::level::Event::ExplosionHit { player: id, source });
+        }
     }
     // `Level.getEntities` lists the ender dragons' parts too, after every other entity: each
     // part takes its own share for the dragon (whose hurt cooldown keeps the largest).

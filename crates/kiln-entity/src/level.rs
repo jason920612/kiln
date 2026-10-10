@@ -285,6 +285,10 @@ pub enum Event {
     LevelEvent { event: i32, pos: BlockPos, data: i32 },
     /// `Level.blockEvent(pos, block, a, b)` for the block at `pos` (a spawner's delay reset).
     BlockEvent { pos: BlockPos, a: i32, b: i32 },
+    /// `Entity.onExplosionHit(source)` of player `player`: an explosion (`source`, the entity that made it) reached it.
+    ExplosionHit { player: i32, source: Option<i32> },
+    /// `sendParticles(ItemParticleOption(minecraft:item, item), pos, count, spread, speed)` (`item` is the item's network id).
+    ItemParticles { item: i32, pos: Vec3, count: i32, spread: Vec3, speed: f32 },
     /// A game event for vibrations (`minecraft:hit_ground`, `minecraft:entity_place`, ...).
     GameEvent { event: &'static str, pos: Vec3, entity: Option<i32> },
     /// Damage to an entity this crate does not simulate (mobs, players).
@@ -806,6 +810,11 @@ pub trait EntityLevel {
     /// `sendParticles(BlockParticleOption(block_crumble, state), pos, count, dx, dy, dz, 0)`.
     fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
         let _ = (pos, state, count, spread);
+    }
+
+    /// `sendParticles(ItemParticleOption(minecraft:item, item), pos, count, dx, dy, dz, speed)`: `item` is the item's network id.
+    fn item_particles(&mut self, item: i32, pos: Vec3, count: i32, spread: Vec3, speed: f32) {
+        self.emit(Event::ItemParticles { item, pos, count, spread, speed });
     }
 
     /// `getRawBrightness(pos, skyDarken)`: the larger of the sky light less `sky_darken` and
