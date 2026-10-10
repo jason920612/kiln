@@ -1,0 +1,11 @@
+# Items whose placement differs between kiln-blocks' `placement::place` and vanilla, on purpose:
+# the game master blocks are refused for players without `canUseGameMasterBlocks`
+# (`GameMasterBlockItem.getPlacementState`); kiln-sim checks that where it knows the player
+# (region.rs, `can_use_gamemaster_blocks`), `placement::place` only knows the block.
+minecraft:command_block
+minecraft:chain_command_block
+minecraft:repeating_command_block
+minecraft:jigsaw
+minecraft:structure_block
+minecraft:test_block
+minecraft:test_instance_block
