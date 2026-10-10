@@ -19,6 +19,7 @@ pub fn fall_on(e: &mut Entity, level: &mut dyn EntityLevel, state: u16, _pos: Bl
         Kind::HoneyBlock => {
             e.play_sound(level, "minecraft:block.honey_block.slide", 1.0, 1.0);
             level.emit(Event::EntityEvent { entity: e.id, event: 54 });
+            e.honey_fall = true;
             cause_fall_damage(e, level, distance, 0.2);
         }
         Kind::Slime if !e.is_suppressing_bounce() => {

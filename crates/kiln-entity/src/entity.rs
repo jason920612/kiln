@@ -69,6 +69,8 @@ pub struct Entity {
     /// A mob's landing (`causeFallDamage(distance, multiplier)`) during its move, applied by
     /// the mob once its travel is done (its data is out of the entity meanwhile).
     pub pending_fall: Option<(f64, f32)>,
+    /// The landing was on honey, which lets the block's fall sound follow a landing that hurt (`HoneyBlock.fallOn`).
+    pub honey_fall: bool,
     /// Damage a minecart took from what it stood in (lava, fire) while its own tick held its
     /// state: (kind, amount, attacker), taken by the cart right after.
     pub pending_hurts: Vec<(DamageKind, f32, Option<i32>)>,
@@ -169,6 +171,7 @@ impl Entity {
         let t = kiln_data::entities::by_name(type_name).unwrap_or_else(|| panic!("unknown entity type {type_name}"));
         let mut e = Entity {
             pending_fall: None,
+            honey_fall: false,
             pending_hurts: Vec::new(),
             pending_effects: Vec::new(),
             last_deflected_by: None,
