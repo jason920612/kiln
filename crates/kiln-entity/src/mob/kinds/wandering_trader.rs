@@ -159,6 +159,10 @@ fn is_dark_outside(level: &dyn EntityLevel) -> bool {
 }
 
 impl Kind for WanderingTrader {
+    fn no_offspring(&self) -> bool {
+        true
+    }
+
     fn info(&self) -> &'static Info {
         &INFO
     }

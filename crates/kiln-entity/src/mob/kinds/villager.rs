@@ -1581,6 +1581,25 @@ impl Kind for Villager {
         &INFO
     }
 
+    /// `Villager.getBreedOffspring`: the baby's type is the biome's, its parent's or the partner's (one draw of the parent's random).
+    fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, level: &mut dyn EntityLevel) {
+        let d = e.random.next_double();
+        let my_type = state(m).map_or("minecraft:plains", |s| s.villager_type);
+        let their_type = state(partner).map_or(my_type, |s| s.villager_type);
+        let ty = if d < 0.5 {
+            type_for_biome(level.biome(e.block_position()).and_then(biome_name).unwrap_or("minecraft:plains"))
+        } else if d < 0.75 {
+            my_type
+        } else {
+            their_type
+        };
+        if let Some(cst) = state_mut(child) {
+            cst.villager_type = ty;
+            cst.profession = "minecraft:none";
+            cst.finalized = true;
+        }
+    }
+
     fn new_state(&self, m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
         // `AbstractVillager`: fire maluses; `Villager`: opens doors, floats, picks up loot.
         m.maluses.push((path::PathType::FireInNeighbor, 16.0));

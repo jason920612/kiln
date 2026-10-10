@@ -187,6 +187,10 @@ fn check_spawn(view: &dyn SpawnView, pos: BlockPos) -> bool {
 }
 
 impl Kind for Parrot {
+    fn no_offspring(&self) -> bool {
+        true
+    }
+
     fn info(&self) -> &'static Info {
         &INFO
     }

@@ -225,6 +225,10 @@ pub fn breed_offspring(e: &mut Entity, m: &mut MobData, partner: &MobData, level
 /// `SpawnEggItem.spawnOffspringFromSpawnEgg` for a spawn egg of the mob's own type used on it: a baby (`getBreedOffspring` for an
 /// ageable mob, a fresh mob for the others) at its place, or `None` when the type has no babies.
 pub fn offspring_from_egg(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> Option<Entity> {
+    if is_ageable(m.kind) && m.kind.ext().is_some_and(|k| k.no_offspring()) {
+        // (`getBreedOffspring` returned null: the mob was never made.)
+        return None;
+    }
     let mut child = if is_ageable(m.kind) {
         let me = m.clone();
         breed_offspring(e, m, &me, level)

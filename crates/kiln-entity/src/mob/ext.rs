@@ -372,6 +372,10 @@ pub trait Kind: Sync + Send {
     fn actually_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) {
         let _ = (e, m, level, source, amount);
     }
+    /// `getBreedOffspring` returns nothing (a parrot, a wandering trader): no baby from a spawn egg.
+    fn no_offspring(&self) -> bool {
+        false
+    }
     /// `onOffspringSpawnedFromEgg(player, baby)`: what the type does when a spawn egg brought a baby of it (a fox trusts the player).
     fn offspring_from_egg(&self, m: &mut MobData, baby: &mut Entity, level: &mut dyn EntityLevel, player: i32) {
         let _ = (m, baby, level, player);

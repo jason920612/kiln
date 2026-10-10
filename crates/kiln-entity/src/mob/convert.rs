@@ -100,6 +100,10 @@ pub fn convert_to(
 pub fn set_baby(e: &mut Entity, m: &mut MobData, baby: bool) {
     if m.kind.is_zombie() {
         super::kinds::zombie::set_baby(e, m, baby);
+    } else if m.kind == super::MobKind::Piglin {
+        super::kinds::piglin::set_baby(e, m, baby);
+    } else if m.kind == super::MobKind::Zoglin {
+        super::kinds::zoglin::set_baby(e, m, baby);
     } else if super::breed::is_ageable(m.kind) {
         super::set_age(e, m, if baby { super::breed::BABY_START_AGE } else { 0 });
     }
