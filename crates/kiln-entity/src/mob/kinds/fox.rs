@@ -223,7 +223,9 @@ fn pick_up_items(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let Some(item) = level.entity_mut(id) else { continue };
         let EntityKind::Item(d) = &mut item.kind else { continue };
         let mut stack = std::mem::replace(&mut d.stack, ItemStack::empty());
+        let thrower = d.thrower;
         item.discard();
+        crate::mob::on_item_pickup(e, m, level, thrower, &stack);
         let count = stack.count();
         if count > 1 {
             let rest = stack.split(count - 1);

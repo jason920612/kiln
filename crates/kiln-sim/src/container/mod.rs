@@ -951,7 +951,14 @@ impl Containers {
             && !self.map.contains_key(&pos)
             && let Some(kind) = kind_of(be)
         {
-            self.map.insert(pos, ContainerBe::load(kind, be.kind, &be.nbt));
+            let mut c = ContainerBe::load(kind, be.kind, &be.nbt);
+            // A new `BrewingStandBlockEntity` has no brew time or fuel total yet (`loadAdditional`'s 400 and 20 are for a saved one
+            // that lacks them).
+            if kind == BeKind::BrewingStand && be.nbt.get("total_brew_time").is_none() && be.nbt.get("total_fuel").is_none() {
+                c.cook_total = 0;
+                c.lit_total = 0;
+            }
+            self.map.insert(pos, c);
         }
         removed
     }

@@ -35,6 +35,8 @@ pub(crate) enum Trigger {
     Location { location: Option<Cap> },
     EnterBlock { blocks: Option<kiln_loot::parse::IdSet>, state: Option<Json> },
     ChangedDimension { from: Option<String>, to: Option<String> },
+    /// `bee_nest_destroyed`: the nest block and its state, the tool, and the bees still inside.
+    BeeNest { block: Option<kiln_loot::parse::IdSet>, state: Option<Json>, item: Option<ItemPredicate>, bees: IntBounds },
     VillagerTrade { villager: Option<Cap>, item: Option<ItemPredicate> },
     EnchantedItem { item: Option<ItemPredicate>, levels: IntBounds },
     /// `entity_hurt_player` and `player_hurt_entity` (the damage predicate's taken/dealt
@@ -114,6 +116,11 @@ impl Conds {
         self.get(key).and_then(|v| IntBounds::from_value(&v.to_value()).ok()).unwrap_or(IntBounds::ANY)
     }
 
+    /// A `MinMaxBounds.Doubles` condition tested with `matchesSqr` (absent: any).
+    pub fn doubles_sqr(&self, key: &str, v: f64) -> bool {
+        self.get(key).and_then(|b| DoubleBounds::from_value(&b.to_value()).ok()).is_none_or(|b| b.min.is_none_or(|m| m * m <= v) && b.max.is_none_or(|m| v <= m * m))
+    }
+
     /// A `DistancePredicate` (`x`, `y`, `z`, `horizontal`, `absolute`) between two points;
     /// absent: any.
     pub fn distance(&self, key: &str, a: [f64; 3], b: [f64; 3]) -> bool {
@@ -191,6 +198,13 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:player_sheared_equipment",
     "minecraft:fall_after_explosion",
     "minecraft:thrown_item_picked_up_by_player",
+    "minecraft:thrown_item_picked_up_by_entity",
+    "minecraft:spear_mobs",
+    "minecraft:bee_nest_destroyed",
+    "minecraft:used_ender_eye",
+    "minecraft:any_block_use",
+    "minecraft:default_block_use",
+    "minecraft:allay_drop_item_on_block",
 ];
 
 fn err<T>(m: impl Into<String>) -> PResult<T> {
@@ -300,6 +314,12 @@ impl Criterion {
             "placed_block" | "item_used_on_block" | "default_block_use" | "any_block_use" | "allay_drop_item_on_block" => {
                 Trigger::Location { location: opt_cap(p, c, "location")? }
             }
+            "bee_nest_destroyed" => Trigger::BeeNest {
+                block: c.get("block").map(|v| p.id_set(v, kiln_item::registry::BLOCK)).transpose()?,
+                state: c.get("state").cloned(),
+                item: opt_item(c, "item")?,
+                bees: int_bounds(c, "num_bees_inside")?,
+            },
             "enter_block" | "slide_down_block" => Trigger::EnterBlock {
                 blocks: c.get("blocks").map(|v| p.id_set(v, kiln_item::registry::BLOCK)).transpose()?,
                 state: c.get("state").cloned(),

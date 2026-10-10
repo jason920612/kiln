@@ -309,6 +309,40 @@ impl Player {
         });
     }
 
+    /// `BeeNestDestroyedTrigger.trigger`: a nest or hive broken by the player; `bees` still inside after the break.
+    pub(crate) fn bee_nest_destroyed(&mut self, state: u16, tool: &ItemStack, bees: i32) {
+        let block = kiln_item::registry::BLOCK.id(kiln_data::builtin_entries("minecraft:block").and_then(|b| b.get(kiln_data::block_logic::block_index(state)).copied()).unwrap_or(""));
+        self.fire("minecraft:bee_nest_destroyed", None, |c, loot, _| match &c.trigger {
+            Trigger::BeeNest { block: set, state: props, item, bees: wanted } => {
+                set.as_ref().is_none_or(|b| block.is_some_and(|id| b.contains(id)))
+                    && props.as_ref().is_none_or(|p| state_matches(state, p))
+                    && item.as_ref().is_none_or(|p| kiln_loot::predicate::item_matches(&loot.tags, p, tool))
+                    && kiln_loot::predicate::item::int_bounds(wanted, bees)
+            }
+            _ => false,
+        });
+    }
+
+    /// `UsedEnderEyeTrigger.trigger`: an eye thrown toward the stronghold at `target`; `distance` is the horizontal distance
+    /// (compared squared) from the player.
+    pub(crate) fn used_ender_eye(&mut self, target: [i32; 3]) {
+        let (dx, dz) = (self.pos[0] - target[0] as f64, self.pos[2] - target[2] as f64);
+        let sq = dx * dx + dz * dz;
+        self.fire_conds("minecraft:used_ender_eye", None, |c, _, _| c.doubles_sqr("distance", sq));
+    }
+
+    /// `SpearMobsTrigger.trigger`: the living things the player's spear has stabbed within its contact cooldown.
+    pub(crate) fn spear_mobs(&mut self, count: i32) {
+        self.fire_conds("minecraft:spear_mobs", None, |c, _, _| c.get("count").and_then(kiln_loot::Json::as_i32).is_none_or(|n| count >= n));
+    }
+
+    /// `PickedUpItemTrigger.trigger` for `thrown_item_picked_up_by_entity`: `stack` was thrown by this player and `entity` took it.
+    pub(crate) fn thrown_item_picked_up_by_entity(&mut self, stack: &ItemStack, entity: &Subject) {
+        self.fire_conds("minecraft:thrown_item_picked_up_by_entity", None, |c, ok, loot| {
+            c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, stack)) && c.cap("entity").is_none_or(|cap| ok(cap, entity))
+        });
+    }
+
     /// `ChangeDimensionTrigger.trigger`.
     pub(crate) fn changed_dimension(&mut self, from: &str, to: &str) {
         self.fire("minecraft:changed_dimension", None, |c, _, _| match &c.trigger {
@@ -580,6 +614,13 @@ impl Player {
                     all && kiln_loot::predicate::item::int_bounds(&c.ints("unique_entity_types"), types.len() as i32)
                 });
             }
+            E::ThrownItemPickedUp { item, entity } => {
+                let who = s(entity);
+                self.thrown_item_picked_up_by_entity(item, &who);
+            }
+            E::AllayDropItem { pos, state, item } => {
+                self.used_on_block("minecraft:allay_drop_item_on_block", [pos.x, pos.y, pos.z], *state, item, &NoWorld);
+            }
             E::TargetHit { projectile, pos, signal } => {
                 let p = s(projectile);
                 let origin = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
@@ -593,6 +634,18 @@ impl Player {
 }
 
 use criteria::Conds;
+
+/// No world to look at (a trigger whose conditions are about the block state and the tool it was given).
+struct NoWorld;
+
+impl WorldProbe for NoWorld {
+    fn block(&self, _pos: [i32; 3]) -> Option<u16> {
+        None
+    }
+    fn biome(&self, _pos: [i32; 3]) -> Option<&'static str> {
+        None
+    }
+}
 
 /// `StatePropertiesPredicate` of `enter_block`: every named property has the value (or is in
 /// the `{min, max}` range).

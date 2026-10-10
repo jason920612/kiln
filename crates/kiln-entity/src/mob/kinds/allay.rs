@@ -258,12 +258,14 @@ impl Kind for Allay {
                 let rest = add_item(&mut st_mut(m).inventory, &stack);
                 let Some(it) = level.entity_mut(id) else { continue };
                 let EntityKind::Item(d) = &mut it.kind else { continue };
+                let thrower = d.thrower;
                 if rest.is_empty() {
                     it.discard();
                 } else {
                     d.stack.set_count(rest.count());
                 }
                 let _ = count;
+                mob::on_item_pickup(e, m, level, thrower, &stack);
                 st_mut(m).last_item = Some((id, pos, eye));
                 if !e.silent {
                     level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.item.pickup", source: "neutral", volume: 0.2, pitch: 1.0 });
@@ -679,7 +681,14 @@ fn throw_at(cx: &mut Cx, target: Vec3) {
     }
     let taken = one.split(1);
     st_mut(cx.m).inventory = one;
+    let thrown = taken.clone();
     throw_item(cx.e, cx.level, taken, target.add(0.0, 1.0, 0.0), (0.20000000298023224, 0.30000001192092896, 0.20000000298023224), 0.2);
+    // The liked player's `allay_drop_item_on_block`: the block under where the item was thrown at.
+    if let Some(player) = liked_player(cx) {
+        let pos = BlockPos::new(target.x.floor() as i32, target.y.floor() as i32 - 1, target.z.floor() as i32);
+        let state = cx.level.block(pos);
+        cx.level.emit(Event::Criterion { player: player.id, criterion: crate::level::Criterion::AllayDropItem { pos, state, item: thrown } });
+    }
     if cx.time % 7 == 0 && cx.rng().next_double() < 0.9 {
         let pitch = THROW_SOUND_PITCHES[cx.rng().next_int_bounded(THROW_SOUND_PITCHES.len() as i32) as usize];
         let pos = cx.e.position();

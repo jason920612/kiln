@@ -488,6 +488,8 @@ public class InteractVectors {
                 c = blockCase("place52_" + it[0] + "_" + mode, "minecraft:air");
                 c.gameMode = mode;
                 c.slot("h0", parsed(it[1]));
+                // (a hopper ticks: the level that ticks it makes it ready, as Kiln's replay does)
+                if (it[0].equals("hopper_named")) c.ticking();
                 c.step(useOn(2, 99, 0, 1, 0));
                 out.add(c);
             }

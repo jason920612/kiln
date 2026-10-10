@@ -1780,6 +1780,14 @@ fn in_wall(b: &Aabb, level: &dyn EntityLevel) -> bool {
     false
 }
 
+/// `LivingEntity.onItemPickup(itemEntity)`: a stack a player threw, taken by `e`, goes to the thrower's
+/// `thrown_item_picked_up_by_entity` trigger. `stack` is the item entity's whole stack.
+pub fn on_item_pickup(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, thrower: Option<u128>, stack: &ItemStack) {
+    let Some(player) = thrower.and_then(|u| level.player_by_uuid(u)) else { return };
+    let entity = crate::level::Seen::of_mob(e, m);
+    level.emit(Event::Criterion { player: player.id, criterion: crate::level::Criterion::ThrownItemPickedUp { item: stack.clone(), entity } });
+}
+
 pub fn is_alive(e: &Entity, m: &MobData) -> bool {
     !e.is_removed() && m.health > 0.0
 }

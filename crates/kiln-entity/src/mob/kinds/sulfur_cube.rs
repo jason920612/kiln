@@ -619,6 +619,7 @@ impl Kind for SulfurCube {
                     continue;
                 }
                 let mut stack = d.stack.clone();
+                let (thrower, whole) = (d.thrower, d.stack.clone());
                 let one = stack.split(1);
                 if let Some(it) = level.entity_mut(id)
                     && let EntityKind::Item(d) = &mut it.kind
@@ -628,6 +629,7 @@ impl Kind for SulfurCube {
                         it.discard();
                     }
                 }
+                mob::on_item_pickup(e, m, level, thrower, &whole);
                 set_body(m, one);
                 sound(e, level, "minecraft:entity.sulfur_cube.absorb", 1.0, 1.0);
             }

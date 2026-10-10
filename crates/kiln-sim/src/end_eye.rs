@@ -69,6 +69,7 @@ pub(crate) fn use_item(p: &mut Player, level: &mut RegionLevel, off_hand: bool, 
     let mut e = kiln_entity::ext_entity::eye_of_ender::new(Vec3::new(p.pos[0], p.pos[1] + height * 0.5, p.pos[2]), &stack, seed);
     kiln_entity::ext_entity::eye_of_ender::signal_to(&mut e, Vec3::new(target[0] as f64, target[1] as f64, target[2] as f64));
     crate::ranged::push_spawn(spawns, e);
+    p.used_ender_eye(target);
     // `Mth.lerp(random.nextFloat(), 0.33F, 0.5F)`.
     let t = level.random().next_float();
     let pitch = 0.33 + t * (0.5 - 0.33);

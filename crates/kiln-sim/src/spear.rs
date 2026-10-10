@@ -755,6 +755,15 @@ fn kinetic_hits(w: &mut Work<'_, '_, '_>, a: usize, slot: EquipmentSlot, held: &
         // `broadcastEntityEvent(attacker, 2)`: viewers (and the wielder) hear the hit.
         let pkt = entity::entity_event(w.players[a].entity_id, 2);
         crate::combat::send_to_trackers_and_self(w.players, a, &pkt);
+        // `SpearMobsTrigger`: the living things in the weapon's memory of recent stabs.
+        let living = w.players[a]
+            .recent_stabs
+            .iter()
+            .filter(|(id, _)| {
+                w.players.iter().any(|q| q.entity_id == *id) || w.entities.list.binary_search_by_key(id, |e| e.id).ok().and_then(|i| w.entities.list[i].phys.as_deref()).is_some_and(|e| kiln_entity::mob::data(e).is_some())
+            })
+            .count() as i32;
+        w.players[a].spear_mobs(living);
     }
 }
 

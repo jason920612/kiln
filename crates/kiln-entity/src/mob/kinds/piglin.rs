@@ -485,6 +485,7 @@ fn pick_up_item(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, me
     stop_walking(m, mem);
     let Some(item) = level.entity_mut(id) else { return };
     let EntityKind::Item(d) = &mut item.kind else { return };
+    let (thrower, whole) = (d.thrower, d.stack.clone());
     let taken = if is_item(&d.stack, "minecraft:gold_nugget") {
         let s = std::mem::replace(&mut d.stack, ItemStack::empty());
         item.discard();
@@ -496,6 +497,7 @@ fn pick_up_item(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, me
         }
         s
     };
+    mob::on_item_pickup(e, m, level, thrower, &whole);
     if is_loved(&taken) {
         mem.erase(Mem::TimeTryingToReachAdmireItem);
         hold_in_offhand(e, m, level, taken);
@@ -534,14 +536,19 @@ pub fn pick_up_loot(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
         if m.kind == MobKind::PiglinBrute {
             // `Mob.pickUpItem`.
             let equipped = equip_item_if_possible(e, m, level, stack.clone());
+            let mut picked = None;
             if !equipped.is_empty()
                 && let Some(item) = level.entity_mut(id)
                 && let EntityKind::Item(d) = &mut item.kind
             {
+                picked = Some((d.thrower, d.stack.clone()));
                 d.stack.shrink(equipped.count());
                 if d.stack.is_empty() {
                     item.discard();
                 }
+            }
+            if let Some((thrower, whole)) = picked {
+                mob::on_item_pickup(e, m, level, thrower, &whole);
             }
         } else {
             pick_up_item(e, m, level, &mut brain.st.mem, id);
