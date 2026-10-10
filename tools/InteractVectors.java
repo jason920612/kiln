@@ -530,7 +530,7 @@ public class InteractVectors {
                 for (String tool : new String[] {"silk", "plain"}) {
                     String state = block.equals("beehive") ? "minecraft:beehive[facing=north,honey_level=0]" : "minecraft:bee_nest[facing=north,honey_level=0]";
                     c = new Case("adv53_" + block + "_" + bees + "_" + tool).advancements();
-                    c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 " + state + nestBees(bees)).watch(2, 100, 0);
+                    c.cmd("setblock 2 99 0 minecraft:stone").late("setblock 2 100 0 " + state + nestBees(bees)).watch(2, 100, 0);
                     c.slot("h0", parsed(tool.equals("silk") ? silk : plain));
                     c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
                     out.add(c);
@@ -539,7 +539,7 @@ public class InteractVectors {
         }
         c = new Case("adv53_nest_creative").advancements();
         c.gameMode = "creative";
-        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:bee_nest[facing=north,honey_level=0]" + nestBees(3)).watch(2, 100, 0);
+        c.cmd("setblock 2 99 0 minecraft:stone").late("setblock 2 100 0 minecraft:bee_nest[facing=north,honey_level=0]" + nestBees(3)).watch(2, 100, 0);
         c.slot("h0", parsed(silk));
         c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
         out.add(c);

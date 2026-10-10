@@ -315,7 +315,7 @@ impl Criterion {
                 Trigger::Location { location: opt_cap(p, c, "location")? }
             }
             "bee_nest_destroyed" => Trigger::BeeNest {
-                block: c.get("block").map(|v| p.id_set(v, kiln_item::registry::BLOCK)).transpose()?,
+                block: c.get("blocks").map(|v| p.id_set(v, kiln_item::registry::BLOCK)).transpose()?,
                 state: c.get("state").cloned(),
                 item: opt_item(c, "item")?,
                 bees: int_bounds(c, "num_bees_inside")?,
