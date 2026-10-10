@@ -319,3 +319,122 @@ fn observer_pulse_runs_a_piston() {
     assert!(extended_at.is_some(), "the observer's pulse never extended the piston");
     assert!(!state::get_bool(level.block(BlockPos::new(10, y, 8)), "extended"), "it retracted again");
 }
+
+/// What a layout does for 120 ticks: how many pieces survive, where its west edge is at tick 40 and 120, and whether it still changes at the end.
+fn outcome(rows: [&[usize]; 2], last: (usize, usize), tap: bool) -> (usize, usize, i32, i32, bool) {
+    let mut level = TestLevel::void();
+    level.load_chunks((-1, -1), (4, 1));
+    let y = 100;
+    let (mut pieces, mut trigger) = (0, None);
+    for (z, row) in rows.iter().enumerate() {
+        for (i, &c) in row.iter().enumerate() {
+            let s = cell(c);
+            if !is_air(s) {
+                pieces += 1;
+                let p = BlockPos::new(16 + i as i32, y, 8 + z as i32);
+                if (z, i) == last && !tap {
+                    trigger = Some((p, s));
+                } else {
+                    level.set_raw(p, s, flags::SKIP_ALL_SIDEEFFECTS);
+                }
+            }
+        }
+    }
+    if tap {
+        let p = BlockPos::new(16 + last.1 as i32, y, 8 + last.0 as i32);
+        crate::update::set_block_and_update(&mut level, p, d::STONE);
+        level.tick(0, &[(0, 0), (1, 0)]);
+        crate::update::set_block_and_update(&mut level, p, d::AIR);
+    }
+    if let Some((p, s)) = trigger {
+        crate::update::set_block_and_update(&mut level, p, s);
+    }
+    let measure = |level: &TestLevel| {
+        let (mut min, mut count, mut h) = (i32::MAX, 0usize, 0u64);
+        for x in 0..80 {
+            for z in 6..12 {
+                for yy in 98..103 {
+                    let s = level.block(BlockPos::new(x, yy, z));
+                    if !is_air(s) && !state::is(s, d::PISTON_HEAD) && !state::is(s, d::MOVING_PISTON) {
+                        min = min.min(x);
+                        count += 1;
+                        h = h.wrapping_mul(1_000_003).wrapping_add(s as u64 + (x as u64) * 77 + (z as u64) * 13 + yy as u64);
+                    }
+                }
+            }
+        }
+        (min, count, h)
+    };
+    let (mut a, mut h_before) = (0, 0);
+    for t in 1..=120 {
+        level.tick(0, &[(0, 0), (1, 0)]);
+        if t == 40 {
+            a = measure(&level).0;
+        }
+        if t == 110 {
+            h_before = measure(&level).2;
+        }
+    }
+    let (min, count, h) = measure(&level);
+    (pieces, count, a, min, h != h_before)
+}
+
+/// Layouts of the `flyer_search3` family that stay together and keep changing (for the vanilla check of `tools/FlyerCheck.java`).
+#[test]
+#[ignore]
+fn flyer_dump() {
+    let w: usize = std::env::var("KILN_FLYER_W").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+    let threads: usize = std::env::var("KILN_FLYER_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
+    let path = std::env::var("KILN_FLYER_DUMP").unwrap_or_else(|_| "/tmp/flyer_dump.jsonl".into());
+    let cells = 2 * w;
+    let pieces = 6;
+    let total: usize = (0..pieces).fold(1, |a, i| a * (cells - i));
+    let out = std::sync::Mutex::new(std::fs::File::create(path).unwrap());
+    let (runs, kept) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    std::thread::scope(|sc| {
+        for t in 0..threads {
+            let (out, runs, kept) = (&out, &runs, &kept);
+            sc.spawn(move || {
+                use std::io::Write;
+                let mut n = t;
+                while n < total {
+                    let mut m = n;
+                    n += threads;
+                    let mut free: Vec<usize> = (0..cells).collect();
+                    let mut at = Vec::new();
+                    for i in 0..pieces {
+                        let k = m % (cells - i);
+                        m /= cells - i;
+                        at.push(free.remove(k));
+                    }
+                    if at[0] > at[1] || at[2] > at[3] {
+                        continue;
+                    }
+                    for facing in 0..64usize {
+                        let (p0, p1, o0, o1) = (facing & 1, (facing >> 1) & 1, (facing >> 2) & 3, (facing >> 4) & 3);
+                        let mut grid = vec![0usize; cells];
+                        grid[at[0]] = 2 + p0;
+                        grid[at[1]] = 2 + p1;
+                        grid[at[2]] = [6, 7, 8, 9][o0];
+                        grid[at[3]] = [6, 7, 8, 9][o1];
+                        for &s in &at[4..] {
+                            grid[s] = 1;
+                        }
+                        let (a, b) = grid.split_at(w);
+                        let spots: Vec<(usize, usize)> = (0..2).flat_map(|z| (0..w).map(move |i| (z, i))).filter(|&(z, i)| grid[z * w + i] != 0).collect();
+                        for last in spots {
+                            runs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let (p, c, x40, x120, changing) = outcome([a, b], last, false);
+                            // intact, and still doing something at the end
+                            if c == p && changing {
+                                kept.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                writeln!(out.lock().unwrap(), "{{\"rows\":[{:?},{:?}],\"last\":[{},{}],\"x40\":{x40},\"x120\":{x120}}}", a, b, last.0, last.1).unwrap();
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    println!("{} runs, {} intact and still changing", runs.load(std::sync::atomic::Ordering::Relaxed), kept.load(std::sync::atomic::Ordering::Relaxed));
+}
