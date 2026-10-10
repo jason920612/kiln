@@ -5126,6 +5126,25 @@ public class InteractVectors {
                 for (Object o : packets(obs)) if (o instanceof Map<?, ?> m && "sound".equals(m.get("t"))) heard.add(op("name", m.get("name"), "source", m.get("source"), "volume", m.get("volume"), "pitch", m.get("pitch")));
                 samples.add(heard);
             }
+            // the same as a baby (a pig's has sounds of its own)
+            List<Object> baby = new ArrayList<>();
+            if (e instanceof net.minecraft.world.entity.Mob mob) {
+                mob.setBaby(true);
+                if (mob.isBaby()) {
+                    for (int i = 0; i < 2; i++) {
+                        drain(obs);
+                        try {
+                            step.invoke(e, below, stone);
+                        } catch (Throwable t) {
+                            baby.add("error " + t);
+                            continue;
+                        }
+                        List<Object> heard = new ArrayList<>();
+                        for (Object o : packets(obs)) if (o instanceof Map<?, ?> m && "sound".equals(m.get("t"))) heard.add(op("name", m.get("name"), "source", m.get("source"), "volume", m.get("volume"), "pitch", m.get("pitch")));
+                        baby.add(heard);
+                    }
+                }
+            }
             String fall = "null";
             try {
                 Method fs = net.minecraft.world.entity.LivingEntity.class.getDeclaredMethod("getFallSounds");
@@ -5137,7 +5156,7 @@ public class InteractVectors {
             } catch (Throwable t) {
                 // none
             }
-            lines.add("{\"type\":\"" + id + "\",\"emission\":\"" + emission.invoke(e) + "\",\"fall\":" + fall + ",\"steps\":" + toJson(samples) + "}");
+            lines.add("{\"type\":\"" + id + "\",\"emission\":\"" + emission.invoke(e) + "\",\"fall\":" + fall + ",\"steps\":" + toJson(samples) + ",\"baby\":" + toJson(baby) + "}");
             e.discard();
         }
         try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(out))) {
