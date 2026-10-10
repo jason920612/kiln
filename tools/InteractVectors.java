@@ -1626,6 +1626,19 @@ public class InteractVectors {
         c = p54("shulker_front");
         c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd(summon54("shulker", 6.5, 100.0, 0.5));
         out.add(cycle54(c, "4 100 -1", 6, 0));
+        // ---- what hangs on a block breaks when anything moves it (the drops have randomness of their own: off)
+        c = p54("cushion_front");
+        c.pos = new double[] {6.5, 100.0, 3.0};
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd("gamerule entity_drops false");
+        c.slot("h0", stack("minecraft:red_cushion", 1)).step(useOnAt(6, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(cycle54(c, "4 100 -1", 4, 0).step(op("op", "command", "command", "gamerule entity_drops true")));
+        c = p54("item_frame_front");
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd("gamerule entity_drops false").cmd("summon minecraft:item_frame 6 100 0 {Facing:1b}");
+        out.add(cycle54(c, "4 100 -1", 4, 0).step(op("op", "command", "command", "gamerule entity_drops true")));
+        c = p54("painting_front");
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd("setblock 6 100 -1 minecraft:stone").cmd("gamerule entity_drops false")
+                .cmd("summon minecraft:painting 6 100 0 {facing:3b,variant:\"minecraft:kebab\"}");
+        out.add(cycle54(c, "4 100 -1", 4, 0).step(op("op", "command", "command", "gamerule entity_drops true")));
         // ---- one thing at a time at places around a pushing, pulling piston
         double[][] places = {{3.4, 100, 0.5}, {5.5, 101, 0.5}, {5.5, 100.9375, 1.5}, {6.4, 100, 0.5}, {6.4, 100, -0.3}, {6.9, 100, 0.9}, {5.2, 102, 0.4}, {7.0, 100, 0.1}};
         for (String[] m : new String[][] {{"stone", "sticky_piston[facing=east]", "stone"}, {"slime", "sticky_piston[facing=east]", "slime_block"}, {"honey", "sticky_piston[facing=east]", "honey_block"}}) {
