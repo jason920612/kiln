@@ -81,6 +81,11 @@ SUITES = {
     "container50": (["-p", "kiln-sim", "--lib", "parity"], {"KILN_CONTAINER_VECTORS": "wp50/container/*.jsonl", "KILN_LANG": vec("generated/assets/minecraft/lang/en_us.json")}),
     "loom_clicks": (["-p", "kiln-inventory", "--test", "click_parity"], {"KILN_PARITY": "1", "KILN_CLICK_VECTORS": vec("wp50/inventory/loom.jsonl")}),
     "ominous_trial": (["-p", "kiln-sim", "--test", "ominous_trial"], {}),
+    # wp52 suites: recorded into <work>/wp52 (the wolf, spawn egg and entity-structure scenarios). The mob scenarios (eqwolf50_*,
+    # eqwolf52_*, hurtwolf52_*, eggbaby52_*) are folded into m6-mobs2/vectors.jsonl (the mob_parity suite).
+    "interact52": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp52/interact/*.jsonl"}),
+    "container52": (["-p", "kiln-sim", "--lib", "parity"], {"KILN_CONTAINER_VECTORS": "wp52/container/*.jsonl", "KILN_LANG": vec("generated/assets/minecraft/lang/en_us.json")}),
+    "melee52": (["-p", "kiln-sim", "--lib", "melee_parity"], {"KILN_MELEE_VECTORS": vec("wp52/combat/melee.jsonl")}),
 }
 
 SUMMARY =re.compile(r"(test result:|skipped|parity|match|scenarios|vectors|rounds|chunks|sequences|cases|agree|mismatch|diverg)", re.I)
