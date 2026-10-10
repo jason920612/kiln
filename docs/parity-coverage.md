@@ -1,6 +1,6 @@
-# Kiln 與原版 26.3 的一致性涵蓋矩陣（wp44 稽核，wp45 整合後的狀態，wp49 補 D 項後更新）
+# Kiln 與原版 26.3 的一致性涵蓋矩陣（wp44 稽核，wp45 整合後的狀態，wp49、wp50 補 D 項後更新）
 
-基準：`main` 的 e5dd225 加上 wp41、wp44 及其十條子分支（wp45 整合成 `wp45-integrate`），再加 wp49（`wp49-d-gaps`，接在 wp48 之後）。第 1～5 節是整合後的狀態（每個區域的 A/B/C/D 在 wp45 時重算，數字是 wp45 在 VM 上重錄並重放的結果；wp49 補完的 D 項已在各表的對應列改成現況，第 1 節的總計欄沒有重算），第 6 節記錄 wp44／wp45／wp49 做了什麼、完成了什麼、放棄了什麼。
+基準：`main` 的 e5dd225 加上 wp41、wp44 及其十條子分支（wp45 整合成 `wp45-integrate`），再加 wp49（`wp49-d-gaps`，接在 wp48 之後）與 wp50（`wp50-last-d`，把第 4 節剩下的 D 項做完，見 6.4）。第 1～5 節是整合後的狀態（每個區域的 A/B/C/D 在 wp45 時重算，數字是 wp45 在 VM 上重錄並重放的結果；wp49 補完的 D 項已在各表的對應列改成現況，第 1 節的總計欄沒有重算），第 6 節記錄 wp44／wp45／wp49／wp50 做了什麼、完成了什麼、放棄了什麼。
 稽核範圍是玩家能觀察到的行為。方法：先問「完整驗證」要涵蓋什麼，刪掉不可觀察的工作，不另建新框架；只有稽核指出的洞才補。
 
 ## 0. 「完整驗證」要涵蓋什麼
@@ -147,11 +147,11 @@
 | 銅氧化與其他風化銅 | A | 14 | `misc` 的 13 個銅 scenario（`ChangeOverTimeBlock` 掃描與機率、門的下半、箱與大箱的兩半互相跟隨） |  |
 | 海龜蛋、紅石礦、紫水晶、滴水石、乾燥的哈氣、硫磺 | A | 9 | `misc` 44 個 scenario（生長、掉落、滴水、鍋釜、泥） | 模擬端讓身體壓到絆線與海龜蛋 |
 | 珊瑚、海綿、鷹架、絆線與鉤、目標方塊、大型垂葉 | A | 13 | `wet` 7＋`misc` 的絆線、目標、垂葉、銅燈 scenario | 鷹架塌落的實體部分為 C |
-| 刷怪磚、試煉刷怪磚、寶庫 | A | 3 | 刷怪磚：mob_parity 的 `spawner_` 49 個 scenario（延遲、潛在生成物與權重、範圍、上限、光線與自訂規則、生怪蛋、`spawner_blocks_work`、亂數與存檔）；試煉刷怪磚 `interact_parity` `trial_` 14 個、寶庫 `vault_` 19 個 scenario（wp49，見 6.3） | 試煉刷怪磚的怪物位置由 level 亂數決定，向量用給定位置避開；不祥試煉的物品實體（`ominous_item_spawner`）沒做 |
+| 刷怪磚、試煉刷怪磚、寶庫 | A | 3 | 刷怪磚：mob_parity 的 `spawner_` 49 個 scenario（延遲、潛在生成物與權重、範圍、上限、光線與自訂規則、生怪蛋、`spawner_blocks_work`、亂數與存檔）；試煉刷怪磚 `interact_parity` `trial_` 14 個、寶庫 `vault_` 19 個 scenario（wp49，見 6.3） | 試煉刷怪磚的怪物位置由 level 亂數決定，向量用給定位置避開；不祥試煉的物品雨由 wp50 補上（`ominous_item_spawner`：`ominous50` 15 個 `container_parity` scenario＋`tests/ominous_trial.rs`） |
 | 告示牌、懸掛式告示牌 | A | 4 | `interact_parity` 的 sign／equip／book／pick 共 409 個 scenario（編輯與編輯鎖、染色、上蠟、螢光墨囊、點擊事件、牆上與懸掛式放置） | 懸掛告示牌的存活（支撐消失會掉）未模擬 |
 | 營火、蜂巢、鐘、講台、裝飾陶罐、書架（雕紋）、合成器、製圖台 | A | 8 | wp49：`interact_parity` 的營火＋陶罐＋書架 `b49` 67、鐘 76、蜂巢 22、講台 22、合成器 99、陶罐 44、製圖台與地圖 21；`container_parity` 的營火 6、蜂巢 6、講台 10、陶罐 14、合成器 26（見 6.3） | 原清單中的擱板（shelf）與潛影導管沒有獨立向量（未驗證，沿用 C） |
-| 指令方塊（普通、連鎖、重複；條件式）、結構方塊、拼圖方塊 | 指令方塊 A／結構與拼圖方塊 D | 3 | wp49：`interact_parity` 的指令方塊 46 個＋`container_parity` 的 `cmdblock` 24 個 scenario（執行、條件、連鎖、重複、紅石、自動、`command_block_output`、礦車指令方塊） | 結構方塊、拼圖方塊只存 NBT；封包被丟棄 |
-| 其他：日光感測器、旗幟、花盆、蛋糕、凋零玫瑰、終界傳送門框架、氣泡柱、可摔落的刷子方塊 | A（旗幟圖樣除外） | 9 | 終界傳送門框架：`end` 28 個 scenario；凋零玫瑰：`effect_parity` `haz_wither_rose_*`；wp49：日光感測器 `daylight` 4、蛋糕 `cake` 23、花盆（見上）、氣泡柱 `block/bubble` 6、刷子 `brush` 17 個 scenario | 旗幟圖樣為 D |
+| 指令方塊（普通、連鎖、重複；條件式）、結構方塊、拼圖方塊 | A（指令方塊、結構方塊、拼圖方塊） | 3 | wp49：`interact_parity` 的指令方塊 46 個＋`container_parity` 的 `cmdblock` 24 個 scenario（執行、條件、連鎖、重複、紅石、自動、`command_block_output`、礦車指令方塊） | wp50 補上結構方塊與拼圖方塊（`interact_parity` 的 `structure50` 88 個 scenario，見 6.4）；缺口：存檔時不收集範圍內的實體、拼圖方塊 `generate` 的 `keepJigsaws` 旗標不作用 |
+| 其他：日光感測器、旗幟、花盆、蛋糕、凋零玫瑰、終界傳送門框架、氣泡柱、可摔落的刷子方塊 | A（wp50 補上旗幟圖樣） | 9 | 終界傳送門框架：`end` 28 個 scenario；凋零玫瑰：`effect_parity` `haz_wither_rose_*`；wp49：日光感測器 `daylight` 4、蛋糕 `cake` 23、花盆（見上）、氣泡柱 `block/bubble` 6、刷子 `brush` 17 個 scenario；wp50：旗幟圖樣（織布機、盾牌、鍋釜洗旗）`banner50` 19、`cauldron50` 170 個 scenario | – |
 
 沒列的純形狀類別（樓梯、牆、鐵欄杆等，無伺服器端 hook）由 `blocks_diff` 的連接與彈出 scenario 一併驗證（A）。
 
@@ -168,8 +168,9 @@
 | 馬、驢、騾、骷髏馬物品欄 | A | 240 | `mount.jsonl` | 無羊駝向量 |
 | Sculk 感測器、創生之心 | A | 12／10 | `sculk_parity.rs`、`tests/creaking.rs` | – |
 | 釀造台運作 | C | 0（配方查詢 A 3,289 筆） | `tests/containers.rs` | 計時、燃料、選單點擊無向量 |
-| 發射器 | A | 95＋28 | `container_parity` 的 `dispenser_`／`wind_`（wp49，見 3.1 與 6.3） | 刷子對犰狳、剪斷拴繩、豬鞍、鸚鵡螺鞍與護甲 |
-| 投擲器、終界箱、信標、附魔台、鐵砧、砂輪、織布機、商人選單、羊駝物品欄、床、重生錨 | C | 0 | `tests/*`、`kiln-inventory/tests/menus.rs` | 選單點擊向量只涵蓋 13 種選單（見下） |
+| 發射器 | A | 95＋28 | `container_parity` 的 `dispenser_`／`wind_`（wp49，見 3.1 與 6.3） | wp50 補上刷子對犰狳、剪斷拴繩、豬鞍、鸚鵡螺鞍與護甲（`container50` 的 `c50` 45 個 scenario，見 6.4） |
+| 織布機選單 | A | 1,500 序列／35,988 步 | wp50：`kiln-inventory/tests/click_parity.rs`（`loom_clicks`） | 見 6.4 |
+| 投擲器、終界箱、信標、附魔台、鐵砧、砂輪、商人選單、羊駝物品欄、床、重生錨 | C | 0 | `tests/*`、`kiln-inventory/tests/menus.rs` | 選單點擊向量只涵蓋 14 種選單（見下） |
 | 合成器、講台、製圖台、裝飾陶罐、書架、營火、鐘、蜂巢 | A | 見 3.1 | wp49 的 `interact_parity`／`container_parity` 向量（見 3.1 與 6.3） | – |
 | 刷怪磚、試煉刷怪磚、寶庫 | A | 49＋14＋19 | `mob_parity` 的 `spawner_`＋`cavespider_`；`interact_parity` 的 `trial_`、`vault_` | – |
 | 告示牌編輯、染色、上蠟、書與筆 | A | 194＋21 | `interact_parity.rs`（`sign_*`、`book_*`）；未放行文字過濾（聊天過濾器）與書的 `resolveBookComponents` | 橫幅與頭顱放置資料仍 D |
@@ -210,7 +211,7 @@
 | 剪刀、釣竿、皮帶、煙火、末影珍珠 | A\* | 528／96／18／16／20 | 各 vector | 浮標咬鉤時序、珍珠傳送傷害為 C |
 | 末影之眼（放進框架、開傳送門、飛行、落下或碎裂）、`/locate` 的 `#eye_of_ender_located` | A | 40 個飛行向量（`entity_parity`）、28 個框架與環形 scenario（`block_parity` 的 `end`） | `EntityVectors.java`、`BlockTickVectors.java` |  |
 | 地圖（含製圖台、旗幟、展示框、探索地圖）、命名牌、刷子、玩家 wind charge、發射器 | A | `interact_parity` 的 `maps_`／`carto_`／`mframe_` 23 個、`explore` 11 個、`brush_` 17 個；`container_parity` 的 `wind_` 28 個＋`dispenser_` 95 個（wp49，見 6.3） | `InteractVectors.java`、`ExploreMapVectors.java`、`ContainerVectors.java` | 命名牌（Name Tag）見 6.3；地圖顏色以世界地形算（同 worldgen 的 A 範圍） |
-| 移動檢查 | C | 0 | `movement.rs` | 「moved wrongly」缺：`player::server_move` 有 120 個原版向量但模擬沒接上（`region.rs:855`） |
+| 移動檢查 | A | 27（wp50 `moves50`） | `movement.rs`、`region.rs` 的 `handle_move`、`phantom.rs` | 「moved wrongly」已接上（伺服器身體 `player::server_move` 的終點對上用戶端宣稱的位置）；被退回的移動不計摔落傷害；卡在蜘蛛網等的第二步沒有向量（原版 harness 不 tick 玩家） |
 | 飢餓、飽和、自然回血 | A\* | 隨效果向量 | `health.rs` | 自然回血無專屬向量 |
 | 經驗與等級、死亡重生、睡眠、出生點 | C／A\* | – | `xp.rs`、`sleep.rs`、`weather_parity.rs` | 等級公式無向量 |
 | 進度（1,866 個）、統計、配方書解鎖 | B | 0 | `advancement_check.py`、`advancements_view.py` | 54 種 trigger 中約 9 種不會觸發 |
@@ -220,7 +221,7 @@
 
 | 已知差異 | 內容 |
 |---|---|
-| `haz_snow_lava_clears` | 燃燒中的玩家在粉雪旁的岩漿：火提早一 tick 熄 |
+| `haz_snow_lava_clears` | 燃燒中的玩家在粉雪旁的岩漿：火提早一 tick 熄。wp50 查過，判定是錄製 harness 內事件順序造成的差異（向量與 Kiln 重播的 tick 內順序不同），不是行為缺口；仍留在 `KNOWN_GAPS` |
 
 ### 3.4 生物（90 種 Mob 子類，wp49 之後全部實作）
 
@@ -228,11 +229,11 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 
 | 家族 | 類型 | 級別 | 向量數（主角 scenario） | 缺口 |
 |---|---|---|---|---|
-| 被動動物 | `pig` `cow` `sheep` `chicken` `rabbit` `fox` `wolf` `cat` `ocelot` `panda` `polar_bear` `turtle` `mooshroom` `armadillo` `sniffer` `axolotl` `goat` `frog` `tadpole` `parrot` `bat` | A（多數另有 B） | 3–29 | 豬鞍騎乘缺；狼鎧甲缺；貓晨間送禮不發生；`FoxStrollThroughVillage` 不執行。苦力怕、骷髏、蜘蛛、襲擊者會躲貓、狼、犰狳、嚎叫者（wp41，`avoid_*` 向量） |
-| 載具與坐騎 | `horse` `donkey` `mule` `llama` `trader_llama` `skeleton_horse` `zombie_horse` `camel` `camel_husk` `nautilus` `zombie_nautilus` | A | 2–25 | 玩家操控坐騎只有 C；背包畫面未建模 |
+| 被動動物 | `pig` `cow` `sheep` `chicken` `rabbit` `fox` `wolf` `cat` `ocelot` `panda` `polar_bear` `turtle` `mooshroom` `armadillo` `sniffer` `axolotl` `goat` `frog` `tadpole` `parrot` `bat` | A（多數另有 B） | 3–29 | 豬鞍與胡蘿蔔釣竿騎乘在 wp50 補上（`eq50_pig*`）；狼鎧甲缺；貓晨間送禮不發生；`FoxStrollThroughVillage` 不執行。苦力怕、骷髏、蜘蛛、襲擊者會躲貓、狼、犰狳、嚎叫者（wp41，`avoid_*` 向量） |
+| 載具與坐騎 | `horse` `donkey` `mule` `llama` `trader_llama` `skeleton_horse` `zombie_horse` `camel` `camel_husk` `nautilus` `zombie_nautilus` | A | 2–25 | 鸚鵡螺（含殭屍鸚鵡螺）的鞍與護甲在 wp50 補上（`eq50_nautilus*`、`eq50_zombie_nautilus*`）；玩家操控坐騎只有 C；背包畫面未建模 |
 | 敵對（主世界） | `zombie` `husk` `drowned` `zombie_villager` `skeleton` `stray` `bogged` `parched` `creeper` `spider` `cave_spider` `silverfish` `slime` `enderman` `endermite` `witch` `phantom` `creaking` `warden` `breeze` `guardian` `elder_guardian` `vex` | A | 2–63（不少僅 2–4 個） | **殭屍破門缺（hard 難度）**；`MoveThroughVillage` 不啟動 |
 | 襲擊者 | `pillager` `vindicator` `evoker` `illusioner` `ravager` | A | 4–9＋27 個波次 | 襲擊裝備附魔擲了沒套用、破門缺、鐘不由玩家敲 |
-| 下界 | `zombified_piglin` `piglin` `piglin_brute` `hoglin` `zoglin` `blaze` `ghast` `magma_cube` `wither_skeleton` `strider` | A | 3–27 | 要塞生怪覆寫缺，烈焰人與凋零骷髏在自然世界遇不到；strider 無自然生成規則 |
+| 下界 | `zombified_piglin` `piglin` `piglin_brute` `hoglin` `zoglin` `blaze` `ghast` `magma_cube` `wither_skeleton` `strider` | A | 3–27 | 要塞生怪覆寫缺，烈焰人與凋零骷髏在自然世界遇不到；strider 無自然生成規則；strider 的鞍與胡蘿蔔釣竿在 wp50 補上（`eq50_strider*`） |
 | 終界與頭目 | `ender_dragon` `shulker` `wither` | A | 12／7／6 | 無世界邊界 |
 | 水生 | `squid` `glow_squid` `cod` `salmon` `tropical_fish` `pufferfish` | A | 3–6 | 神殿生怪覆寫缺 |
 | 村民與 NPC | `villager` `wandering_trader` `iron_golem` `snow_golem` `allay` | A | 3–61 | 交易表擲法與原版不同；鐵傀儡不回村、不保衛村；堆肥不模擬 |
@@ -262,7 +263,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 閃電、經驗瓶、玩家被噴到的藥水、area effect cloud（龍息） | C／A\* | – | – |
 | 畫、展示框、盔甲座、display（方塊／物品／文字）、interaction、marker | A | wp49：`interact_parity` 的 `frames_` 55、`stand_` 142、`mframe_` 2 個 scenario；`entity_nbt` 127 個（`EntityNbtVectors.java`：原版載入並存出的 NBT 與 Kiln 逐欄相同的 122 個，5 個留給模擬端） | 文字顯示的選擇器與分數解析在模擬端做，向量只比存檔欄位 |
 | 風彈（玩家丟出與發射器射出的 `wind_charge`）、被拋射物打中的載具／盔甲座／畫 | A | wp49：`container_parity` 的 `wind_` 27 個 scenario（牆、地板、各種生物、載具、離開載入範圍） | 拋射物對 `#redirectable_projectile` 與 `BlockAttachedEntity` 的撞擊判定補齊（`Entity.canBeHitByProjectile`） |
-| mannequin、cushion、ominous_item_spawner | **D** | 0 | 存檔以 NBT 保留但不模擬、client 看不到、`/summon` 失敗；不祥試煉刷怪磚的物品雨因此缺 |
+| mannequin、cushion、ominous_item_spawner | A（wp50） | cushion 152、mannequin 46＋`entity_nbt` 53、ominous 15 | `interact_parity` 的 `cushion50`／`mannequin50`；`entity_nbt.rs` 的 `mannequin.jsonl`；`container_parity` 的 `ominous50` | cushion 的流體、活塞與中鍵挑選、mannequin 的方塊音效（harness 不錄生物的方塊音效）未比對，見 6.4 |
 | 實體存檔（entities/*.mca） | B | – | `entity_persist_check.py`（原版載入 Kiln 存檔 64/64、35/35） |
 
 ### 3.6 世界生成、世界狀態、維度、規則
@@ -335,12 +336,12 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 5 | 告示牌與書編輯、挖礦經驗、右鍵穿裝備、中鍵挑選 | A | `InteractVectors.java`、loot 的 `block_experience` | 完成（wp44-interact）；創造模式帶資料的中鍵挑選放棄 |
 | 6 | 摔落傷害與落地方塊、玩家環境傷害（仙人掌、甜莓、粉雪、窒息） | A（651／663，12 個已知差異） | `EffectVectors` 加 fall／hazard scenario | 完成（wp44-player）；12 個差異見 3.3 |
 | 7 | 玩家打生物、橫掃、重錘 | A（690／690） | `CombatVectors` 目標改成生物 | 完成（wp44-combat） |
-| 8 | 世界初始動物、蜜蜂與海豚等 6 種缺失生物、畫與展示框與盔甲座 | A（wp49 之後） | `MobVectors` 照樣板各加 4–8 個 scenario；存檔用 `entity_persist_check` | 完成（wp49，見 6.3）；mannequin、cushion、ominous_item_spawner 三種實體未做 |
+| 8 | 世界初始動物、蜜蜂與海豚等 6 種缺失生物、畫與展示框與盔甲座 | A（wp49 之後） | `MobVectors` 照樣板各加 4–8 個 scenario；存檔用 `entity_persist_check` | 完成（wp49，見 6.3）；mannequin、cushion、ominous_item_spawner 在 wp50 補上（見 6.4） |
 | 9 | 難度、遊戲規則、seed 與 `/op` 持久化；遊戲規則接線 | B（27 項互載；59 條規則 54 條有人讀） | 原版先存、Kiln 載入，反過來再一次 | 完成（wp44-admin） |
-| 10 | 選單點擊向量補鐵砧、砂輪、附魔台、織布機、製圖台、釀造台、信標、商人 | C | `InventoryVectors.java` 選單種類清單擴充 | 未做 |
-| 11 | 發射器全部行為、營火烹飪、蜂巢、鐘、講台、合成器、裝飾陶罐 | A（wp49 之後） | `ContainerVectors` 場景 | 完成（wp49，見 6.3）；發射器剩刷子對犰狳、剪斷拴繩、豬鞍等 |
+| 10 | 選單點擊向量補鐵砧、砂輪、附魔台、織布機、製圖台、釀造台、信標、商人 | C（織布機已升 A） | `InventoryVectors.java` 選單種類清單擴充 | 織布機在 wp50 完成（1,500 序列）；其餘未做 |
+| 11 | 發射器全部行為、營火烹飪、蜂巢、鐘、講台、合成器、裝飾陶罐 | A（wp49 之後） | `ContainerVectors` 場景 | 完成（wp49，見 6.3）；發射器的刷子對犰狳、剪斷拴繩、豬鞍等在 wp50 補上 |
 | 12 | 地圖與製圖台、探索地圖 | A（wp49 之後） | 需先實作 `MapItemSavedData` | 完成（wp49：`maps_`／`carto_`／`mframe_` 與 `explore` 向量） |
-| 13 | 「moved wrongly」、村莊圍攻、貓生成、選擇器 `level=` | 村莊圍攻與貓生成 C（已實作，無原版向量）／「moved wrongly」D | 現有向量已存在（`server_move` 120 個）只需接線 | 圍攻與貓生成在 wp49 寫完；「moved wrongly」未做 |
+| 13 | 「moved wrongly」、村莊圍攻、貓生成、選擇器 `level=` | 村莊圍攻與貓生成 C（已實作，無原版向量）／「moved wrongly」A | 現有 `server_move` 物理接線，另錄 `moves50` | 圍攻與貓生成在 wp49 寫完；「moved wrongly」在 wp50 完成（27 個 scenario） |
 | 14 | 讓預設 CI 真的比對（設 `KILN_WORK`、`KILN_PARITY=1`），重錄過期向量 | 流程 | 零成本 | `tools/parity_suites.py` 已含 wp44／wp45 的套件；wp45 重錄了 block、interact、melee、spear、effects、entity、spawn 向量，並把 wp41／wp44 的生物向量併入 `m6-mobs2` |
 
 ## 5. 已知的過期註解（誤導讀者）
@@ -423,12 +424,46 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 
 仍是 D 或 C 的（以及原因）：
 
-- **實體**：`mannequin`、`cushion`、`ominous_item_spawner` 三種沒有實作（存檔保留、不 tick、`/summon` 失敗）。不祥試煉刷怪磚的物品雨因缺 `ominous_item_spawner` 而不下。
-- **豬鞍與胡蘿蔔釣竿**：豬沒有鞍欄位，也不能騎；發射器與右鍵放鞍在豬身上都不作用。鸚鵡螺（nautilus）的鞍與護甲同樣沒接。
-- **發射器**：刷子對犰狳（掉鱗甲）、剪斷拴繩（`shearOffAllLeashConnections`）沒做；穿裝備時的裝備音效與遊戲事件、拾取戰利品的生物的 `canPickUpLoot` 隨機性只靠生物自己的值。
+- **實體**（wp50 補上）：`mannequin`、`cushion`、`ominous_item_spawner`。
+- **豬鞍與胡蘿蔔釣竿、鸚鵡螺鞍與護甲**（wp50 補上）。
+- **發射器**：刷子對犰狳與剪斷拴繩在 wp50 補上；穿裝備時的裝備音效與遊戲事件、拾取戰利品的生物的 `canPickUpLoot` 隨機性只靠生物自己的值。
 - **無法用原版向量驗證的**：貓生成與村莊圍攻（原版的亂數與計時不可重播，只有 Kiln 單元測試）；硫磺方塊的玩家推擠、衝刺擊退與接觸傷害對生物（harness 不 tick 玩家）；初始動物的順序相依（原版的結果依區塊產生順序，以量測到的容許度比對）。
 - **已知差異**：`effect_parity` 的 `haz_snow_lava_clears`（燃燒中的玩家在粉雪旁的岩漿，火提早一 tick 熄）。
-- 與 wp45 相同、這一輪沒碰的：「moved wrongly」、結構方塊與拼圖方塊、旗幟圖樣、配方書封包位元組、釀造台運作向量、選單點擊向量補鐵砧等。
+- 與 wp45 相同、這一輪沒碰的：配方書封包位元組、釀造台運作向量、選單點擊向量補鐵砧等（「moved wrongly」、結構方塊與拼圖方塊、旗幟圖樣在 wp50 補上）。
+
+### 6.4 wp50（`wp50-last-d`）：做完剩下的 D 項
+
+目標：把 wp49 之後仍是 D 的項目做完，並用原版 26.3 錄的向量驗證。做法同 wp49（讀 `javap -c -p` 的原版碼、最簡單而精確的實作、`tools/*Vectors.java` 在原版伺服器內跑場景、Kiln 重播逐項比對）。向量在 `work/wp50/`（`mobs`、`interact`、`container`、`inventory`、`entities`），`tools/parity_suites.py` 的 `interact50`（`wp50/interact/*.jsonl` 全部）、`container50`、`loom_clicks`、`ominous_trial` 把它們接進整套；生物向量（`eq50_*` 68 個）併入 `work/m6-mobs2/vectors.jsonl`（原檔備份為 `.pre-wp50`，依 name 去重後 1,227 行，`mob_parity` 1,198 個 scenario 通過）。
+
+| 項目 | 內容 | 原版向量 | 驗證端 |
+|---|---|---|---|
+| cushion | `Cushion` 實體：`BlockAttachedEntity` 的存活檢查（每 100 tick，post-increment）、顏色與自訂名稱、坐上與坐下音效、離開、被雷劈（四種附著實體共用修正）、`/summon` 與存檔 | 152 | `interact_parity`（`cushion50`） |
+| mannequin | `Mannequin`（`LivingEntity` 而非 `Mob`）：屬性只有生物共通的一組、`profile`／`hidden_layers`／`main_hand`／`pose`／`immovable`／`description` 存檔、`immovable` 時不 travel、26.3 的 living 存檔欄位；命名牌只對非 mob 生效；火與岩漿傷害在 tick 內延後 | 行為 46、NBT 53 | `interact_parity`（`mannequin50`）、`entity_nbt.rs` |
+| ominous_item_spawner | 不祥試煉刷怪磚的物品雨（物品實體、拋射物種類、延遲）、骨頭與空堆疊 | 15 | `container_parity`（`ominous50`）、`tests/ominous_trial.rs` |
+| 豬、地獄疣豬行者的鞍與胡蘿蔔釣竿；鸚鵡螺鞍與護甲 | 鞍欄位、放鞍（右鍵與發射器）、剪下、騎乘與操控（含胡蘿蔔釣竿加速）、AI 在有鞍時的行為；鸚鵡螺與殭屍鸚鵡螺的鞍與護甲 | 68（`eq50_*`，含馬、驢、羊駝、駱駝的對照組）＋發射器放鞍與裝備 21（`dispenser_equip50_*`） | `mob_parity`、`container_parity` |
+| 發射器的刷子與剪刀 | 刷子對犰狳（含幼體、已刷過、別種生物、什麼都沒有）、剪刀剪斷拴繩（`shearOffAllLeashConnections`） | `container50` 的 `c50` 中 `dispenser_brush50_*` 5、`dispenser_shears50_*` 4 | `container_parity` |
+| 旗幟圖樣 | 織布機選單（按鈕順序來自 tag 的 JSON 順序、`slotsChanged` 對任何來源重算）、盾牌上旗幟、鍋釜洗旗與洗盾 | 選單點擊 1,500 序列／35,988 步、`banner50` 19、`cauldron50` 170 | `kiln-inventory/tests/click_parity.rs`、`interact_parity` |
+| 結構方塊 | 螢幕封包（更新資料、存範圍、載入範圍、偵測大小）、模式（存、載入、角落、資料）、範本庫（先找世界 `generated/`，再找 datapack 與遊戲資料；找不到的也記住）、`fillFromWorld`（略過結構空位、帶方塊實體資料）、`placeInWorld`（旋轉、鏡射、完整度的 `BlockRotProcessor` 與種子、`strict` 的旗標 816、方塊實體載入並依模式更新方塊）、紅石觸發（存、載入、角落卸載）、放置者為作者、`StructureTemplate` 預設作者 `?`、`DataVersion` 與 `id`／`properties` 的存檔鍵 | `structure50` 88 | `interact_parity`（含範本 NBT 逐位元組比對） |
+| 拼圖方塊 | 螢幕封包、方塊實體欄位與 `joint` 預設（依朝向）、放置朝向（`getStateForPlacement`）、`JigsawGenerate` 接到 `/place jigsaw` 的機制 | 含在 `structure50`（9 個 jigsaw scenario） | `interact_parity` |
+| 「moved wrongly」 | 封包移動先讓伺服器身體走 `player::server_move`，水平距離平方超過 0.0625（創造、旁觀、睡眠不計；垂直分量被原版的比較式永遠歸零）且舊位置沒有碰撞，或新位置撞到新的碰撞形狀，就退回起點；被退回的移動從方塊效果的移動紀錄中移除；潛行不會走下邊緣的身體退讓是這條檢查的主要來源 | `moves50` 27 | `interact_parity` |
+
+這一輪找到並修掉的 Kiln 錯誤（皆由向量抓到）：
+
+- 織布機：背包裡有束口袋時 `slotsChanged` 也要重算；按鈕順序不是字母順序而是 tag 的 JSON 順序。
+- `BlockAttachedEntity` 的存活檢查在第 100 次之後才做（`ticksSinceLastCheck++ >= 100`），畫、展示框、拴繩結一起改。
+- 站上方塊就移走的標誌牌：standing／wall sign 在放置範圍的邊緣依 `updateShape` 掉落（`StructureTemplate.updateShapeAtEdge`），和旗幟走同一條規則。
+- 結構方塊／拼圖方塊放置時的方塊狀態（`JigsawBlock.getStateForPlacement`）、`loadAdditional` 的 `updateBlockState`（模式改了方塊跟著改）。
+- 資料指令改方塊實體後，區塊副本與「原版解析後再存出」一致（箱子沒有戰利品表就不留 `LootTableSeed`）。
+
+仍是 D 或 C 的（以及原因）：
+
+- **結構方塊存檔不收集範圍內的實體**（`fillEntityList`）：載入端（`Template.place_entities`）已有，存檔端沒有，向量也沒有帶實體的場景。
+- **拼圖方塊 `generate` 的 `keepJigsaws`** 不作用（`/place jigsaw` 同樣沒有）；結構範本放置需要 datapack 的噪音設定才能建立區域（沒有時回報失敗）。
+- **Kiln 在結構方塊流程中會多送中間狀態的方塊實體封包**（`set_block` 與載入資料各送一次）；向量比對取每個位置的最後一個。
+- **cushion**：流體、活塞推動與中鍵挑選未比對；**mannequin**：生物落地的方塊音效 harness 不錄（比對時濾掉）。
+- **「moved wrongly」**：被退回的移動不做 `doCheckFallDamage`；`isInPostImpulseGraceTime`（重錘後的寬限）沒有模型；身體卡在蜘蛛網等方塊的第二步，原版 harness 不 tick 玩家所以沒有向量（Kiln 在 tick 內套用）。
+- 還沒做：`player_sheared_equipment` 的進度 trigger、狼鎧甲、生怪蛋生出幼體。
+
 
 ## 7. 重跑
 
@@ -454,6 +489,12 @@ java ... tools/EffectVectors.java work/wp49/effects/ench.jsonl ench_           #
 java ... tools/EntityNbtVectors.java work/wp49/entities/nbt.jsonl
 java ... tools/ExploreMapVectors.java work/wp49/explore/maps.jsonl 12345       # 第二個參數是 seed
 java ... tools/InitialMobVectors.java work/wp49/initial/mobs2.jsonl 2 20      # seed 與半徑；一個世界一個檔，測試用 : 串接
+# wp50 的向量
+java ... tools/InteractVectors.java work/wp50/interact/structure50.jsonl structure50_   # 另有 cushion50／mannequin50／banner50／cauldron50／moves50
+java ... tools/ContainerVectors.java work/wp50/container/c50.jsonl equip50             # 另有 brush50／shears50／ominous50
+java ... tools/MobVectors.java work/wp50/mobs/eq50.jsonl eq50_                         # 併入 work/m6-mobs2/vectors.jsonl 前先備份
+java ... tools/InventoryVectors.java work/wp50/inventory/loom.jsonl loom
+java ... tools/EntityNbtVectors.java work/wp50/entities/mannequin.jsonl mannequin
 # 與原版互載、指令對跑
 python tools/admin_check.py --kiln-exe target/release/kiln
 python tools/command_diff.py --kiln-exe target/release/kiln --bot-exe target/release/kiln-bot
