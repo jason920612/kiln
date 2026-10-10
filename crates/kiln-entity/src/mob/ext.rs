@@ -920,6 +920,11 @@ pub trait Kind: Sync + Send {
         let _ = m;
         None
     }
+    /// `getHurtSound(source)` of a type whose sound depends on what hurt it (a wolf in armor).
+    fn hurt_sound_from(&self, m: &MobData, source: &DamageSource) -> Option<&'static str> {
+        let _ = source;
+        self.hurt_sound_for(m)
+    }
     fn death_sound_for(&self, m: &MobData) -> Option<&'static str> {
         let _ = m;
         None

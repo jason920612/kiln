@@ -48,6 +48,11 @@ fn crackiness(damage: i32, max_damage: i32) -> u8 {
     }
 }
 
+/// `Wolf.canArmorAbsorb`: the armor takes the blow unless the damage type goes through it.
+fn can_armor_absorb(m: &MobData, source: &DamageSource) -> bool {
+    is(&st(m).body, "minecraft:wolf_armor") && !source.kind.is_tag("minecraft:bypasses_wolf_armor")
+}
+
 /// `Repairable.isValidRepairItem`: `repair` is one of the items the armor's `repairable` component names.
 fn valid_repair_item(armor: &ItemStack, repair: &ItemStack) -> bool {
     use kiln_item::HolderSet;
@@ -232,13 +237,21 @@ impl Kind for Wolf {
         Some(tame::owned_by(m, level, player))
     }
 
+    /// `Wolf.getHurtSound`: the armor's when it takes the blow, else the wolf's own (by its sound variant).
+    fn hurt_sound_from(&self, m: &MobData, source: &DamageSource) -> Option<&'static str> {
+        if can_armor_absorb(m, source) {
+            return Some("minecraft:item.wolf_armor.damage");
+        }
+        Some(sound(m, "hurt"))
+    }
+
     /// `Wolf.actuallyHurt`: wolf armor takes the blow (a damage type the armor does not stop goes through): the armor wears by
     /// the damage, and cracks, with a sound and scute particles, when it gets to a worse level.
     fn override_actually_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> bool {
-        let body = &st(m).body;
-        if !is(body, "minecraft:wolf_armor") || source.kind.is_tag("minecraft:bypasses_wolf_armor") {
+        if !can_armor_absorb(m, source) {
             return false;
         }
+        let body = &st(m).body;
         let (damage, max_damage) = (body.damage(), body.max_damage());
         // `hurtAndBreak(ceil(amount), this, BODY)`.
         let n = amount.ceil() as i32;
