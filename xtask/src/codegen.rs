@@ -57,6 +57,8 @@ pub fn run(root: &Path, work: &Path) -> Result<()> {
     fs::write(out.join("block_items.rs"), crate::block_logic::gen_block_items(&block_items)?)?;
     let flammability = read_json(&input.generated.join("extra/flammability.json")).context("run `cargo xtask extract` first")?;
     fs::write(out.join("flammability.rs"), crate::block_logic::gen_flammability(&flammability)?)?;
+    let sounds = read_json(&input.generated.join("extra/sound_types.json")).context("run `cargo xtask extract` first")?;
+    fs::write(out.join("sound_types.rs"), crate::block_logic::gen_sound_types(&sounds)?)?;
     let rules = read_json(&input.generated.join("extra/game_rules.json")).context("run `cargo xtask extract` first")?;
     fs::write(out.join("game_rules.rs"), gen_game_rules(&rules)?)?;
     fs::write(out.join("dimension_types.rs"), gen_dimension_types(&input)?)?;

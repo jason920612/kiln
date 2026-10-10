@@ -97,6 +97,7 @@ public class ExtractBlockLogic {
         }
         blockItems(out);
         flammability(out);
+        soundTypes(out);
         try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(out.resolve("block_classes.json")))) {
             w.println("[");
             int i = 0, count = BuiltInRegistries.BLOCK.size();
@@ -158,6 +159,61 @@ public class ExtractBlockLogic {
             rows.add(String.format(Locale.ROOT, "{\"block\":\"%s\",\"ignite\":%d,\"burn\":%d}", BuiltInRegistries.BLOCK.getKey(b), i, u));
         }
         Files.writeString(out.resolve("flammability.json"), "[\n" + String.join(",\n", rows) + "\n]\n");
+    }
+
+    // Every block's `SoundType` (the sounds of stepping, placing, landing, ... on it): the distinct sound types,
+    // the type of each block (registry order), and for a block whose states differ the property that tells them apart.
+    static void soundTypes(Path out) throws Exception {
+        Map<net.minecraft.world.level.block.SoundType, Integer> ids = new LinkedHashMap<>();
+        List<String> blocks = new ArrayList<>();
+        List<String> byProperty = new ArrayList<>();
+        for (Block b : BuiltInRegistries.BLOCK) {
+            String name = BuiltInRegistries.BLOCK.getKey(b).toString();
+            Set<net.minecraft.world.level.block.SoundType> seen = new LinkedHashSet<>();
+            for (BlockState s : b.getStateDefinition().getPossibleStates()) seen.add(s.getSoundType());
+            for (var t : seen) ids.putIfAbsent(t, ids.size());
+            blocks.add(String.format(Locale.ROOT, "[\"%s\",%d]", name, ids.get(b.defaultBlockState().getSoundType())));
+            if (seen.size() > 1) {
+                // The one property whose value decides the sound type.
+                String found = null;
+                for (var prop : b.getStateDefinition().getProperties()) {
+                    Map<String, Integer> by = new LinkedHashMap<>();
+                    boolean ok = true;
+                    for (BlockState s : b.getStateDefinition().getPossibleStates()) {
+                        String v = s.getValue(prop).toString();
+                        int t = ids.get(s.getSoundType());
+                        Integer old = by.putIfAbsent(v, t);
+                        if (old != null && old != t) ok = false;
+                    }
+                    if (ok) {
+                        StringBuilder m = new StringBuilder();
+                        for (var e : by.entrySet()) m.append(m.length() > 0 ? "," : "").append(String.format(Locale.ROOT, "[\"%s\",%d]", e.getKey(), e.getValue()));
+                        found = String.format(Locale.ROOT, "[\"%s\",\"%s\",[%s]]", name, prop.getName(), m);
+                        break;
+                    }
+                }
+                if (found == null) throw new IllegalStateException("no single property decides the sound of " + name);
+                byProperty.add(found);
+            }
+        }
+        List<String> types = new ArrayList<>();
+        for (var t : ids.keySet()) {
+            types.add(String.format(Locale.ROOT, "{\"volume\":%s,\"pitch\":%s,\"break\":\"%s\",\"step\":\"%s\",\"place\":\"%s\",\"hit\":\"%s\",\"fall\":\"%s\"}",
+                    Float.toString(t.getVolume()), Float.toString(t.getPitch()), t.getBreakSound().location(), t.getStepSound().location(), t.getPlaceSound().location(),
+                    t.getHitSound().location(), t.getFallSound().location()));
+        }
+        Files.writeString(out.resolve("sound_types.json"), "{\"types\":[
+" + String.join(",
+", types) + "
+],\"blocks\":[
+" + String.join(",
+", blocks) + "
+],\"by_property\":[
+"
+                + String.join(",
+", byProperty) + "
+]}
+");
     }
 
     static boolean covered(VoxelShape test, VoxelShape face) {
