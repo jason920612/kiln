@@ -96,6 +96,8 @@ fn sound_source_name(id: i32) -> &'static str {
 }
 
 thread_local! {
+    /// The case records the pitch of the sounds of blocks, not of voices.
+    static NO_VOICE_PITCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The case does not record sound pitches (an entity's voice pitch comes from its own random).
     static NO_PITCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The teleports (Player Position packets) of the last step.
@@ -121,7 +123,7 @@ fn decode(pkt: &Bytes) -> Option<Value> {
             let (volume, pitch) = (r.f32().ok()?, r.f32().ok()?);
             // (The vectors print floats the way Java does: the shortest text of the float.)
             let java = |f: f32| format!("{f}").parse::<f64>().unwrap_or(f as f64);
-            let pitch = if NO_PITCH.with(|n| n.get()) { 0.0 } else { java(pitch) };
+            let pitch = if NO_PITCH.with(|n| n.get()) || (NO_VOICE_PITCH.with(|n| n.get()) && !name.starts_with("minecraft:block.")) { 0.0 } else { java(pitch) };
             json!({"t": "sound", "name": name, "source": sound_source_name(source), "pos": [x as f64 / 8.0, y as f64 / 8.0, z as f64 / 8.0],
                    "volume": java(volume), "pitch": pitch})
         }
@@ -580,6 +582,7 @@ fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
 
 fn run_case(line: &Value) -> Vec<String> {
     NO_PITCH.with(|n| n.set(line["no_pitch"].as_bool() == Some(true)));
+    NO_VOICE_PITCH.with(|n| n.set(line["no_voice_pitch"].as_bool() == Some(true)));
     // (A map covers 128 blocks around the origin: the replay's player sees as far.)
     let maps = line["maps"].as_bool() == Some(true);
     let view = if maps { 8 } else { 2 };

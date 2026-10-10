@@ -215,6 +215,9 @@ public class InteractVectors {
         /** wp54: a second player stands here (survival, nothing happens to it) and the sounds it hears are recorded after every step (`obs`). */
         double[] observer;
 
+        /** wp54: voices have no recorded pitch (an entity's own random), the sounds of blocks keep theirs. */
+        boolean noVoicePitch;
+
         /** wp54: only what the observer heard is compared (the case is about a sound, not about how the block is placed). */
         boolean soundOnly;
 
@@ -894,6 +897,26 @@ public class InteractVectors {
         c.noPitch = true;
         c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 3 99 0 minecraft:stone").late(summon);
         return c;
+    }
+
+    /** wp54: a mannequin that falls onto `block` (a stone block under it, the floor the player stands on is the world's). */
+    static Case mannequinFall54(String name, String block, int height) {
+        Case c = new Case("mannequin54_fall_" + name).hanging();
+        c.tickCushions = true;
+        c.noVoicePitch = true;
+        c.cmd("setblock 2 99 0 " + block).cmd("setblock 3 99 0 minecraft:stone").late("summon minecraft:mannequin 2.5 " + height + " 0.5");
+        return c;
+    }
+
+    static void mannequins54(List<Case> out) {
+        Case c;
+        for (String block : new String[] {"minecraft:stone", "minecraft:grass_block", "minecraft:white_wool", "minecraft:glass", "minecraft:oak_planks", "minecraft:iron_block", "minecraft:slime_block", "minecraft:honey_block", "minecraft:snow_block", "minecraft:hay_block"}) {
+            for (int height : new int[] {103, 110}) {
+                c = mannequinFall54(block.replace("minecraft:", "") + "_" + height, block, height);
+                c.step(op("op", "tick_cushions", "ticks", 40));
+                out.add(c);
+            }
+        }
     }
 
     static void mannequins50(List<Case> out) {
@@ -4040,8 +4063,9 @@ public class InteractVectors {
             if (o instanceof net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket) teleports++;
             if (o instanceof ClientboundSoundPacket s) {
                 if (recordNoPitch && soundName(s).startsWith("minecraft:block.")) continue;
+                boolean voice = recordNoVoicePitch && !soundName(s).startsWith("minecraft:block.");
                 out.add(op("t", "sound", "name", soundName(s), "source", s.getSource().getName(),
-                        "pos", new double[] {s.getX(), s.getY(), s.getZ()}, "volume", s.getVolume(), "pitch", recordNoPitch ? 0.0f : s.getPitch()));
+                        "pos", new double[] {s.getX(), s.getY(), s.getZ()}, "volume", s.getVolume(), "pitch", recordNoPitch || voice ? 0.0f : s.getPitch()));
             } else if (o instanceof ClientboundOpenSignEditorPacket e) {
                 out.add(op("t", "open_sign_editor", "pos", List.of(e.pos().getX(), e.pos().getY(), e.pos().getZ()),
                         "front", e.slot() == net.minecraft.world.level.block.entity.SignTextSlot.FRONT));
@@ -4218,6 +4242,7 @@ public class InteractVectors {
 
     static boolean mobCase;
     static boolean recordNoPitch;
+    static boolean recordNoVoicePitch;
 
     /**
      * wp54: `Level.tickBlockEntities` for the moving pistons, in the order their tickers were registered. (The level here is not
@@ -4718,6 +4743,7 @@ public class InteractVectors {
         if (c.watchAdv) resetAdvancements(p);
         java.util.TreeSet<String> advBefore = c.watchAdv ? doneCriteria(p) : null;
         recordNoPitch = c.noPitch;
+        recordNoVoicePitch = c.noVoicePitch;
         if (c.noPitch) addAttackTicks(p, 100);
         recordMaps = c.watchMaps;
         if (c.watchMaps) resetMaps();
@@ -4842,6 +4868,7 @@ public class InteractVectors {
         line.put("food", c.watchFood ? c.food : null);
         line.put("hanging", c.watchHanging);
         line.put("no_pitch", c.noPitch);
+        line.put("no_voice_pitch", c.noVoicePitch);
         line.put("stands", c.watchStands);
         line.put("bees", c.watchBees);
         line.put("menus", c.watchMenus);
@@ -4999,6 +5026,7 @@ public class InteractVectors {
             commandBlocks49(all);
             pistons54(all);
             sounds54(all);
+            mannequins54(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {
