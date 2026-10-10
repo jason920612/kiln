@@ -420,9 +420,20 @@ fn no_spawner_delay(t: Tag) -> Tag {
             if fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:chicken")) {
                 fields.retain(|(k, _)| k != "EggLayTime");
             }
+            // (A template's entry for a rider, which has no data of its own, is where Kiln's level put it after the first tick.)
+            if fields.iter().any(|(k, v)| k == "nbt" && matches!(v, Tag::Compound(c) if c.is_empty())) {
+                for (k, v) in fields.iter_mut() {
+                    if k == "pos"
+                        && let Tag::List(p) = v
+                        && p.len() == 3
+                    {
+                        p[1] = Tag::Double(0.0);
+                    }
+                }
+            }
             // (An item entity's age and health: Kiln's level ticks between the steps.)
             if fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:item")) {
-                fields.retain(|(k, _)| k != "Age" && k != "Health");
+                fields.retain(|(k, _)| !matches!(k.as_str(), "Age" | "Health" | "PickupDelay"));
             }
             for (k, v) in fields.iter_mut() {
                 if k == "Passengers"
