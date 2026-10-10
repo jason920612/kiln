@@ -1,0 +1,594 @@
+// Kiln plugin API 1.0 (design §11, `docs/plugin-api.md`). Frozen: see the semver policy in
+// `docs/plugin-api.md` and the digest test (`kiln-plugin-host/tests/wit_freeze.rs`).
+//
+// Threading contract: a plugin has exactly one `global` instance (serial phases: command
+// registration, configuration, join/leave, plugin commands, global tasks) and, when it
+// exports `region-hooks`, one instance per region (cancellable events at the vanilla points,
+// batched observe events, tasks routed to the region). Region instances are bound to their
+// region, never to a thread, and any barrier (split, merge, reload, a trap) may replace them:
+// guest memory is only a cache. Persistent state lives in host-managed owned namespaces
+// (`state`); the global instance hands a state blob across a hot reload (`on-disable`,
+// `on-enable`).
+//
+// There is no main thread and no synchronous call into another region. Everything a plugin
+// does to the game (messages, HUD, teleports, items, menus, entities, blocks) is an *effect*:
+// it is queued when the handler returns normally, applied at the next serial point in an
+// order that does not depend on threads or the region layout, and answered with a ticket
+// whose outcome arrives in `on-results` the next tick (with the `op-results` subscription).
+//
+// No numeric registry ids are persisted or fixed: blocks, items, entity types, damage types
+// and levels are per-run ids (`registry.key` gives the resource key, `registry.id` the id of
+// a key).
+package kiln:api@1.0.0;
+
+interface types {
+    /// A player in the current call; valid only during the call that received it (a stale
+    /// handle traps). Handles carry the instance generation.
+    type player-handle = u64;
+    /// The cell (8x8 chunks) of the event's target block; valid only during that call.
+    type cell-handle = u64;
+    /// The entity of the event; valid only during that call.
+    type entity-handle = u64;
+    /// An atomic operation's or effect's ticket (its outcome arrives in `on-results` the next
+    /// tick).
+    type ticket = u64;
+    /// A scheduled task; carries the generation of the instance that scheduled it (a handle
+    /// from before a reload traps).
+    type task-handle = u64;
+    /// A level of this run: an index into `init-info.levels`.
+    type level = u32;
+    /// Per-run registry ids (see `registry`).
+    type block = u32;
+    type item = u32;
+    type entity-type = u32;
+    type damage-type = u32;
+
+    record uuid { hi: u64, lo: u64 }
+
+    record block-pos { x: s32, y: s32, z: s32 }
+
+    /// Flat (no strings): an event record crosses as plain arguments, without allocating
+    /// in the guest. The name is `event.player-name(handle)`.
+    record player {
+        handle: player-handle,
+        uuid: uuid,
+        /// Permission level 4 (an operator).
+        operator: bool,
+    }
+
+    /// A piece of chat text with its style.
+    record span {
+        text: string,
+        /// A named colour (`gold`, `gray`, ...) or `#rrggbb`.
+        color: option<string>,
+        bold: bool,
+        italic: bool,
+    }
+
+    enum game-mode { survival, creative, adventure, spectator }
+
+    /// What the host knows of a player right now (`event.info`).
+    record player-info {
+        level: level,
+        pos: tuple<f64, f64, f64>,
+        /// Yaw and pitch in degrees.
+        rot: tuple<f32, f32>,
+        health: f32,
+        food: u32,
+        game-mode: game-mode,
+        on-ground: bool,
+        sneaking: bool,
+        sprinting: bool,
+        flying: bool,
+        /// The main hand: the item and how many, none when empty.
+        held: option<item>,
+        held-count: u32,
+    }
+
+    /// A player on the server (`event.online`).
+    record online-player { uuid: uuid, name: string, level: level }
+
+    /// A cancellable event's outcome. A message for the acting player with a denial goes
+    /// through `event.deny-message` (the outcome itself stays a flat value: no cleanup call).
+    enum decision { allow, deny }
+
+    /// A chat message's outcome: sent as is, dropped, or replaced by formatted text.
+    variant chat-verdict { pass, cancel, rewrite(list<span>) }
+
+    record block-event {
+        player: player,
+        level: level,
+        pos: block-pos,
+        /// The block being broken.
+        block: block,
+        cell: cell-handle,
+    }
+
+    record place-event {
+        player: player,
+        level: level,
+        /// Where a block (or fluid) would go.
+        pos: block-pos,
+        /// The clicked block (`pos` itself for a bucket aimed at a replaceable block).
+        against: block-pos,
+        /// The item in the hand used; none when the hand is empty.
+        item: option<item>,
+        cell: cell-handle,
+    }
+
+    record entity-event {
+        player: player,
+        level: level,
+        entity: entity-handle,
+        entity-uuid: uuid,
+        kind: entity-type,
+        pos: tuple<f64, f64, f64>,
+        /// The cell the entity stands in.
+        cell: cell-handle,
+    }
+
+    /// A player is about to take damage.
+    record damage-event {
+        victim: player,
+        level: level,
+        pos: block-pos,
+        cause: damage-type,
+        amount: f32,
+        /// The attacking player, when a player is responsible (melee, arrows).
+        attacker: option<player>,
+        /// The cell the victim stands in.
+        cell: cell-handle,
+    }
+
+    record chat-event { player: player, message: string }
+
+    record command-event { player: player, command: string }
+
+    /// An item as a handler sees it. `tag` is the plugin tag of a custom item (see
+    /// `item-stack.tag`), without the plugin id prefix; none for plain items.
+    record item-view { item: item, count: u32, tag: option<string> }
+
+    /// The held item is used, on a block or in the air.
+    record item-use-event {
+        player: player,
+        level: level,
+        item: item-view,
+        off-hand: bool,
+        /// The clicked block, none when used in the air.
+        target: option<block-pos>,
+    }
+
+    enum click-kind { left, right, shift-left, shift-right, middle, drop, double, swap, drag, other }
+
+    /// A click in an open container screen (the player's own inventory included).
+    record container-click-event {
+        player: player,
+        /// The id of the plugin menu (`menu-spec.id`, without the plugin prefix), none for a
+        /// vanilla container.
+        menu: option<string>,
+        /// The menu type key, e.g. `minecraft:generic_9x3`, `minecraft:inventory`.
+        container: string,
+        slot: s32,
+        button: u8,
+        kind: click-kind,
+        /// The stack in the clicked slot.
+        clicked: option<item-view>,
+    }
+
+    /// A plugin-raised event (`events.raise`), as another plugin sees it.
+    record custom-event {
+        /// `<raising plugin id>:<name>`.
+        name: string,
+        /// The raising plugin's id.
+        source: string,
+        payload: list<u8>,
+        actor: option<player>,
+    }
+
+    record death-event {
+        player: player,
+        level: level,
+        pos: block-pos,
+        cause: damage-type,
+        /// The player or entity that killed them, if any.
+        killer: option<uuid>,
+    }
+
+    enum spawn-reason { join, respawn, level-change }
+
+    /// A player appears in a level: on joining, after dying, or after changing level.
+    record spawn-event { player: player, level: level, pos: block-pos, reason: spawn-reason }
+
+    record observed-block { player: player, level: level, pos: block-pos, block: block }
+
+    /// What happened in the region since the last phase boundary (sent in batches).
+    variant observed {
+        block-broken(observed-block),
+        block-placed(observed-block),
+        player-died(death-event),
+        player-spawned(spawn-event),
+    }
+
+    variant global-value { int(s64), bytes(list<u8>) }
+
+    record compare-and-set { key: string, expected: option<global-value>, new: global-value }
+
+    /// `try-add`: add `delta` unless the result would fall below `floor` (a missing key counts
+    /// as 0): a withdrawal that cannot overdraw.
+    record try-add { key: string, delta: s64, floor: s64 }
+
+    /// Typed atomic operations on the plugin's global namespace: the only way contexts other
+    /// than the global instance change it. Applied in B0 in a deterministic order.
+    variant atomic-op {
+        add(tuple<string, s64>),
+        compare-and-set(compare-and-set),
+        append(tuple<string, list<u8>>),
+        try-add(try-add),
+    }
+
+    /// An atomic operation's or effect's outcome: whether it changed anything (a failed
+    /// compare-and-set, a refused `try-add`, an offline player and a type mismatch did not)
+    /// and, for operations, the key's value afterwards.
+    record op-result { ticket: ticket, applied: bool, value: option<global-value> }
+
+    /// A task that ran: its handle, the plugin's own id, the player it follows (`for-player`)
+    /// or the cell of its position (`at-position`).
+    record task-event { handle: task-handle, id: u64, player: option<player>, cell: option<cell-handle> }
+
+    variant task-target {
+        global,
+        player(uuid),
+        position(tuple<level, s32, s32>),
+    }
+
+    enum cancel-reason {
+        /// The plugin was reloaded: the new generation may schedule the task again.
+        reload,
+        /// The player a task followed left.
+        player-left,
+    }
+
+    record cancelled-task { id: u64, target: task-target, remaining-ticks: u32, reason: cancel-reason }
+
+    record config-entry { key: string, value: string }
+
+    record init-info {
+        id: string,
+        /// The manifest's `[config]` table, as strings.
+        config: list<config-entry>,
+        /// The overworld spawn point.
+        spawn: block-pos,
+        /// Level keys by level id, e.g. `minecraft:overworld`.
+        levels: list<string>,
+        /// Instance generation (bumped by every hot reload of the plugin).
+        generation: u32,
+    }
+
+    record command-spec {
+        /// The literal, e.g. `broken` for `/broken`.
+        name: string,
+        /// Minimum permission level (0-4).
+        permission: u8,
+    }
+
+    /// An item to create. `tag` marks a custom item: it is stored as `<plugin id>:<tag>` in
+    /// the stack's custom data, so only this plugin's items carry its tags.
+    record item-stack {
+        /// Resource key, e.g. `minecraft:diamond_sword`.
+        item: string,
+        count: u32,
+        name: option<list<span>>,
+        lore: list<list<span>>,
+        tag: option<string>,
+        /// An `item_model` key, for custom looks.
+        model: option<string>,
+        /// The enchantment glint.
+        glint: bool,
+    }
+
+    record menu-item { slot: u8, stack: item-stack }
+
+    /// A chest-style menu. `id` is the plugin's own name for it (the host prefixes the plugin
+    /// id); its slots are locked: clicks reach `on-container-click` but never move items.
+    record menu-spec { id: string, title: list<span>, rows: u8, items: list<menu-item> }
+
+    enum boss-color { pink, blue, red, green, yellow, purple, white }
+
+    enum boss-style { progress, notched-6, notched-10, notched-12, notched-20 }
+
+    record spawn-spec {
+        /// Entity type key, e.g. `minecraft:armor_stand`.
+        kind: string,
+        level: level,
+        pos: tuple<f64, f64, f64>,
+        yaw: f32,
+        name: option<list<span>>,
+        no-ai: bool,
+        invulnerable: bool,
+        silent: bool,
+        no-gravity: bool,
+    }
+
+    record block-change {
+        x: s32,
+        y: s32,
+        z: s32,
+        /// A block state, e.g. `minecraft:oak_stairs[facing=north]`.
+        state: string,
+    }
+
+    enum edit-error {
+        /// A position lies outside the cell the call was given.
+        outside-cell,
+        /// More than 4096 changes in one call.
+        too-many,
+        unknown-level,
+        /// A state string that names no block.
+        bad-state,
+    }
+}
+
+/// Owned namespaces (always linked).
+interface state {
+    use types.{player-handle, cell-handle, entity-handle, global-value, atomic-op, ticket};
+
+    variant scope { player(player-handle), cell(cell-handle), entity(entity-handle) }
+
+    /// Reads a key of a namespace the current context owns (writes of this call included).
+    get: func(s: scope, key: string) -> option<list<u8>>;
+    /// Writes (none deletes) a key; buffered until the handler returns normally.
+    put: func(s: scope, key: string, val: option<list<u8>>);
+    /// A key holding a little-endian `s64` (8 bytes), as a flat value: no list crosses, so
+    /// counters cost no allocation in the guest. Other contents read as none.
+    get-int: func(s: scope, key: string) -> option<s64>;
+    /// Writes the 8 bytes of `val` (buffered like `put`).
+    put-int: func(s: scope, key: string, val: s64);
+    /// The plugin's global namespace: the global instance reads the live value, every other
+    /// context a snapshot at most one tick old.
+    global-get: func(key: string) -> option<global-value>;
+    /// Queues an atomic operation on the global namespace (applied in B0; from the global
+    /// instance it applies when the call returns). With the `op-results` subscription the
+    /// outcome arrives in `on-results` the next tick.
+    submit: func(op: atomic-op) -> ticket;
+}
+
+/// The current event (always linked).
+interface event {
+    use types.{player-handle, span, player-info, online-player};
+
+    /// A player's name (any player handle of the call).
+    player-name: func(p: player-handle) -> string;
+    /// The message the acting player gets if this handler denies.
+    deny-message: func(text: list<span>);
+    /// A player of the call as the host sees them right now.
+    info: func(p: player-handle) -> player-info;
+    /// The players online at the start of the tick (a snapshot, the same in every context).
+    online: func() -> list<online-player>;
+}
+
+/// Deterministic environment (always linked): in strict mode the clock follows the tick and
+/// the random stream is seeded from the server seed, the plugin and the call.
+interface env {
+    /// Ticks since the server started.
+    tick: func() -> u64;
+    /// Milliseconds since the Unix epoch (strict mode: derived from the tick).
+    now-millis: func() -> u64;
+    /// A random 64-bit value.
+    random: func() -> u64;
+}
+
+/// Per-run registry ids and their resource keys (always linked).
+interface registry {
+    enum kind { level, block, item, entity-type, damage-type }
+
+    key: func(k: kind, id: u32) -> option<string>;
+    id: func(k: kind, key: string) -> option<u32>;
+}
+
+/// `scheduler`: delayed tasks, committed when the scheduling call returns normally. Tasks
+/// run at the start of a tick (B0), in (due tick, scheduling order).
+interface scheduler {
+    use types.{uuid, level, task-handle};
+
+    /// `on-task` in the global instance after `delay-ticks` (at least 1).
+    global: func(delay-ticks: u32, id: u64) -> task-handle;
+    /// `on-task` in the region instance holding the player then (the task follows them;
+    /// cancelled with a notice to the global instance if they are not online then). By uuid,
+    /// so that a new generation can schedule again what a reload cancelled.
+    for-player: func(p: uuid, delay-ticks: u32, id: u64) -> task-handle;
+    /// `on-task` in the region instance owning the position then.
+    at-position: func(level: level, x: s32, z: s32, delay-ticks: u32, id: u64) -> task-handle;
+    /// Cancels a task that has not run; false if it ran or was cancelled already.
+    cancel: func(t: task-handle) -> bool;
+}
+
+/// `player.message`: chat to players, delivered at the next serial point.
+interface chat {
+    use types.{player-handle, span, uuid};
+
+    send: func(to: player-handle, text: list<span>);
+    /// To a player by uuid, wherever they are (nothing happens if they are not online).
+    tell: func(who: uuid, text: list<span>);
+    broadcast: func(text: list<span>);
+}
+
+/// `player.hud`: per-player screen elements. None of them touch the server's shared
+/// scoreboard or boss bars; each shows only to the player named.
+interface hud {
+    use types.{uuid, span, ticket, boss-color, boss-style};
+
+    /// Fade and stay times in ticks.
+    title: func(to: uuid, title: list<span>, subtitle: list<span>, fade-in: u32, stay: u32, fade-out: u32) -> ticket;
+    action-bar: func(to: uuid, text: list<span>) -> ticket;
+    /// The sidebar of one player: a title and up to 15 lines (top to bottom).
+    sidebar: func(to: uuid, title: list<span>, lines: list<list<span>>) -> ticket;
+    clear-sidebar: func(to: uuid) -> ticket;
+    /// Shows or updates the plugin's boss bar `id` for the player; `progress` is 0.0 to 1.0.
+    bossbar: func(to: uuid, id: string, text: list<span>, progress: f32, color: boss-color, style: boss-style) -> ticket;
+    clear-bossbar: func(to: uuid, id: string) -> ticket;
+}
+
+/// `player.control`: changes to a player.
+interface players {
+    use types.{uuid, level, game-mode, span, ticket};
+
+    teleport: func(who: uuid, level: level, x: f64, y: f64, z: f64, yaw: f32, pitch: f32) -> ticket;
+    set-game-mode: func(who: uuid, mode: game-mode) -> ticket;
+    /// Full health, food and saturation; puts out fire.
+    heal: func(who: uuid) -> ticket;
+    /// Kills the player as `/kill` does (the death is announced and observed like any other).
+    kill: func(who: uuid) -> ticket;
+    kick: func(who: uuid, reason: list<span>) -> ticket;
+}
+
+/// `inventory`: items and menus.
+interface inventory {
+    use types.{uuid, item-stack, menu-spec, ticket};
+
+    /// What does not fit drops at the player's feet.
+    give: func(who: uuid, stack: item-stack) -> ticket;
+    /// Takes `count` of `item` (a key) from the inventory; applies only if the player has all.
+    take: func(who: uuid, item: string, count: u32) -> ticket;
+    clear: func(who: uuid) -> ticket;
+    /// Opens a locked chest-style menu (replacing any menu open).
+    open-menu: func(who: uuid, spec: menu-spec) -> ticket;
+    /// Changes one slot of the plugin's menu `id` while the player has it open.
+    set-slot: func(who: uuid, menu: string, slot: u8, stack: option<item-stack>) -> ticket;
+    close-menu: func(who: uuid) -> ticket;
+}
+
+/// `entity.control`: entities the plugin owns.
+interface entities {
+    use types.{uuid, level, spawn-spec, ticket};
+
+    /// Spawns an entity; its uuid is derived from the server seed, the plugin and the call,
+    /// so it is known at once and the same on every run. Entity-scoped data of the plugin
+    /// can be written when the entity is first interacted with.
+    spawn: func(spec: spawn-spec) -> uuid;
+    /// Removes an entity this plugin spawned.
+    remove: func(level: level, id: uuid) -> ticket;
+}
+
+/// `world.write`: blocks of the cell the call was given.
+interface blocks {
+    use types.{cell-handle, level, block-change, edit-error, ticket};
+
+    /// Queues the changes (with the vanilla update flags of a player placing blocks). All
+    /// positions must lie in `cell`: the cell of the call's event or position task.
+    set-blocks: func(cell: cell-handle, level: level, changes: list<block-change>) -> result<ticket, edit-error>;
+}
+
+/// `events.raise`: events between plugins.
+interface events {
+    use types.{player-handle, decision};
+
+    /// Raises `<this plugin>:<name>` to the other plugins subscribed to `custom`, in this
+    /// context (region or global), in load order, until one denies. Depth one: a handler of
+    /// a raised event cannot raise more. Returns allow when nobody is subscribed.
+    raise: func(name: string, payload: list<u8>, actor: option<player-handle>) -> decision;
+}
+
+/// `jobs`: work for the plugin's async component (`tasks.wasm`, the `async-tasks` world in
+/// `async-tasks.wit`). Linked for plugins whose manifest names a `tasks` component.
+interface jobs {
+    use types.{ticket};
+
+    /// Hands the component a job. `id` is the plugin's own number for it (it comes back with a
+    /// cancellation notice if a reload interrupts the job). The outcome arrives in `on-results`
+    /// under the returned ticket: `applied` true with the result bytes in `value`, or false with
+    /// the failure text.
+    submit: func(id: u64, kind: string, payload: list<u8>) -> ticket;
+}
+
+/// Logging to the server console (always linked).
+interface log {
+    info: func(msg: string);
+    warn: func(msg: string);
+    error: func(msg: string);
+}
+
+/// Exports of the global instance.
+interface global-hooks {
+    use types.{init-info, command-spec, player, span, task-event, op-result, cancelled-task, custom-event, decision};
+
+    /// After instantiation: the commands to register (needs `command.register`).
+    init: func(info: init-info) -> list<command-spec>;
+    /// After `init`: the blob the previous generation returned from `on-disable` (hot
+    /// reload), none on a cold start.
+    on-enable: func(blob: option<list<u8>>);
+    /// Before a hot reload replaces the plugin: state to hand to the next generation.
+    on-disable: func() -> option<list<u8>>;
+    on-join: func(p: player);
+    on-leave: func(p: player);
+    /// A registered command; `args` is the text after the literal. Returns the reply.
+    on-command: func(p: option<player>, name: string, args: string) -> list<span>;
+    on-task: func(t: task-event);
+    on-results: func(p: option<player>, results: list<op-result>);
+    /// Tasks that will not run (reload, the player left).
+    on-cancelled: func(tasks: list<cancelled-task>);
+    on-custom: func(ev: custom-event) -> decision;
+}
+
+/// Exports of region instances (optional).
+interface region-hooks {
+    use types.{init-info, player, block-event, place-event, entity-event, damage-event, chat-event, command-event, item-use-event, container-click-event, custom-event, decision, chat-verdict, observed, task-event, op-result};
+
+    /// After each instantiation (a region instance may be replaced at any barrier).
+    init: func(info: init-info);
+    on-block-break: func(ev: block-event) -> decision;
+    on-block-place: func(ev: place-event) -> decision;
+    on-entity-interact: func(ev: entity-event) -> decision;
+    /// A player hits an entity (`player` is the attacker).
+    on-entity-attack: func(ev: entity-event) -> decision;
+    on-player-damage: func(ev: damage-event) -> decision;
+    on-item-use: func(ev: item-use-event) -> decision;
+    on-container-click: func(ev: container-click-event) -> decision;
+    on-chat: func(ev: chat-event) -> chat-verdict;
+    on-command: func(ev: command-event) -> decision;
+    on-observe: func(events: list<observed>);
+    on-task: func(t: task-event);
+    on-results: func(p: option<player>, results: list<op-result>);
+    on-custom: func(ev: custom-event) -> decision;
+}
+
+world global-plugin {
+    import state;
+    import event;
+    import env;
+    import registry;
+    import scheduler;
+    import chat;
+    import hud;
+    import players;
+    import inventory;
+    import entities;
+    import blocks;
+    import events;
+    import jobs;
+    import log;
+    export global-hooks;
+}
+
+world region-plugin {
+    import state;
+    import event;
+    import env;
+    import registry;
+    import scheduler;
+    import chat;
+    import hud;
+    import players;
+    import inventory;
+    import entities;
+    import blocks;
+    import events;
+    import jobs;
+    import log;
+    export region-hooks;
+}
+
+/// What the Rust SDK builds: both worlds in one component.
+world plugin {
+    include global-plugin;
+    include region-plugin;
+}

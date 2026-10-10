@@ -1,0 +1,14 @@
+id = "compat10"
+version = "1.0.0"
+capabilities = ["player.message", "command.register"]
+
+[[subscribe]]
+event = "block-break"
+policy = "fail-closed"
+
+[[subscribe]]
+event = "chat"
+policy = "fail-open"
+
+[[subscribe]]
+event = "observe"
