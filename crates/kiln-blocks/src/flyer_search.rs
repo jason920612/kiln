@@ -205,3 +205,60 @@ fn flyer_search2() {
     });
     println!("{} layouts fly", found.load(std::sync::atomic::Ordering::Relaxed));
 }
+
+/// Two sticky pistons, two observers and `slimes` slime blocks placed anywhere in a `w` x 2 grid.
+#[test]
+#[ignore]
+fn flyer_search3() {
+    let w: usize = std::env::var("KILN_FLYER_W").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+    let slimes: usize = std::env::var("KILN_FLYER_SLIMES").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+    let threads: usize = std::env::var("KILN_FLYER_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
+    let cells = 2 * w;
+    // pieces: 2 sticky pistons (kinds 2/3), 2 observers (6..9), slimes (1)
+    let pieces = 4 + slimes;
+    let total: usize = (0..pieces).fold(1, |a, i| a * (cells - i));
+    let found = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|sc| {
+        for t in 0..threads {
+            let found = &found;
+            sc.spawn(move || {
+                let mut n = t;
+                while n < total {
+                    // positions of the pieces: a permutation prefix
+                    let mut m = n;
+                    n += threads;
+                    let mut free: Vec<usize> = (0..cells).collect();
+                    let mut at = Vec::new();
+                    for i in 0..pieces {
+                        let k = m % (cells - i);
+                        m /= cells - i;
+                        at.push(free.remove(k));
+                    }
+                    // pieces 0 and 1 are the pistons (0 < 1 to skip mirror duplicates), 2 and 3 observers, the rest slime
+                    if at[0] > at[1] || at[2] > at[3] {
+                        continue;
+                    }
+                    for facing in 0..64usize {
+                        let (p0, p1, o0, o1) = (facing & 1, (facing >> 1) & 1, (facing >> 2) & 3, (facing >> 4) & 3);
+                        let mut grid = vec![0usize; cells];
+                        grid[at[0]] = 2 + p0;
+                        grid[at[1]] = 2 + p1;
+                        grid[at[2]] = [6, 7, 8, 9][o0];
+                        grid[at[3]] = [6, 7, 8, 9][o1];
+                        for &s in &at[4..] {
+                            grid[s] = 1;
+                        }
+                        let (a, b) = grid.split_at(w);
+                        if let Some((x, y)) = run2([a, b], 100)
+                            && y - x >= 8
+                        {
+                            found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            println!("flies {} blocks: row0 {:?} row1 {:?} (0 air, 1 slime, 2/3 sticky east/west, 6/7/8/9 observer east/west/north/south)", y - x, a, b);
+                        }
+                    }
+                }
+            });
+        }
+    });
+    println!("{} layouts fly", found.load(std::sync::atomic::Ordering::Relaxed));
+}
