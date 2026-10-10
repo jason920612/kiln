@@ -76,6 +76,21 @@ impl PlayerAdvancements {
         self.progress[i].obtained.get(c).is_some_and(Option::is_some)
     }
 
+    /// `advancement/criterion` for every criterion completed, sorted (what the interaction vectors record).
+    #[cfg(test)]
+    pub fn done_criteria(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for (i, a) in self.data.list.iter().enumerate() {
+            for (c, (name, _)) in a.criteria.iter().enumerate() {
+                if self.criterion_done(i, c) {
+                    out.push(format!("{}/{name}", a.id));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
     /// Whether a listener for criterion `c` of `i` is registered (`registerListeners`: the
     /// advancement is not done and neither is the criterion).
     pub fn listening(&self, i: usize, c: usize) -> bool {

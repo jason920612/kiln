@@ -105,6 +105,8 @@ public class InteractVectors {
         boolean tickLevel;
         // wp49: the living mobs around are recorded.
         boolean watchMobs;
+        // wp53: the advancement criteria the player completes at each step are recorded.
+        boolean watchAdv;
         // wp50: the cushions tick once after every step (the replay's level does), `tick_cushions` ticks them that many times.
         boolean tickCushions;
         // wp50: the player's position and the teleports sent are recorded after every step (and the connection's last good position is the start).
@@ -195,6 +197,12 @@ public class InteractVectors {
 
         Case hanging() {
             watchHanging = true;
+            return this;
+        }
+
+        /** wp53: the criteria of advancements completed at every step are recorded (`adv`). */
+        Case advancements() {
+            watchAdv = true;
             return this;
         }
 
@@ -504,6 +512,37 @@ public class InteractVectors {
             c.step(useOn(2, 99, 0, 1, 0));
             out.add(c);
         }
+    }
+
+    // ---------------------------------------------------------------- wp53: advancement triggers
+
+    static String nestBees(int n) {
+        return "{bees:[" + "{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:100,ticks_in_hive:5},".repeat(n).replaceAll(",$", "") + "]}";
+    }
+
+    static void advancements53(List<Case> out) {
+        Case c;
+        String silk = "minecraft:netherite_axe[enchantments={\"minecraft:silk_touch\":1,\"minecraft:efficiency\":5}]";
+        String plain = "minecraft:netherite_axe[enchantments={\"minecraft:efficiency\":5}]";
+        // `BeehiveBlock.playerDestroy` → `bee_nest_destroyed` (`husbandry/silk_touch_nest`: a silk touch tool, three bees inside)
+        for (String block : new String[] {"bee_nest", "beehive"}) {
+            for (int bees : new int[] {0, 2, 3}) {
+                for (String tool : new String[] {"silk", "plain"}) {
+                    String state = block.equals("beehive") ? "minecraft:beehive[facing=north,honey_level=0]" : "minecraft:bee_nest[facing=north,honey_level=0]";
+                    c = new Case("adv53_" + block + "_" + bees + "_" + tool).advancements();
+                    c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 " + state + nestBees(bees)).watch(2, 100, 0);
+                    c.slot("h0", parsed(tool.equals("silk") ? silk : plain));
+                    c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
+                    out.add(c);
+                }
+            }
+        }
+        c = new Case("adv53_nest_creative").advancements();
+        c.gameMode = "creative";
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:bee_nest[facing=north,honey_level=0]" + nestBees(3)).watch(2, 100, 0);
+        c.slot("h0", parsed(silk));
+        c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
+        out.add(c);
     }
 
     static void banners50(List<Case> out) {
@@ -3109,6 +3148,24 @@ public class InteractVectors {
     static final int SX = 4, SY = 100, SZ = 4;
     static final double[][] AROUND = {{0, 2}, {0, -2}, {2, 0}, {-2, 0}, {1.5, 1.5}, {-1.5, -1.5}, {2, -1}, {-1, 2}};
 
+    /** wp53: `advancement/criterion` for every criterion the player has completed. */
+    static java.util.TreeSet<String> doneCriteria(ServerPlayer p) {
+        var done = new java.util.TreeSet<String>();
+        for (var holder : server.getAdvancements().getAllAdvancements()) {
+            for (String crit : p.getAdvancements().getOrStartProgress(holder).getCompletedCriteria()) done.add(holder.id() + "/" + crit);
+        }
+        return done;
+    }
+
+    /** wp53: the player's advancement progress is cleared (the profile's advancements outlive a case). */
+    static void resetAdvancements(ServerPlayer p) {
+        for (var holder : server.getAdvancements().getAllAdvancements()) {
+            for (String crit : new ArrayList<String>(java.util.stream.StreamSupport.stream(p.getAdvancements().getOrStartProgress(holder).getCompletedCriteria().spliterator(), false).toList())) {
+                p.getAdvancements().revoke(holder, crit);
+            }
+        }
+    }
+
     static Map<String, Object> useOn(int x, int y, int z, int face, int hand) {
         return op("op", "use_on", "hand", hand, "pos", List.of(x, y, z), "face", face, "cursor", List.of(0.5, 0.5, 0.5));
     }
@@ -4331,6 +4388,8 @@ public class InteractVectors {
         recordMenus = c.watchMenus;
         long startClock = server.overworld().getGameTime();
         mobCase = c.watchMobs;
+        if (c.watchAdv) resetAdvancements(p);
+        java.util.TreeSet<String> advBefore = c.watchAdv ? doneCriteria(p) : null;
         recordNoPitch = c.noPitch;
         if (c.noPitch) addAttackTicks(p, 100);
         recordMaps = c.watchMaps;
@@ -4361,6 +4420,13 @@ public class InteractVectors {
                 used.put(item, p.getStats().getValue(net.minecraft.stats.Stats.ITEM_USED.get(BuiltInRegistries.ITEM.getValue(Identifier.parse(item)))) - usedBefore.get(item));
             }
             r.put("used", used);
+            if (c.watchAdv) {
+                var now = doneCriteria(p);
+                var fresh = new ArrayList<String>(now);
+                fresh.removeAll(advBefore);
+                advBefore = now;
+                r.put("adv", fresh);
+            }
             if (c.watchHanging) r.put("hangings", hangings());
             if (c.watchStands) r.put("stands", stands());
             if (c.watchBees) {
@@ -4435,6 +4501,7 @@ public class InteractVectors {
         for (int[] w : c.watch) watch.add(List.of(w[0], w[1], w[2]));
         line.put("watch", watch);
         line.put("stat_items", c.statItems);
+        line.put("adv", c.watchAdv);
         line.put("templates", c.templates);
         line.put("food", c.watchFood ? c.food : null);
         line.put("hanging", c.watchHanging);
@@ -4566,6 +4633,7 @@ public class InteractVectors {
             crafters49(all);
             brushes49(all);
             banners50(all);
+            advancements53(all);
             cushions50(all);
             mannequins50(all);
             structures50(all);
