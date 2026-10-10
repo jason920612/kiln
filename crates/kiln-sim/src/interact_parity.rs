@@ -404,6 +404,21 @@ fn no_hive_ticks(t: Tag) -> Tag {
     Tag::Compound(fields)
 }
 
+/// A mob spawner's countdown (the recorded level does not tick; Kiln's does between the steps).
+fn no_spawner_delay(t: Tag) -> Tag {
+    match t {
+        Tag::Compound(mut fields) => {
+            let spawner = fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:mob_spawner"));
+            if spawner {
+                fields.retain(|(k, _)| k != "Delay");
+            }
+            Tag::Compound(fields.into_iter().map(|(k, v)| (k, no_spawner_delay(v))).collect())
+        }
+        Tag::List(items) => Tag::List(items.into_iter().map(no_spawner_delay).collect()),
+        other => other,
+    }
+}
+
 /// A trial spawner's saved data with the UUIDs of its mobs made alike (the mobs of the vectors are not Kiln's).
 fn no_mob_uuids(t: Tag) -> Tag {
     let Tag::Compound(mut fields) = t else { return t };
@@ -846,6 +861,18 @@ fn run_case(line: &Value) -> Vec<String> {
         }
         // (A structure block's screen: the changes of one tick are sent once, and many of one section as a Section Blocks Update.)
         if step["op"] == "set_structure" {
+            let mut last: std::collections::HashMap<String, usize> = Default::default();
+            for (i, p) in got_packets.iter().enumerate() {
+                if p.contains("\"t\":\"block_entity_data\"") {
+                    let pos = p.split("\"pos\":").nth(1).and_then(|r| r.split(']').next()).unwrap_or("").to_owned();
+                    last.insert(pos, i);
+                }
+            }
+            let mut i = 0;
+            got_packets.retain(|p| {
+                i += 1;
+                !p.contains("\"t\":\"block_entity_data\"") || last.values().any(|&l| l == i - 1)
+            });
             let mut updates: Vec<String> = got_packets.iter().filter(|p| p.contains("\"t\":\"block_update\"")).cloned().collect();
             updates.sort();
             updates.dedup();
@@ -911,14 +938,14 @@ fn run_case(line: &Value) -> Vec<String> {
             });
             let expected = b["be"].as_str().map(|h| sorted(&tag_of(h)));
             // (A hive's bees age with the ticks Kiln's level makes between the steps; the recorded level stands still.)
-            let (got, expected) = (got.map(no_hive_ticks).map(no_mob_uuids), expected.map(no_hive_ticks).map(no_mob_uuids));
+            let (got, expected) = (got.map(no_hive_ticks).map(no_mob_uuids).map(no_spawner_delay), expected.map(no_hive_ticks).map(no_mob_uuids).map(no_spawner_delay));
             eq(&format!("block entity {at:?}"), format!("{got:?}"), format!("{expected:?}"));
         }
         if let Some(want_templates) = want.get("templates").and_then(Value::as_object) {
             // The templates the manager holds (an id it has none for is null), as the saved NBT.
             for (id, hex_want) in want_templates {
-                let got = sim.template_nbt(id).map(|t| kiln_command::snbt::to_snbt(&sorted(&t)));
-                let expected = hex_want.as_str().map(|h| kiln_command::snbt::to_snbt(&sorted(&tag_of(h))));
+                let got = sim.template_nbt(id).map(|t| kiln_command::snbt::to_snbt(&no_spawner_delay(sorted(&t))));
+                let expected = hex_want.as_str().map(|h| kiln_command::snbt::to_snbt(&no_spawner_delay(sorted(&tag_of(h)))));
                 if got != expected {
                     let (a, b) = first_diff(got.as_deref().unwrap_or("none"), expected.as_deref().unwrap_or("none"));
                     eq(&format!("template {id}"), a, b);

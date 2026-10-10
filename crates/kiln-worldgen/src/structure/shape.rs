@@ -216,13 +216,13 @@ impl ShapeLevel<'_, '_> {
         with_prop(s, d.name(), if connects { "true" } else { "false" })
     }
 
-    /// `WallBannerBlock` / `BannerBlock.updateShape`: gone without a (legacy) solid block
-    /// behind or below.
+    /// `WallBannerBlock` / `BannerBlock.updateShape` (and the signs': `StandingSignBlock`, `WallSignBlock`): gone without a
+    /// (legacy) solid block behind or below.
     fn banner_update_shape(&self, s: u16, p: BlockPos, d: Dir) -> Option<u16> {
         use crate::block_facts::{block_class, is_solid};
         let support = match block_class(s) {
-            "WallBannerBlock" => crate::blocks::prop(s, "facing").and_then(Dir::by_name)?.opposite(),
-            "BannerBlock" => Dir::Down,
+            "WallBannerBlock" | "WallSignBlock" => crate::blocks::prop(s, "facing").and_then(Dir::by_name)?.opposite(),
+            "BannerBlock" | "StandingSignBlock" => Dir::Down,
             _ => return None,
         };
         (d == support && !is_solid(self.get(p.relative(support)))).then_some(state::AIR)

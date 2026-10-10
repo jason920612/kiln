@@ -368,6 +368,15 @@ impl Sim {
             part.1.hearts.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.spawners.reload(kiln_blocks::BlockPos::new(x, y, z), be);
         }
+        // Vanilla parses the data and saves it again: the chunk's copy is what the live block entity saves (a furnace drops the
+        // fields it has no use for, a chest without a loot table keeps no seed).
+        self.with_level_in(dim, pos, |l| {
+            let bp = kiln_blocks::BlockPos::new(x, y, z);
+            if let Some(c) = l.blocks.containers.get_mut(bp) {
+                c.dirty = true;
+            }
+            crate::container::open::sync_chunk_copy(l, bp);
+        });
         if let Some(was) = was_auto {
             self.with_level_in(dim, pos, |l| crate::command_block::auto_reloaded(l, kiln_blocks::BlockPos::new(x, y, z), was));
         }
