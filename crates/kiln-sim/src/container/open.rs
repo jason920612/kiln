@@ -954,6 +954,7 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
 /// `BlockEntity.applyComponentsFromItemStack` for the block entities that are not containers: the skull reads its profile, name
 /// and note sound, the enchanting table its name; what is not read stays in `components`.
 fn apply_plain_components(level: &mut RegionLevel, pos: BlockPos, stack: &ItemStack) {
+    use kiln_world::Blocks as _;
     let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
     let Some(chunk) = level.cells.chunk_mut(kiln_world::ChunkPos::of_block(pos.x, pos.z)) else { return };
     let Some(mut be) = chunk.block_entity(x, pos.y, z).cloned() else { return };
