@@ -1738,6 +1738,7 @@ impl Sim {
         for (conn, pkt) in exclusive {
             self.exclusive_packet(conn, pkt);
         }
+        self.run_structure_triggers();
         self.answer_suggestions();
         // Leaves last, so the packets a player sent before leaving still apply.
         for conn in leaves {
@@ -1751,6 +1752,7 @@ impl Sim {
         for command in console {
             self.run_console_command(command.trim_start_matches('/'));
         }
+        self.run_structure_triggers();
         for (request, result) in profile_results {
             self.profile_lookup_finished(request, result);
         }
@@ -1802,6 +1804,7 @@ impl Sim {
         }
         // The command blocks whose tick came run their commands (they may change anything).
         self.run_command_blocks();
+        self.run_structure_triggers();
         // Entities from here on have newer ids.
         let first_new = self.next_entity_id;
         self.materialize_spawns();
@@ -3191,6 +3194,9 @@ impl Sim {
             }
             PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
             PlayIn::SetCommandBlock(update) => self.set_command_block(conn, &update),
+            PlayIn::SetStructureBlock(update) => self.set_structure_block(conn, &update),
+            PlayIn::SetJigsawBlock(update) => self.set_jigsaw_block(conn, &update),
+            PlayIn::JigsawGenerate { pos, levels, keep_jigsaws } => self.jigsaw_generate(conn, pos, levels, keep_jigsaws),
             PlayIn::ResourcePack { id, action } => self.resource_pack_response(conn, id, action),
             PlayIn::CookieResponse(response) => self.cookie_response(conn, response),
             PlayIn::Chat { message } => {

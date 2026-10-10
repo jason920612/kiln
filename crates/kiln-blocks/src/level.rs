@@ -224,6 +224,9 @@ pub trait Level {
     /// `CommandBlock.neighborChanged` → `setPoweredAndUpdate`: the command block's power, as the block saw it.
     fn command_block_powered(&mut self, _pos: BlockPos, _state: u16, _powered: bool) {}
 
+    /// `StructureBlock.neighborChanged`: the structure block's power, as the block saw it (a block that was not powered runs its mode).
+    fn structure_block_powered(&mut self, _pos: BlockPos, _state: u16, _powered: bool) {}
+
     /// The analog output of the single item frame at `pos` facing `facing`, if exactly one.
     fn item_frame_analog(&self, _pos: BlockPos, _facing: Direction) -> Option<i32> {
         None

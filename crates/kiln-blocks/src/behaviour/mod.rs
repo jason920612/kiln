@@ -70,6 +70,10 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
             let powered = crate::redstone::has_neighbor_signal(level, pos);
             level.command_block_powered(pos, s, powered);
         }
+        C::StructureBlock => {
+            let powered = crate::redstone::has_neighbor_signal(level, pos);
+            level.structure_block_powered(pos, s, powered);
+        }
         _ if logic::is_instance(s, C::CopperBulbBlock) => misc3::bulb_check_and_flip(level, s, pos),
         _ if logic::is_instance(s, C::TrapDoorBlock) => misc::powered_open_neighbor_changed(level, s, pos),
         _ if logic::is_instance(s, C::DoorBlock) => components::door_neighbor_changed(level, s, pos, source),

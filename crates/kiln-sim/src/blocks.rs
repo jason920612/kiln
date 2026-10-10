@@ -66,6 +66,8 @@ pub(crate) struct RegionBlocks {
     pub initial_mobs: Vec<ChunkPos>,
     /// Command blocks whose scheduled tick came this tick (the serial phase runs their commands).
     pub command_ticks: Vec<BlockPos>,
+    /// Structure blocks that were powered this tick (the serial phase runs their modes).
+    pub structure_triggers: Vec<BlockPos>,
 }
 
 impl Default for RegionBlocks {
@@ -87,6 +89,7 @@ impl Default for RegionBlocks {
             spawners: Default::default(),
             initial_mobs: Vec::new(),
             command_ticks: Vec::new(),
+            structure_triggers: Vec::new(),
         }
     }
 }
@@ -219,6 +222,7 @@ impl RegionPart for RegionBlocks {
         into.spawners.merge(std::mem::take(&mut from.spawners));
         into.initial_mobs.append(&mut from.initial_mobs);
         into.command_ticks.append(&mut from.command_ticks);
+        into.structure_triggers.append(&mut from.structure_triggers);
     }
 
     fn split(mut self, owner_of: &dyn Fn(CellPos) -> usize, n: usize) -> SmallVec<[Self; 4]> {
@@ -279,6 +283,9 @@ impl RegionPart for RegionBlocks {
         }
         for p in self.command_ticks.drain(..) {
             parts[owner((p.x >> 4, p.z >> 4))].command_ticks.push(p);
+        }
+        for p in self.structure_triggers.drain(..) {
+            parts[owner((p.x >> 4, p.z >> 4))].structure_triggers.push(p);
         }
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
@@ -697,6 +704,10 @@ impl Level for RegionLevel<'_> {
 
     fn command_block_powered(&mut self, pos: BlockPos, state: u16, powered: bool) {
         crate::command_block::powered_changed(self, pos, state, powered);
+    }
+
+    fn structure_block_powered(&mut self, pos: BlockPos, _state: u16, powered: bool) {
+        crate::structure_block::powered_changed(self, pos, powered);
     }
 
     fn crafter_triggered(&mut self, pos: BlockPos, triggered: bool) {

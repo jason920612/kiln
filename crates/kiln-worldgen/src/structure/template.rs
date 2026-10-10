@@ -894,6 +894,11 @@ pub fn read_template_file(path: &Path) -> Option<Template> {
     decode_template(&std::fs::read(path).ok()?).map(|t| Template::load(&t))
 }
 
+/// A template from the bytes of a file.
+pub fn read_template_bytes(bytes: &[u8]) -> Option<Template> {
+    decode_template(bytes).map(|t| Template::load(&t))
+}
+
 /// A template file: gzipped named NBT.
 fn decode_template(bytes: &[u8]) -> Option<Tag> {
     let mut raw = Vec::new();

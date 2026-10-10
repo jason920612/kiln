@@ -998,6 +998,10 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32, old:
         if level.blocks.containers.get(pos).is_some_and(|c| c.kind == BeKind::CommandBlock) {
             crate::command_block::created(level, pos);
         }
+        // `StructureBlockEntity` and `JigsawBlockEntity` constructors.
+        if level.blocks.containers.get(pos).is_some_and(|c| matches!(c.kind, BeKind::StructureBlock | BeKind::Jigsaw)) {
+            crate::structure_block::created(level, pos);
+        }
     }
     let Some(mut removed) = removed else { return };
     level.out.removed_components.push((pos, removed.components()));

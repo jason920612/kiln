@@ -371,6 +371,9 @@ impl Sim {
         if let Some(was) = was_auto {
             self.with_level_in(dim, pos, |l| crate::command_block::auto_reloaded(l, kiln_blocks::BlockPos::new(x, y, z), was));
         }
+        if matches!(kiln_world::block_entity::type_name(old.kind), "minecraft:structure_block" | "minecraft:jigsaw") {
+            self.with_level_in(dim, pos, |l| crate::structure_block::loaded(l, kiln_blocks::BlockPos::new(x, y, z)));
+        }
         let Some((kind, tag)) = self.dims[dim].regions.block_entity_data(x, y, z) else { return true };
         let pkt = packets::block_entity_data(pos, kind as i32, &tag);
         for p in self.players.values_mut().filter(|p| p.dim == dim && p.sent_chunks.contains(&chunk_pos)) {

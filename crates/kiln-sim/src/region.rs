@@ -908,6 +908,9 @@ pub(crate) fn is_exclusive(pkt: &PlayIn) -> bool {
         PlayIn::ChatCommand { .. }
             | PlayIn::CommandSuggestion { .. }
             | PlayIn::SetCommandBlock(_)
+            | PlayIn::SetStructureBlock(_)
+            | PlayIn::SetJigsawBlock(_)
+            | PlayIn::JigsawGenerate { .. }
             | PlayIn::Chat { .. }
             // Disconnects and per-player protocol state.
             | PlayIn::ResourcePack { .. }
@@ -1511,6 +1514,10 @@ fn use_on_block(
         let entity_data = placed_from.get(kiln_item::keys::BLOCK_ENTITY_DATA).map(|d| &d.tag).filter(|_| p.can_use_gamemaster_blocks());
         let powered = kiln_blocks::redstone::has_neighbor_signal(level, placed_at);
         crate::command_block::placed_by(level, placed_at, powered, placed_from.has(kiln_item::component::ids::BLOCK_ENTITY_DATA), entity_data);
+    }
+    // `StructureBlock.setPlacedBy`: the placer is the author.
+    if kiln_data::block_logic::is_instance(level.block(placed_at), kiln_data::block_logic::BlockClass::StructureBlock) {
+        crate::structure_block::placed_by(level, placed_at, &p.name);
     }
     // `SignBlock.setPlacedBy`: the placer edits the new sign.
     crate::signs::placed_by(p, level, placed_at);
