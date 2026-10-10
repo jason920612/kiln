@@ -995,7 +995,7 @@ public class InteractVectors {
         // ---- wp52: the entities of the area (`fillEntityList`): not the players, a rider inside its vehicle, a painting by the block it hangs on
         for (String ignore : new String[] {"with", "ignored"}) {
             c = structCase("save_entities_" + ignore, "wp52:ents_" + ignore);
-            entitiesContent(c);
+            entitiesContent(c, true);
             c.step(setStructure("SAVE_AREA", "SAVE", "wp52:ents_" + ignore, new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", ignore.equals("ignored"), false, false, true, 1.0, 0L));
             out.add(c);
         }
