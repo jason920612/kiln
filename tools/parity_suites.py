@@ -94,6 +94,15 @@ SUITES = {
     # wp54 suites: recorded into <work>/wp54 (pistons moving entities: piston54.jsonl; block sounds: sound54.jsonl for walking, landing and placing,
     # mannequin54.jsonl for a mob landing). The step / fall sounds of the mobs are folded into m6-mobs2/vectors.jsonl (the `sound_trace` of mob_parity).
     "interact54": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp54/interact/*.jsonl"}),
+    # wp55 suites: recorded into <work>/wp55 (every block item placed in 2200 surroundings: tools/PlaceVectors.java -> place/shared.jsonl and
+    # place/self.jsonl, compared by kiln-blocks `place_parity`; supports taken away by /fill and /setblock: support/support55.jsonl, a family
+    # of tools/BlockTickVectors.java, compared by `block_parity`; the block entity every block item gets when placed: interact/place55.jsonl).
+    "place55": (["-p", "kiln-blocks", "--lib", "place_parity"], {
+        "KILN_PLACE_VECTORS": os.pathsep.join(vec(f"wp55/place/{n}.jsonl") for n in ("shared", "self")),
+        "KILN_PLACE_EXPECTED": str(ROOT / "tools" / "place_expected.txt"),
+    }),
+    "support55": (["-p", "kiln-blocks", "--lib", "block_parity"], {"KILN_BLOCK_VECTORS": vec("wp55/support/support55.jsonl")}),
+    "interact55": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp55/interact/*.jsonl"}),
     "plugin_compat": (["-p", "kiln-plugin-host", "--test", "api_compat", "--test", "wit_freeze"], {}),
 }
 
