@@ -107,24 +107,35 @@ fn flyer_search() {
 
 /// Two rows (z = 8 and 9) of `len` cells; early exit for layouts that settle.
 fn run2(rows: [&[usize]; 2], ticks: i32) -> Option<(i32, i32)> {
+    // Every piece in turn is the one placed last (the machine is started by placing a block).
+    let spots: Vec<(usize, usize)> = (0..2).flat_map(|z| (0..rows[z].len()).map(move |i| (z, i))).filter(|&(z, i)| rows[z][i] != 0).collect();
+    spots.into_iter().find_map(|last| run2_from(rows, ticks, last))
+}
+
+fn run2_from(rows: [&[usize]; 2], ticks: i32, last: (usize, usize)) -> Option<(i32, i32)> {
     let mut level = TestLevel::void();
     level.load_chunks((-1, -1), (4, 1));
     let y = 100;
     let mut pieces = 0;
     let mut spots = Vec::new();
+    let mut trigger = None;
     for (z, row) in rows.iter().enumerate() {
         for (i, &c) in row.iter().enumerate() {
             let s = cell(c);
             if !is_air(s) {
                 pieces += 1;
                 let p = BlockPos::new(16 + i as i32, y, 8 + z as i32);
-                level.set_raw(p, s, flags::SKIP_ALL_SIDEEFFECTS);
+                if (z, i) == last {
+                    trigger = Some((p, s));
+                } else {
+                    level.set_raw(p, s, flags::SKIP_ALL_SIDEEFFECTS);
+                }
                 spots.push(p);
             }
         }
     }
-    for p in spots {
-        let s = level.block(p);
+    // (the blocks of the machine were placed without updates; the last one is placed the way a player does)
+    if let Some((p, s)) = trigger {
         crate::update::set_block_and_update(&mut level, p, s);
     }
     let measure = |level: &TestLevel| {
