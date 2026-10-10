@@ -4334,6 +4334,8 @@ public class InteractVectors {
         command("kill @e[type=minecraft:armor_stand]");
         command("kill @e[type=minecraft:marker]");
         command("kill @e[type=minecraft:minecart]");
+        // (wp52: whatever else a case summoned: carts, boats, crystals, primed TNT...)
+        command("kill @e[type=!minecraft:player]");
         command("kill @e[type=minecraft:falling_block]");
         command("kill @e[type=minecraft:item]");
         for (var bee : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.bee.Bee.class, new AABB(-64, -64, -64, 64, 320, 64))) bee.discard();
