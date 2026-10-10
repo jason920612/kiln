@@ -270,6 +270,7 @@ pub(crate) fn created(level: &mut RegionLevel, pos: BlockPos) {
         _ => return,
     }
     c.mark_changed();
+    crate::container::open::sync_chunk_copy(level, pos);
 }
 
 /// `loadAdditional` has run on the block entity at `pos`: a structure block's block follows the mode it loaded
@@ -296,8 +297,9 @@ pub(crate) fn loaded(level: &mut RegionLevel, pos: BlockPos) {
                 j.rollable = Some(matches!(front, "up" | "down"));
             }
         }
-        _ => {}
+        _ => return,
     }
+    crate::container::open::sync_chunk_copy(level, pos);
 }
 
 /// `StructureBlock.neighborChanged`: the power changes; a block that was not powered runs its mode (in the serial phase).
@@ -318,6 +320,7 @@ pub(crate) fn placed_by(level: &mut RegionLevel, pos: BlockPos, author: &str) {
         if let Some(c) = level.blocks.containers.get_mut(pos) {
             c.mark_changed();
         }
+        crate::container::open::sync_chunk_copy(level, pos);
     }
 }
 

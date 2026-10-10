@@ -264,6 +264,11 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
         // pistons, dispensers, droppers, barrels and command blocks face back at the player.
         C::ObserverBlock => state::set_dir(d, "facing", c.looking()),
         C::PistonBaseBlock | C::BarrelBlock | C::CommandBlock => state::set_dir(d, "facing", c.looking().opposite()),
+        // `JigsawBlock.getStateForPlacement`: the clicked face is the front, the top is the way the player faces (against a floor or ceiling) or up.
+        C::JigsawBlock => {
+            let top = if c.face.axis() == crate::Axis::Y { c.horizontal().opposite() } else { Direction::Up };
+            state::set(d, "orientation", &format!("{}_{}", c.face.name(), top.name()))
+        }
         _ if logic::is_instance(d, C::DispenserBlock) => state::set_dir(d, "facing", c.looking().opposite()),
         C::RedstoneLampBlock => state::set_bool(d, "lit", has_neighbor_signal(level, pos)),
         C::NoteBlock => crate::redstone::devices::note_instrument(level, pos, d),
