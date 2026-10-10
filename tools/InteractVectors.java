@@ -4036,6 +4036,37 @@ public class InteractVectors {
     static boolean mobCase;
     static boolean recordNoPitch;
 
+    /**
+     * wp54: `Level.tickBlockEntities` for the moving pistons, in the order their tickers were registered. (The level here is not
+     * running: its chunks do not count as ticking, and `tickBlockEntities` would tick nothing.)
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    static void tickMovingPistons(ServerLevel level) throws ReflectiveOperationException {
+        Field tf = net.minecraft.world.level.Level.class.getDeclaredField("blockEntityTickers");
+        Field pf = net.minecraft.world.level.Level.class.getDeclaredField("pendingBlockEntityTickers");
+        Field flag = net.minecraft.world.level.Level.class.getDeclaredField("tickingBlockEntities");
+        tf.setAccessible(true);
+        pf.setAccessible(true);
+        flag.setAccessible(true);
+        List<net.minecraft.world.level.block.entity.TickingBlockEntity> tickers = (List) tf.get(level);
+        List<net.minecraft.world.level.block.entity.TickingBlockEntity> pending = (List) pf.get(level);
+        flag.setBoolean(level, true);
+        if (!pending.isEmpty()) {
+            tickers.addAll(pending);
+            pending.clear();
+        }
+        var it = tickers.iterator();
+        while (it.hasNext()) {
+            var t = it.next();
+            if (t.isRemoved()) {
+                it.remove();
+            } else if (level.getBlockEntity(t.getPos()) instanceof net.minecraft.world.level.block.piston.PistonMovingBlockEntity pm) {
+                net.minecraft.world.level.block.piston.PistonMovingBlockEntity.tick(level, t.getPos(), level.getBlockState(t.getPos()), pm);
+            }
+        }
+        flag.setBoolean(level, false);
+    }
+
     /** wp54: every entity but the players: [type, x, y, z, vx, vy, vz, on ground], sorted. */
     static List<Object> entRows() {
         List<Object[]> rows = new ArrayList<>();
@@ -4356,15 +4387,7 @@ public class InteractVectors {
                     for (var e : level.getAllEntities()) if (!(e instanceof net.minecraft.world.entity.player.Player)) ents.add(e);
                     ents.sort(Comparator.comparingInt(net.minecraft.world.entity.Entity::getId));
                     for (var e : ents) if (!e.isRemoved() && !e.isPassenger()) level.tickNonPassenger(e);
-                    // (The level is frozen, which keeps its block entities from ticking: the flag is down for this call.)
-                    var frozen = net.minecraft.world.TickRateManager.class.getDeclaredField("isFrozen");
-                    frozen.setAccessible(true);
-                    frozen.setBoolean(level.tickRateManager(), false);
-                    try {
-                        level.tickBlockEntities();
-                    } finally {
-                        frozen.setBoolean(level.tickRateManager(), true);
-                    }
+                    tickMovingPistons(level);
                 } else if (tickPlayer != null) {
                     // (`Entity.baseTick` and `LivingEntity.tick` keep the previous tick's rotations, which `getViewVector(0)` reads.)
                     settleRotation(tickPlayer);
