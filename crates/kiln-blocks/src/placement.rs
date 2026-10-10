@@ -155,6 +155,13 @@ fn can_be_replaced<L: Level + ?Sized>(level: &L, s: u16, item: BlockId, face: Di
     }
     let same_item = BlockId::of(s) == item;
     // `canBeReplaced` of a block that piles up: the same item adds one (candles, sea pickles, eggs, petals, litter).
+    if logic::is_instance(s, C::MultifaceBlock) {
+        // `MultifaceBlock.canBeReplaced`: another item replaces it; its own only where a face is still free.
+        return !same_item || Direction::ALL.iter().any(|d| !state::get_bool(s, d.name()));
+    }
+    if logic::block_class(s) == C::ScaffoldingBlock {
+        return same_item;
+    }
     let pile = ["candles", "pickles", "eggs", "flower_amount", "segment_amount"].into_iter().find(|p| state::has(s, p));
     if let Some(p) = pile.filter(|_| !sneaking && same_item) {
         if state::get_int(s, p) < 4 {
@@ -378,6 +385,32 @@ fn door_hinge<L: Level + ?Sized>(c: &Ctx<L>) -> &'static str {
     if (sx < 0 && dz < 0.5) || (sx > 0 && dz > 0.5) || (sz < 0 && dx > 0.5) || (sz > 0 && dx < 0.5) { "right" } else { "left" }
 }
 
+/// `ScaffoldingBlockItem.updatePlacementContext`: where the scaffolding goes (and from which side), `None` when it cannot.
+fn scaffolding_target<L: Level + ?Sized>(level: &L, block: BlockId, pos: BlockPos, face: Direction, horizontal: Direction, sneaking: bool) -> Option<(BlockPos, Direction)> {
+    let same = |s: u16| state::same_block(s, block.default_state());
+    if !same(level.block(pos)) {
+        return (crate::behaviour::wet::scaffolding_distance(level, pos) != 7).then_some((pos, face));
+    }
+    // (`isInside` of the hit is never set here.)
+    let dir = if sneaking { face } else if face == Direction::Up { horizontal } else { Direction::Up };
+    let mut at = pos.relative(dir);
+    let mut steps = 0;
+    while steps < 7 {
+        if !level.in_bounds(at) {
+            return None;
+        }
+        let s = level.block(at);
+        if !same(s) {
+            return block_props::replaceable(s).then_some((at, dir));
+        }
+        at = at.relative(dir);
+        if dir.is_horizontal() {
+            steps += 1;
+        }
+    }
+    None
+}
+
 /// `BlockItem.place` up to the state: where the item's block goes and in which state.
 pub fn placement<L: Level + ?Sized>(level: &L, item: &BlockItem, ctx: &PlaceContext) -> Option<(BlockPos, u16)> {
     let hit_state = level.block(ctx.hit);
@@ -389,7 +422,13 @@ pub fn placement<L: Level + ?Sized>(level: &L, item: &BlockItem, ctx: &PlaceCont
     if !replace_clicked && !can_be_replaced(level, level.block(pos), item.block, ctx.face, ctx.click[1], pos, false, ctx.sneaking) {
         return None;
     }
-    let c = Ctx { level, pos, replace_clicked, face: ctx.face, click: ctx.click, yaw: ctx.yaw, pitch: ctx.pitch, sneaking: ctx.sneaking };
+    let (mut pos, mut face, mut replace_clicked) = (pos, ctx.face, replace_clicked);
+    if logic::block_class(item.block.default_state()) == BlockClass::ScaffoldingBlock {
+        // `ScaffoldingBlockItem.updatePlacementContext`.
+        (pos, face) = scaffolding_target(level, item.block, pos, face, Direction::from_yaw(ctx.yaw as f64), ctx.sneaking)?;
+        replace_clicked = replace_clicked || pos != ctx.hit.relative(ctx.face);
+    }
+    let c = Ctx { level, pos, replace_clicked, face, click: ctx.click, yaw: ctx.yaw, pitch: ctx.pitch, sneaking: ctx.sneaking };
     // (`ScaffoldingBlockItem.mustSurvive` is false: scaffolding goes where it stands, `canSurvive` or not)
     let must_survive = logic::block_class(item.block.default_state()) != BlockClass::ScaffoldingBlock;
     let state = match item.wall {

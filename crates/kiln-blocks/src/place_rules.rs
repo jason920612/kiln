@@ -99,6 +99,7 @@ pub(crate) fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -
         C::SpeleothemBlock => speleothem::valid_placement(level, s, pos, state::get_dir(s, "vertical_direction").unwrap_or(Direction::Up)),
         C::ScaffoldingBlock => wet::scaffolding_distance(level, pos) < 7,
         C::SeaPickleBlock => sea_pickle_may_place_on(below()),
+        C::PathBlock => !logic::is_solid(above()) || logic::is_instance(above(), C::FenceGateBlock),
         _ => continue,
         });
     }
@@ -133,6 +134,9 @@ pub(crate) fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, 
             breaks(connected.opposite() == dir)
         }
         C::SeaPickleBlock => breaks(true),
+        C::HugeMushroomBlock => {
+            if state::same_block(neighbor, s) { state::set_bool(s, dir.name(), false) } else { s }
+        }
         C::BambooSaplingBlock => {
             if !support::can_survive(level, s, pos) {
                 d::AIR
@@ -364,6 +368,40 @@ pub(crate) fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, d0: u16) -> Opt
             })
         }),
         C::MossyCarpetBlock => Some(mossy_carpet_state(level, d0, pos, true)),
+        // `HugeMushroomBlock.getStateForPlacement`: a face is shown unless the same block is beside it.
+        C::HugeMushroomBlock => {
+            let mut s = d0;
+            for dir in Direction::ALL {
+                s = state::set_bool(s, dir.name(), !state::same_block(level.block(pos.relative(dir)), d0));
+            }
+            Some(s)
+        }
+        C::TurtleEggBlock => {
+            let here = level.block(pos);
+            Some(if state::same_block(here, d0) { state::set_int(here, "eggs", (state::get_int(here, "eggs") + 1).min(4)) } else { d0 })
+        }
+        C::SnowLayerBlock => {
+            let here = level.block(pos);
+            Some(if state::same_block(here, d0) { state::set_int(here, "layers", (state::get_int(here, "layers") + 1).min(8)) } else { d0 })
+        }
+        // `SmallDripleafBlock.getStateForPlacement`: a double plant that faces the player and takes the water that is there.
+        C::SmallDripleafBlock => {
+            if !level.in_bounds(pos.above()) || !block_props::replaceable(level.block(pos.above())) {
+                return Some(None);
+            }
+            let s = state::set_dir(d0, "facing", c.horizontal().opposite());
+            Some(state::set_bool(s, "waterlogged", water_at(level, pos)))
+        }
+        // `SegmentableBlock.getStateForPlacement`: petals and litter pile up on themselves.
+        _ if logic::implements(d0, kiln_data::block_logic::interface::SEGMENTABLE_BLOCK) => {
+            let amount = if state::has(d0, "flower_amount") { "flower_amount" } else { "segment_amount" };
+            let here = level.block(pos);
+            Some(if state::same_block(here, d0) {
+                state::set_int(here, amount, (state::get_int(here, amount) + 1).min(4))
+            } else {
+                state::set_dir(d0, "facing", c.horizontal().opposite())
+            })
+        }
         C::PitcherCropBlock => Some(d0),
         C::MangrovePropaguleBlock => Some(state::set_int(c.waterlogged(d0), "age", 4)),
         C::PotentSulfurBlock => Some(potent_sulfur_state(level, d0, pos)),
@@ -441,6 +479,19 @@ pub(crate) fn concrete_of(powder: u16) -> u16 {
 
 /// `PotentSulfurBlock.validBlockState`'s wet/dry part (the geyser states need the block entity).
 fn potent_sulfur_state<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> u16 {
-    let wet = water_source(level.block(pos.above()));
-    state::set(s, "potent_sulfur_state", if wet { "wet" } else { "dry" })
+    if !water_source(level.block(pos.above())) {
+        return state::set(s, "potent_sulfur_state", "dry");
+    }
+    let below = level.block(pos.below());
+    let source_if_fluid = || {
+        let f = logic::fluid(below);
+        f.is_empty() || f.source
+    };
+    if crate::tags::is(below, "minecraft:causes_continuous_geyser_eruptions") && source_if_fluid() {
+        return state::set(s, "potent_sulfur_state", "continuous");
+    }
+    if crate::tags::is(below, "minecraft:causes_periodic_geyser_eruptions") && source_if_fluid() {
+        return if state::get(s, "potent_sulfur_state") == Some("erupting") { s } else { state::set(s, "potent_sulfur_state", "dormant") };
+    }
+    state::set(s, "potent_sulfur_state", "wet")
 }

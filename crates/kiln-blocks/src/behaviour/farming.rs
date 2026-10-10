@@ -71,6 +71,8 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) -> bool {
                 turn_to_dirt(level, s, pos);
             }
         }
+        // `DirtPathBlock.tick`: back to dirt, whatever is on top.
+        C::PathBlock => turn_to_dirt(level, s, pos),
         // `SugarCaneBlock.tick` / `CactusBlock.tick` / `BambooStalkBlock.tick`: without support
         // the block breaks and drops.
         C::SugarCaneBlock | C::CactusBlock | C::BambooStalkBlock => {
@@ -88,8 +90,8 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     use BlockClass as C;
     match logic::block_class(s) {
         // `FarmlandBlock.updateShape`: a block put on top (or the water going) re-checks next tick.
-        C::FarmlandBlock => {
-            if dir == Direction::Up && !farmland_can_survive(level, pos) {
+        C::FarmlandBlock | C::PathBlock => {
+            if dir == Direction::Up && !can_survive(level, s, pos).unwrap_or(true) {
                 schedule_block_tick(level, pos, BlockId::of(s), 1, TickPriority::Normal);
             }
             Some(s)
@@ -150,6 +152,10 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> Optio
     use BlockClass as C;
     Some(match logic::block_class(s) {
         C::FarmlandBlock => farmland_can_survive(level, pos),
+        C::PathBlock => {
+            let above = level.block(pos.above());
+            !logic::is_solid(above) || logic::is_instance(above, C::FenceGateBlock)
+        }
         C::SugarCaneBlock => sugar_cane_can_survive(level, pos),
         C::CactusBlock => cactus_can_survive(level, pos),
         C::BambooStalkBlock | C::BambooSaplingBlock => tags::is(level.block(pos.below()), "minecraft:supports_bamboo"),

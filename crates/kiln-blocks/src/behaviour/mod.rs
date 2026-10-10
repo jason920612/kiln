@@ -335,7 +335,7 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::CoralPlantBlock | C::CoralFanBlock | C::CoralWallFanBlock | C::CoralBlock => wet::coral_tick(level, s, pos),
         _ if growth::is_growing_plant(s) => growth::plant_tick(level, s, pos),
         C::CreakingHeartBlock => misc::creaking_heart_tick(level, s, pos),
-        C::FarmlandBlock | C::SugarCaneBlock | C::CactusBlock | C::BambooStalkBlock => {
+        C::FarmlandBlock | C::PathBlock | C::SugarCaneBlock | C::CactusBlock | C::BambooStalkBlock => {
             farming::tick(level, s, pos);
         }
         C::DriedGhastBlock => misc2::dried_ghast_tick(level, s, pos),
