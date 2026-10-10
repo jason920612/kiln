@@ -126,6 +126,9 @@ impl Entity {
         if !self.can_emit_movement() || !emission.anything() {
             return;
         }
+        if std::env::var_os("KILN_STEP_DEBUG").is_some() {
+            eprintln!("STEP {} id {} t{} move {:?} dist {} next {} ground {} emission {:?}", self.type_name, self.id, self.tick_count, movement, self.move_dist, self.next_step, self.on_ground, emission);
+        }
         let len = (movement.length() * 0.6000000238418579) as f32;
         let horizontal = (movement.horizontal_distance() * 0.6000000238418579) as f32;
         let on_pos = self.on_pos(level, 1.0e-5);

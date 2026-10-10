@@ -20,7 +20,8 @@ fn f(v: &Value) -> f64 {
 
 /// The sounds of footing: steps, landings and what a block makes when something lands on it.
 fn is_footing(name: &str) -> bool {
-    name.starts_with("minecraft:block.") || name.contains(".step") || name.contains("fall") || name.contains("shamble")
+    let block = name.strip_prefix("minecraft:block.").is_some_and(|n| n.ends_with(".step") || n.ends_with(".fall"));
+    block || name.contains(".step") || name.ends_with("small_fall") || name.ends_with("big_fall") || name.contains("shamble")
 }
 
 /// A sound as the vectors compare it: the position as the packet carries it (eighths of a block).
