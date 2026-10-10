@@ -660,8 +660,7 @@ impl Sim {
         let Tag::Compound(mut fields) = be.saved(at) else { return None };
         fields.retain(|(k, _)| !matches!(k.as_str(), "x" | "y" | "z"));
         // A live container's state is newer than the chunk's copy.
-        let live = self.dims[dim].regions.at(chunk_pos.cell()).and_then(|r| r.part().1.containers.get(BlockPos::new(at[0], at[1], at[2])));
-        if let Some(Tag::Compound(live)) = live.map(|c| c.chunk_tag()) {
+        if let Some(Tag::Compound(live)) = self.block_entity_live(dim, at[0], at[1], at[2]) {
             for (k, v) in live {
                 fields.retain(|(ok, _)| *ok != k);
                 fields.push((k, v));

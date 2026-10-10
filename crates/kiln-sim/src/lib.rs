@@ -1992,7 +1992,12 @@ impl Sim {
     /// The saved form of the live sculk block entity (sensor, shrieker, catalyst) at an
     /// overworld position (for tests and tools).
     pub fn block_entity_nbt(&self, x: i32, y: i32, z: i32) -> Option<kiln_proto::nbt::Tag> {
-        let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;
+        self.block_entity_live(OVERWORLD_ID, x, y, z)
+    }
+
+    /// [`Self::block_entity_nbt`] in any level.
+    pub(crate) fn block_entity_live(&self, dim: DimId, x: i32, y: i32, z: i32) -> Option<kiln_proto::nbt::Tag> {
+        let region = self.dims[dim].regions.at(ChunkPos::of_block(x, z).cell())?;
         let p = kiln_blocks::BlockPos::new(x, y, z);
         let part = &region.part().1;
         part.sculk
