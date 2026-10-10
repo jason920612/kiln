@@ -326,8 +326,8 @@ pub(crate) fn placed_by(level: &mut RegionLevel, pos: BlockPos, author: &str) {
 
 // ---- the templates --------------------------------------------------------------------------------------------------------
 
-/// A template of the manager with the author it was saved under (`StructureTemplate.author`; templates read from files
-/// have none).
+/// A template of the manager with the author it was saved under (`StructureTemplate.author`, "?" until a structure block
+/// saves it).
 pub(crate) struct Stored {
     pub template: Arc<Template>,
     pub author: String,
@@ -401,8 +401,8 @@ impl Sim {
             None => self.world.templates.disk.get(id).and_then(|b| kiln_worldgen::structure::template::read_template_bytes(b)),
         };
         let found = match from_file {
-            Some(t) => Some(Arc::new(Stored { template: Arc::new(t), author: String::new() })),
-            None => self.find_template(id).map(|t| Arc::new(Stored { template: t, author: String::new() })),
+            Some(t) => Some(Arc::new(Stored { template: Arc::new(t), author: "?".into() })),
+            None => self.find_template(id).map(|t| Arc::new(Stored { template: t, author: "?".into() })),
         };
         self.world.templates.insert(id, found.clone());
         found
