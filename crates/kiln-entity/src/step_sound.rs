@@ -144,9 +144,9 @@ impl Entity {
             done |= self.sound_and_vibration(level, on_pos, on_state, false, emission.events(), movement);
         }
         if done {
-            self.next_step = (self.move_dist as i32 + 1) as f32;
+            self.next_step = self.next_step_after();
         } else if self.is_in_water() {
-            self.next_step = (self.move_dist as i32 + 1) as f32;
+            self.next_step = self.next_step_after();
             if emission.sounds() {
                 self.water_swim_sound(level);
             }
@@ -159,6 +159,16 @@ impl Entity {
     /// `isSwimming()`: the swimming pose (not tracked: a swimmer is in water, off the ground).
     fn is_swimming(&self) -> bool {
         false
+    }
+
+    /// `nextStep()`: how far the next step is (a turtle, a strider and a warden step more often than once a block).
+    fn next_step_after(&self) -> f32 {
+        match self.type_name {
+            "minecraft:turtle" => self.move_dist + 0.15,
+            "minecraft:strider" => self.move_dist + 0.6,
+            "minecraft:warden" => self.move_dist + 0.55,
+            _ => (self.move_dist as i32 + 1) as f32,
+        }
     }
 
     /// Whether this kind of entity makes steps here at all (the ones the level simulates: players and mobs).
