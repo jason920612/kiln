@@ -98,6 +98,8 @@ fn sound_source_name(id: i32) -> &'static str {
 thread_local! {
     /// The case does not record sound pitches (an entity's voice pitch comes from its own random).
     static NO_PITCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The teleports (Player Position packets) of the last step.
+    static TELEPORTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Kiln's packet as the vectors print it (`None`: not a kind the vectors record).
@@ -251,6 +253,7 @@ const INTERESTING: [i32; 15] = [
 fn take_packets(stats: &SinkStats, menus: bool, maps: bool) -> Vec<Value> {
     use kiln_data::packets::play::clientbound as ids;
     let all = std::mem::take(stats.log.lock().unwrap().as_mut().unwrap());
+    TELEPORTS.with(|t| t.set(all.iter().filter(|p| kiln_proto::codec::Reader::new(p).varint().ok() == Some(ids::PLAYER_POSITION)).count()));
     all.iter()
         .filter(|p| {
             kiln_proto::codec::Reader::new(p).varint().ok().is_some_and(|id| {
@@ -729,6 +732,18 @@ fn run_case(line: &Value) -> Vec<String> {
                     })),
                 ));
             }
+            "move" => {
+                let to: Vec<f64> = step["to"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+                inbox.push(ToSim::Packet(
+                    1,
+                    PlayIn::Move { pos: Some([to[0], to[1], to[2]]), rot: None, on_ground: step["on_ground"].as_bool().unwrap(), horizontal_collision: step["hcol"].as_bool().unwrap() },
+                ));
+            }
+            "accept_teleport" => {
+                if let Some(id) = sim.players[&1].awaiting_teleport {
+                    inbox.push(ToSim::Packet(1, PlayIn::AcceptTeleport { id }));
+                }
+            }
             "set_structure" => {
                 use kiln_proto::packets::serverbound as sb;
                 let ints = |k: &str| -> [i32; 3] { arr3(&step[k]) };
@@ -944,6 +959,11 @@ fn run_case(line: &Value) -> Vec<String> {
             // (A hive's bees age with the ticks Kiln's level makes between the steps; the recorded level stands still.)
             let (got, expected) = (got.map(no_hive_ticks).map(no_mob_uuids).map(no_spawner_delay), expected.map(no_hive_ticks).map(no_mob_uuids).map(no_spawner_delay));
             eq(&format!("block entity {at:?}"), format!("{got:?}"), format!("{expected:?}"));
+        }
+        if let Some(want_pos) = want.get("ppos").and_then(Value::as_array) {
+            let want_pos: Vec<f64> = want_pos.iter().map(|v| v.as_f64().unwrap()).collect();
+            eq("player position", format!("{:?}", sim.players[&1].pos), format!("{:?}", [want_pos[0], want_pos[1], want_pos[2]]));
+            eq("teleports", TELEPORTS.with(|t| t.get()).to_string(), want["teleports"].to_string());
         }
         if let Some(want_templates) = want.get("templates").and_then(Value::as_object) {
             // The templates the manager holds (an id it has none for is null), as the saved NBT.

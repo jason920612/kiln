@@ -1022,10 +1022,6 @@ pub(crate) fn player_packet(
                     p.award_stat(*crate::player_stats::stat::JUMP, 1);
                 }
                 p.exhaust_for_jump(d, was_on_ground);
-                if was_on_ground && !on_ground && d[1] > 0.0 {
-                    p.server_jump(from, cells, env.game_time, env.min_y);
-                }
-                p.server_packet_move(from, d, was_on_ground, cells, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
                 let mut ctx = damage_ctx(env, spawns, deaths);
                 let blocks = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z);
                 p.after_move_fall(d, on_ground, p.pos[1] - y0 > 0.0, &blocks, &mut ctx);
@@ -1645,12 +1641,34 @@ fn handle_move(
         p.teleport(p.pos, p.rot, now);
         return false;
     }
+    // `jumpFromGround` (when the server holds the player on the ground), then `move(PLAYER, delta)` of the server's body
+    // (see the `phantom` module): what the packet did to the body stays whether the claim is taken or not.
+    let from = p.pos;
+    let d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    let was_on_ground = p.on_ground;
+    if was_on_ground && !on_ground && d[1] > 0.0 {
+        p.server_jump(from, world, env.game_time, env.min_y);
+    }
+    let moves_before = p.movements.len();
+    let end = p.server_packet_move(from, d, was_on_ground, world, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
+    // The claim against where the body got (the vertical part never counts: vanilla zeroes it), outside creative and
+    // spectator mode.
+    let (dx, dz) = (to[0] - end[0], to[2] - end[2]);
+    let sleeping = p.sleep.pos.is_some();
+    let wrongly = dx * dx + dz * dz > 0.0625 && !sleeping && p.game_mode != 1 && p.game_mode != 3;
+    if wrongly {
+        warn!("{} moved wrongly!", p.name);
+    }
     // Spectators have no physics.
-    if p.game_mode != 3 && to != p.pos {
-        let old = movement::Aabb::player(p.pos, movement::MIN_POSE_HEIGHT);
+    if p.game_mode != 3 && !sleeping {
+        let (_, h, _) = p.dimensions();
+        let old_box = movement::Aabb::player(from, h as f64);
+        let stuck_in_place = wrongly && !movement::collides_with_anything(world, old_box);
         let new = movement::Aabb::player(to, movement::MIN_POSE_HEIGHT);
-        if movement::collides_with_anything_new(world, old, new) {
-            p.teleport(p.pos, rot, now);
+        let into_something = to != from && movement::collides_with_anything_new(world, movement::Aabb::player(from, movement::MIN_POSE_HEIGHT), new);
+        if stuck_in_place || into_something {
+            p.movements.truncate(moves_before);
+            p.teleport(from, rot, now);
             return false;
         }
     }

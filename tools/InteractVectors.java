@@ -107,6 +107,8 @@ public class InteractVectors {
         boolean watchMobs;
         // wp50: the cushions tick once after every step (the replay's level does), `tick_cushions` ticks them that many times.
         boolean tickCushions;
+        // wp50: the player's position and the teleports sent are recorded after every step (and the connection's last good position is the start).
+        boolean watchMove;
         // wp50: sound pitches are not recorded (an entity's voice pitch comes from its own random).
         boolean noPitch;
         // wp50: structure templates (by id) recorded after every step.
@@ -183,6 +185,11 @@ public class InteractVectors {
         /** wp49: maps are recorded (their data and packets) and every step is followed by a tick of the player's maps. */
         Case maps() {
             watchMaps = true;
+            return this;
+        }
+
+        Case moves() {
+            watchMove = true;
             return this;
         }
 
@@ -1164,6 +1171,73 @@ public class InteractVectors {
         c.cmd("setblock 2 100 0 minecraft:jigsaw[orientation=north_up]").cmd("setblock 3 100 0 minecraft:jigsaw[orientation=up_east]").cmd("setblock 4 100 0 minecraft:jigsaw[orientation=east_up]{joint:\"bad\",pool:\"bad pool\",placement_priority:\"x\"}")
                 .watch(2, 100, 0).watch(3, 100, 0).watch(4, 100, 0);
         c.step(op("op", "command", "command", "data merge block 2 100 0 {name:\"minecraft:set\"}"));
+        out.add(c);
+    }
+
+    // ---------------------------------------------------------------- wp50: "moved wrongly"
+
+    static Map<String, Object> move(double x, double y, double z, boolean onGround) {
+        return op("op", "move", "to", List.of(x, y, z), "on_ground", onGround, "hcol", false);
+    }
+
+    /** A flat floor of stone at y = 98 over x = -4..12 (z = -6..8) with air above, the player standing at (3.5, 99, 0.5). */
+    static Case moveCase(String name, String mode, boolean sneaking) {
+        Case c = new Case("moves50_" + name).moves();
+        c.gameMode = mode;
+        c.sneaking = sneaking;
+        c.pos = new double[] {3.5, 99.0, 0.5};
+        c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air");
+        return c;
+    }
+
+    static void moves50(List<Case> out) {
+        Case c;
+        // ---- plain moves are taken as they come
+        for (double d : new double[] {0.0, 0.1, 0.25, 0.9}) {
+            c = moveCase("walk_" + (int) (d * 100), "survival", false);
+            c.step(move(3.5 + d, 99.0, 0.5, true));
+            out.add(c);
+        }
+        c = moveCase("jump", "survival", false);
+        c.step(move(3.5, 99.4, 0.5, false)).step(op("op", "accept_teleport"));
+        out.add(c);
+        c = moveCase("fall_through_floor", "survival", false);
+        c.step(move(3.5, 97.6, 0.5, false));
+        out.add(c);
+        c = moveCase("into_wall", "survival", false);
+        c.cmd("fill 4 99 -2 4 101 2 minecraft:stone");
+        c.step(move(4.0, 99.0, 0.5, true));
+        out.add(c);
+        c = moveCase("up_a_step", "survival", false);
+        c.cmd("setblock 4 99 0 minecraft:stone");
+        c.step(move(4.2, 100.0, 0.5, true));
+        out.add(c);
+        c = moveCase("up_a_step_too_high", "survival", false);
+        c.cmd("fill 4 99 0 4 100 0 minecraft:stone");
+        c.step(move(4.2, 101.0, 0.5, true));
+        out.add(c);
+        // ---- a sneaking player does not walk off an edge: the server's body stays and the client's claim is wrong beyond a quarter block
+        for (String mode : new String[] {"survival", "creative", "spectator", "adventure"}) {
+            for (double d : new double[] {0.5, 0.9, 1.05, 1.4}) {
+                c = moveCase("edge_" + mode + "_" + (int) (d * 100), mode, true);
+                c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
+                c.step(move(3.5 + d, 99.0, 0.5, true));
+                out.add(c);
+            }
+        }
+        c = moveCase("edge_not_sneaking", "survival", false);
+        c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
+        c.step(move(4.9, 99.0, 0.5, false));
+        out.add(c);
+        // ---- already stuck in a cobweb: a claim to go the whole way is too far
+        c = moveCase("cobweb", "survival", false);
+        c.cmd("setblock 3 99 0 minecraft:cobweb");
+        c.step(move(3.6, 99.0, 0.5, true)).step(move(4.0, 99.0, 0.5, true));
+        out.add(c);
+        // ---- a teleport waits for its answer: moves before it are not heard
+        c = moveCase("edge_then_walk", "survival", true);
+        c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
+        c.step(move(4.9, 99.0, 0.5, true)).step(move(3.6, 99.0, 0.5, true)).step(op("op", "accept_teleport")).step(move(3.6, 99.0, 0.5, true));
         out.add(c);
     }
 
@@ -3350,6 +3424,7 @@ public class InteractVectors {
         p.setDeltaMovement(Vec3.ZERO);
         p.setOnGround(true);
         p.fallDistance = 0.0;
+        if (c.watchMove) p.connection.resetPosition();
         if (c.sneaking) {
             p.setShiftKeyDown(true);
             p.setPose(Pose.CROUCHING);
@@ -3404,9 +3479,12 @@ public class InteractVectors {
     /// wp49: map packets (and the entity sounds around them) are recorded for cases that watch maps.
     static boolean recordMaps;
 
+    static int teleports;
+
     static List<Object> packets(ServerPlayer p) throws Exception {
         List<Object> out = new ArrayList<>();
         for (Object o : drain(p)) {
+            if (o instanceof net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket) teleports++;
             if (o instanceof ClientboundSoundPacket s) {
                 if (recordNoPitch && soundName(s).startsWith("minecraft:block.")) continue;
                 out.add(op("t", "sound", "name", soundName(s), "source", s.getSource().getName(),
@@ -3682,6 +3760,24 @@ public class InteractVectors {
                     for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) cu.tick();
                     for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 60, -16, 32, 330, 32))) mq.tick();
                 }
+            }
+            // wp50: the client says it moved to a position (`ServerboundMovePlayerPacket.Pos`); the server may put it back.
+            case "move" -> {
+                @SuppressWarnings("unchecked") List<Number> to = (List<Number>) s.get("to");
+                // (The player's own tick sets the key from its input; the scenario keeps it held.)
+                if (c.sneaking) p.setShiftKeyDown(true);
+                p.connection.handleMovePlayer(new net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.Pos(to.get(0).doubleValue(), to.get(1).doubleValue(), to.get(2).doubleValue(),
+                        (boolean) s.get("on_ground"), (boolean) s.get("hcol")));
+                // (Each step is a tick of its own: the connection takes one position per tick.)
+                field(p.connection.getClass(), "receivedPositionThisTick").set(p.connection, false);
+                field(p.connection.getClass(), "knownMovePacketCount").set(p.connection, get(p.connection, "receivedMovePacketCount"));
+                field(p.connection.getClass(), "firstGoodX").set(p.connection, p.getX());
+                field(p.connection.getClass(), "firstGoodY").set(p.connection, p.getY());
+                field(p.connection.getClass(), "firstGoodZ").set(p.connection, p.getZ());
+            }
+            case "accept_teleport" -> {
+                var at = (Vec3) get(p.connection, "awaitingPositionFromClient");
+                if (at != null) p.connection.handleAcceptTeleportPacket(new net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket((int) get(p.connection, "awaitingTeleport"), at.x, at.y, at.z, p.getYRot(), p.getXRot()));
             }
             // wp50: the structure block screen's packet.
             case "set_structure" -> {
@@ -3992,6 +4088,11 @@ public class InteractVectors {
             if (c.watchMaps) r.put("maps", mapsOf(p));
             r.put("inv", inventory(p));
             r.put("packets", packets(p));
+            if (c.watchMove) {
+                r.put("ppos", List.of(p.getX(), p.getY(), p.getZ()));
+                r.put("teleports", teleports);
+                teleports = 0;
+            }
             r.put("blocks", blocks(c));
             if (!c.templates.isEmpty()) r.put("templates", templatesOf(c));
             r.put("entities", itemEntities());
@@ -4203,6 +4304,7 @@ public class InteractVectors {
             cushions50(all);
             mannequins50(all);
             structures50(all);
+            moves50(all);
             cauldrons50(all);
             commandBlocks49(all);
         }).get();
