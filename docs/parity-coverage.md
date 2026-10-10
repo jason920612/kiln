@@ -502,6 +502,12 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 `tools/parity_suites.py` 新增 `interact53`、`container53`、`plugin_compat`；wp52 的 `place52.jsonl` 補回 7 個 scenario（62 個），生物向量併入 `work/m6-mobs2/vectors.jsonl`
 （原檔備份為 `.pre-wp53`，依 name 去重後 +34）。
 
+驗證（VM，release，`--no-fail-fast`）：workspace 測試在沒有與有 `KILN_DATAPACK` 時各 161 個測試目標全綠；`tools/parity_suites.py` 全部 86 次執行 exit 0：`mob_parity` **1346**／1346
+（wp52 是 1312，+34 `pickup53_*`，564,811 個生物狀態逐項相同）、`interact52-place52` 62／62（+7）、`interact53-adv53` 13／13、`container53-c53` 1／1、`container52-c52` 5／5、`determinism` 6／6、`plugin_compat` 6 個。
+這一輪還抓到並修掉兩個**早就存在**的測試問題：`claims_do_not_depend_on_the_region_layout`（proptest 的模型假設同一 tick 內的兩次放置立刻互相看得到，跨 cell 邊界的複寫晚一個 tick；
+抽到相鄰重疊的種子就失敗，種子存進 regressions 檔後每次都失敗）與 `plugin_api_determinism` 約 3%（120 次中 4 次）的失敗（strict 模式的降級在第三次 strike 發生的當下生效，平行 region 的同 tick 呼叫是否看到旗標取決於執行緒；
+改成下一個 B0 生效，300 次連跑 0 次失敗；見 `docs/plugin-api.md` §4.5）。另外 `plugins/Cargo.lock` 少列 `lockbox`。
+
 | 項目 | 內容 | 原版向量 | 驗證端 |
 |---|---|---|---|
 | 進度 trigger | `bee_nest_destroyed`（`BeehiveBlock.playerDestroy` 只要玩家用得上掉落就觸發，**絲綢之觸也觸發**；`num_bees_inside` 是破壞後還留在方塊裡的蜂數）、`used_ender_eye`（`EnderEyeItem.use`：玩家到最近要塞的水平距離平方，`matchesSqr`）、`spear_mobs`（`KineticWeapon.damageEntities` 有命中時，近期刺過的活生物數 ≥ `count`）、`thrown_item_picked_up_by_entity`（`LivingEntity.onItemPickup`：玩家丟的物品被生物撿起；接在豬布林、硫磺方塊、悅靈、狐狸、貓熊、海豚與新的通用撿拾）、`allay_drop_item_on_block`（`AllayAi.throwItem`：喜歡的玩家、目標下方的方塊、丟出的那一個物品）、`any_block_use`（`handleUseItemOn`：凡是 `consumesAction` 的點擊，帶手上剩下的物品）、`default_block_use`（空手 `useWithoutItem` 被方塊接走） | `adv53` 13（`husbandry/silk_touch_nest`：蜂巢／蜂窩 × 0／2／3 隻蜂 × 絲綢／非絲綢 + 創造模式；只有「絲綢＋3 隻＋蜂巢（nest）」完成準則） | `interact_parity`（InteractVectors 現在可以 `advancements()` 記錄每一步完成的準則）；其餘 6 個 trigger 沒有原版向量，見下，由 `advancements/wp53_tests.rs` 6 個測試覆蓋 |
