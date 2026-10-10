@@ -546,6 +546,23 @@ public class InteractVectors {
         }
     }
 
+    // ---------------------------------------------------------------- wp55: the block entity every block item gets when it is placed
+
+    static void placeBlockEntities55(List<Case> out) {
+        for (net.minecraft.world.item.Item it : BuiltInRegistries.ITEM) {
+            if (!(it instanceof net.minecraft.world.item.BlockItem bi) || !bi.getBlock().defaultBlockState().hasBlockEntity()) continue;
+            String item = BuiltInRegistries.ITEM.getKey(it).toString();
+            Case c = blockCase("place55_be_" + item.replace("minecraft:", ""), "minecraft:air");
+            // (the second half of a bed, the block above)
+            c.watch(2, 100, 1).watch(2, 101, 0);
+            c.gameMode = "creative";
+            c.op = true;
+            c.slot("h0", stack(item));
+            c.step(useOn(2, 99, 0, 1, 0));
+            out.add(c);
+        }
+    }
+
     // ---------------------------------------------------------------- wp53: advancement triggers
 
     static String nestBees(int n) {
@@ -5027,6 +5044,7 @@ public class InteractVectors {
             pistons54(all);
             sounds54(all);
             mannequins54(all);
+            placeBlockEntities55(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {
