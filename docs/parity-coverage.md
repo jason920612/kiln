@@ -541,7 +541,11 @@ wp53 查出兩個「缺的是 Kiln 本身」的子系統，這一輪做掉。向
 | 方塊 SoundType 表 | `ExtractBlockLogic` 從原版抽出每個方塊狀態的 `SoundType`（音量、音高、破壞／踩踏／放置／敲擊／摔落五種音效），`xtask codegen` 產出 `kiln-data/src/gen/sound_types.rs`，`block_sounds::sound_type(state)`；依屬性才變的方塊（破裂的裝飾罐、…）另外記 | – （每個音效名檢查是原版 `sound_event` 登錄） | `kiln-data` 單元測試 3 個；下列的重播 |
 | 伺服器的方塊音效 | **放置**：`BlockItem.place` 用 `getPlaceSound`（音量 `(v+1)/2`、音高 `×0.8`），不送給放置者本人；**踩踏**：`Entity.applyMovementEmissionAndPlaySound`／`vibrationAndSoundEffectsFromBlock` 全面重寫（`nextStep`、`getMovementEmission`、玩家飛行與蹲在地上無音效、`Player.playStepSound` 的組合方塊／靜音方塊／方塊內，水中與游泳）；**摔落**：`LivingEntity.playBlockFallSound` 只在傷害 > 0 時，位置在腳下 0.2 格；玩家自己聽不到自己的（`Player.playSound` 排除本人）；蜜塊的 `fallOn` 在受傷後再播一次方塊的摔落音。**破壞／敲擊音效是客戶端用自己的表播的**（伺服器只送 level event），所以沒有伺服器端的東西可比。每種實體類型怎麼踩（`StepRow`：發射條件、聲源、固定音效、幼體音效、摔落音效）由 `InteractVectors --step-sounds` 在原版內對每個生物類型呼叫 `playStepSound` 後產生（`tools/gen_step_sounds.py` → `gen/step_sounds.rs`）；另外龜（`nextStep` +0.15）、潛地獸（+0.6）、伏守衛（+0.55）、馬（木頭、雪、騎乘時的奔馳計數器與鼻息）、銅傀儡（依氧化）、硫磺方塊（吞了東西就不出聲）、殺手兔（hostile 聲源） | `sound54` 314（每種 `SoundType` 取一個代表方塊 × 摔 6／12 格、走 8 步、蹲走；薄方塊在上面（地毯、雪、青苔、發光地衣）；每個可放的物品的放置音）；`mannequin54` 20（mannequin 摔在各種方塊上，110 格高）；`mob_parity` 的 `sound_trace`（每 tick 玩家聽得到的步伐／摔落音，位置照封包量化到 1/8 格） | `interact_parity`（`sound54` 314／314，`mannequin54` 20／20）、`mob_parity`（`sound_trace`） |
 
-驗證（VM，release，`--no-fail-fast`）：見本節末的結果表。`mob_parity` 在 1375 個 scenario 中 790 個帶著原版 `sound_trace` 比對步伐與摔落音（另外 585 個是依賴隨機的情節——戰利品、生成時機——重錄後軌跡和舊檔不同，保留舊檔、不比聲音）。
+驗證（VM，release，`--no-fail-fast`）：workspace 測試在沒有與有 `KILN_DATAPACK` 時各 161 個測試目標全綠；`tools/parity_suites.py` 全部 89 次執行 exit 0：`interact54-piston54` **112**／112、`interact54-sound54` **314**／314、`interact54-mannequin54` **20**／20、`mob_parity` 1346／1346、`determinism`、`plugin_compat` 皆過。
+這一輪順手抓到並修的：`step_sound.rs` 的 `powf`（`no_std_libm` 守門測試，改用 `kiln_javamath::pow`）、`crowd_golden` 的四個封包摘要（狀態雜湊不變，只是人群現在會互相聽到腳步與落地音；已重錄並在檔頭註明）。
+**已知的偶發失敗**：整個 workspace（或 `-p kiln-plugin-host -p kiln-sim`）在沒有 datapack 時，`native_world`（外掛的 cell 資料沒寫進 cell 檔）與 `entity_data_follows_the_entity`（寵物計數 1 而非 2）各偶發失敗過；單獨跑 8／8 與 3／3 通過，連跑兩次整組與最後一次整個 workspace 也全過，
+兩者都不經過本分支改的程式（外掛主機、cell 儲存）；看起來是外掛主機／cell 寫入的時序問題，沒有查到根因。
+`mob_parity` 在 1375 個 scenario 中 790 個帶著原版 `sound_trace` 比對步伐與摔落音（另外 585 個是依賴隨機的情節——戰利品、生成時機——重錄後軌跡和舊檔不同，保留舊檔、不比聲音）。
 
 這一輪找到、**沒有修**的缺口：
 
