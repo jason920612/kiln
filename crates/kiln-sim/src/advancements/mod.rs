@@ -654,6 +654,9 @@ mod layout {
 }
 
 #[cfg(test)]
+mod wp53_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
