@@ -543,8 +543,7 @@ wp53 查出兩個「缺的是 Kiln 本身」的子系統，這一輪做掉。向
 
 驗證（VM，release，`--no-fail-fast`）：workspace 測試在沒有與有 `KILN_DATAPACK` 時各 161 個測試目標全綠；`tools/parity_suites.py` 全部 89 次執行 exit 0：`interact54-piston54` **112**／112、`interact54-sound54` **314**／314、`interact54-mannequin54` **20**／20、`mob_parity` 1346／1346、`determinism`、`plugin_compat` 皆過。
 這一輪順手抓到並修的：`step_sound.rs` 的 `powf`（`no_std_libm` 守門測試，改用 `kiln_javamath::pow`）、`crowd_golden` 的四個封包摘要（狀態雜湊不變，只是人群現在會互相聽到腳步與落地音；已重錄並在檔頭註明）。
-**已知的偶發失敗**：整個 workspace（或 `-p kiln-plugin-host -p kiln-sim`）在沒有 datapack 時，`native_world`（外掛的 cell 資料沒寫進 cell 檔）與 `entity_data_follows_the_entity`（寵物計數 1 而非 2）各偶發失敗過；單獨跑 8／8 與 3／3 通過，連跑兩次整組與最後一次整個 workspace 也全過，
-兩者都不經過本分支改的程式（外掛主機、cell 儲存）；看起來是外掛主機／cell 寫入的時序問題，沒有查到根因。
+**偶發失敗（已找到原因）**：整個 workspace 在沒有 datapack 時，`native_world` 約每 4 次失敗 1 次（`entity_data_follows_the_entity` 也失敗過 1 次）。原因是外掛主機 ordered 模式每次呼叫的牆鐘預算只有 500 µs，剛編譯好的外掛第一次被呼叫在忙碌的機器上會超時，超時時 fail-closed（拒絕且什麼都不記），測試要找的 claim 就不會寫進 cell。`native_world` 的 `PluginSettings` 改成 200 ms 的預算（其他外掛測試本來就是），之後連跑 5 次整個 `-p kiln-sim` 與兩輪整個 workspace（沒有／有 datapack 各 161 個目標）都全綠；`entity_data_follows_the_entity` 只失敗過一次、沒有再重現，沒有改。
 `mob_parity` 在 1375 個 scenario 中 790 個帶著原版 `sound_trace` 比對步伐與摔落音（另外 585 個是依賴隨機的情節——戰利品、生成時機——重錄後軌跡和舊檔不同，保留舊檔、不比聲音）。
 
 這一輪找到、**沒有修**的缺口：
