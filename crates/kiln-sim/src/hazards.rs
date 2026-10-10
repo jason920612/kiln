@@ -252,9 +252,14 @@ impl Player {
 
     /// `Player.playSound`: heard by the player's viewers (the player's own client plays it).
     pub(crate) fn queue_sound(&mut self, sound: &str, volume: f32, pitch: f32) {
+        self.queue_sound_at(self.pos, sound, volume, pitch);
+    }
+
+    /// [`Player::queue_sound`] where the player was when it made the sound.
+    pub(crate) fn queue_sound_at(&mut self, at: [f64; 3], sound: &str, volume: f32, pitch: f32) {
         let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound) else { return };
         let seed = self.sound_seed.next_long();
-        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), world_fx::SoundSource::Players, self.pos, volume, pitch, seed);
+        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), world_fx::SoundSource::Players, at, volume, pitch, seed);
         self.pending_sounds.push(pkt);
     }
 

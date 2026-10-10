@@ -2015,8 +2015,7 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
 
 /// `LivingEntity.causeFallDamage` (the landing happened in the move just done): the fall
 /// power above the safe fall distance, scaled by the multiplier attribute, as fall damage
-/// with the small or big fall sound. Approximation: the landing block's fall sound is not
-/// played.
+/// with the small or big fall sound and the landing block's.
 fn cause_fall_damage(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, distance: f64, multiplier: f32) {
     if entity_type_tag(e.type_name, "minecraft:fall_damage_immune") {
         return;
@@ -2026,12 +2025,10 @@ fn cause_fall_damage(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
     if dmg <= 0 {
         return;
     }
-    let (small, big) = if m.kind.category() == Category::Monster {
-        ("minecraft:entity.hostile.small_fall", "minecraft:entity.hostile.big_fall")
-    } else {
-        ("minecraft:entity.generic.small_fall", "minecraft:entity.generic.big_fall")
-    };
+    let (small, big) = crate::step_sound::fall_sounds(e.type_name, m.kind.category() == Category::Monster);
     play_sound(e, m, level, if dmg > 4 { big } else { small }, 1.0, 1.0);
+    // `playBlockFallSound`: the block at the feet lands with a sound of its own.
+    e.play_block_fall_sound(level);
     hurt(e, m, level, DamageSource::of(DamageKind::Fall), dmg as f32);
 }
 

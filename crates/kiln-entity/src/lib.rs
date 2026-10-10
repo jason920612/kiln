@@ -36,6 +36,7 @@ pub mod ride;
 pub mod shape;
 pub mod spawner;
 pub mod spear;
+pub mod step_sound;
 pub mod tnt;
 pub mod trial_spawner;
 pub mod vibration;

@@ -131,6 +131,9 @@ pub struct Entity {
     /// `pistonDeltas` and `pistonDeltasGameTime`: how far pistons moved it per axis this tick (at most 0.51).
     piston_deltas: [f64; 3],
     piston_deltas_game_time: i64,
+    /// `lastCrystalSoundPlayTick` and `crystalSoundIntensity`: the chime of walking on amethyst.
+    pub(crate) last_crystal_sound_play_tick: i32,
+    pub(crate) crystal_sound_intensity: f32,
     on_ground_no_blocks: bool,
     pub(crate) movement_this_tick: VecDeque<Movement>,
     pub(crate) final_movements_this_tick: Vec<Movement>,
@@ -214,6 +217,8 @@ impl Entity {
             piston_noclip: None,
             piston_deltas: [0.0; 3],
             piston_deltas_game_time: 0,
+            last_crystal_sound_play_tick: 0,
+            crystal_sound_intensity: 0.0,
             on_ground_no_blocks: false,
             movement_this_tick: VecDeque::new(),
             final_movements_this_tick: Vec::new(),
@@ -791,57 +796,11 @@ impl Entity {
         if self.can_simulate_movement() && ((vertical_move && self.vertical_collision) || self.horizontal_collision) {
             self.restitute_movement_after_collisions(level, on_state, x_collision, z_collision, collided);
         }
-        if matches!(self.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) {
-            crate::prof!("mv", "emission");
-            self.apply_movement_emission(level, collided, on_pos, on_state);
-        }
+        crate::prof!("mv", "emission");
+        self.apply_movement_emission(level, collided, on_pos, on_state);
         crate::prof!("mv", "speed factor");
         let f = self.block_speed_factor(level) as f64;
         self.delta = self.delta.multiply(f, 1.0, f);
-    }
-
-    /// `applyMovementEmissionAndPlaySound` (`MovementEmission.ALL`, not riding): walking step
-    /// sounds and, in water, swim sounds (their pitch draws from the random).
-    fn apply_movement_emission(&mut self, level: &mut dyn EntityLevel, movement: Vec3, pos: BlockPos, state: u16) {
-        let len = (movement.length() * 0.6000000238418579) as f32;
-        let horizontal = (movement.horizontal_distance() * 0.6000000238418579) as f32;
-        let on_pos = self.on_pos(level, 1.0e-5);
-        let on_state = level.block(on_pos);
-        let climbable = |s: u16| has_tag(s, Tag::Climbable);
-        self.move_dist += if climbable(on_state) { len } else { horizontal };
-        self.fly_dist += len;
-        if !(self.move_dist > self.next_step) || kiln_data::blocks_types::is_air(on_state) {
-            return;
-        }
-        // `vibrationAndSoundEffectsFromBlock`: a step on the ground or a climbable block (the step
-        // sound draws nothing).
-        let stepped = |e: &Entity, s: u16| !kiln_data::blocks_types::is_air(s) && (e.on_ground || climbable(s));
-        let mut ok = stepped(self, state);
-        if on_pos != pos {
-            ok |= stepped(self, on_state);
-        }
-        // The step game event comes from the supporting block (the effect block when they are
-        // the same), with that block as the context.
-        let supporting = if on_pos == pos { state } else { on_state };
-        if stepped(self, supporting) {
-            level.block_game_event("minecraft:step", self.position, Some(self.id), supporting);
-        }
-        if ok {
-            self.next_step = (self.move_dist as i32 + 1) as f32;
-        } else if self.is_in_water() {
-            self.next_step = (self.move_dist as i32 + 1) as f32;
-            if let Some(sound) = crate::mob::swim_sound_of(self) {
-                let d = self.delta;
-                let volume = (1.0f32).min(((d.x * d.x * 0.20000000298023224 + d.y * d.y + d.z * d.z * 0.20000000298023224).sqrt() as f32) * 0.35);
-                let pitch = 1.0 + (self.random_next_float_pub() - self.random_next_float_pub()) * 0.4;
-                self.play_sound(level, sound, volume, pitch);
-            }
-            level.emit(Event::GameEvent { event: "minecraft:swim", pos: self.position, entity: Some(self.id) });
-        }
-    }
-
-    fn random_next_float_pub(&mut self) -> f32 {
-        kiln_javamath::random::RandomSource::next_float(&mut self.random)
     }
 
     /// Server side: false for players, whose client is authoritative.

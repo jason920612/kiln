@@ -1704,6 +1704,54 @@ public class InteractVectors {
                 "minecraft:skeleton_skull", "minecraft:white_banner", "minecraft:oak_trapdoor", "minecraft:repeater", "minecraft:piston", "minecraft:white_carpet", "minecraft:tripwire_hook"}) {
             if (!items.contains(item)) items.add(item);
         }
+        // ---- landing and walking on one block of each sound type (a whole block, so that the player stands on it)
+        List<String> floors = new ArrayList<>();
+        for (net.minecraft.world.item.Item it : BuiltInRegistries.ITEM) {
+            if (it instanceof net.minecraft.world.item.BlockItem bi) {
+                BlockState st = bi.getBlock().defaultBlockState();
+                if (!st.isCollisionShapeFullBlock(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, BlockPos.ZERO) || !st.getFluidState().isEmpty()) continue;
+                if (bi.getBlock().hasDynamicShape() || st.hasBlockEntity()) continue;
+                if (st.getBlock() instanceof net.minecraft.world.level.block.FarmBlock || st.getBlock() instanceof net.minecraft.world.level.block.TurtleEggBlock
+                        || st.getBlock() instanceof net.minecraft.world.level.block.FallingBlock || st.getBlock() instanceof net.minecraft.world.level.block.InfestedBlock
+                        || st.getBlock() instanceof net.minecraft.world.level.block.LeavesBlock || st.getBlock() instanceof net.minecraft.world.level.block.IceBlock) continue;
+                String name = BuiltInRegistries.ITEM.getKey(it).toString();
+                if (floors.stream().noneMatch(f -> BuiltInRegistries.BLOCK.getValue(Identifier.parse(f)).defaultBlockState().getSoundType() == st.getSoundType())) floors.add(name);
+            }
+        }
+        for (String block : new String[] {"minecraft:sand", "minecraft:gravel", "minecraft:oak_leaves", "minecraft:soul_sand", "minecraft:ice", "minecraft:packed_ice", "minecraft:slime_block", "minecraft:honey_block", "minecraft:hay_block", "minecraft:snow_block"}) {
+            if (!floors.contains(block)) floors.add(block);
+        }
+        for (String block : floors) {
+            String name = block.replace("minecraft:", "");
+            for (double fall : new double[] {6.0, 12.0}) {
+                c = new Case("sound54_fall_" + (int) fall + "_" + name).moves().observer(5.5, 99.0, 2.5);
+                c.pos = new double[] {3.5, 99.0, 0.5};
+                c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air").cmd("setblock 3 98 0 " + block);
+                c.step(op("op", "set_fall", "distance", fall)).step(move(3.7, 99.0, 0.5, true));
+                out.add(c);
+                if (fall == 12.0 && !"slime_block".equals(name) && !"honey_block".equals(name)) break;
+            }
+            c = new Case("sound54_walk_" + name).moves().observer(8.5, 99.0, 2.5);
+            c.pos = new double[] {3.5, 99.0, 0.5};
+            c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air").cmd("fill 3 98 0 12 98 1 " + block);
+            for (int i = 1; i <= 8; i++) c.step(move(3.5 + i, 99.0, 0.5, true));
+            out.add(c);
+        }
+        // sneaking is silent on the ground; in the air it is not
+        c = new Case("sound54_walk_sneaking").moves().observer(8.5, 99.0, 2.5);
+        c.pos = new double[] {3.5, 99.0, 0.5};
+        c.sneaking = true;
+        c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air");
+        for (int i = 1; i <= 8; i++) c.step(move(3.5 + i * 0.5, 99.0, 0.5, true));
+        out.add(c);
+        // a thin block on top of the floor sounds with the floor's (the combination, the muffled)
+        for (String top : new String[] {"minecraft:white_carpet", "minecraft:moss_carpet", "minecraft:snow[layers=1]", "minecraft:pink_petals", "minecraft:glow_lichen[down=true]", "minecraft:crimson_roots"}) {
+            c = new Case("sound54_walk_over_" + top.replaceAll("[^a-z_]", "_").replace("minecraft_", "")).moves().observer(8.5, 99.0, 2.5);
+            c.pos = new double[] {3.5, 99.0625, 0.5};
+            c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air").cmd("fill 3 99 0 12 99 1 " + top);
+            for (int i = 1; i <= 8; i++) c.step(move(3.5 + i, 99.0625, 0.5, true));
+            out.add(c);
+        }
         for (String item : items) {
             c = sound54("place_" + item.replace("minecraft:", ""));
             c.watch(2, 100, 0).slot("h0", stack(item)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
