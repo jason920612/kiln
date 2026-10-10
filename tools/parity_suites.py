@@ -86,6 +86,7 @@ SUITES = {
     "interact52": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp52/interact/*.jsonl"}),
     "container52": (["-p", "kiln-sim", "--lib", "parity"], {"KILN_CONTAINER_VECTORS": "wp52/container/*.jsonl", "KILN_LANG": vec("generated/assets/minecraft/lang/en_us.json")}),
     "melee52": (["-p", "kiln-sim", "--lib", "melee_parity"], {"KILN_MELEE_VECTORS": vec("wp52/combat/melee.jsonl")}),
+    "effects52": (["-p", "kiln-sim", "--lib", "effect_parity"], {"KILN_EFFECT_VECTORS": vec("wp52/effects/impulse.jsonl")}),
 }
 
 SUMMARY =re.compile(r"(test result:|skipped|parity|match|scenarios|vectors|rounds|chunks|sequences|cases|agree|mismatch|diverg)", re.I)
