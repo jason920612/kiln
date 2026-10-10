@@ -87,6 +87,11 @@ SUITES = {
     "container52": (["-p", "kiln-sim", "--lib", "parity"], {"KILN_CONTAINER_VECTORS": "wp52/container/*.jsonl", "KILN_LANG": vec("generated/assets/minecraft/lang/en_us.json")}),
     "melee52": (["-p", "kiln-sim", "--lib", "melee_parity"], {"KILN_MELEE_VECTORS": vec("wp52/combat/melee.jsonl")}),
     "effects52": (["-p", "kiln-sim", "--lib", "effect_parity"], {"KILN_EFFECT_VECTORS": vec("wp52/effects/impulse.jsonl")}),
+    # wp53 suites: recorded into <work>/wp53 (the bee nest advancement criteria, a wolf in armor picking up armor from a dispenser). The 7 place52_*
+    # scenarios wp52 had taken out are back in wp52/interact/place52.jsonl and the mobs that pick up loot (pickup53_*) in m6-mobs2/vectors.jsonl.
+    "interact53": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp53/interact/*.jsonl"}),
+    "container53": (["-p", "kiln-sim", "--lib", "parity"], {"KILN_CONTAINER_VECTORS": "wp53/container/*.jsonl", "KILN_LANG": vec("generated/assets/minecraft/lang/en_us.json")}),
+    "plugin_compat": (["-p", "kiln-plugin-host", "--test", "api_compat", "--test", "wit_freeze"], {}),
 }
 
 SUMMARY =re.compile(r"(test result:|skipped|parity|match|scenarios|vectors|rounds|chunks|sequences|cases|agree|mismatch|diverg)", re.I)
