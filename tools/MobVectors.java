@@ -8794,7 +8794,8 @@ public class MobVectors {
 
     /** A pig, cow or chicken (adult or baby) of a sound variant is hurt by the player twice (it is knocked about, and walks) and then killed. */
     static void scenariosWp55Voices(List<Scenario> out) {
-        String[][] kinds = {{"pig", "classic", "mini", "big"}, {"cow", "classic", "moody"}, {"chicken", "classic", "picky"}};
+        String[][] kinds = {{"pig", "classic", "mini", "big"}, {"cow", "classic", "moody"}, {"chicken", "classic", "picky"},
+                {"wolf", "classic", "angry", "big", "cute", "grumpy", "puglin", "sad"}, {"cat", "classic", "royal"}};
         for (String[] k : kinds) {
             for (int v = 1; v < k.length; v++) {
                 for (boolean baby : new boolean[] {false, true}) {
