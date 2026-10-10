@@ -388,6 +388,7 @@ fn flyer_dump() {
     let path = std::env::var("KILN_FLYER_DUMP").unwrap_or_else(|_| "/tmp/flyer_dump.jsonl".into());
     let cells = 2 * w;
     let pieces = 6;
+    let all = std::env::var_os("KILN_FLYER_ALL").is_some();
     let total: usize = (0..pieces).fold(1, |a, i| a * (cells - i));
     let out = std::sync::Mutex::new(std::fs::File::create(path).unwrap());
     let (runs, kept) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
@@ -426,9 +427,9 @@ fn flyer_dump() {
                             runs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             let (p, c, x40, x120, changing) = outcome([a, b], last, false);
                             // intact, and still doing something at the end
-                            if c == p && changing {
+                            if (c == p && changing) || all {
                                 kept.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                writeln!(out.lock().unwrap(), "{{\"rows\":[{:?},{:?}],\"last\":[{},{}],\"x40\":{x40},\"x120\":{x120}}}", a, b, last.0, last.1).unwrap();
+                                writeln!(out.lock().unwrap(), "{{\"rows\":[{:?},{:?}],\"last\":[{},{}],\"x40\":{x40},\"x120\":{x120},\"intact\":{}}}", a, b, last.0, last.1, (c == p) as i32).unwrap();
                             }
                         }
                     }

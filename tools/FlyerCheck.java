@@ -191,7 +191,9 @@ public class FlyerCheck {
                         throw new RuntimeException(e);
                     }
                 }).get();
-                boolean same = vanilla[0] == kx40 && vanilla[1] == kx120;
+                // (Kiln's lines for machines that fell apart carry its measurement of what was left; compared the same way)
+                boolean kilnIntact = line.contains("\"intact\":1") || !line.contains("\"intact\"");
+                boolean same = vanilla[0] == kx40 && vanilla[1] == kx120 && (kilnIntact == (vanilla[2] == 1));
                 boolean flies = vanilla[2] == 1 && Math.abs(vanilla[1] - vanilla[0]) >= 3;
                 counts[0]++;
                 if (!same) counts[1]++;
