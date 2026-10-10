@@ -241,7 +241,7 @@ impl EntityExt for Cushion {
             if matches!(lava.kind, crate::physics::FluidKind::Lava | crate::physics::FluidKind::FlowingLava) && at.y as f64 + f64::from(crate::fluid::height(&*level, at, &lava)) > e.y() {
                 // (`lavaHurt`: the burn sound after a hurt that went through.)
                 if self.hurt(e, level, DamageKind::Lava, 4.0, None) && !e.silent {
-                    let pitch = 2.0 + e.random.next_float() * 0.4;
+                    let pitch = 2.0 + kiln_javamath::random::RandomSource::next_float(&mut e.random) * 0.4;
                     level.emit(crate::level::Event::Sound { pos: e.position(), sound: "minecraft:entity.generic.burn", source: "neutral", volume: 0.4, pitch });
                 }
             }
