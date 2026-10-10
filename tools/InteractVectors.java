@@ -4642,6 +4642,7 @@ public class InteractVectors {
         line.put("menus", c.watchMenus);
         line.put("maps", c.watchMaps);
         line.put("ticking", c.tickLevel);
+        line.put("pistons", c.pistonWorld);
         line.put("op", c.op);
         if (c.fullTicks) line.put("clock", startClock);
         line.put("mobs", c.watchMobs);
