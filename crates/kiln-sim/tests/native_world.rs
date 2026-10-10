@@ -26,7 +26,11 @@ fn item_count(sim: &Sim) -> usize {
 
 fn config(dir: &Path) -> SimConfig {
     let mut c = SimConfig::new(8, 4, Some(dir.to_owned()));
-    c.plugins = Some(kiln_sim::PluginSettings::new(kiln_plugin_host::examples::custom_dir("native-world", &["chat-format", "counter", "spawn-protection"], &[]).expect("example plugins")));
+    let mut plugins = kiln_sim::PluginSettings::new(kiln_plugin_host::examples::custom_dir("native-world", &["chat-format", "counter", "spawn-protection"], &[]).expect("example plugins"));
+    // The default budget (500 us a call) is for a running server: the first call into a plugin that was just compiled can take longer on a loaded
+    // machine, which fails closed (a timeout denies and records nothing), and the claim this test looks for would never be written.
+    plugins.call_budget = std::time::Duration::from_millis(200);
+    c.plugins = Some(plugins);
     c
 }
 
