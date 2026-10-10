@@ -3571,7 +3571,7 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
     let owners: Vec<(u128, kiln_entity::level::Seen)> = if throwers.is_empty() {
         Vec::new()
     } else {
-        entities.list.iter().filter(|o| !o.removed && throwers.contains(&o.uuid)).filter_map(|o| o.phys.as_deref().map(|p| (o.uuid, kiln_entity::level::Seen::of(p)))).collect()
+        entities.list.iter().filter(|o| !o.removed).filter_map(|o| o.phys.as_deref()).filter(|p| throwers.contains(&p.uuid)).map(|p| (p.uuid, kiln_entity::level::Seen::of(p))).collect()
     };
     for e in &mut entities.list {
         if e.removed {
