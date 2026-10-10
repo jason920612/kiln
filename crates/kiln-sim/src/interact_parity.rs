@@ -59,6 +59,11 @@ fn sound_source_name(id: i32) -> &'static str {
     ["master", "music", "record", "weather", "block", "hostile", "neutral", "player", "ambient", "voice", "ui"].get(id as usize).copied().unwrap_or("?")
 }
 
+thread_local! {
+    /// The case does not record sound pitches (an entity's voice pitch comes from its own random).
+    static NO_PITCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Kiln's packet as the vectors print it (`None`: not a kind the vectors record).
 fn decode(pkt: &Bytes) -> Option<Value> {
     use kiln_data::packets::play::clientbound as ids;
@@ -74,8 +79,9 @@ fn decode(pkt: &Bytes) -> Option<Value> {
             let (volume, pitch) = (r.f32().ok()?, r.f32().ok()?);
             // (The vectors print floats the way Java does: the shortest text of the float.)
             let java = |f: f32| format!("{f}").parse::<f64>().unwrap_or(f as f64);
+            let pitch = if NO_PITCH.with(|n| n.get()) { 0.0 } else { java(pitch) };
             json!({"t": "sound", "name": name, "source": sound_source_name(source), "pos": [x as f64 / 8.0, y as f64 / 8.0, z as f64 / 8.0],
-                   "volume": java(volume), "pitch": java(pitch)})
+                   "volume": java(volume), "pitch": pitch})
         }
         ids::SOUND_ENTITY => {
             let holder = r.varint().ok()?;
@@ -266,6 +272,13 @@ fn hangings_json(sim: &Sim) -> Value {
     for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
         for e in region.part().0.list.iter().filter(|e| !e.removed) {
             let Some(phys) = e.phys.as_deref() else { continue };
+            if let Some(m) = kiln_entity::mob::data(phys).filter(|m| m.kind == kiln_entity::mob::MobKind::Mannequin) {
+                // [type, x, y, z, 0, "health,pose,hurtTime,deathTime,height,invulnerableTime", 0, 0].
+                let p = phys.position();
+                let state = format!("{:.4},{},{},{},{:.4},{}", m.health, kiln_entity::mob::kinds::mannequin::pose_name_of(m), m.hurt_time, m.death_time, phys.height, phys.invulnerable_time);
+                rows.push((phys.type_name.to_owned(), p.x, p.y, p.z, json!([phys.type_name, p.x, p.y, p.z, 0, state, 0, 0])));
+                continue;
+            }
             if let Some(c) = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::cushion::Cushion>(phys) {
                 // [type, x, y, z, 0, color, riders, the riders seat height in ten thousandths].
                 let p = phys.position();
@@ -432,7 +445,7 @@ fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
     for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
         for e in region.part().0.list.iter().filter(|e| !e.removed) {
             let Some(phys) = e.phys.as_deref() else { continue };
-            if kiln_entity::ext_entity::hanging::direction_of(phys).is_none() && phys.type_name != "minecraft:armor_stand" && !kiln_entity::ext_entity::cushion::is_cushion(phys) {
+            if kiln_entity::ext_entity::hanging::direction_of(phys).is_none() && phys.type_name != "minecraft:armor_stand" && !kiln_entity::ext_entity::cushion::is_cushion(phys) && phys.type_name != "minecraft:mannequin" {
                 continue;
             }
             let p = phys.position();
@@ -446,6 +459,7 @@ fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
 }
 
 fn run_case(line: &Value) -> Vec<String> {
+    NO_PITCH.with(|n| n.set(line["no_pitch"].as_bool() == Some(true)));
     // (A map covers 128 blocks around the origin: the replay's player sees as far.)
     let maps = line["maps"].as_bool() == Some(true);
     let view = if maps { 8 } else { 2 };

@@ -107,6 +107,8 @@ public class InteractVectors {
         boolean watchMobs;
         // wp50: the cushions tick once after every step (the replay's level does), `tick_cushions` ticks them that many times.
         boolean tickCushions;
+        // wp50: sound pitches are not recorded (an entity's voice pitch comes from its own random).
+        boolean noPitch;
         // wp49: commands the replay runs together with the first step (after the level has settled), not before it
         // (a hive ages while the replay's level ticks; the recorded one stands still).
         List<String> late = new ArrayList<>();
@@ -717,6 +719,133 @@ public class InteractVectors {
         c = cushionCase("tick_while_sitting"); c.tickCushions = true;
         c.late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
         c.step(useEntity(2.5, 100.0, 0.5, 0, false)).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+    }
+
+    /** A mannequin case: ticked after every step, the mannequins summoned at the start (age 0), no pitches. */
+    static Case mannequinCase(String name, String summon) {
+        Case c = new Case("mannequin50_" + name).hanging();
+        c.tickCushions = true;
+        c.noPitch = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 3 99 0 minecraft:stone").late(summon);
+        return c;
+    }
+
+    static void mannequins50(List<Case> out) {
+        Case c;
+        String at = "summon minecraft:mannequin 2.5 100 0.5";
+        c = mannequinCase("idle", at);
+        c.step(op("op", "tick_cushions", "ticks", 5)).step(op("op", "tick_cushions", "ticks", 40));
+        out.add(c);
+        // ---- hitting: the weapon, the mode, the armor
+        String[][] weapons = {{"fist", ""}, {"stick", "minecraft:stick"}, {"sword", "minecraft:diamond_sword"}, {"axe", "minecraft:iron_axe"}, {"trident", "minecraft:trident"},
+                {"sharp", "minecraft:diamond_sword[enchantments={\"minecraft:sharpness\":5}]"}, {"fire", "minecraft:wooden_sword[enchantments={\"minecraft:fire_aspect\":2}]"},
+                {"knock", "minecraft:stick[enchantments={\"minecraft:knockback\":2}]"}, {"mace", "minecraft:mace"}};
+        for (String[] w : weapons) {
+            c = mannequinCase("hit_" + w[0], at);
+            if (!w[1].isEmpty()) c.slot("h0", parsed(w[1]));
+            c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 3));
+            out.add(c);
+        }
+        for (String mode : new String[] {"creative", "adventure"}) {
+            c = mannequinCase("hit_" + mode, at);
+            c.gameMode = mode;
+            c.slot("h0", parsed("minecraft:diamond_sword"));
+            c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 3));
+            out.add(c);
+        }
+        c = mannequinCase("hit_twice_at_once", at);
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5)).step(attackEntity(2.5, 100.5, 0.5));
+        out.add(c);
+        c = mannequinCase("hit_again_later", at);
+        c.slot("h0", parsed("minecraft:iron_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 12)).step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 12)).step(attackEntity(2.5, 100.5, 0.5));
+        out.add(c);
+        c = mannequinCase("hit_armored", "summon minecraft:mannequin 2.5 100 0.5 {equipment:{chest:{id:\"minecraft:diamond_chestplate\",count:1},head:{id:\"minecraft:iron_helmet\",count:1}}}");
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5));
+        out.add(c);
+        c = mannequinCase("hit_absorption", "summon minecraft:mannequin 2.5 100 0.5 {AbsorptionAmount:4.0f}");
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5));
+        out.add(c);
+        c = mannequinCase("hit_resistance", "summon minecraft:mannequin 2.5 100 0.5 {active_effects:[{id:\"minecraft:resistance\",amplifier:1b,duration:200}]}");
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5));
+        out.add(c);
+        // ---- dying
+        c = mannequinCase("kill", "summon minecraft:mannequin 2.5 100 0.5 {Health:3.0f,equipment:{mainhand:{id:\"minecraft:diamond\",count:1},head:{id:\"minecraft:iron_helmet\",count:1}}}");
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 10)).step(op("op", "tick_cushions", "ticks", 20));
+        out.add(c);
+        c = mannequinCase("kill_creative", "summon minecraft:mannequin 2.5 100 0.5 {Health:3.0f}");
+        c.gameMode = "creative";
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 30));
+        out.add(c);
+        c = mannequinCase("kill_named", "summon minecraft:mannequin 2.5 100 0.5 {Health:3.0f,CustomName:'\"Dummy\"'}");
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 30));
+        out.add(c);
+        // ---- the body
+        c = mannequinCase("fall", "summon minecraft:mannequin 2.5 112 0.5");
+        c.step(op("op", "tick_cushions", "ticks", 5)).step(op("op", "tick_cushions", "ticks", 20)).step(op("op", "tick_cushions", "ticks", 20));
+        out.add(c);
+        c = mannequinCase("fall_far", "summon minecraft:mannequin 2.5 140 0.5");
+        c.step(op("op", "tick_cushions", "ticks", 40)).step(op("op", "tick_cushions", "ticks", 40));
+        out.add(c);
+        c = mannequinCase("no_gravity", "summon minecraft:mannequin 2.5 105 0.5 {NoGravity:1b}");
+        c.step(op("op", "tick_cushions", "ticks", 20));
+        out.add(c);
+        c = mannequinCase("motion", "summon minecraft:mannequin 2.5 100 0.5 {Motion:[0.3d,0.5d,0.1d]}");
+        c.step(op("op", "tick_cushions", "ticks", 10)).step(op("op", "tick_cushions", "ticks", 30));
+        out.add(c);
+        c = mannequinCase("immovable", "summon minecraft:mannequin 2.5 105 0.5 {immovable:1b,Motion:[0.3d,0.0d,0.0d]}");
+        c.step(op("op", "tick_cushions", "ticks", 10)).step(op("op", "tick_cushions", "ticks", 30));
+        out.add(c);
+        c = mannequinCase("burning", "summon minecraft:mannequin 2.5 100 0.5 {Fire:100s}");
+        c.step(op("op", "tick_cushions", "ticks", 25)).step(op("op", "tick_cushions", "ticks", 25));
+        out.add(c);
+        c = mannequinCase("lava", at);
+        c.cmd("setblock 2 99 0 minecraft:lava");
+        c.step(op("op", "tick_cushions", "ticks", 15));
+        out.add(c);
+        c = mannequinCase("water", at);
+        c.cmd("setblock 2 99 0 minecraft:water").cmd("setblock 2 100 0 minecraft:water");
+        c.step(op("op", "tick_cushions", "ticks", 30));
+        out.add(c);
+        c = mannequinCase("suffocate", "summon minecraft:mannequin 2.5 100 0.5");
+        c.cmd("setblock 2 100 0 minecraft:stone").cmd("setblock 2 101 0 minecraft:stone");
+        c.step(op("op", "tick_cushions", "ticks", 12));
+        out.add(c);
+        for (String pose : new String[] {"crouching", "swimming", "fall_flying", "sleeping"}) {
+            c = mannequinCase("pose_" + pose, "summon minecraft:mannequin 2.5 100 0.5 {pose:\"" + pose + "\"}");
+            c.step(op("op", "tick_cushions", "ticks", 5));
+            out.add(c);
+        }
+        c = mannequinCase("effects", "summon minecraft:mannequin 2.5 100 0.5 {Health:10.0f,active_effects:[{id:\"minecraft:poison\",amplifier:0b,duration:300},{id:\"minecraft:regeneration\",amplifier:1b,duration:100}]}");
+        c.step(op("op", "tick_cushions", "ticks", 50)).step(op("op", "tick_cushions", "ticks", 50));
+        out.add(c);
+        c = mannequinCase("wither", "summon minecraft:mannequin 2.5 100 0.5 {active_effects:[{id:\"minecraft:wither\",amplifier:1b,duration:300}]}");
+        c.step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = mannequinCase("instant_damage", "summon minecraft:mannequin 2.5 100 0.5 {Health:15.0f}");
+        c.cmd("effect give @e[type=minecraft:mannequin] minecraft:instant_damage 1 1");
+        c.step(op("op", "tick_cushions", "ticks", 5));
+        out.add(c);
+        // ---- clicking: nothing reacts
+        for (String item : new String[] {"minecraft:name_tag", "minecraft:lead", "minecraft:shears", "minecraft:stick", "minecraft:diamond_chestplate", "minecraft:saddle", "minecraft:bucket", "minecraft:apple"}) {
+            c = mannequinCase("use_" + item.substring(10), at);
+            c.slot("h0", item.equals("minecraft:name_tag") ? parsed("minecraft:name_tag[custom_name='\"Bob\"']") : stack(item));
+            c.step(useEntity(2.5, 100.5, 0.5, 0, false)).step(useEntity(2.5, 100.5, 0.5, 0, true));
+            out.add(c);
+        }
+        c = mannequinCase("use_empty", at);
+        c.step(useEntity(2.5, 100.5, 0.5, 0, false));
+        out.add(c);
+        c = mannequinCase("commands", at);
+        c.step(op("op", "command", "command", "damage @e[type=minecraft:mannequin] 5 minecraft:generic")).step(op("op", "command", "command", "kill @e[type=minecraft:mannequin]"));
         out.add(c);
     }
 
@@ -2962,7 +3091,7 @@ public class InteractVectors {
         for (Object o : drain(p)) {
             if (o instanceof ClientboundSoundPacket s) {
                 out.add(op("t", "sound", "name", soundName(s), "source", s.getSource().getName(),
-                        "pos", new double[] {s.getX(), s.getY(), s.getZ()}, "volume", s.getVolume(), "pitch", s.getPitch()));
+                        "pos", new double[] {s.getX(), s.getY(), s.getZ()}, "volume", s.getVolume(), "pitch", recordNoPitch ? 0.0f : s.getPitch()));
             } else if (o instanceof ClientboundOpenSignEditorPacket e) {
                 out.add(op("t", "open_sign_editor", "pos", List.of(e.pos().getX(), e.pos().getY(), e.pos().getZ()),
                         "front", e.slot() == net.minecraft.world.level.block.entity.SignTextSlot.FRONT));
@@ -3025,7 +3154,7 @@ public class InteractVectors {
         net.minecraft.world.entity.Entity best = null;
         double bd = 1e18;
         for (var e : level.getEntities((net.minecraft.world.entity.Entity) null, new AABB(x - 2, y - 2, z - 2, x + 2, y + 2, z + 2),
-                en -> en instanceof net.minecraft.world.entity.decoration.HangingEntity || en instanceof net.minecraft.world.entity.decoration.ArmorStand || en instanceof net.minecraft.world.entity.decoration.Cushion)) {
+                en -> en instanceof net.minecraft.world.entity.decoration.HangingEntity || en instanceof net.minecraft.world.entity.decoration.ArmorStand || en instanceof net.minecraft.world.entity.decoration.Cushion || en instanceof net.minecraft.world.entity.decoration.Mannequin)) {
             double d = e.position().distanceToSqr(x, y, z);
             if (d < bd) { bd = d; best = e; }
         }
@@ -3049,6 +3178,11 @@ public class InteractVectors {
                 if (System.getenv("INTERACT_DEBUG") != null) System.out.println("DEBUG painting " + pt.getVariant().getRegisteredName() + " " + pt.getVariant().value().width() + "x" + pt.getVariant().value().height() + " bb " + pt.getBoundingBox());
             }
             rows.add(new Object[] {type, e.getX(), e.getY(), e.getZ(), e.getDirection().get3DDataValue(), item, rot, area});
+        }
+        // wp50: mannequins: [type, x, y, z, 0, "health,pose,hurtTime,deathTime,height,invulnerableTime", 0, 0].
+        for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 90, -16, 32, 120, 32))) {
+            String state = String.format(java.util.Locale.ROOT, "%.4f,%s,%d,%d,%.4f,%d", mq.getHealth(), mq.getPose().getSerializedName(), mq.hurtTime, mq.deathTime, mq.getBbHeight(), mq.invulnerableTime);
+            rows.add(new Object[] {BuiltInRegistries.ENTITY_TYPE.getKey(mq.getType()).toString(), mq.getX(), mq.getY(), mq.getZ(), 0, state, 0, 0});
         }
         // wp50: cushions: [type, x, y, z, 0, color, riders, the riders' seat height in ten thousandths].
         for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 90, -16, 32, 120, 32))) {
@@ -3096,6 +3230,7 @@ public class InteractVectors {
     }
 
     static boolean mobCase;
+    static boolean recordNoPitch;
 
     static List<Object> itemEntities() {
         ServerLevel level = server.overworld();
@@ -3188,6 +3323,7 @@ public class InteractVectors {
             case "tick_cushions" -> {
                 for (int i = 0; i < (int) s.get("ticks"); i++) {
                     for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 90, -16, 32, 120, 32))) cu.tick();
+                    for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 90, -16, 32, 120, 32))) mq.tick();
                 }
             }
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
@@ -3459,12 +3595,14 @@ public class InteractVectors {
         recordMenus = c.watchMenus;
         long startClock = server.overworld().getGameTime();
         mobCase = c.watchMobs;
+        recordNoPitch = c.noPitch;
         recordMaps = c.watchMaps;
         if (c.watchMaps) resetMaps();
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
             if (c.tickCushions && !"tick_cushions".equals(s.get("op"))) {
                 for (var cu : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 90, -16, 32, 120, 32))) cu.tick();
+                for (var mq : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 90, -16, 32, 120, 32))) mq.tick();
             }
             if (c.watchMaps) mapTick(p);
             Map<String, Object> r = new LinkedHashMap<>();
@@ -3525,6 +3663,8 @@ public class InteractVectors {
         command("kill @e[type=minecraft:glow_item_frame]");
         command("kill @e[type=minecraft:painting]");
         command("kill @e[type=minecraft:cushion]");
+        command("kill @e[type=minecraft:mannequin]");
+        for (var mq : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-64, -64, -64, 64, 320, 64))) mq.discard();
         command("kill @e[type=minecraft:armor_stand]");
         command("kill @e[type=minecraft:falling_block]");
         command("kill @e[type=minecraft:item]");
@@ -3549,6 +3689,7 @@ public class InteractVectors {
         line.put("stat_items", c.statItems);
         line.put("food", c.watchFood ? c.food : null);
         line.put("hanging", c.watchHanging);
+        line.put("no_pitch", c.noPitch);
         line.put("stands", c.watchStands);
         line.put("bees", c.watchBees);
         line.put("menus", c.watchMenus);
@@ -3675,6 +3816,7 @@ public class InteractVectors {
             brushes49(all);
             banners50(all);
             cushions50(all);
+            mannequins50(all);
             cauldrons50(all);
             commandBlocks49(all);
         }).get();

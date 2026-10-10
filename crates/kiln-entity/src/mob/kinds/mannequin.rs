@@ -70,6 +70,11 @@ fn pose_name(p: i32) -> &'static str {
     }
 }
 
+/// The pose a mannequin has, by its serialized name.
+pub fn pose_name_of(m: &MobData) -> &'static str {
+    pose_name(st(m).pose)
+}
+
 fn pose_of(name: &str) -> Option<i32> {
     Some(match name {
         "standing" => pose::STANDING,
