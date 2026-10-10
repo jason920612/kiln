@@ -583,6 +583,8 @@ pub(crate) struct WorldState {
     pub tick_times: Vec<i64>,
     pub tick_index: usize,
     pub forced_dirty: bool,
+    /// A block is being placed with its data (`Host::set_block`): its block entity goes out with the block's change, not on its own.
+    pub defer_be_packet: bool,
     /// Each level's generation pipeline (none for flat levels), for `/locate`.
     pub pipelines: Vec<Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>>>,
     /// Each level's worldgen as block behaviour uses it (what grows: saplings, bone meal).

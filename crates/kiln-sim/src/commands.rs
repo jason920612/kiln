@@ -314,13 +314,8 @@ impl Sim {
         None
     }
 
-    /// The block changes [`Sim::with_level_held`] kept while data was loaded go out now. A structure block's or jigsaw block's own data has
-    /// sent the block with its data already (`load_block_entity`).
-    fn send_held_changes(&mut self, dim: crate::DimId, pos: [i32; 3], mut held: Vec<[i32; 3]>) {
-        let own = self.dims[dim].regions.block_entity_data(pos[0], pos[1], pos[2]).is_some_and(|(kind, _)| matches!(kiln_world::block_entity::type_name(kind), "minecraft:structure_block" | "minecraft:jigsaw"));
-        if own {
-            held.retain(|p| *p != pos);
-        }
+    /// The block changes [`Sim::with_level_held`] kept while data was loaded go out now (the block entity with them).
+    fn send_held_changes(&mut self, dim: crate::DimId, pos: [i32; 3], held: Vec<[i32; 3]>) {
         if !held.is_empty() {
             self.with_level_in(dim, pos, |level| level.out.changed.extend(held));
         }
@@ -394,10 +389,16 @@ impl Sim {
         }
         if matches!(kiln_world::block_entity::type_name(old.kind), "minecraft:structure_block" | "minecraft:jigsaw") {
             // (The block and its data go to the clients together, once: `sendBlockUpdated`.)
+            let deferred = self.world.defer_be_packet;
             self.with_level_in(dim, pos, |l| {
                 crate::structure_block::loaded(l, kiln_blocks::BlockPos::new(x, y, z));
-                l.out.changed.push(pos);
+                if !deferred {
+                    l.out.changed.push(pos);
+                }
             });
+            return true;
+        }
+        if self.world.defer_be_packet {
             return true;
         }
         let Some((kind, tag)) = self.dims[dim].regions.block_entity_data(x, y, z) else { return true };
@@ -1356,7 +1357,9 @@ impl Host for Sim {
         let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
         // (With data to load the changes wait for it: the clients get the block entity once, with its data.)
         let (state_changed, held) = self.with_level_held(dim, pos, nbt.is_some(), |level| kiln_blocks::set_block(level, at, state, flags.0)).unwrap_or((false, Vec::new()));
+        self.world.defer_be_packet = held.contains(&pos);
         let loaded = self.load_nbt(dim, pos, nbt);
+        self.world.defer_be_packet = false;
         self.send_held_changes(dim, pos, held);
         loaded || state_changed
     }
@@ -1373,7 +1376,9 @@ impl Host for Sim {
             .collect();
         let input = kiln_blocks::commands::BlockInput { state: block.state, defined };
         let (state_changed, held) = self.with_level_held(dim, pos, block.nbt.is_some(), |level| input.place(level, at, flags.0)).unwrap_or((false, Vec::new()));
+        self.world.defer_be_packet = held.contains(&pos);
         let loaded = self.load_nbt(dim, pos, block.nbt.as_ref());
+        self.world.defer_be_packet = false;
         self.send_held_changes(dim, pos, held);
         loaded || state_changed
     }
