@@ -736,6 +736,8 @@ public class MobVectors {
         StringBuilder trace = new StringBuilder();
         // wp54: the sounds the scenario's player hears, per tick.
         StringBuilder soundTrace = new StringBuilder();
+        StringBuilder entitySoundTrace = new StringBuilder();
+        soundTracked = tracked;
         drainSounds(player);
         StringBuilder othersTrace = new StringBuilder();
         StringBuilder heartTrace = new StringBuilder();
@@ -901,6 +903,8 @@ public class MobVectors {
             }
             if (tick > 0) soundTrace.append(',');
             soundTrace.append(drainSounds(player));
+            if (tick > 0) entitySoundTrace.append(',');
+            entitySoundTrace.append('[').append(entitySounds).append(']');
             if (System.getenv("PICKUP_DEBUG") != null && tick % 10 == 0) {
                 Mob m0 = (Mob) tracked.get(0);
                 Entity it0 = tracked.size() > initial ? tracked.get(initial) : null;
@@ -975,8 +979,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp, Float.toString(s.playerHealth));
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"esound_trace\":[%s],\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, entitySoundTrace, trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
@@ -1262,9 +1266,14 @@ public class MobVectors {
     }
 
     /** wp54: the sounds the player's connection was sent since the last call, as `[[name, source, volume, pitch, x, y, z], ...]`. */
+    /** wp55: the entity sound packets (`playSound(null, entity, ...)`: a long jump landing, a ram, a shear) of the last `drainSounds`, by the index of the mob that made them. */
+    static StringBuilder entitySounds = new StringBuilder();
+    static List<Entity> soundTracked = new ArrayList<>();
+
     static String drainSounds(ServerPlayer p) throws Exception {
         Object connection = get(p.connection, "connection");
         EmbeddedChannel ch = (EmbeddedChannel) get(connection, "channel");
+        entitySounds = new StringBuilder();
         StringBuilder out = new StringBuilder("[");
         Object o;
         while ((o = ch.readOutbound()) != null) {
@@ -1272,6 +1281,14 @@ public class MobVectors {
             if (o instanceof net.minecraft.network.protocol.game.ClientboundBundlePacket b) for (var q : b.subPackets()) packets.add(q);
             else packets.add(o);
             for (Object q : packets) {
+                if (q instanceof net.minecraft.network.protocol.game.ClientboundSoundEntityPacket ep) {
+                    int who = -1;
+                    for (int i = 0; i < soundTracked.size(); i++) if (soundTracked.get(i).getId() == ep.getId()) who = i;
+                    if (entitySounds.length() > 0) entitySounds.append(',');
+                    entitySounds.append(String.format(Locale.ROOT, "[\"%s\",\"%s\",%s,%s,%d]", ep.getSound().unwrapKey().map(k -> k.identifier().toString()).orElse("?"), ep.getSource().getName(),
+                            Float.toString(ep.getVolume()), Float.toString(ep.getPitch()), who));
+                    continue;
+                }
                 if (!(q instanceof net.minecraft.network.protocol.game.ClientboundSoundPacket sp)) continue;
                 if (out.length() > 1) out.append(',');
                 out.append(String.format(Locale.ROOT, "[\"%s\",\"%s\",%s,%s,%s,%s,%s]", sp.getSound().unwrapKey().map(k -> k.identifier().toString()).orElse("?"), sp.getSource().getName(),
@@ -8749,6 +8766,7 @@ public class MobVectors {
         scenariosWp52Wolf(out);
         scenariosWp52Eggs(out);
         scenariosWp53Pickup(out);
+        scenariosWp55Voices(out);
     }
 
     // ------------------------------------------------------------------ wp53: Mob.aiStep picks up what lies at its feet
@@ -8770,6 +8788,37 @@ public class MobVectors {
         s.ticks = 30;
         floor(s, 16, "minecraft:grass_block");
         return s;
+    }
+
+    // ------------------------------------------------------------------ wp55: the voices of the sound variants
+
+    /** A pig, cow or chicken (adult or baby) of a sound variant is hurt by the player twice (it is knocked about, and walks) and then killed. */
+    static void scenariosWp55Voices(List<Scenario> out) {
+        String[][] kinds = {{"pig", "classic", "mini", "big"}, {"cow", "classic", "moody"}, {"chicken", "classic", "picky"}};
+        for (String[] k : kinds) {
+            for (int v = 1; v < k.length; v++) {
+                for (boolean baby : new boolean[] {false, true}) {
+                    long seed = 55000L + Math.abs((k[0] + k[v] + baby).hashCode() % 1000);
+                    MobSpec m = new MobSpec("minecraft:" + k[0], 0.5, BY, 0.5, 30f, seed);
+                    m.nbt = "{PersistenceRequired:1b,NoAI:1b,sound_variant:\"minecraft:" + k[v] + "\"" + (baby ? ",Age:-24000" : "") + "}";
+                    Scenario s = new Scenario("voice55_" + k[0] + "_" + k[v] + (baby ? "_baby" : ""));
+                    s.mobs.add(m);
+                    s.player = new double[] {3.5, BY, 0.5};
+                    s.playerCreative = true;
+                    s.levelSeed = 5500 + Math.abs((k[0] + k[v]).hashCode() % 300);
+                    s.hurts.put(5, new double[] {0, 1.0});
+                    s.hurts.put(25, new double[] {0, 1.0});
+                    Action a = new Action(45, "hurt");
+                    a.mob = 0;
+                    a.what = "minecraft:magic";
+                    a.x = 100.0;
+                    s.actions.add(a);
+                    s.ticks = 70;
+                    floor(s, 16, "minecraft:grass_block");
+                    out.add(s);
+                }
+            }
+        }
     }
 
     static String worn(String slot, String item) {

@@ -74,6 +74,8 @@ pub struct StepHint {
     pub weather: u8,
     /// A killer bunny is hostile.
     pub evil: bool,
+    /// A cow of the moody sound variant (`entity.cow_moody.step`).
+    pub moody: bool,
 }
 
 /// The hint of a mob.
@@ -84,6 +86,7 @@ pub fn hint_of(m: &crate::mob::MobData) -> StepHint {
         MobKind::CopperGolem => h.weather = crate::mob::kinds::copper_golem::st(m).weather,
         MobKind::SulfurCube => h.swallowed = crate::mob::kinds::sulfur_cube::has_body(m),
         MobKind::Rabbit => h.evil = crate::mob::kinds::rabbit::variant(m) == crate::mob::kinds::rabbit::EVIL,
+        MobKind::Cow => h.moody = crate::mob::variant_voice(m, "step").is_some(),
         _ => {}
     }
     h
@@ -275,6 +278,7 @@ impl Entity {
                     Step::Silent => {}
                     Step::Fixed(sound, volume) => {
                         let (sound, volume) = row.and_then(|r| r.baby).filter(|_| self.step_hint.baby).unwrap_or((sound, volume));
+                        let sound = if self.step_hint.moody { "minecraft:entity.cow_moody.step" } else { sound };
                         self.play_own_sound(level, sound, volume, 1.0);
                     }
                 }

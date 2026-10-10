@@ -134,6 +134,15 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
     if kind == MobKind::Chicken {
         m.chicken_jockey = r.bool_or("IsChickenJockey", false);
     }
+    // `VariantUtils.readVariant` and the sound variant of pigs, cows and chickens.
+    if matches!(kind, MobKind::Pig | MobKind::Cow | MobKind::Chicken) {
+        if let Some(v) = r.get("variant").and_then(Tag::as_str).and_then(|v| kiln_data::synced_id(&format!("{}_variant", kind.type_name()), v)) {
+            m.variant = v;
+        }
+        if let Some(v) = r.get("sound_variant").and_then(Tag::as_str).and_then(|v| kiln_data::synced_id(&format!("{}_sound_variant", kind.type_name()), v)) {
+            m.sound_variant = v;
+        }
+    }
     match &mut m.species {
         Species::Sheep { color, sheared } => {
             *sheared = r.bool_or("Sheared", false);
@@ -252,6 +261,14 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     }
     if super::breed::is_animal(m.kind) {
         o.put("InLove", Tag::Int(m.in_love));
+    }
+    if matches!(m.kind, MobKind::Pig | MobKind::Cow | MobKind::Chicken) {
+        if let Some(v) = super::kinds::wolf::synced_name(&format!("{}_variant", m.kind.type_name()), m.variant) {
+            o.put("variant", Tag::String(v.to_owned()));
+        }
+        if let Some(v) = super::kinds::wolf::synced_name(&format!("{}_sound_variant", m.kind.type_name()), m.sound_variant) {
+            o.put("sound_variant", Tag::String(v.to_owned()));
+        }
     }
     match &m.species {
         Species::Sheep { color, sheared } => {
