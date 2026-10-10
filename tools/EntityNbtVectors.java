@@ -46,6 +46,16 @@ public class EntityNbtVectors {
         c.add(new Case("mannequin_profile_bad_name", "mannequin", "{profile:\"this name is far too long\"}"));
         c.add(new Case("mannequin_profile_bad_type", "mannequin", "{profile:5}"));
         c.add(new Case("mannequin_profile_bad_model", "mannequin", "{profile:{name:\"x\",model:\"huge\"}}"));
+        c.add(new Case("mannequin_profile_id_string", "mannequin", "{profile:{id:\"00000001-0000-0002-0000-000000000003\"}}"));
+        c.add(new Case("mannequin_profile_properties_map", "mannequin", "{profile:{name:\"M\",properties:{textures:[\"abc\",\"def\"],other:[\"x\"]}}}"));
+        c.add(new Case("mannequin_profile_name_too_long_compound", "mannequin", "{profile:{name:\"this name is far too long\"}}"));
+        c.add(new Case("mannequin_profile_name_space", "mannequin", "{profile:\"a b\"}"));
+        c.add(new Case("mannequin_profile_bad_texture", "mannequin", "{profile:{name:\"x\",texture:\"BAD ID\"}}"));
+        c.add(new Case("mannequin_profile_bad_id", "mannequin", "{profile:{name:\"x\",id:[I;1,2]}}"));
+        c.add(new Case("mannequin_profile_property_missing_value", "mannequin", "{profile:{name:\"x\",properties:[{name:\"a\"}]}}"));
+        c.add(new Case("mannequin_profile_name_only_props", "mannequin", "{profile:{name:\"Solo\",properties:[{name:\"t\",value:\"v\"}]}}"));
+        c.add(new Case("mannequin_description_styled", "mannequin", "{description:'{\"text\":\"Guard\",\"bold\":true}'}"));
+        c.add(new Case("mannequin_description_list", "mannequin", "{description:['a',{text:\"b\"}]}"));
         c.add(new Case("mannequin_layers", "mannequin", "{hidden_layers:[\"cape\",\"hat\"]}"));
         c.add(new Case("mannequin_layers_all", "mannequin", "{hidden_layers:[\"cape\",\"jacket\",\"left_sleeve\",\"right_sleeve\",\"left_pants_leg\",\"right_pants_leg\",\"hat\"]}"));
         c.add(new Case("mannequin_layers_bad", "mannequin", "{hidden_layers:[\"cape\",\"nonsense\"]}"));
