@@ -154,7 +154,7 @@ impl Kind for Mannequin {
         s.hide_description = r.bool_or("hide_description", false);
         s.description = match r.get("description") {
             // (Stored as the component codec writes it back: a list of parts becomes a text with extras.)
-            Some(t) => kiln_item::Text::from_nbt(t.clone()).map(|x| x.nbt().clone()),
+            Some(t) => normalized_text(t),
             None => None,
         };
         crate::mob::refresh_dimensions(e, m);
@@ -201,4 +201,26 @@ impl Kind for Mannequin {
             d.set(data::entity::POSE, &DataValue::Pose(s.pose));
         }
     }
+}
+
+/// `ComponentSerialization.CODEC` read and written again: a list of parts is its first part with the others as
+/// `extra`; a text with nothing but its text is the bare string.
+fn normalized_text(t: &Tag) -> Option<Tag> {
+    let t = kiln_item::Text::from_nbt(t.clone())?.nbt().clone();
+    Some(match &t {
+        Tag::List(parts) if !parts.is_empty() => {
+            let mut first = match normalized_text(&parts[0])? {
+                Tag::String(s) => vec![("text".to_owned(), Tag::String(s))],
+                Tag::Compound(c) => c,
+                other => return Some(other),
+            };
+            let extra: Vec<Tag> = parts[1..].iter().filter_map(normalized_text).collect();
+            if !extra.is_empty() {
+                first.push(("extra".into(), Tag::List(extra)));
+            }
+            Tag::Compound(first)
+        }
+        Tag::Compound(c) if c.len() == 1 && c[0].0 == "text" && matches!(c[0].1, Tag::String(_)) => c[0].1.clone(),
+        other => other.clone(),
+    })
 }
