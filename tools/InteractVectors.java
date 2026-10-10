@@ -1631,6 +1631,8 @@ public class InteractVectors {
         for (String[] m : new String[][] {{"stone", "sticky_piston[facing=east]", "stone"}, {"slime", "sticky_piston[facing=east]", "slime_block"}, {"honey", "sticky_piston[facing=east]", "honey_block"}}) {
             for (String type : new String[] {"pig", "item"}) {
                 for (int i = 0; i < places.length; i++) {
+                    // (An item that ends up inside a block moves out of it by its own random, which the replay does not share; one in the air has fallen further.)
+                    if ("item".equals(type) && (i == 1 || i == 2 || i == 6)) continue;
                     c = p54("spot_" + m[0] + "_" + type + "_" + i);
                     c.cmd("setblock 4 100 0 minecraft:" + m[1]).cmd("setblock 5 100 0 minecraft:" + m[2]).cmd(summon54(type, places[i][0], places[i][1], places[i][2]));
                     for (int k = 0; k < 3; k++) c.step(op("op", "idle"));
@@ -1639,7 +1641,7 @@ public class InteractVectors {
             }
         }
         double[][] below = {{4.5, 100.0, 0.5}, {4.2, 100.0, 0.5}, {4.8, 100.0, 0.2}, {3.9, 100.0, 0.5}};
-        for (String type : new String[] {"pig", "item", "armor_stand"}) {
+        for (String type : new String[] {"pig", "armor_stand"}) {
             for (int i = 0; i < below.length; i++) {
                 c = p54("down_" + type + "_" + i);
                 c.cmd("setblock 4 102 0 minecraft:sticky_piston[facing=down]").cmd("setblock 4 101 0 minecraft:slime_block").cmd(summon54(type, below[i][0], below[i][1], below[i][2]));
