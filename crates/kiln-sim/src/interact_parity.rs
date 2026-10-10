@@ -674,6 +674,67 @@ fn run_case(line: &Value) -> Vec<String> {
                     })),
                 ));
             }
+            "set_structure" => {
+                use kiln_proto::packets::serverbound as sb;
+                let ints = |k: &str| -> [i32; 3] { arr3(&step[k]) };
+                let (off, size) = (ints("offset"), ints("size"));
+                inbox.push(ToSim::Packet(
+                    1,
+                    PlayIn::SetStructureBlock(Box::new(sb::StructureBlockUpdate {
+                        pos: arr3(&step["pos"]),
+                        update_type: match step["update"].as_str().unwrap() {
+                            "SAVE_AREA" => sb::StructureUpdateType::SaveArea,
+                            "LOAD_AREA" => sb::StructureUpdateType::LoadArea,
+                            "SCAN_AREA" => sb::StructureUpdateType::ScanArea,
+                            _ => sb::StructureUpdateType::UpdateData,
+                        },
+                        mode: match step["mode"].as_str().unwrap() {
+                            "SAVE" => sb::StructureMode::Save,
+                            "LOAD" => sb::StructureMode::Load,
+                            "CORNER" => sb::StructureMode::Corner,
+                            _ => sb::StructureMode::Data,
+                        },
+                        name: step["name"].as_str().unwrap().to_owned(),
+                        offset: off.map(|v| v.clamp(-48, 48) as i8),
+                        size: size.map(|v| v.clamp(0, 48) as i8),
+                        mirror: match step["mirror"].as_str().unwrap() {
+                            "LEFT_RIGHT" => sb::Mirror::LeftRight,
+                            "FRONT_BACK" => sb::Mirror::FrontBack,
+                            _ => sb::Mirror::None,
+                        },
+                        rotation: match step["rotation"].as_str().unwrap() {
+                            "CLOCKWISE_90" => sb::Rotation::Clockwise90,
+                            "CLOCKWISE_180" => sb::Rotation::Clockwise180,
+                            "COUNTERCLOCKWISE_90" => sb::Rotation::CounterClockwise90,
+                            _ => sb::Rotation::None,
+                        },
+                        metadata: step["metadata"].as_str().unwrap().to_owned(),
+                        integrity: (step["integrity"].as_f64().unwrap() as f32).clamp(0.0, 1.0),
+                        seed: step["seed"].as_i64().unwrap(),
+                        ignore_entities: step["ignore_entities"].as_bool().unwrap(),
+                        show_air: step["show_air"].as_bool().unwrap(),
+                        show_bounding_box: step["show_box"].as_bool().unwrap(),
+                        strict: step["strict"].as_bool().unwrap(),
+                    })),
+                ));
+            }
+            "set_jigsaw" => {
+                use kiln_proto::packets::serverbound::JigsawBlockUpdate;
+                inbox.push(ToSim::Packet(
+                    1,
+                    PlayIn::SetJigsawBlock(Box::new(JigsawBlockUpdate {
+                        pos: arr3(&step["pos"]),
+                        name: step["name"].as_str().unwrap().to_owned(),
+                        target: step["target"].as_str().unwrap().to_owned(),
+                        pool: step["pool"].as_str().unwrap().to_owned(),
+                        final_state: step["final_state"].as_str().unwrap().to_owned(),
+                        rollable: step["joint"].as_str() == Some("ROLLABLE"),
+                        selection_priority: i32_of(&step["selection"]),
+                        placement_priority: i32_of(&step["placement"]),
+                    })),
+                ));
+            }
+            "jigsaw_generate" => inbox.push(ToSim::Packet(1, PlayIn::JigsawGenerate { pos: arr3(&step["pos"]), levels: i32_of(&step["levels"]), keep_jigsaws: step["keep"].as_bool().unwrap() })),
             "menu_slot_state" => {
                 let id = sim.players[&1].containers.counter;
                 inbox.push(ToSim::Packet(1, PlayIn::ContainerSlotStateChanged { slot: i32_of(&step["slot"]), container_id: id, enabled: step["enabled"].as_bool().unwrap() }));
@@ -744,7 +805,7 @@ fn run_case(line: &Value) -> Vec<String> {
         let mut want_packets: Vec<String> = want["packets"].as_array().unwrap().iter().map(|v| normalize_want(v).to_string()).collect();
         // Vanilla sends two or more changes of one section as a Section Blocks Update, which the
         // vectors do not record (Kiln sends each change on its own).
-        if step["op"] == "command" && got_packets.iter().filter(|p| p.contains("\"t\":\"block_update\"")).count() >= 2 {
+        if matches!(step["op"].as_str(), Some("command" | "set_structure")) && got_packets.iter().filter(|p| p.contains("\"t\":\"block_update\"")).count() >= 2 {
             got_packets.retain(|p| !p.contains("\"t\":\"block_update\""));
         }
         // (The attack sound is the cooldown's: this level does not tick between the vanilla steps.)
@@ -801,6 +862,14 @@ fn run_case(line: &Value) -> Vec<String> {
             // (A hive's bees age with the ticks Kiln's level makes between the steps; the recorded level stands still.)
             let (got, expected) = (got.map(no_hive_ticks).map(no_mob_uuids), expected.map(no_hive_ticks).map(no_mob_uuids));
             eq(&format!("block entity {at:?}"), format!("{got:?}"), format!("{expected:?}"));
+        }
+        if let Some(want_templates) = want.get("templates").and_then(Value::as_object) {
+            // The templates the manager holds (an id it has none for is null), as the saved NBT.
+            for (id, hex_want) in want_templates {
+                let got = sim.template_nbt(id).map(|t| sorted(&t));
+                let expected = hex_want.as_str().map(|h| sorted(&tag_of(h)));
+                eq(&format!("template {id}"), format!("{got:?}"), format!("{expected:?}"));
+            }
         }
         let mut got_items: Vec<String> = sim.item_stacks().iter().filter(|s| line["mobs"].as_bool() != Some(true) || s.item_name() != "minecraft:rotten_flesh").map(stack_hex).collect();
         got_items.sort();
