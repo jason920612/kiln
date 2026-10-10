@@ -607,6 +607,7 @@ impl Default for WorldState {
             tick_times: vec![0; 100],
             tick_index: 0,
             forced_dirty: false,
+            defer_be_packet: false,
             pipelines: Vec::new(),
         }
     }
