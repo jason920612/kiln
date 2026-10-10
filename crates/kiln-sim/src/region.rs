@@ -1522,7 +1522,17 @@ fn use_on_block(
         return;
     }
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
-    let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
+    let Some((placed_at, placed_state)) = placement::place(level, &item, &ctx) else { return };
+    // `BlockItem.updateBlockStateFromTag`: the item's `block_state` properties the block has are set (clients only).
+    if let Some(props) = placed_from.get(kiln_item::keys::BLOCK_STATE) {
+        let mut s = placed_state;
+        for (name, value) in &props.0 {
+            s = kiln_blocks::state::set(s, name, value);
+        }
+        if s != placed_state {
+            kiln_blocks::set_block(level, placed_at, s, kiln_blocks::flags::CLIENTS);
+        }
+    }
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
     // `CommandBlock.setPlacedBy` (after the item's block entity data, which only a game master may set).
     if kiln_data::block_logic::is_instance(level.block(placed_at), kiln_data::block_logic::BlockClass::CommandBlock) {
