@@ -109,6 +109,8 @@ public class InteractVectors {
         boolean tickCushions;
         // wp50: sound pitches are not recorded (an entity's voice pitch comes from its own random).
         boolean noPitch;
+        // wp50: structure templates (by id) recorded after every step.
+        List<String> templates = new ArrayList<>();
         // wp49: commands the replay runs together with the first step (after the level has settled), not before it
         // (a hive ages while the replay's level ticks; the recorded one stands still).
         List<String> late = new ArrayList<>();
@@ -134,6 +136,16 @@ public class InteractVectors {
 
         Case watch(int x, int y, int z) {
             watch.add(new int[] {x, y, z});
+            return this;
+        }
+
+        Case watchBox(int x0, int y0, int z0, int x1, int y1, int z1) {
+            for (int y = y0; y <= y1; y++) for (int z = z0; z <= z1; z++) for (int x = x0; x <= x1; x++) watch(x, y, z);
+            return this;
+        }
+
+        Case template(String id) {
+            templates.add(id);
             return this;
         }
 
@@ -847,6 +859,311 @@ public class InteractVectors {
         out.add(c);
         c = mannequinCase("commands", at);
         c.step(op("op", "command", "command", "damage @e[type=minecraft:mannequin] 5 minecraft:generic")).step(op("op", "command", "command", "kill @e[type=minecraft:mannequin]"));
+        out.add(c);
+    }
+
+    // ---------------------------------------------------------------- wp50: structure blocks and jigsaw blocks
+
+    static Map<String, Object> setStructure(String update, String mode, String name, int[] off, int[] size, String mirror, String rotation, String metadata,
+            boolean ignoreEntities, boolean strict, boolean showAir, boolean showBox, double integrity, long seed) {
+        return op("op", "set_structure", "pos", List.of(2, 100, 0), "update", update, "mode", mode, "name", name,
+                "offset", List.of(off[0], off[1], off[2]), "size", List.of(size[0], size[1], size[2]), "mirror", mirror, "rotation", rotation,
+                "metadata", metadata, "ignore_entities", ignoreEntities, "strict", strict, "show_air", showAir, "show_box", showBox,
+                "integrity", integrity, "seed", seed);
+    }
+
+    /** A structure block screen's packet with the usual settings (offset (1, 0, 0), size 3x3x3). */
+    static Map<String, Object> structPacket(String update, String mode, String name) {
+        return setStructure(update, mode, name, new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L);
+    }
+
+    static Case structCase(String name, String id) {
+        Case c = new Case("structure50_" + name).hanging();
+        c.op = true;
+        c.gameMode = "creative";
+        c.cmd("fill -2 98 -6 12 98 8 minecraft:stone").cmd("fill -2 99 -6 12 106 8 minecraft:air")
+                .cmd("setblock 2 100 0 minecraft:structure_block[mode=save]");
+        c.watchBox(0, 100, -3, 7, 103, 5);
+        c.watch(2, 100, 0);
+        if (id != null) c.template(id);
+        return c;
+    }
+
+    /** The cube x 3..5, y 100..102, z 0..2 filled with all sorts of blocks. */
+    static void mixedContent(Case c) {
+        c.cmd("setblock 3 100 0 minecraft:stone")
+                .cmd("setblock 4 100 0 minecraft:oak_stairs[facing=east,half=bottom,shape=straight]")
+                .cmd("setblock 5 100 0 minecraft:chest[facing=north]{Items:[{Slot:0b,id:\"minecraft:diamond\",count:3}]}")
+                .cmd("setblock 3 100 1 minecraft:oak_sign[rotation=4]{front_text:{messages:['\"hello\"','\"\"','\"\"','\"\"']}}")
+                .cmd("setblock 4 100 1 minecraft:glass")
+                .cmd("setblock 5 100 1 minecraft:water")
+                .cmd("setblock 3 101 0 minecraft:structure_void")
+                .cmd("setblock 4 101 1 minecraft:lever[face=floor,facing=north,powered=true]")
+                .cmd("setblock 5 100 2 minecraft:stone").cmd("setblock 5 101 2 minecraft:redstone_wire[power=7]")
+                .cmd("setblock 3 102 2 minecraft:oak_fence").cmd("setblock 3 101 2 minecraft:oak_fence")
+                .cmd("setblock 4 102 0 minecraft:jigsaw[orientation=east_up]{pool:\"minecraft:empty\",name:\"minecraft:a\",target:\"minecraft:b\",joint:\"aligned\",final_state:\"minecraft:stone\",placement_priority:3,selection_priority:2}")
+                .cmd("setblock 5 102 1 minecraft:structure_block[mode=data]{metadata:\"chest\",name:\"minecraft:x\"}");
+    }
+
+    static void structures50(List<Case> out) {
+        Case c;
+        // ---- putting one down: a structure block remembers who placed it
+        for (String block : new String[] {"minecraft:structure_block", "minecraft:jigsaw", "minecraft:command_block"}) {
+            c = new Case("structure50_place_" + block.substring(10)).hanging();
+            c.op = true;
+            c.gameMode = "creative";
+            c.cmd("setblock 2 99 0 minecraft:stone").watch(2, 100, 0);
+            c.slot("h0", stack(block));
+            c.step(useOn(2, 99, 0, 1, 0));
+            out.add(c);
+        }
+        // ---- clicking: the structure block takes the click of an operator in creative mode (its screen opens), others put a block on it
+        for (String who : new String[] {"op_creative", "op_survival", "creative", "survival"}) {
+            c = new Case("structure50_click_" + who).hanging();
+            c.op = who.startsWith("op");
+            c.gameMode = who.endsWith("creative") ? "creative" : "survival";
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:structure_block[mode=save]").watch(2, 100, 0).watch(2, 101, 0);
+            c.slot("h0", stack("minecraft:cobblestone", 4)).stat("minecraft:cobblestone");
+            c.step(useOn(2, 100, 0, 1, 0));
+            out.add(c);
+            c = new Case("structure50_click_jigsaw_" + who).hanging();
+            c.op = who.startsWith("op");
+            c.gameMode = who.endsWith("creative") ? "creative" : "survival";
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:jigsaw[orientation=north_up]").watch(2, 100, 0).watch(2, 101, 0);
+            c.slot("h0", stack("minecraft:cobblestone", 4)).stat("minecraft:cobblestone");
+            c.step(useOn(2, 100, 0, 1, 0));
+            out.add(c);
+        }
+        // ---- the screen's settings
+        c = structCase("update_all", null);
+        c.step(setStructure("UPDATE_DATA", "SAVE", "wp50:house", new int[] {-3, 2, 5}, new int[] {7, 8, 9}, "LEFT_RIGHT", "CLOCKWISE_90", "meta data", false, true, true, false, 0.25, 123456789012L));
+        c.step(setStructure("UPDATE_DATA", "LOAD", "wp50:house", new int[] {1, 0, 0}, new int[] {1, 1, 1}, "FRONT_BACK", "COUNTERCLOCKWISE_90", "", true, false, false, true, 1.0, 0L));
+        c.step(setStructure("UPDATE_DATA", "CORNER", "wp50:house", new int[] {1, 0, 0}, new int[] {1, 1, 1}, "NONE", "CLOCKWISE_180", "x", true, false, false, true, 0.5, -5L));
+        c.step(setStructure("UPDATE_DATA", "DATA", "wp50:house", new int[] {0, 0, 0}, new int[] {0, 0, 0}, "NONE", "NONE", "player_spawn", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        for (String name : new String[] {"", "house", "wp50:house", "Bad Name", "a:b:c", "wp50:dir/sub/house", "WP50:upper", "wp50:ok_name.1-2"}) {
+            c = structCase("name_" + name.replaceAll("[^a-zA-Z0-9]", "_"), null);
+            c.step(structPacket("UPDATE_DATA", "SAVE", name));
+            out.add(c);
+        }
+        // a block entity that was not given its fields (made by /setblock): the defaults
+        c = structCase("defaults", null);
+        c.cmd("setblock 6 100 0 minecraft:structure_block").cmd("setblock 7 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:q\",posX:100,posY:-100,sizeX:99,sizeZ:-3,rotation:\"BAD\",mode:\"CORNER\",integrity:7.5f}");
+        c.watch(6, 100, 0).watch(7, 100, 0);
+        c.step(op("op", "command", "command", "data merge block 2 100 0 {mode:\"LOAD\",integrity:0.5f,seed:5L}"));
+        out.add(c);
+        // not an operator (or not in creative): nothing happens
+        for (String who : new String[] {"survival_op", "creative_not_op"}) {
+            c = structCase("denied_" + who, "wp50:denied");
+            c.op = who.equals("survival_op");
+            c.gameMode = who.equals("survival_op") ? "survival" : "creative";
+            mixedContent(c);
+            c.step(structPacket("UPDATE_DATA", "SAVE", "wp50:denied")).step(structPacket("SAVE_AREA", "SAVE", "wp50:denied"));
+            out.add(c);
+        }
+        // ---- saving an area
+        c = structCase("save_mixed", "wp50:mixed");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:mixed"));
+        out.add(c);
+        c = structCase("save_mixed_entities_flag", "wp50:mixed2");
+        mixedContent(c);
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp50:mixed2", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("save_air", "wp50:air");
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:air"));
+        out.add(c);
+        c = structCase("save_one_block", "wp50:one");
+        c.cmd("setblock 3 100 0 minecraft:diamond_block");
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp50:one", new int[] {1, 0, 0}, new int[] {1, 1, 1}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("save_size_zero", "wp50:zero");
+        c.cmd("setblock 3 100 0 minecraft:diamond_block");
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp50:zero", new int[] {1, 0, 0}, new int[] {0, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("save_negative_offset", "wp50:neg");
+        c.cmd("fill -1 100 -2 1 101 0 minecraft:cobblestone");
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp50:neg", new int[] {-3, 0, -2}, new int[] {3, 2, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("save_twice", "wp50:twice");
+        c.cmd("setblock 3 100 0 minecraft:stone");
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:twice")).step(op("op", "command", "command", "setblock 4 100 0 minecraft:gold_block")).step(structPacket("SAVE_AREA", "SAVE", "wp50:twice"));
+        out.add(c);
+        c = structCase("save_no_name", null);
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", ""));
+        out.add(c);
+        c = structCase("save_in_load_mode", "wp50:wrongmode");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "LOAD", "wp50:wrongmode"));
+        out.add(c);
+        c = structCase("save_big", "wp50:big");
+        c.cmd("fill 3 100 0 20 120 20 minecraft:copper_block hollow");
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp50:big", new int[] {1, 0, 0}, new int[] {20, 20, 20}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("save_blocks_with_entities", "wp50:bes");
+        c.cmd("setblock 3 100 0 minecraft:barrel[facing=up]{Items:[{Slot:3b,id:\"minecraft:apple\",count:5},{Slot:4b,id:\"minecraft:stick\",count:1}],CustomName:'\"Box\"'}")
+                .cmd("setblock 4 100 0 minecraft:furnace[facing=south,lit=false]{BurnTime:10s}")
+                .cmd("setblock 5 100 0 minecraft:spawner{SpawnData:{entity:{id:\"minecraft:pig\"}}}")
+                .cmd("setblock 3 100 1 minecraft:white_banner[rotation=3]{patterns:[{color:\"red\",pattern:\"minecraft:stripe_top\"}]}")
+                .cmd("setblock 4 100 1 minecraft:player_head[rotation=2]")
+                .cmd("setblock 5 100 1 minecraft:command_block[facing=north]{Command:\"say hi\"}")
+                .cmd("setblock 3 100 2 minecraft:lectern[facing=west]")
+                .cmd("setblock 4 100 2 minecraft:bell[attachment=floor,facing=north]")
+                .cmd("setblock 5 100 2 minecraft:decorated_pot");
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:bes"));
+        out.add(c);
+        // ---- loading an area it saved (cleared in between)
+        String[][] places = {
+                {"same", "NONE", "NONE"}, {"rot90", "NONE", "CLOCKWISE_90"}, {"rot180", "NONE", "CLOCKWISE_180"}, {"rot270", "NONE", "COUNTERCLOCKWISE_90"},
+                {"mirror_lr", "LEFT_RIGHT", "NONE"}, {"mirror_fb", "FRONT_BACK", "NONE"}, {"mirror_lr_rot90", "LEFT_RIGHT", "CLOCKWISE_90"}, {"mirror_fb_rot270", "FRONT_BACK", "COUNTERCLOCKWISE_90"}};
+        for (String[] pl : places) {
+            c = structCase("load_" + pl[0], "wp50:l_" + pl[0]);
+            mixedContent(c);
+            c.step(structPacket("SAVE_AREA", "SAVE", "wp50:l_" + pl[0]));
+            c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+            c.step(setStructure("LOAD_AREA", "LOAD", "wp50:l_" + pl[0], new int[] {1, 0, 0}, new int[] {3, 3, 3}, pl[1], pl[2], "", true, false, false, true, 1.0, 0L));
+            out.add(c);
+        }
+        c = structCase("load_other_offset", "wp50:off");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:off"));
+        c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:off", new int[] {2, 1, 2}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_over_blocks", "wp50:over");
+        c.cmd("setblock 3 100 0 minecraft:stone").cmd("setblock 4 101 1 minecraft:oak_planks");
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:over"));
+        c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:obsidian"));
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:over", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        for (double integrity : new double[] {0.0, 0.3, 0.5, 0.9}) {
+            for (long seed : new long[] {42L, -7L, 9999999999L}) {
+                c = structCase("load_integrity_" + (int) (integrity * 10) + "_" + seed, "wp50:i" + (int) (integrity * 10) + "s" + Math.abs(seed));
+                c.cmd("fill 3 100 0 5 102 2 minecraft:bricks");
+                c.step(structPacket("SAVE_AREA", "SAVE", "wp50:i" + (int) (integrity * 10) + "s" + Math.abs(seed)));
+                c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+                c.step(setStructure("LOAD_AREA", "LOAD", "wp50:i" + (int) (integrity * 10) + "s" + Math.abs(seed), new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, integrity, seed));
+                out.add(c);
+            }
+        }
+        c = structCase("load_strict", "wp50:strict");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:strict"));
+        c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:strict", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, true, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_not_found", null);
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:nowhere", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_wrong_mode", "wp50:lm");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:lm"));
+        c.step(setStructure("LOAD_AREA", "DATA", "wp50:lm", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_other_size", "wp50:size");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:size"));
+        c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:size", new int[] {1, 0, 0}, new int[] {5, 1, 2}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:size", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_vanilla_template", "minecraft:igloo/top");
+        c.step(setStructure("LOAD_AREA", "LOAD", "minecraft:igloo/top", new int[] {1, 0, 0}, new int[] {7, 5, 8}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        c.step(setStructure("LOAD_AREA", "LOAD", "minecraft:igloo/top", new int[] {1, 0, 0}, new int[] {7, 5, 8}, "NONE", "CLOCKWISE_90", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_updates_data", "minecraft:igloo/top");
+        c.step(op("op", "command", "command", "data merge block 2 100 0 {mode:\"LOAD\",name:\"minecraft:igloo/top\"}"));
+        c.step(setStructure("LOAD_AREA", "LOAD", "minecraft:igloo/top", new int[] {1, 0, 0}, new int[] {1, 1, 1}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        // ---- scanning for corners
+        for (String variant : new String[] {"two", "one", "three", "none", "other_name", "far", "flat", "mode_load", "inverted"}) {
+            c = structCase("scan_" + variant, null);
+            c.cmd("setblock 2 100 0 minecraft:structure_block[mode=save]{name:\"wp50:scan\"}");
+            switch (variant) {
+                case "two" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 7 104 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "one" -> c.cmd("setblock 6 103 4 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "three" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 7 104 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}")
+                        .cmd("setblock 9 101 -3 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "other_name" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:other\"}").cmd("setblock 7 104 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "far" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 90 104 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "flat" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 7 100 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "mode_load" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 7 104 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "inverted" -> c.cmd("setblock -1 104 -3 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 7 100 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                default -> { }
+            }
+            c.step(structPacket("SCAN_AREA", variant.equals("mode_load") ? "LOAD" : "SAVE", "wp50:scan"));
+            out.add(c);
+        }
+        // ---- redstone: save when powered, load when powered, unload a corner
+        for (String mode : new String[] {"SAVE", "LOAD", "CORNER", "DATA"}) {
+            c = structCase("power_" + mode.toLowerCase(), "wp50:p_" + mode.toLowerCase());
+            mixedContent(c);
+            c.step(structPacket("UPDATE_DATA", "SAVE", "wp50:p_" + mode.toLowerCase()));
+            c.step(structPacket("SAVE_AREA", "SAVE", "wp50:p_" + mode.toLowerCase()));
+            c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+            c.step(structPacket("UPDATE_DATA", mode, "wp50:p_" + mode.toLowerCase()));
+            c.step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"));
+            c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+            c.step(op("op", "command", "command", "setblock 2 101 0 minecraft:air"));
+            c.step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"));
+            out.add(c);
+        }
+        c = structCase("power_save_new_content", "wp50:p_new");
+        c.cmd("setblock 3 100 0 minecraft:stone");
+        c.step(structPacket("UPDATE_DATA", "SAVE", "wp50:p_new"));
+        c.step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block")).step(op("op", "command", "command", "setblock 3 100 0 minecraft:gold_block"))
+                .step(op("op", "command", "command", "setblock 2 101 0 minecraft:air")).step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"));
+        out.add(c);
+        c = structCase("power_load_missing", null);
+        c.step(structPacket("UPDATE_DATA", "LOAD", "wp50:missing")).step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"));
+        out.add(c);
+        c = structCase("power_by_item", "wp50:p_item");
+        c.cmd("setblock 3 100 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:redstone_block"));
+        c.step(structPacket("UPDATE_DATA", "SAVE", "wp50:p_item")).step(useOn(2, 100, 0, 5, 0));
+        out.add(c);
+        c = structCase("power_corner_unload", "wp50:p_corner");
+        c.cmd("setblock 3 100 0 minecraft:stone");
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:p_corner"))
+                .step(structPacket("UPDATE_DATA", "CORNER", "wp50:p_corner")).step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"))
+                .step(structPacket("UPDATE_DATA", "LOAD", "wp50:p_corner")).step(op("op", "command", "command", "setblock 2 101 0 minecraft:air")).step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"));
+        out.add(c);
+        // ---- jigsaw blocks
+        String[][] jigsaws = {
+                {"all", "minecraft:a", "minecraft:b", "minecraft:village/plains/houses", "minecraft:stone", "ALIGNED", "5", "-3"},
+                {"rollable", "minecraft:door", "minecraft:door", "minecraft:empty", "minecraft:air", "ROLLABLE", "0", "0"},
+                {"namespaced", "wp50:x/y", "wp50:z", "wp50:pool/sub", "minecraft:oak_stairs[facing=east]", "ALIGNED", "100", "100"},
+                {"bad_state", "minecraft:a", "minecraft:b", "minecraft:empty", "not a block state", "ROLLABLE", "1", "1"},
+                {"long_state", "minecraft:a", "minecraft:b", "minecraft:empty", "x".repeat(300), "ROLLABLE", "1", "1"}};
+        for (String[] j : jigsaws) {
+            c = new Case("structure50_jigsaw_" + j[0]).hanging();
+            c.op = true;
+            c.gameMode = "creative";
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:jigsaw[orientation=up_north]").watch(2, 100, 0);
+            c.step(op("op", "set_jigsaw", "pos", List.of(2, 100, 0), "name", j[1], "target", j[2], "pool", j[3], "final_state", j[4], "joint", j[5], "selection", Integer.parseInt(j[6]), "placement", Integer.parseInt(j[7])));
+            out.add(c);
+        }
+        for (String who : new String[] {"survival", "creative_not_op"}) {
+            c = new Case("structure50_jigsaw_denied_" + who).hanging();
+            c.op = who.equals("survival");
+            c.gameMode = who.equals("survival") ? "survival" : "creative";
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:jigsaw[orientation=up_north]").watch(2, 100, 0);
+            c.step(op("op", "set_jigsaw", "pos", List.of(2, 100, 0), "name", "minecraft:a", "target", "minecraft:b", "pool", "minecraft:empty", "final_state", "minecraft:air", "joint", "ROLLABLE", "selection", 0, "placement", 0));
+            out.add(c);
+        }
+        c = new Case("structure50_jigsaw_wrong_block").hanging();
+        c.op = true;
+        c.gameMode = "creative";
+        c.cmd("setblock 2 100 0 minecraft:stone").watch(2, 100, 0);
+        c.step(op("op", "set_jigsaw", "pos", List.of(2, 100, 0), "name", "minecraft:a", "target", "minecraft:b", "pool", "minecraft:empty", "final_state", "minecraft:air", "joint", "ROLLABLE", "selection", 0, "placement", 0));
+        out.add(c);
+        c = new Case("structure50_jigsaw_defaults").hanging();
+        c.op = true;
+        c.gameMode = "creative";
+        c.cmd("setblock 2 100 0 minecraft:jigsaw[orientation=north_up]").cmd("setblock 3 100 0 minecraft:jigsaw[orientation=up_east]").cmd("setblock 4 100 0 minecraft:jigsaw[orientation=east_up]{joint:\"bad\",pool:\"bad pool\",placement_priority:\"x\"}")
+                .watch(2, 100, 0).watch(3, 100, 0).watch(4, 100, 0);
+        c.step(op("op", "command", "command", "data merge block 2 100 0 {name:\"minecraft:set\"}"));
         out.add(c);
     }
 
@@ -3138,6 +3455,22 @@ public class InteractVectors {
         return out;
     }
 
+    /** wp50: the structure templates in the manager (the ones asked for, without making any): id to the saved NBT as hex. */
+    static Map<String, Object> templatesOf(Case c) throws Exception {
+        Map<String, Object> out = new LinkedHashMap<>();
+        Object repo = get(server.getStructureManager(), "structureRepository");
+        for (String id : c.templates) {
+            Object entry = ((Map<?, ?>) repo).get(Identifier.parse(id));
+            if (entry instanceof Optional<?> o && o.isPresent()) {
+                var t = (net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate) o.get();
+                out.put(id, nbtHex(t.save(new net.minecraft.nbt.CompoundTag())));
+            } else {
+                out.put(id, null);
+            }
+        }
+        return out;
+    }
+
     static List<Object> blocks(Case c) throws Exception {
         ServerLevel level = server.overworld();
         List<Object> out = new ArrayList<>();
@@ -3349,6 +3682,30 @@ public class InteractVectors {
                     for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) cu.tick();
                     for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 60, -16, 32, 330, 32))) mq.tick();
                 }
+            }
+            // wp50: the structure block screen's packet.
+            case "set_structure" -> {
+                @SuppressWarnings("unchecked") List<Integer> at = (List<Integer>) s.get("pos");
+                @SuppressWarnings("unchecked") List<Integer> off = (List<Integer>) s.get("offset");
+                @SuppressWarnings("unchecked") List<Integer> size = (List<Integer>) s.get("size");
+                p.connection.handleSetStructureBlock(new net.minecraft.network.protocol.game.ServerboundSetStructureBlockPacket(new BlockPos(at.get(0), at.get(1), at.get(2)),
+                        net.minecraft.world.level.block.entity.StructureBlockEntity.UpdateType.valueOf((String) s.get("update")),
+                        net.minecraft.world.level.block.state.properties.StructureMode.valueOf((String) s.get("mode")), (String) s.get("name"),
+                        new BlockPos(off.get(0), off.get(1), off.get(2)), new net.minecraft.core.Vec3i(size.get(0), size.get(1), size.get(2)),
+                        net.minecraft.world.level.block.Mirror.valueOf((String) s.get("mirror")), net.minecraft.world.level.block.Rotation.valueOf((String) s.get("rotation")),
+                        (String) s.get("metadata"), (boolean) s.get("ignore_entities"), (boolean) s.get("strict"), (boolean) s.get("show_air"), (boolean) s.get("show_box"),
+                        ((Number) s.get("integrity")).floatValue(), ((Number) s.get("seed")).longValue()));
+            }
+            // wp50: the jigsaw block screen's packets.
+            case "set_jigsaw" -> {
+                @SuppressWarnings("unchecked") List<Integer> at = (List<Integer>) s.get("pos");
+                p.connection.handleSetJigsawBlock(new net.minecraft.network.protocol.game.ServerboundSetJigsawBlockPacket(new BlockPos(at.get(0), at.get(1), at.get(2)),
+                        Identifier.parse((String) s.get("name")), Identifier.parse((String) s.get("target")), Identifier.parse((String) s.get("pool")), (String) s.get("final_state"),
+                        net.minecraft.world.level.block.entity.JigsawBlockEntity.JointType.valueOf((String) s.get("joint")), (int) s.get("selection"), (int) s.get("placement")));
+            }
+            case "jigsaw_generate" -> {
+                @SuppressWarnings("unchecked") List<Integer> at = (List<Integer>) s.get("pos");
+                p.connection.handleJigsawGenerate(new net.minecraft.network.protocol.game.ServerboundJigsawGeneratePacket(new BlockPos(at.get(0), at.get(1), at.get(2)), (int) s.get("levels"), (boolean) s.get("keep")));
             }
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
             // wp49: a click on a menu button (`ServerboundContainerButtonClickPacket`) of the player's open menu.
@@ -3636,6 +3993,7 @@ public class InteractVectors {
             r.put("inv", inventory(p));
             r.put("packets", packets(p));
             r.put("blocks", blocks(c));
+            if (!c.templates.isEmpty()) r.put("templates", templatesOf(c));
             r.put("entities", itemEntities());
             if (c.watchMobs) r.put("mobs", mobRows());
             Map<String, Object> used = new LinkedHashMap<>();
@@ -3713,6 +4071,7 @@ public class InteractVectors {
         for (int[] w : c.watch) watch.add(List.of(w[0], w[1], w[2]));
         line.put("watch", watch);
         line.put("stat_items", c.statItems);
+        line.put("templates", c.templates);
         line.put("food", c.watchFood ? c.food : null);
         line.put("hanging", c.watchHanging);
         line.put("no_pitch", c.noPitch);
@@ -3843,6 +4202,7 @@ public class InteractVectors {
             banners50(all);
             cushions50(all);
             mannequins50(all);
+            structures50(all);
             cauldrons50(all);
             commandBlocks49(all);
         }).get();
