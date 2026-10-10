@@ -873,7 +873,12 @@ public class InteractVectors {
 
     static Map<String, Object> setStructure(String update, String mode, String name, int[] off, int[] size, String mirror, String rotation, String metadata,
             boolean ignoreEntities, boolean strict, boolean showAir, boolean showBox, double integrity, long seed) {
-        return op("op", "set_structure", "pos", List.of(2, 100, 0), "update", update, "mode", mode, "name", name,
+        return setStructureAt(new int[] {2, 100, 0}, update, mode, name, off, size, mirror, rotation, metadata, ignoreEntities, strict, showAir, showBox, integrity, seed);
+    }
+
+    static Map<String, Object> setStructureAt(int[] at, String update, String mode, String name, int[] off, int[] size, String mirror, String rotation, String metadata,
+            boolean ignoreEntities, boolean strict, boolean showAir, boolean showBox, double integrity, long seed) {
+        return op("op", "set_structure", "pos", List.of(at[0], at[1], at[2]), "update", update, "mode", mode, "name", name,
                 "offset", List.of(off[0], off[1], off[2]), "size", List.of(size[0], size[1], size[2]), "mirror", mirror, "rotation", rotation,
                 "metadata", metadata, "ignore_entities", ignoreEntities, "strict", strict, "show_air", showAir, "show_box", showBox,
                 "integrity", integrity, "seed", seed);
@@ -1013,11 +1018,12 @@ public class InteractVectors {
         // a template with entities comes back (the hanging ones, the stands and the items are what the vectors can see)
         c = structCase("load_entities", "wp52:back");
         entitiesContent(c, false);
+        c.cmd("setblock 2 100 6 minecraft:structure_block[mode=load]").watch(2, 100, 6);
         c.step(setStructure("SAVE_AREA", "SAVE", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
-        c.step(op("op", "command", "command", "kill @e[type=minecraft:armor_stand]")).step(op("op", "command", "command", "kill @e[type=minecraft:item_frame]"))
-                .step(op("op", "command", "command", "kill @e[type=minecraft:painting]")).step(op("op", "command", "command", "kill @e[type=minecraft:item]"));
-        c.step(setStructure("UPDATE_DATA", "LOAD", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
-        c.step(setStructure("LOAD_AREA", "LOAD", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        c.step(setStructureAt(new int[] {2, 100, 6}, "UPDATE_DATA", "LOAD", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        c.step(setStructureAt(new int[] {2, 100, 6}, "LOAD_AREA", "LOAD", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        // turned and mirrored, the entities go with the blocks
+        c.step(setStructureAt(new int[] {2, 100, 6}, "LOAD_AREA", "LOAD", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "LEFT_RIGHT", "CLOCKWISE_90", "", false, false, false, true, 1.0, 0L));
         c.stands();
         out.add(c);
         c = structCase("save_air", "wp50:air");
