@@ -2735,6 +2735,27 @@ pub(crate) fn stab_mob(
 /// `i` of the region's players right-clicks entity `target` with the item in `hand` (0 main,
 /// 1 off). The held item changes as the mob says; sheared wool drops.
 #[allow(clippy::too_many_arguments)]
+/// `handlePickItemFromEntity`: the entity within reach gives what it is a pick of.
+pub(crate) fn pick_item_from_entity(entities: &Entities, p: &mut Player, target: i32) {
+    let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
+    if entities.list[idx].removed {
+        return;
+    }
+    let Some(phys) = entities.list[idx].phys.as_deref() else { return };
+    // `isWithinEntityInteractionRange(entity, 3.0)`.
+    let bb = phys.bounding_box();
+    let eye = p.eye_position();
+    let d = |v: f64, lo: f64, hi: f64| if v < lo { lo - v } else if v > hi { v - hi } else { 0.0 };
+    let (dx, dy, dz) = (d(eye[0], bb.min_x, bb.max_x), d(eye[1], bb.min_y, bb.max_y), d(eye[2], bb.min_z, bb.max_z));
+    let range = p.attribute(crate::combat::ENTITY_INTERACTION_RANGE) + 3.0;
+    if dx * dx + dy * dy + dz * dz >= range * range {
+        return;
+    }
+    if let Some(stack) = kiln_entity::ext_entity::pick_result(phys) {
+        p.try_pick_item(&stack);
+    }
+}
+
 pub(crate) fn interact_mob(
     entities: &mut Entities,
     level: &mut RegionLevel,

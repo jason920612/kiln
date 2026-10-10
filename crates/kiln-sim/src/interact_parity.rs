@@ -540,6 +540,11 @@ fn stand_diff(got: &[StandRow], want: &[StandRow]) -> String {
 }
 
 /// The id of the hanging entity (or armor stand) nearest to `at`.
+fn vec3_of_value(v: &Value) -> [f64; 3] {
+    let a = v.as_array().unwrap();
+    [a[0].as_f64().unwrap(), a[1].as_f64().unwrap(), a[2].as_f64().unwrap()]
+}
+
 fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
     let mut best: Option<(f64, i32)> = None;
     for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
@@ -703,6 +708,22 @@ fn run_case(line: &Value) -> Vec<String> {
                     1,
                     PlayIn::EditBook { slot: i32_of(&step["slot"]), pages, title: step["title"].as_str().map(str::to_owned) },
                 ));
+            }
+            "pick_entity" => {
+                let at = vec3_of_value(&step["pos"]);
+                let mut best: Option<(f64, i32)> = None;
+                for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
+                    for e in region.part().0.list.iter().filter(|e| !e.removed) {
+                        let Some(phys) = e.phys.as_deref() else { continue };
+                        let p = phys.position();
+                        let d = (p.x - at[0]).powi(2) + (p.y - at[1]).powi(2) + (p.z - at[2]).powi(2);
+                        if best.is_none_or(|b| d < b.0) {
+                            best = Some((d, e.id));
+                        }
+                    }
+                }
+                let Some((_, id)) = best else { panic!("{}: no entity near {at:?} at step {n}", line["name"]) };
+                inbox.push(ToSim::Packet(1, PlayIn::PickItemFromEntity { entity_id: id, include_data: step["include"].as_bool().unwrap() }));
             }
             "pick_block" => inbox.push(ToSim::Packet(1, PlayIn::PickItemFromBlock { pos: arr3(&step["pos"]), include_data: step["include"].as_bool().unwrap() })),
             "use_entity" | "attack_entity" => {

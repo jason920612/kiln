@@ -3344,6 +3344,84 @@ public class InteractVectors {
         return op("op", "pick_block", "pos", List.of(x, y, z), "include", include);
     }
 
+    // ---------------------------------------------------------------- wp52: middle click on an entity (`handlePickItemFromEntity`)
+
+    static void pickEntities52(List<Case> out) {
+        Case c;
+        String[][] things = {
+                {"armor_stand", "summon minecraft:armor_stand 4 100 1 {NoGravity:1b}"},
+                {"item_frame_empty", "setblock 5 100 1 minecraft:stone|summon minecraft:item_frame 4 100 1 {Facing:5b}"},
+                {"item_frame_item", "setblock 5 100 1 minecraft:stone|summon minecraft:item_frame 4 100 1 {Facing:5b,Item:{id:\"minecraft:diamond\",count:3}}"},
+                {"glow_frame", "setblock 5 100 1 minecraft:stone|summon minecraft:glow_item_frame 4 100 1 {Facing:5b}"},
+                {"named_frame", "setblock 5 100 1 minecraft:stone|summon minecraft:item_frame 4 100 1 {Facing:5b,CustomName:'\"Fr\"'}"},
+                {"painting", "setblock 5 100 1 minecraft:stone|summon minecraft:painting 4 100 1 {facing:1b,variant:\"minecraft:kebab\"}"},
+                {"cushion_red", "setblock 4 99 1 minecraft:stone|summon minecraft:cushion 4.5 100 1.5 {Color:\"red\"}"},
+                {"cushion_white", "setblock 4 99 1 minecraft:stone|summon minecraft:cushion 4.5 100 1.5 {}"},
+                {"mannequin", "summon minecraft:mannequin 4.5 100 1.5 {}"},
+                {"end_crystal", "summon minecraft:end_crystal 4.5 100 1.5 {}"},
+                {"minecart", "summon minecraft:minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"chest_minecart", "summon minecraft:chest_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"hopper_minecart", "summon minecraft:hopper_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"furnace_minecart", "summon minecraft:furnace_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"tnt_minecart", "summon minecraft:tnt_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"command_minecart", "summon minecraft:command_block_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"spawner_minecart", "summon minecraft:spawner_minecart 4.5 100 1.5 {NoGravity:1b}"},
+                {"oak_boat", "summon minecraft:oak_boat 4.5 100 1.5 {NoGravity:1b}"},
+                {"cherry_chest_boat", "summon minecraft:cherry_chest_boat 4.5 100 1.5 {NoGravity:1b}"},
+                {"bamboo_raft", "summon minecraft:bamboo_raft 4.5 100 1.5 {NoGravity:1b}"},
+                {"item", "summon minecraft:item 4.5 100 1.5 {Item:{id:\"minecraft:stone\",count:1},NoGravity:1b}"},
+                {"marker", "summon minecraft:marker 4.5 100 1.5 {}"},
+                {"snowball", "summon minecraft:snowball 4.5 100 1.5 {NoGravity:1b}"},
+                {"tnt", "summon minecraft:tnt 4.5 100 1.5 {NoGravity:1b,fuse:80}"},
+                {"pig", "summon minecraft:pig 4.5 100 1.5 {NoAI:1b}"},
+                {"cow", "summon minecraft:cow 4.5 100 1.5 {NoAI:1b}"},
+                {"wolf", "summon minecraft:wolf 4.5 100 1.5 {NoAI:1b}"},
+                {"zombie", "summon minecraft:zombie 4.5 100 1.5 {NoAI:1b}"},
+                {"villager", "summon minecraft:villager 4.5 100 1.5 {NoAI:1b}"},
+                {"iron_golem", "summon minecraft:iron_golem 4.5 100 1.5 {NoAI:1b}"},
+                {"creeper", "summon minecraft:creeper 4.5 100 1.5 {NoAI:1b}"},
+                {"slime", "summon minecraft:slime 4.5 100 1.5 {NoAI:1b,Size:1}"},
+                {"bat", "summon minecraft:bat 4.5 100 1.5 {NoAI:1b}"},
+                {"giant", "summon minecraft:giant 4.5 100 1.5 {NoAI:1b}"},
+                {"ender_dragon", "summon minecraft:ender_dragon 4.5 101 1.5 {NoAI:1b}"},
+                {"wither", "summon minecraft:wither 4.5 101 1.5 {NoAI:1b}"},
+                {"zombie_horse", "summon minecraft:zombie_horse 4.5 100 1.5 {NoAI:1b}"},
+                {"copper_golem", "summon minecraft:copper_golem 4.5 100 1.5 {NoAI:1b}"},
+        };
+        for (String[] t : things) {
+            c = new Case("pickent52_" + t[0]);
+            c.gameMode = "creative";
+            for (String cmd : t[1].split("\\|")) c.cmd(cmd);
+            c.step(op("op", "pick_entity", "pos", List.of(4.5, 100.0, 1.5), "include", false));
+            out.add(c);
+        }
+        // A survival player gets what he has: from the main inventory into the hotbar, or nothing.
+        for (String[] t : new String[][] {{"pig", "minecraft:pig_spawn_egg", "summon minecraft:pig 4.5 100 1.5 {NoAI:1b}"}, {"minecart", "minecraft:minecart", "summon minecraft:minecart 4.5 100 1.5 {NoGravity:1b}"}}) {
+            c = new Case("pickent52_survival_has_" + t[0]);
+            c.gameMode = "survival";
+            c.cmd(t[2]).slot("m20", stack(t[1], 4)).slot("h0", stack("minecraft:dirt"));
+            c.step(op("op", "pick_entity", "pos", List.of(4.5, 100.0, 1.5), "include", false));
+            out.add(c);
+            c = new Case("pickent52_survival_hasnt_" + t[0]);
+            c.gameMode = "survival";
+            c.cmd(t[2]).slot("h0", stack("minecraft:dirt"));
+            c.step(op("op", "pick_entity", "pos", List.of(4.5, 100.0, 1.5), "include", false));
+            out.add(c);
+        }
+        // Out of reach: nothing.
+        c = new Case("pickent52_far");
+        c.gameMode = "creative";
+        c.cmd("summon minecraft:pig 40.5 100 1.5 {NoAI:1b}");
+        c.step(op("op", "pick_entity", "pos", List.of(40.5, 100.0, 1.5), "include", false));
+        out.add(c);
+        // An item frame holding an item: the item (a second pick finds it in the hotbar).
+        c = new Case("pickent52_frame_twice");
+        c.gameMode = "creative";
+        c.cmd("setblock 5 100 1 minecraft:stone").cmd("summon minecraft:item_frame 4 100 1 {Facing:5b,Item:{id:\"minecraft:stick\",count:1}}");
+        c.step(op("op", "pick_entity", "pos", List.of(4.5, 100.0, 1.5), "include", false)).step(op("op", "pick_entity", "pos", List.of(4.5, 100.0, 1.5), "include", true));
+        out.add(c);
+    }
+
     static void picks(List<Case> out) {
         Case c;
         String[] modes = {"survival", "creative"};
@@ -3796,6 +3874,20 @@ public class InteractVectors {
                 List<String> pages = (List<String>) s.get("pages");
                 String title = (String) s.get("title");
                 p.connection.handleEditBook(new ServerboundEditBookPacket((int) s.get("slot"), pages, Optional.ofNullable(title)));
+            }
+            // wp52: middle click on the entity nearest to `pos`.
+            case "pick_entity" -> {
+                @SuppressWarnings("unchecked")
+                List<Double> at = (List<Double>) s.get("pos");
+                net.minecraft.world.entity.Entity target = null;
+                double bd = 1e18;
+                for (var e : server.overworld().getEntities((net.minecraft.world.entity.Entity) null, new AABB(at.get(0) - 8, at.get(1) - 8, at.get(2) - 8, at.get(0) + 8, at.get(1) + 8, at.get(2) + 8),
+                        en -> !(en instanceof net.minecraft.world.entity.player.Player))) {
+                    double d = e.position().distanceToSqr(at.get(0), at.get(1), at.get(2));
+                    if (d < bd) { bd = d; target = e; }
+                }
+                if (target == null) throw new IllegalStateException("no entity near " + at);
+                p.connection.handlePickItemFromEntity(new net.minecraft.network.protocol.game.ServerboundPickItemFromEntityPacket(target.getId(), (boolean) s.get("include")));
             }
             case "pick_block" -> {
                 @SuppressWarnings("unchecked")
@@ -4377,6 +4469,7 @@ public class InteractVectors {
             signs(all);
             books(all);
             picks(all);
+            pickEntities52(all);
             cakes(all);
             blocks49(all);
             frames49(all);

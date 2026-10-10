@@ -231,6 +231,12 @@ impl RegionWork<'_> {
                 entities::riding_jump(self.entities, &mut self.players, i, data, &env.blocks);
                 continue;
             }
+            if let PlayIn::PickItemFromEntity { entity_id, .. } = pkt {
+                if !self.players[i].dead {
+                    entities::pick_item_from_entity(self.entities, self.players[i], entity_id);
+                }
+                continue;
+            }
             if let PlayIn::Interact { entity_id, hand, sneaking, location, .. } = pkt {
                 if let Some(h) = self.plugins.as_mut()
                     && crate::plugins::deny_interact(h, self.players[i], self.entities, entity_id)

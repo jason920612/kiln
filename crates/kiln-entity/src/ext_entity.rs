@@ -202,6 +202,33 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
     }
 }
 
+/// `Entity.getPickResult`: what a middle click on `e` gives (`None`: nothing). A mob stands for its spawn egg; a few things for
+/// their item (the armor stand, the end crystal, the painting, the lead of a knot, boats and minecarts, a cushion by its colour); an
+/// item frame for what it holds, or itself.
+pub fn pick_result(e: &Entity) -> Option<kiln_item::ItemStack> {
+    use kiln_item::ItemStack;
+    if let Some(m) = crate::mob::data(e)
+        && m.kind.is_mob()
+    {
+        return ItemStack::of(&format!("{}_spawn_egg", e.type_name), 1);
+    }
+    let item = |name: &str| ItemStack::of(name, 1);
+    match e.type_name {
+        "minecraft:armor_stand" | "minecraft:end_crystal" | "minecraft:painting" => item(e.type_name),
+        "minecraft:leash_knot" => item("minecraft:lead"),
+        "minecraft:item_frame" | "minecraft:glow_item_frame" => {
+            let frame = get::<item_frame::ItemFrame>(e)?;
+            if frame.item.is_empty() { Some(frame.frame_item(e)) } else { Some(frame.item.clone()) }
+        }
+        "minecraft:cushion" => item(&cushion::item_name(get::<cushion::Cushion>(e)?.color)),
+        // (A spawner minecart is a plain one in the hand.)
+        "minecraft:spawner_minecart" => item("minecraft:minecart"),
+        n if minecart::is_minecart(n) => item(n),
+        n if n.ends_with("_boat") || n.ends_with("_raft") => item(n),
+        _ => None,
+    }
+}
+
 /// The extension state of `e` as `T`.
 pub fn get<T: 'static>(e: &Entity) -> Option<&T> {
     match &e.kind {
