@@ -936,7 +936,12 @@ fn replay(s: &Value) -> Result<usize, String> {
                 .iter()
                 .map(|r| {
                     let (v, p) = (f(&r[2]) as f32, f(&r[3]) as f32);
-                    format!("{} {} {v:?} {p:?} {}", r[0].as_str().unwrap(), r[1].as_str().unwrap(), r[4].as_i64().unwrap())
+                    // (Kiln names the source `players` where the packet's `SoundSource.getName()` is `player`.)
+                    let source = match r[1].as_str().unwrap() {
+                        "player" => "players",
+                        other => other,
+                    };
+                    format!("{} {source} {v:?} {p:?} {}", r[0].as_str().unwrap(), r[4].as_i64().unwrap())
                 })
                 .collect();
             want_rows.sort();
