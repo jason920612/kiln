@@ -1297,11 +1297,6 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         }
     }
 
-    fn item_particles(&mut self, item: i32, pos: Vec3, count: i32, spread: Vec3, speed: f32) {
-        if let Some(p) = item_packet(item, pos, count, spread, speed) {
-            self.level.push_packet(p);
-        }
-    }
 
     fn mob_griefing(&self) -> bool {
         self.level.env().mobs.griefing
@@ -3147,6 +3142,13 @@ fn carry_out(
     match event {
         Event::Sound { pos, sound, source, volume, pitch } => {
             send_sound(players, env, n, arr(pos), sound, source_of(source), volume, pitch);
+        }
+        Event::ItemParticles { item, pos, count, spread, speed } => {
+            if let Some((at, range, pkt)) = item_packet(item, pos, count, spread, speed) {
+                for p in players.iter_mut().filter(|p| dist2(p.pos, at) < range * range) {
+                    p.send(pkt.clone());
+                }
+            }
         }
         Event::LevelEvent { event, pos, data } => level.effect(Effect::LevelEvent { id: event, pos: kb(pos), data }),
         Event::BlockExploded { pos, state, decay, radius, .. } => {
