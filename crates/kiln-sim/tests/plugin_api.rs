@@ -379,8 +379,8 @@ fn lockbox_reads_the_clicked_block_checks_a_permission_node_and_counts_steps() {
     g.ticks(12);
     g.send(0, PlayIn::SetCreativeSlot { slot: 36, item: Some(stack("minecraft:chest", 1)) });
     g.ticks(1);
+    // (Gus stays in creative mode: his breaks are instant, so a refusal is the plugin's.)
     g.console("gamemode survival Fay");
-    g.console("gamemode survival Gus");
     g.ticks(1);
     let f = g.ground(0);
     let chest = [f[0] + 1, f[1] + 1, f[2]];
