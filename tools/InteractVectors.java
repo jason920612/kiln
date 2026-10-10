@@ -914,16 +914,17 @@ public class InteractVectors {
 
     /** wp52: entities in the cube x 3..5, y 100..102, z 0..2 (and two just outside it). */
     static void entitiesContent(Case c) {
+        // (Summoned in the order of their places: the simulation numbers the entities of one tick that way, vanilla by when they came.)
         c.cmd("setblock 3 100 0 minecraft:stone").cmd("setblock 5 101 2 minecraft:stone").cmd("setblock 5 102 1 minecraft:stone")
+                .cmd("summon minecraft:marker 3.2 102.0 2.2 {UUID:[I;1,0,0,5],data:{a:1b}}")
                 .cmd("summon minecraft:armor_stand 3.5 100.0 0.5 {UUID:[I;1,0,0,1],NoGravity:1b,ShowArms:1b}")
                 .cmd("summon minecraft:pig 4.5 100.0 1.5 {UUID:[I;1,0,0,2],NoAI:1b,Silent:1b,Passengers:[{id:\"minecraft:chicken\",UUID:[I;1,0,0,3],NoAI:1b,Silent:1b}]}")
                 .cmd("summon minecraft:item 4.5 101.0 0.5 {UUID:[I;1,0,0,4],Item:{id:\"minecraft:stone\",count:3},Age:100s,PickupDelay:5s}")
-                .cmd("summon minecraft:marker 3.2 102.0 2.2 {UUID:[I;1,0,0,5],data:{a:1b}}")
+                .cmd("summon minecraft:item_frame 5 101 1 {UUID:[I;1,0,0,9],Facing:2b,Item:{id:\"minecraft:stick\",count:1}}")
+                .cmd("summon minecraft:painting 5 102 0 {UUID:[I;1,0,0,10],Facing:2b,variant:\"minecraft:kebab\"}")
                 .cmd("summon minecraft:armor_stand 5.9 100.0 0.5 {UUID:[I;1,0,0,6],NoGravity:1b}")
                 .cmd("summon minecraft:armor_stand 6.7 100.0 0.5 {UUID:[I;1,0,0,7],NoGravity:1b}")
-                .cmd("summon minecraft:pig 8.5 100.0 1.5 {UUID:[I;1,0,0,8],NoAI:1b,Silent:1b}")
-                .cmd("summon minecraft:item_frame 5 101 1 {UUID:[I;1,0,0,9],Facing:2b,Item:{id:\"minecraft:stick\",count:1}}")
-                .cmd("summon minecraft:painting 5 102 0 {UUID:[I;1,0,0,10],Facing:2b,variant:\"minecraft:kebab\"}");
+                .cmd("summon minecraft:pig 8.5 100.0 1.5 {UUID:[I;1,0,0,8],NoAI:1b,Silent:1b}");
     }
 
     static void structures50(List<Case> out) {
@@ -1005,7 +1006,7 @@ public class InteractVectors {
                 .cmd("summon minecraft:armor_stand -1.5 100.0 -0.5 {UUID:[I;2,0,0,2],NoGravity:1b}")
                 .cmd("summon minecraft:armor_stand 3.5 100.0 0.5 {UUID:[I;2,0,0,3],NoGravity:1b}")
                 .cmd("summon minecraft:armor_stand -1.5 100.0 0.5 {UUID:[I;2,0,0,4],NoGravity:1b}")
-                .cmd("summon minecraft:armor_stand 1.5 100.0 0.5 {UUID:[I;2,0,0,5],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand 3.9 100.0 0.5 {UUID:[I;2,0,0,5],NoGravity:1b}")
                 .cmd("summon minecraft:armor_stand 1.5 120.0 0.5 {UUID:[I;2,0,0,6],NoGravity:1b}");
         c.step(setStructure("SAVE_AREA", "SAVE", "wp52:sects", new int[] {-5, 0, -2}, new int[] {9, 3, 4}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
         out.add(c);
