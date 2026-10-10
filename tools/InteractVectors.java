@@ -1576,6 +1576,73 @@ public class InteractVectors {
             for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
             out.add(cycle54(c, "4 100 -1", 5, 0));
         }
+        // ---- players
+        double[][] spots = {{6.3, 100.0, 0.5}, {6.6, 100.0, 0.2}, {5.9, 100.0, 0.9}};
+        for (int k = 0; k < spots.length; k++) {
+            double[] at = spots[k];
+            c = p54("player_stone_front_" + k);
+            c.pos = at;
+            c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone");
+            out.add(cycle54(c, "4 100 -1", 5, 6));
+            c = p54("player_slime_front_" + k);
+            c.pos = at;
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:slime_block");
+            out.add(cycle54(c, "4 100 -1", 8, 0));
+        }
+        c = p54("player_slime_up");
+        c.pos = new double[] {4.5, 102.0, 0.5};
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=up]").cmd("setblock 4 101 0 minecraft:slime_block");
+        out.add(cycle54(c, "3 100 0", 8, 0));
+        c = p54("player_stone_up");
+        c.pos = new double[] {4.5, 102.0, 0.5};
+        c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=up]").cmd("setblock 4 101 0 minecraft:stone");
+        out.add(cycle54(c, "3 100 0", 6, 6));
+        c = p54("player_honey");
+        c.pos = new double[] {5.5, 100.9375, 0.5};
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:honey_block");
+        out.add(cycle54(c, "4 100 -1", 6, 0));
+        c = p54("player_honey_back");
+        c.pos = new double[] {5.5, 100.9375, 0.5};
+        c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:honey_block");
+        out.add(cycle54(c, "4 100 -1", 6, 6));
+        c = p54("player_down");
+        c.pos = new double[] {4.5, 99.0, 0.5};
+        c.cmd("fill 4 99 0 4 99 0 minecraft:air").cmd("setblock 4 102 0 minecraft:piston[facing=down]").cmd("setblock 4 101 0 minecraft:stone");
+        out.add(cycle54(c, "3 102 0", 6, 0));
+        // ---- chains and squeezes
+        for (String type : new String[] {"pig", "item", "armor_stand"}) {
+            c = p54("chain_slime_" + type);
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("fill 5 100 0 6 100 0 minecraft:slime_block").cmd(summon54(type, 7.3, 100.0, 0.5));
+            out.add(cycle54(c, "4 100 -1", 8, 0));
+            c = p54("squeeze_" + type);
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone");
+            c.cmd("setblock 10 100 0 minecraft:piston[facing=west]").cmd("setblock 9 100 0 minecraft:stone").cmd(summon54(type, 7.5, 100.0, 0.5));
+            c.step(op("op", "command", "command", "setblock 4 100 -1 minecraft:redstone_block"));
+            c.step(op("op", "command", "command", "setblock 10 100 -1 minecraft:redstone_block"));
+            for (int i = 0; i < 7; i++) c.step(op("op", "idle"));
+            out.add(c);
+        }
+        // ---- a shulker box moves, a shulker is pushed
+        c = p54("shulker_box_front");
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:shulker_box").cmd(summon54("pig", 6.3, 100.0, 0.5));
+        out.add(cycle54(c, "4 100 -1", 5, 0));
+        c = p54("shulker_front");
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd(summon54("shulker", 6.5, 100.0, 0.5));
+        out.add(cycle54(c, "4 100 -1", 6, 0));
+        // ---- a ring of things around a pushing, pulling piston
+        for (String[] m : new String[][] {{"stone_east", "sticky_piston[facing=east]", "stone"}, {"slime_east", "sticky_piston[facing=east]", "slime_block"}, {"honey_east", "sticky_piston[facing=east]", "honey_block"}}) {
+            c = p54("zoo_" + m[0]);
+            c.cmd("setblock 4 100 0 minecraft:" + m[1]).cmd("setblock 5 100 0 minecraft:" + m[2]);
+            String[] types = {"pig", "cow", "sheep", "item", "armor_stand", "oak_boat", "minecart", "chicken"};
+            double[][] places = {{3.4, 100, 0.5}, {5.5, 101, 0.5}, {5.5, 100.9375, 1.5}, {6.4, 100, 0.5}, {6.4, 100, -0.3}, {6.9, 100, 0.9}, {5.2, 102, 0.4}, {7.0, 100, 0.1}};
+            for (int i = 0; i < types.length; i++) c.cmd(summon54(types[i], places[i][0], places[i][1], places[i][2]));
+            for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
+            out.add(cycle54(c, "4 100 -1", 6, 6));
+        }
+        c = p54("zoo_down");
+        c.cmd("setblock 4 102 0 minecraft:sticky_piston[facing=down]").cmd("setblock 4 101 0 minecraft:slime_block");
+        for (String t : new String[] {"pig", "item", "armor_stand"}) c.cmd(summon54(t, 4.5 + ("pig".equals(t) ? 0 : "item".equals(t) ? 0.3 : -0.3), 100.0, 0.5));
+        out.add(cycle54(c, "3 102 0", 6, 6));
     }
 
     /** wp49: campfires (food on the fire), flower pots, chiseled bookshelves. */
