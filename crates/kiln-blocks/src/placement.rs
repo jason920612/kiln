@@ -44,15 +44,15 @@ impl BlockItem {
     }
 }
 
-struct Ctx<'a, L: ?Sized> {
-    level: &'a L,
-    pos: BlockPos,
-    replace_clicked: bool,
-    face: Direction,
-    click: [f64; 3],
-    yaw: f32,
-    pitch: f32,
-    sneaking: bool,
+pub(crate) struct Ctx<'a, L: ?Sized> {
+    pub(crate) level: &'a L,
+    pub(crate) pos: BlockPos,
+    pub(crate) replace_clicked: bool,
+    pub(crate) face: Direction,
+    pub(crate) click: [f64; 3],
+    pub(crate) yaw: f32,
+    pub(crate) pitch: f32,
+    pub(crate) sneaking: bool,
 }
 
 /// `Mth.sin` / `Mth.cos` (the 65536-entry table, double-argument versions).
@@ -98,12 +98,12 @@ fn ordered_by_nearest(yaw: f32, pitch: f32) -> [Direction; 6] {
 
 impl<L: Level + ?Sized> Ctx<'_, L> {
     /// `getHorizontalDirection`.
-    fn horizontal(&self) -> Direction {
+    pub(crate) fn horizontal(&self) -> Direction {
         Direction::from_yaw(self.yaw as f64)
     }
 
     /// `getNearestLookingDirections`: when placing against a face, the face's opposite first.
-    fn nearest(&self) -> [Direction; 6] {
+    pub(crate) fn nearest(&self) -> [Direction; 6] {
         let mut dirs = ordered_by_nearest(self.yaw, self.pitch);
         if !self.replace_clicked {
             let want = self.face.opposite();
@@ -128,14 +128,17 @@ impl<L: Level + ?Sized> Ctx<'_, L> {
         self.click[1] - self.pos.y as f64 > 0.5
     }
 
-    fn waterlogged(&self, s: u16) -> u16 {
+    pub(crate) fn waterlogged(&self, s: u16) -> u16 {
         state::set_bool(s, "waterlogged", self.in_water_source())
     }
 }
 
 /// `BlockState.canBeReplaced(BlockPlaceContext)` for the block at the placing position.
-fn can_be_replaced<L: Level + ?Sized>(level: &L, s: u16, item: BlockId, face: Direction, click_y: f64, pos: BlockPos, replace_clicked: bool) -> bool {
-    if logic::block_class(s) == BlockClass::SlabBlock {
+#[allow(clippy::too_many_arguments)]
+fn can_be_replaced<L: Level + ?Sized>(level: &L, s: u16, item: BlockId, face: Direction, click_y: f64, pos: BlockPos, replace_clicked: bool, sneaking: bool) -> bool {
+    use BlockClass as C;
+    let _ = level;
+    if logic::is_instance(s, C::SlabBlock) {
         let ty = state::get(s, "type");
         if ty == Some("double") || BlockId::of(s) != item {
             return false;
@@ -150,8 +153,19 @@ fn can_be_replaced<L: Level + ?Sized>(level: &L, s: u16, item: BlockId, face: Di
             face == Direction::Down || !upper && face.is_horizontal()
         };
     }
-    let _ = level;
-    block_props::replaceable(s) && BlockId::of(s) != item
+    let same_item = BlockId::of(s) == item;
+    // `canBeReplaced` of a block that piles up: the same item adds one (candles, sea pickles, eggs, petals, litter).
+    let pile = ["candles", "pickles", "eggs", "flower_amount", "segment_amount"].into_iter().find(|p| state::has(s, p));
+    if let Some(p) = pile.filter(|_| !sneaking && same_item) {
+        if state::get_int(s, p) < 4 {
+            return true;
+        }
+    }
+    if logic::block_class(s) == C::SnowLayerBlock {
+        let layers = state::get_int(s, "layers");
+        return if same_item && layers < 8 { !replace_clicked || face == Direction::Up } else { layers == 1 };
+    }
+    block_props::replaceable(s) && !same_item
 }
 
 /// `getStateForPlacement` of `block` in context.
@@ -161,6 +175,9 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
     let level = c.level;
     let pos = c.pos;
     let class = logic::block_class(d);
+    if let Some(found) = crate::place_rules::state_for_placement(c, d) {
+        return found;
+    }
     let s = match class {
         C::StairBlock | C::WeatheringCopperStairBlock => {
             let half = if c.face != Direction::Down && (c.face == Direction::Up || !c.click_upper_half()) { "bottom" } else { "top" };
@@ -237,7 +254,7 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
                 (support::can_survive(level, s, pos) && wall_hanging_sign_can_place(level, s, pos)).then(|| c.waterlogged(s))
             });
         }
-        C::LeverBlock | C::ButtonBlock => {
+        C::LeverBlock | C::ButtonBlock | C::GrindstoneBlock => {
             return c.nearest().into_iter().find_map(|dir| {
                 let s = if dir.axis() == Axis::Y {
                     let face = if dir == Direction::Up { "ceiling" } else { "floor" };
@@ -364,17 +381,19 @@ fn door_hinge<L: Level + ?Sized>(c: &Ctx<L>) -> &'static str {
 /// `BlockItem.place` up to the state: where the item's block goes and in which state.
 pub fn placement<L: Level + ?Sized>(level: &L, item: &BlockItem, ctx: &PlaceContext) -> Option<(BlockPos, u16)> {
     let hit_state = level.block(ctx.hit);
-    let replace_clicked = can_be_replaced(level, hit_state, item.block, ctx.face, ctx.click[1], ctx.hit, true);
+    let replace_clicked = can_be_replaced(level, hit_state, item.block, ctx.face, ctx.click[1], ctx.hit, true, ctx.sneaking);
     let pos = if replace_clicked { ctx.hit } else { ctx.hit.relative(ctx.face) };
     if !level.in_bounds(pos) {
         return None;
     }
-    if !replace_clicked && !can_be_replaced(level, level.block(pos), item.block, ctx.face, ctx.click[1], pos, false) {
+    if !replace_clicked && !can_be_replaced(level, level.block(pos), item.block, ctx.face, ctx.click[1], pos, false, ctx.sneaking) {
         return None;
     }
     let c = Ctx { level, pos, replace_clicked, face: ctx.face, click: ctx.click, yaw: ctx.yaw, pitch: ctx.pitch, sneaking: ctx.sneaking };
+    // (`ScaffoldingBlockItem.mustSurvive` is false: scaffolding goes where it stands, `canSurvive` or not)
+    let must_survive = logic::block_class(item.block.default_state()) != BlockClass::ScaffoldingBlock;
     let state = match item.wall {
-        None => state_for_placement(&c, item.block).filter(|&s| support::can_survive(level, s, pos)),
+        None => state_for_placement(&c, item.block).filter(|&s| !must_survive || support::can_survive(level, s, pos)),
         Some((wall_block, attach)) => {
             let wall = state_for_placement(&c, wall_block);
             c.nearest().into_iter().filter(|&d| d != attach.opposite()).find_map(|d| {
@@ -389,7 +408,13 @@ pub fn placement<L: Level + ?Sized>(level: &L, item: &BlockItem, ctx: &PlaceCont
 /// `BlockItem.place`: sets the block (flags 11) and runs `setPlacedBy` (the second half of
 /// doors, tall plants and beds; diodes placed onto power).
 pub fn place<L: Level>(level: &mut L, item: &BlockItem, ctx: &PlaceContext) -> Option<(BlockPos, u16)> {
-    let (pos, s) = placement(level, item, ctx)?;
+    let (pos, mut s) = placement(level, item, ctx)?;
+    // `GrowingPlantHeadBlock.getStateForPlacement`: kelp and vines start at a random age.
+    if logic::is_instance(s, BlockClass::GrowingPlantHeadBlock) {
+        use kiln_javamath::random::RandomSource;
+        let age = level.random().next_int_bounded(25);
+        s = state::set_int(s, "age", age);
+    }
     if !set_block(level, pos, s, flags::ALL_IMMEDIATE) {
         return None;
     }
@@ -405,6 +430,14 @@ pub fn placed_by<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
     use BlockClass as C;
     if logic::is_instance(s, C::DoorBlock) {
         set_block_and_update(level, pos.above(), state::set(s, "half", "upper"));
+    } else if logic::block_class(s) == C::PitcherCropBlock {
+        // (`PitcherCropBlock` grows its upper half later: only the lower is placed.)
+    } else if logic::block_class(s) == C::SmallDripleafBlock {
+        // `SmallDripleafBlock.setPlacedBy`: the upper half takes the lower's state, with the water at its own place.
+        let up = pos.above();
+        let mut upper = state::set(s, "half", "upper");
+        upper = state::set_bool(upper, "waterlogged", crate::place_rules::water_at(level, up));
+        set_block_and_update(level, up, upper);
     } else if logic::is_instance(s, C::DoublePlantBlock) {
         let up = pos.above();
         let mut upper = state::set(BlockId::of(s).default_state(), "half", "upper");

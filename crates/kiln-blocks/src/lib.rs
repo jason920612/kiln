@@ -17,6 +17,7 @@ pub mod interact;
 mod java_map;
 pub mod level;
 pub mod placement;
+mod place_rules;
 pub mod pos;
 pub mod redstone;
 pub mod state;

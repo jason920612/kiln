@@ -190,6 +190,22 @@ fn speleothem_toward(s: u16, dir: Direction) -> bool {
     crate::tags::is(s, "minecraft:speleothems") && state::get_dir(s, "vertical_direction") == Some(dir)
 }
 
+/// `SpeleothemBlock.calculateSpeleothemThickness` of the block `s` (a spike of that kind) at `pos` pointing `tip`.
+pub(crate) fn speleothem_thickness<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, tip: Direction, merge: bool) -> &'static str {
+    let ahead = level.block(pos.relative(tip));
+    if speleothem_toward(ahead, tip.opposite()) && state::same_block(ahead, s) {
+        if merge || state::get(ahead, "thickness") == Some("tip_merge") { "tip_merge" } else { "tip" }
+    } else if !speleothem_toward(ahead, tip) {
+        "tip"
+    } else if matches!(state::get(ahead, "thickness"), Some("tip" | "tip_merge")) {
+        "frustum"
+    } else if !speleothem_toward(level.block(pos.relative(tip.opposite())), tip) {
+        "base"
+    } else {
+        "middle"
+    }
+}
+
 /// `SpeleothemBlock.updateShape` (pointed dripstone, sulfur spikes): thickness follows the
 /// column; a tip that lost its support schedules its fall.
 fn speleothem_update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Direction) -> u16 {
@@ -211,19 +227,7 @@ fn speleothem_update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: 
             return s;
         }
     }
-    let merge = state::get(s, "thickness") == Some("tip_merge");
-    let ahead = level.block(pos.relative(tip));
-    let thickness = if speleothem_toward(ahead, tip.opposite()) && state::same_block(ahead, s) {
-        if merge || state::get(ahead, "thickness") == Some("tip_merge") { "tip_merge" } else { "tip" }
-    } else if !speleothem_toward(ahead, tip) {
-        "tip"
-    } else if matches!(state::get(ahead, "thickness"), Some("tip" | "tip_merge")) {
-        "frustum"
-    } else if !speleothem_toward(level.block(pos.relative(tip.opposite())), tip) {
-        "base"
-    } else {
-        "middle"
-    };
+    let thickness = speleothem_thickness(level, s, pos, tip, state::get(s, "thickness") == Some("tip_merge"));
     state::set(s, "thickness", thickness)
 }
 
