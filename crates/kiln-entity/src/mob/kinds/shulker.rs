@@ -214,6 +214,26 @@ impl Kind for Shulker {
 
 // ---------------------------------------------------------------------- shape and peeking
 
+/// `Shulker.setPos` has put the shulker in the middle of its block: its box follows, and a move into another block
+/// shuts the lid (`DATA_PEEK_ID` to 0) and tells the viewers.
+pub fn snapped(e: &mut Entity, closes: bool) {
+    let Some(mut m) = (match std::mem::replace(&mut e.kind, crate::entity::EntityKind::MobTicking { gravity: 0.0 }) {
+        crate::entity::EntityKind::Mob(m) => Some(m),
+        other => {
+            e.kind = other;
+            None
+        }
+    }) else {
+        return;
+    };
+    if closes {
+        st_mut(&mut m).peek = 0;
+        e.needs_sync = true;
+    }
+    update_bb(e, &m);
+    e.kind = crate::entity::EntityKind::Mob(m);
+}
+
 fn snap(p: Vec3) -> Vec3 {
     Vec3::new(crate::math::floor(p.x) as f64 + 0.5, crate::math::floor(p.y + 0.5) as f64, crate::math::floor(p.z) as f64 + 0.5)
 }

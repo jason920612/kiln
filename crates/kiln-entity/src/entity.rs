@@ -760,6 +760,9 @@ impl Entity {
             let to = from + collided;
             self.add_movement_this_tick(Movement { from, to, axis_dependent_original: Some(movement) });
             self.set_pos(to);
+            if self.snaps_to_block() {
+                self.snap_to_block(from);
+            }
         }
         crate::prof!("col", "after collide");
         let x_collision = !mth_equal(movement.x, collided.x);
@@ -853,6 +856,20 @@ impl Entity {
     /// `maybeBackOffFromEdge`: only players override it.
     fn maybe_back_off_from_edge(&self, level: &dyn EntityLevel, movement: Vec3, mover: MoverType) -> Vec3 {
         crate::player::back_off_from_edge(self, level, movement, mover)
+    }
+
+    /// Whether `setPos` puts the entity in the middle of its block (`Shulker.setPos`, unless it rides).
+    fn snaps_to_block(&self) -> bool {
+        self.type_name == "minecraft:shulker" && self.vehicle.is_none()
+    }
+
+    /// `Shulker.setPos` after a move from `from`: the middle of the block, and a lid that closes when it is another block.
+    fn snap_to_block(&mut self, from: Vec3) {
+        let p = self.position;
+        let old = BlockPos::new(floor(from.x), floor(from.y), floor(from.z));
+        self.set_pos(Vec3::new(floor(p.x) as f64 + 0.5, floor(p.y + 0.5) as f64, floor(p.z) as f64 + 0.5));
+        let closes = self.tick_count != 0 && self.block_position != old;
+        crate::mob::kinds::shulker::snapped(self, closes);
     }
 
     /// `limitPistonMovement`: pistons together move an entity at most 0.51 per axis in a tick, one axis at a time.
