@@ -55,6 +55,42 @@ fn tag_of(h: &str) -> Tag {
     kiln_proto::nbt::read_network(&unhex(h)).unwrap().0
 }
 
+/// A packet as the diff shows it: the NBT hex of a `tag` or `text` as SNBT.
+fn pretty(packet: &str) -> String {
+    let mut out = String::new();
+    let mut rest = packet;
+    while let Some(i) = rest.find("\"tag\":\"").or_else(|| rest.find("\"text\":\"")) {
+        let start = rest[i..].find(":\"").unwrap() + i + 2;
+        let Some(len) = rest[start..].find('"') else { break };
+        let hex_text = &rest[start..start + len];
+        out.push_str(&rest[..start]);
+        match std::panic::catch_unwind(|| tag_of(hex_text)) {
+            Ok(t) => out.push_str(&kiln_command::snbt::to_snbt(&sorted(&t))),
+            Err(_) => out.push_str(hex_text),
+        }
+        rest = &rest[start + len..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// What is in one list of packets and not in the other.
+fn packet_diff(got: &[String], want: &[String]) -> String {
+    let only = |a: &[String], b: &[String]| -> Vec<String> { a.iter().filter(|p| !b.contains(p)).map(|p| pretty(p)).collect() };
+    format!("kiln only {:?}; vanilla only {:?}", only(got, want), only(want, got))
+}
+
+/// Two texts that differ, cut around the first difference.
+fn first_diff(a: &str, b: &str) -> (String, String) {
+    let i = a.bytes().zip(b.bytes()).position(|(x, y)| x != y).unwrap_or(a.len().min(b.len()));
+    let cut = |s: &str| {
+        let from = s.char_indices().map(|(k, _)| k).filter(|&k| k + 200 >= i).next().unwrap_or(0);
+        let to = s.char_indices().map(|(k, _)| k).filter(|&k| k >= i + 300).next().unwrap_or(s.len());
+        format!("@{i}: ...{}...", &s[from..to])
+    };
+    (cut(a), cut(b))
+}
+
 fn sound_source_name(id: i32) -> &'static str {
     ["master", "music", "record", "weather", "block", "hostile", "neutral", "player", "ambient", "voice", "ui"].get(id as usize).copied().unwrap_or("?")
 }
@@ -832,7 +868,13 @@ fn run_case(line: &Value) -> Vec<String> {
         }
         got_packets.sort();
         want_packets.sort();
-        eq("packets", format!("{got_packets:?}"), format!("{want_packets:?}"));
+        let packets_got = format!("{got_packets:?}");
+        let packets_want = format!("{want_packets:?}");
+        if packets_got != packets_want && std::env::var_os("KILN_PACKET_DIFF").is_some() {
+            eq("packets", packet_diff(&got_packets, &want_packets), String::new());
+        } else {
+            eq("packets", packets_got, packets_want);
+        }
         for b in want["blocks"].as_array().unwrap() {
             let at = arr3(&b["pos"]);
             eq(&format!("block {at:?}"), sim.block_at(at[0], at[1], at[2]).map_or(-1, i32::from).to_string(), b["state"].to_string());
@@ -866,9 +908,12 @@ fn run_case(line: &Value) -> Vec<String> {
         if let Some(want_templates) = want.get("templates").and_then(Value::as_object) {
             // The templates the manager holds (an id it has none for is null), as the saved NBT.
             for (id, hex_want) in want_templates {
-                let got = sim.template_nbt(id).map(|t| sorted(&t));
-                let expected = hex_want.as_str().map(|h| sorted(&tag_of(h)));
-                eq(&format!("template {id}"), format!("{got:?}"), format!("{expected:?}"));
+                let got = sim.template_nbt(id).map(|t| kiln_command::snbt::to_snbt(&sorted(&t)));
+                let expected = hex_want.as_str().map(|h| kiln_command::snbt::to_snbt(&sorted(&tag_of(h))));
+                if got != expected {
+                    let (a, b) = first_diff(got.as_deref().unwrap_or("none"), expected.as_deref().unwrap_or("none"));
+                    eq(&format!("template {id}"), a, b);
+                }
             }
         }
         let mut got_items: Vec<String> = sim.item_stacks().iter().filter(|s| line["mobs"].as_bool() != Some(true) || s.item_name() != "minecraft:rotten_flesh").map(stack_hex).collect();
