@@ -825,6 +825,28 @@ public class EffectVectors {
                 out.add(s);
             }
         }
+        // wp52: after a blast or a smash the fall from the impact height does not count (`LivingEntity.causeFallDamage`).
+        for (int h : new int[] {5, 12, 20, 40}) {
+            for (double y : new double[] {0.0, 2.0, 4.5, 9.0, 30.0}) {
+                s = landing(fall("fall_impulse_" + h + "_at_" + (int) (y * 10), h), "stone");
+                s.at(1, op("op", "impulse", "ignore", true, "y", y));
+                out.add(s);
+            }
+        }
+        // ... once the fall hurt, the next one counts again; a fall into water ends nothing (the context stays).
+        s = landing(fall("fall_impulse_hurt_then_normal_12", 12), "stone");
+        s.at(1, op("op", "impulse", "ignore", true, "y", 8.0));
+        out.add(s);
+        s = landing(fall("fall_impulse_off_12", 12), "stone");
+        s.at(1, op("op", "impulse", "ignore", true, "y", 0.0));
+        s.at(2, op("op", "impulse", "ignore", false, "y", 0.0));
+        out.add(s);
+        s = landing(fall("fall_impulse_slime_12", 12), "slime");
+        s.at(1, op("op", "impulse", "ignore", true, "y", 0.0));
+        out.add(s);
+        s = landing(fall("fall_impulse_hay_12", 12), "hay");
+        s.at(1, op("op", "impulse", "ignore", true, "y", 3.0));
+        out.add(s);
         s = landing(fall("fall_rule_off_10", 10), "stone");
         s.at(1, op("op", "gamerule", "name", "fall_damage", "value", "false"));
         s.at(s.ticks - 1, op("op", "gamerule", "name", "fall_damage", "value", "true"));
@@ -1709,6 +1731,8 @@ public class EffectVectors {
                 if (a.containsKey("enchant")) ench.put((String) a.get("enchant"), (Integer) a.get("level"));
                 p.setItemSlot(EquipmentSlot.FEET, item.isEmpty() ? ItemStack.EMPTY : stack(server, item, ench));
             }
+            // wp52: the impulse context (`setIgnoreFallDamageFromCurrentImpulse`) at the height `y` above the floor, as a wind charge's blast or a smash leaves it.
+            case "impulse" -> p.setIgnoreFallDamageFromCurrentImpulse((Boolean) a.get("ignore"), new Vec3(BX, BY + ((Number) a.get("y")).doubleValue(), BZ));
             case "velocity" -> {
                 if (shadow != null) {
                     shadow.setDeltaMovement(((Number) a.get("x")).doubleValue(), ((Number) a.get("y")).doubleValue(),
