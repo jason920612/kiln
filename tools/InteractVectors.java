@@ -583,8 +583,9 @@ public class InteractVectors {
         // two slime blocks in a row, and a piston that is regular (it lets go of them)
         out.add(machine55("two_slimes_player", "setblock 6 100 0 minecraft:slime_block", new double[] {6.5, 101.0, 0.5}));
         out.add(machine55("two_slimes_pig", "setblock 6 100 0 minecraft:slime_block", new double[] {1.5, 100.0, 3.5}, summon54("pig", 6.5, 101.0, 0.5)));
-        out.add(machine55("honey_player", "honey_block", "", new double[] {5.5, 101.0, 0.5}));
-        out.add(machine55("honey_pig", "honey_block", "", new double[] {1.5, 100.0, 3.5}, summon54("pig", 5.5, 101.0, 0.5)));
+        // (a honey block is 15/16 high: what stands on it stands there)
+        out.add(machine55("honey_player", "honey_block", "", new double[] {5.5, 100.9375, 0.5}));
+        out.add(machine55("honey_pig", "honey_block", "", new double[] {1.5, 100.0, 3.5}, summon54("pig", 5.5, 100.9375, 0.5)));
         out.add(machine55("stone_player", "stone", "", new double[] {5.5, 101.0, 0.5}));
         // (debugging) honey and slime under a player, by a redstone block that comes and goes three times
         for (String blk : new String[] {"honey_block", "slime_block"}) {
