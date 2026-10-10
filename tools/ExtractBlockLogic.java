@@ -202,18 +202,8 @@ public class ExtractBlockLogic {
                     Float.toString(t.getVolume()), Float.toString(t.getPitch()), t.getBreakSound().location(), t.getStepSound().location(), t.getPlaceSound().location(),
                     t.getHitSound().location(), t.getFallSound().location()));
         }
-        Files.writeString(out.resolve("sound_types.json"), "{\"types\":[
-" + String.join(",
-", types) + "
-],\"blocks\":[
-" + String.join(",
-", blocks) + "
-],\"by_property\":[
-"
-                + String.join(",
-", byProperty) + "
-]}
-");
+        Files.writeString(out.resolve("sound_types.json"), "{\"types\":[\n" + String.join(",\n", types) + "\n],\"blocks\":[\n" + String.join(",\n", blocks) + "\n],\"by_property\":[\n"
+                + String.join(",\n", byProperty) + "\n]}\n");
     }
 
     static boolean covered(VoxelShape test, VoxelShape face) {
