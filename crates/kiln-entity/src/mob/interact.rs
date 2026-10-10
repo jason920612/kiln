@@ -241,7 +241,7 @@ fn spawn_egg_offspring(e: &mut Entity, level: &mut dyn EntityLevel, who: &Intera
         let at = baby.position();
         let effective = level.effective_difficulty(crate::math::BlockPos::containing(at.x, at.y, at.z));
         let special = if effective < 2.0 { 0.0 } else if effective > 4.0 { 1.0 } else { (effective - 2.0) / 2.0 };
-        let loot = e.random.next_float() < 0.55 * special;
+        let loot = kiln_javamath::random::RandomSource::next_float(&mut e.random) < 0.55 * special;
         if let Some(bm) = super::data_mut(&mut baby) {
             bm.can_pick_up_loot = loot;
         }
