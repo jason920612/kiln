@@ -120,7 +120,8 @@ public class MobVectors {
             }
             // wp52 wolf armor: damage of the type `what` (an id of the damage type registry), `x` of it, with no attacker.
             case "hurt" -> ((LivingEntity) tracked.get(a.mob)).hurtServer(level,
-                    level.damageSources().source(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DAMAGE_TYPE, Identifier.parse(a.what)), null, null), (float) a.x);
+                    new net.minecraft.world.damagesource.DamageSource(level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.DAMAGE_TYPE)
+                            .getOrThrow(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DAMAGE_TYPE, Identifier.parse(a.what)))), (float) a.x);
             case "daytime" -> level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + (long) a.x);
             // wp28 creaking: the block at pos goes away: broken by the player (`what` = "player":
             // `playerWillDestroy`, then the block is removed), or replaced by air.
