@@ -1622,27 +1622,30 @@ public class InteractVectors {
             for (int i = 0; i < 7; i++) c.step(op("op", "idle"));
             out.add(c);
         }
-        // ---- a shulker box moves, a shulker is pushed
-        c = p54("shulker_box_front");
-        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:shulker_box").cmd(summon54("pig", 6.3, 100.0, 0.5));
-        out.add(cycle54(c, "4 100 -1", 5, 0));
+        // ---- a shulker is pushed (it snaps to the block it ends up in); the shulker box block itself is broken by the piston
         c = p54("shulker_front");
         c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd(summon54("shulker", 6.5, 100.0, 0.5));
         out.add(cycle54(c, "4 100 -1", 6, 0));
-        // ---- a ring of things around a pushing, pulling piston
-        for (String[] m : new String[][] {{"stone_east", "sticky_piston[facing=east]", "stone"}, {"slime_east", "sticky_piston[facing=east]", "slime_block"}, {"honey_east", "sticky_piston[facing=east]", "honey_block"}}) {
-            c = p54("zoo_" + m[0]);
-            c.cmd("setblock 4 100 0 minecraft:" + m[1]).cmd("setblock 5 100 0 minecraft:" + m[2]);
-            String[] types = {"pig", "cow", "sheep", "item", "armor_stand", "oak_boat", "minecart", "chicken"};
-            double[][] places = {{3.4, 100, 0.5}, {5.5, 101, 0.5}, {5.5, 100.9375, 1.5}, {6.4, 100, 0.5}, {6.4, 100, -0.3}, {6.9, 100, 0.9}, {5.2, 102, 0.4}, {7.0, 100, 0.1}};
-            for (int i = 0; i < types.length; i++) c.cmd(summon54(types[i], places[i][0], places[i][1], places[i][2]));
-            for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
-            out.add(cycle54(c, "4 100 -1", 6, 6));
+        // ---- one thing at a time at places around a pushing, pulling piston
+        double[][] places = {{3.4, 100, 0.5}, {5.5, 101, 0.5}, {5.5, 100.9375, 1.5}, {6.4, 100, 0.5}, {6.4, 100, -0.3}, {6.9, 100, 0.9}, {5.2, 102, 0.4}, {7.0, 100, 0.1}};
+        for (String[] m : new String[][] {{"stone", "sticky_piston[facing=east]", "stone"}, {"slime", "sticky_piston[facing=east]", "slime_block"}, {"honey", "sticky_piston[facing=east]", "honey_block"}}) {
+            for (String type : new String[] {"pig", "item"}) {
+                for (int i = 0; i < places.length; i++) {
+                    c = p54("spot_" + m[0] + "_" + type + "_" + i);
+                    c.cmd("setblock 4 100 0 minecraft:" + m[1]).cmd("setblock 5 100 0 minecraft:" + m[2]).cmd(summon54(type, places[i][0], places[i][1], places[i][2]));
+                    for (int k = 0; k < 3; k++) c.step(op("op", "idle"));
+                    out.add(cycle54(c, "4 100 -1", 6, 6));
+                }
+            }
         }
-        c = p54("zoo_down");
-        c.cmd("setblock 4 102 0 minecraft:sticky_piston[facing=down]").cmd("setblock 4 101 0 minecraft:slime_block");
-        for (String t : new String[] {"pig", "item", "armor_stand"}) c.cmd(summon54(t, 4.5 + ("pig".equals(t) ? 0 : "item".equals(t) ? 0.3 : -0.3), 100.0, 0.5));
-        out.add(cycle54(c, "3 102 0", 6, 6));
+        double[][] below = {{4.5, 100.0, 0.5}, {4.2, 100.0, 0.5}, {4.8, 100.0, 0.2}, {3.9, 100.0, 0.5}};
+        for (String type : new String[] {"pig", "item", "armor_stand"}) {
+            for (int i = 0; i < below.length; i++) {
+                c = p54("down_" + type + "_" + i);
+                c.cmd("setblock 4 102 0 minecraft:sticky_piston[facing=down]").cmd("setblock 4 101 0 minecraft:slime_block").cmd(summon54(type, below[i][0], below[i][1], below[i][2]));
+                out.add(cycle54(c, "3 102 0", 6, 6));
+            }
+        }
     }
 
     /** wp49: campfires (food on the fire), flower pots, chiseled bookshelves. */
