@@ -51,8 +51,8 @@ fn used_ender_eye_compares_the_horizontal_distance_squared() {
         &[("near", "minecraft:used_ender_eye", r#"{"distance":{"max":10}}"#), ("far", "minecraft:used_ender_eye", r#"{"distance":{"min":50}}"#)],
     );
     let p = sim.players.get_mut(&1).unwrap();
-    let at = [p.pos[0] as i32 + 30, 1000, p.pos[2] as i32 + 40];
-    // 50 blocks away (the height does not count): only `far`.
+    let at = [p.pos[0] as i32 + 40, 1000, p.pos[2] as i32 + 40];
+    // About 56 blocks away (the height does not count): only `far`.
     p.used_ender_eye(at);
     assert_eq!(done(&sim), ["test:far/c"]);
     let p = sim.players.get_mut(&1).unwrap();

@@ -619,7 +619,7 @@ impl Player {
                 self.thrown_item_picked_up_by_entity(item, &who);
             }
             E::AllayDropItem { pos, state, item } => {
-                self.used_on_block("minecraft:allay_drop_item_on_block", [pos.x, pos.y, pos.z], *state, item, &NoWorld);
+                self.used_on_block("minecraft:allay_drop_item_on_block", [pos.x, pos.y, pos.z], *state, item, &OneBlock { pos: [pos.x, pos.y, pos.z], state: *state });
             }
             E::TargetHit { projectile, pos, signal } => {
                 let p = s(projectile);
@@ -635,12 +635,15 @@ impl Player {
 
 use criteria::Conds;
 
-/// No world to look at (a trigger whose conditions are about the block state and the tool it was given).
-struct NoWorld;
+/// A world of one block (a trigger about a block the entity simulation reported, with no level at hand).
+struct OneBlock {
+    pos: [i32; 3],
+    state: u16,
+}
 
-impl WorldProbe for NoWorld {
-    fn block(&self, _pos: [i32; 3]) -> Option<u16> {
-        None
+impl WorldProbe for OneBlock {
+    fn block(&self, pos: [i32; 3]) -> Option<u16> {
+        (pos == self.pos).then_some(self.state)
     }
     fn biome(&self, _pos: [i32; 3]) -> Option<&'static str> {
         None
