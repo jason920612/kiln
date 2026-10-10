@@ -239,7 +239,11 @@ impl EntityExt for Cushion {
             let at = e.block_position();
             let lava = crate::fluid::fluid_at(&*level, at);
             if matches!(lava.kind, crate::physics::FluidKind::Lava | crate::physics::FluidKind::FlowingLava) && at.y as f64 + f64::from(crate::fluid::height(&*level, at, &lava)) > e.y() {
-                self.hurt(e, level, DamageKind::Lava, 4.0, None);
+                // (`lavaHurt`: the burn sound after a hurt that went through.)
+                if self.hurt(e, level, DamageKind::Lava, 4.0, None) && !e.silent {
+                    let pitch = 2.0 + e.random.next_float() * 0.4;
+                    level.emit(crate::level::Event::Sound { pos: e.position(), sound: "minecraft:entity.generic.burn", source: "neutral", volume: 0.4, pitch });
+                }
             }
             self.destroy_if_in_fire(e, level);
             if !e.is_removed() && !survives(&*level, e) {
