@@ -3153,12 +3153,23 @@ public class InteractVectors {
         ServerLevel level = server.overworld();
         net.minecraft.world.entity.Entity best = null;
         double bd = 1e18;
-        for (var e : level.getEntities((net.minecraft.world.entity.Entity) null, new AABB(x - 2, y - 2, z - 2, x + 2, y + 2, z + 2),
+        for (var e : level.getEntities((net.minecraft.world.entity.Entity) null, new AABB(x - 8, y - 8, z - 8, x + 8, y + 8, z + 8),
                 en -> en instanceof net.minecraft.world.entity.decoration.HangingEntity || en instanceof net.minecraft.world.entity.decoration.ArmorStand || en instanceof net.minecraft.world.entity.decoration.Cushion || en instanceof net.minecraft.world.entity.decoration.Mannequin)) {
             double d = e.position().distanceToSqr(x, y, z);
             if (d < bd) { bd = d; best = e; }
         }
         return best;
+    }
+
+    /** Player.attackStrengthTicker moves on (the mock player does not tick). */
+    static void addAttackTicks(ServerPlayer p, int n) {
+        try {
+            java.lang.reflect.Field f = net.minecraft.world.entity.player.Player.class.getDeclaredField("attackStrengthTicker");
+            f.setAccessible(true);
+            f.setInt(p, f.getInt(p) + n);
+        } catch (ReflectiveOperationException x) {
+            throw new IllegalStateException(x);
+        }
     }
 
     static int invulnerableTime(net.minecraft.world.entity.Entity e) {
@@ -3331,6 +3342,7 @@ public class InteractVectors {
             }
             // wp50: the cushions in the area tick `ticks` times (the level itself does not tick here).
             case "tick_cushions" -> {
+                if (c.noPitch) addAttackTicks(p, (int) s.get("ticks"));
                 for (int i = 0; i < (int) s.get("ticks"); i++) {
                     for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 90, -16, 32, 120, 32))) cu.tick();
                     for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 90, -16, 32, 120, 32))) mq.tick();
@@ -3606,11 +3618,13 @@ public class InteractVectors {
         long startClock = server.overworld().getGameTime();
         mobCase = c.watchMobs;
         recordNoPitch = c.noPitch;
+        if (c.noPitch) addAttackTicks(p, 100);
         recordMaps = c.watchMaps;
         if (c.watchMaps) resetMaps();
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
             if (c.tickCushions && !"tick_cushions".equals(s.get("op"))) {
+                if (c.noPitch) addAttackTicks(p, 1);
                 for (var cu : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 90, -16, 32, 120, 32))) cu.tick();
                 for (var mq : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 90, -16, 32, 120, 32))) mq.tick();
             }
