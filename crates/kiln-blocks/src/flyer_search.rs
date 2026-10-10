@@ -277,3 +277,25 @@ fn flyer_search3() {
     });
     println!("{} layouts fly", found.load(std::sync::atomic::Ordering::Relaxed));
 }
+
+/// The search is only as good as its pistons: an observer's pulse extends the piston it points away from, then it retracts.
+#[test]
+fn observer_pulse_runs_a_piston() {
+    let mut level = TestLevel::void();
+    level.load_chunks((-1, -1), (4, 1));
+    let y = 100;
+    level.set_raw(BlockPos::new(10, y, 8), state::parse_state("minecraft:sticky_piston[facing=east,extended=false]").unwrap(), flags::SKIP_ALL_SIDEEFFECTS);
+    level.set_raw(BlockPos::new(9, y, 8), state::parse_state("minecraft:observer[facing=west,powered=false]").unwrap(), flags::SKIP_ALL_SIDEEFFECTS);
+    // a block put where the observer looks
+    crate::update::set_block_and_update(&mut level, BlockPos::new(8, y, 8), d::STONE);
+    let mut extended_at = None;
+    for t in 1..=12 {
+        level.tick(0, &[(0, 0), (1, 0)]);
+        let s = level.block(BlockPos::new(10, y, 8));
+        if state::get_bool(s, "extended") && extended_at.is_none() {
+            extended_at = Some(t);
+        }
+    }
+    assert!(extended_at.is_some(), "the observer's pulse never extended the piston");
+    assert!(!state::get_bool(level.block(BlockPos::new(10, y, 8)), "extended"), "it retracted again");
+}

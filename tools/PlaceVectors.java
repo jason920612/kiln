@@ -131,6 +131,8 @@ public class PlaceVectors {
         c.pitch = new float[] {0f, 60f, -60f}[r.nextInt(3)];
         double[] q = {0.25, 0.5, 0.75};
         double a = q[r.nextInt(3)], b = q[r.nextInt(3)];
+        // a quarter of the players are sneaking (candles, sea pickles, scaffolding, hanging signs, dripstone ask)
+        c.sneak = r.nextInt(4) == 0;
         c.cursor = switch (c.face) {
             case UP -> new double[] {a, 1.0, b};
             case DOWN -> new double[] {a, 0.0, b};
