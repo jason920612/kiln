@@ -295,7 +295,8 @@ public class PlaceVectors {
             ItemStack stack = new ItemStack(item);
             // Items that fail may still print a stack trace of an unrelated reason: say it.
             try {
-                stack.useOn(new UseOnContext(level, player, InteractionHand.MAIN_HAND, stack, new BlockHitResult(loc, c.face, O, false)));
+                player.setItemInHand(InteractionHand.MAIN_HAND, stack);
+                stack.useOn(new UseOnContext(player, InteractionHand.MAIN_HAND, new BlockHitResult(loc, c.face, O, false)));
             } catch (Throwable t) {
                 System.out.println("PlaceVectors: " + name + " in context " + id + ": " + t);
             }
