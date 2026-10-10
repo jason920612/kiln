@@ -69,6 +69,8 @@ pub struct Entity {
     /// A mob's landing (`causeFallDamage(distance, multiplier)`) during its move, applied by
     /// the mob once its travel is done (its data is out of the entity meanwhile).
     pub pending_fall: Option<(f64, f32)>,
+    /// The landing was on honey, which lets the block's fall sound follow a landing that hurt (`HoneyBlock.fallOn`).
+    pub honey_fall: bool,
     /// Damage a minecart took from what it stood in (lava, fire) while its own tick held its
     /// state: (kind, amount, attacker), taken by the cart right after.
     pub pending_hurts: Vec<(DamageKind, f32, Option<i32>)>,
@@ -126,6 +128,17 @@ pub struct Entity {
     pub next_step: f32,
     pub stuck_speed_multiplier: Vec3,
     pub main_supporting_block_pos: Option<BlockPos>,
+    /// `Entity.NOCLIP` while a piston pushes this entity: the direction of the push (blocks moving that way do not stop it).
+    pub piston_noclip: Option<Direction>,
+    /// `pistonDeltas` and `pistonDeltasGameTime`: how far pistons moved it per axis this tick (at most 0.51).
+    piston_deltas: [f64; 3],
+    piston_deltas_game_time: i64,
+    /// `lastCrystalSoundPlayTick` and `crystalSoundIntensity`: the chime of walking on amethyst.
+    pub(crate) last_crystal_sound_play_tick: i32,
+    /// `AbstractHorse.gallopSoundCounter`, and what the mob's last tick said its step depends on.
+    pub(crate) gallop_sound_counter: i32,
+    pub step_hint: crate::step_sound::StepHint,
+    pub(crate) crystal_sound_intensity: f32,
     on_ground_no_blocks: bool,
     pub(crate) movement_this_tick: VecDeque<Movement>,
     pub(crate) final_movements_this_tick: Vec<Movement>,
@@ -158,6 +171,7 @@ impl Entity {
         let t = kiln_data::entities::by_name(type_name).unwrap_or_else(|| panic!("unknown entity type {type_name}"));
         let mut e = Entity {
             pending_fall: None,
+            honey_fall: false,
             pending_hurts: Vec::new(),
             pending_effects: Vec::new(),
             last_deflected_by: None,
@@ -206,6 +220,13 @@ impl Entity {
             next_step: 1.0,
             stuck_speed_multiplier: Vec3::ZERO,
             main_supporting_block_pos: None,
+            piston_noclip: None,
+            piston_deltas: [0.0; 3],
+            piston_deltas_game_time: 0,
+            last_crystal_sound_play_tick: 0,
+            gallop_sound_counter: 0,
+            step_hint: Default::default(),
+            crystal_sound_intensity: 0.0,
             on_ground_no_blocks: false,
             movement_this_tick: VecDeque::new(),
             final_movements_this_tick: Vec::new(),
@@ -397,6 +418,7 @@ impl Entity {
             falling_block: matches!(self.kind, EntityKind::FallingBlock(_)),
             walks_on_powder_snow: matches!(&self.kind, EntityKind::Player(p) if p.walks_on_powder_snow),
             stands_on_lava: self.stands_on_lava,
+            piston_noclip: self.piston_noclip,
         }
     }
 
@@ -707,6 +729,11 @@ impl Entity {
 
     /// `Entity.move(MoverType, Vec3)`.
     pub fn do_move(&mut self, level: &mut dyn EntityLevel, mover: MoverType, mut movement: Vec3) {
+        // `BlockAttachedEntity.move`: whatever hangs on a block breaks when anything moves it.
+        if self.is_block_attached() {
+            crate::ext_entity::attached_moved(self, level, movement);
+            return;
+        }
         if self.no_physics {
             self.set_pos(self.position.add(movement.x, movement.y, movement.z));
             self.horizontal_collision = false;
@@ -714,6 +741,12 @@ impl Entity {
             self.vertical_collision_below = false;
             self.minor_horizontal_collision = false;
             return;
+        }
+        if mover == MoverType::Piston {
+            movement = self.limit_piston_movement(level, movement);
+            if movement == Vec3::ZERO {
+                return;
+            }
         }
         if self.stuck_speed_multiplier.length_sqr() > 1.0e-7 {
             if mover != MoverType::Piston {
@@ -740,6 +773,9 @@ impl Entity {
             let to = from + collided;
             self.add_movement_this_tick(Movement { from, to, axis_dependent_original: Some(movement) });
             self.set_pos(to);
+            if self.snaps_to_block() {
+                self.snap_to_block(from);
+            }
         }
         crate::prof!("col", "after collide");
         let x_collision = !mth_equal(movement.x, collided.x);
@@ -768,57 +804,11 @@ impl Entity {
         if self.can_simulate_movement() && ((vertical_move && self.vertical_collision) || self.horizontal_collision) {
             self.restitute_movement_after_collisions(level, on_state, x_collision, z_collision, collided);
         }
-        if matches!(self.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) {
-            crate::prof!("mv", "emission");
-            self.apply_movement_emission(level, collided, on_pos, on_state);
-        }
+        crate::prof!("mv", "emission");
+        self.apply_movement_emission(level, collided, on_pos, on_state);
         crate::prof!("mv", "speed factor");
         let f = self.block_speed_factor(level) as f64;
         self.delta = self.delta.multiply(f, 1.0, f);
-    }
-
-    /// `applyMovementEmissionAndPlaySound` (`MovementEmission.ALL`, not riding): walking step
-    /// sounds and, in water, swim sounds (their pitch draws from the random).
-    fn apply_movement_emission(&mut self, level: &mut dyn EntityLevel, movement: Vec3, pos: BlockPos, state: u16) {
-        let len = (movement.length() * 0.6000000238418579) as f32;
-        let horizontal = (movement.horizontal_distance() * 0.6000000238418579) as f32;
-        let on_pos = self.on_pos(level, 1.0e-5);
-        let on_state = level.block(on_pos);
-        let climbable = |s: u16| has_tag(s, Tag::Climbable);
-        self.move_dist += if climbable(on_state) { len } else { horizontal };
-        self.fly_dist += len;
-        if !(self.move_dist > self.next_step) || kiln_data::blocks_types::is_air(on_state) {
-            return;
-        }
-        // `vibrationAndSoundEffectsFromBlock`: a step on the ground or a climbable block (the step
-        // sound draws nothing).
-        let stepped = |e: &Entity, s: u16| !kiln_data::blocks_types::is_air(s) && (e.on_ground || climbable(s));
-        let mut ok = stepped(self, state);
-        if on_pos != pos {
-            ok |= stepped(self, on_state);
-        }
-        // The step game event comes from the supporting block (the effect block when they are
-        // the same), with that block as the context.
-        let supporting = if on_pos == pos { state } else { on_state };
-        if stepped(self, supporting) {
-            level.block_game_event("minecraft:step", self.position, Some(self.id), supporting);
-        }
-        if ok {
-            self.next_step = (self.move_dist as i32 + 1) as f32;
-        } else if self.is_in_water() {
-            self.next_step = (self.move_dist as i32 + 1) as f32;
-            if let Some(sound) = crate::mob::swim_sound_of(self) {
-                let d = self.delta;
-                let volume = (1.0f32).min(((d.x * d.x * 0.20000000298023224 + d.y * d.y + d.z * d.z * 0.20000000298023224).sqrt() as f32) * 0.35);
-                let pitch = 1.0 + (self.random_next_float_pub() - self.random_next_float_pub()) * 0.4;
-                self.play_sound(level, sound, volume, pitch);
-            }
-            level.emit(Event::GameEvent { event: "minecraft:swim", pos: self.position, entity: Some(self.id) });
-        }
-    }
-
-    fn random_next_float_pub(&mut self) -> f32 {
-        kiln_javamath::random::RandomSource::next_float(&mut self.random)
     }
 
     /// Server side: false for players, whose client is authoritative.
@@ -833,6 +823,65 @@ impl Entity {
     /// `maybeBackOffFromEdge`: only players override it.
     fn maybe_back_off_from_edge(&self, level: &dyn EntityLevel, movement: Vec3, mover: MoverType) -> Vec3 {
         crate::player::back_off_from_edge(self, level, movement, mover)
+    }
+
+    /// Whether `setPos` puts the entity in the middle of its block (`Shulker.setPos`, unless it rides).
+    fn snaps_to_block(&self) -> bool {
+        self.type_name == "minecraft:shulker" && self.vehicle.is_none()
+    }
+
+    /// `Shulker.setPos` after a move from `from`: the middle of the block, and a lid that closes when it is another block.
+    fn snap_to_block(&mut self, from: Vec3) {
+        let p = self.position;
+        let old = BlockPos::new(floor(from.x), floor(from.y), floor(from.z));
+        self.set_pos(Vec3::new(floor(p.x) as f64 + 0.5, floor(p.y + 0.5) as f64, floor(p.z) as f64 + 0.5));
+        let closes = self.tick_count != 0 && self.block_position != old;
+        crate::mob::kinds::shulker::snapped(self, closes);
+    }
+
+    /// `limitPistonMovement`: pistons together move an entity at most 0.51 per axis in a tick, one axis at a time.
+    fn limit_piston_movement(&mut self, level: &dyn EntityLevel, movement: Vec3) -> Vec3 {
+        if movement.length_sqr() <= 1.0e-7 {
+            return movement;
+        }
+        let now = level.game_time();
+        if now != self.piston_deltas_game_time {
+            self.piston_deltas = [0.0; 3];
+            self.piston_deltas_game_time = now;
+        }
+        let mut restrict = |axis: usize, d: f64| -> Vec3 {
+            let e = jmax(-0.51, jmin(0.51, d + self.piston_deltas[axis]));
+            let d2 = e - self.piston_deltas[axis];
+            self.piston_deltas[axis] = e;
+            if d2.abs() <= 9.999999747378752e-6 {
+                Vec3::ZERO
+            } else {
+                match axis {
+                    0 => Vec3::new(d2, 0.0, 0.0),
+                    1 => Vec3::new(0.0, d2, 0.0),
+                    _ => Vec3::new(0.0, 0.0, d2),
+                }
+            }
+        };
+        if movement.x != 0.0 {
+            restrict(0, movement.x)
+        } else if movement.y != 0.0 {
+            restrict(1, movement.y)
+        } else if movement.z != 0.0 {
+            restrict(2, movement.z)
+        } else {
+            Vec3::ZERO
+        }
+    }
+
+    /// `removeLatestMovementRecording`.
+    pub fn remove_latest_movement_recording(&mut self) {
+        self.movement_this_tick.pop_back();
+    }
+
+    /// Whether this is a `BlockAttachedEntity` (item frames, paintings, leash knots, cushions).
+    pub fn is_block_attached(&self) -> bool {
+        matches!(self.kind, EntityKind::Ext(ref x) if x.attached())
     }
 
     /// Takes the movements recorded since the last call (`movementThisTick`).

@@ -499,7 +499,8 @@ impl RegionWork<'_> {
         // itself and reads the region's blocks, so the players split into windows; what they
         // leave behind is merged in connection order, as a serial loop would have left it.
         let cells = &*self.cells;
-        let ticked = ctx.map_mut_with(PLAYER_TICK_WINDOW, &mut self.players, |_, p| player_tick(p, cells, env, true));
+        let pistons = &self.blocks.data.pistons;
+        let ticked = ctx.map_mut_with(PLAYER_TICK_WINDOW, &mut self.players, |_, p| player_tick(p, cells, pistons, env, true));
         for t in ticked {
             self.out.spawns.extend(t.spawns);
             self.out.deaths.extend(t.deaths);
@@ -644,7 +645,6 @@ impl RegionWork<'_> {
                         crate::container::equip::shear(self.entities, &mut level, &mut self.players, id, &tool, &mut self.out.spawns, &mut self.out.deaths);
                     }
                 }
-                blocks::tick_pistons(&mut level, &ticking);
                 crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
             }
         }
@@ -677,6 +677,7 @@ impl RegionWork<'_> {
             self.blocks.sculk.retain_allays(|id| list.binary_search_by_key(&id, |e| e.id).is_ok_and(|i| !list[i].removed));
         }
         if self.entities.list.is_empty() && self.blocks.hearts.is_empty() && (self.players.is_empty() || (env.blocks.spawn_table.is_none() && self.blocks.spawners.is_empty())) {
+            self.tick_pistons(env, ticking_now);
             self.tick_block_entities(env, ticking_now);
             return;
         }
@@ -708,7 +709,36 @@ impl RegionWork<'_> {
             crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+        self.tick_pistons(env, ticking_now);
         self.tick_block_entities(env, ticking_now);
+    }
+
+    /// `Level.tickBlockEntities` for the moving pistons, after the entities: each one that
+    /// advances pushes what is in its way (`PistonMovingBlockEntity.moveCollidedEntities`).
+    fn tick_pistons(&mut self, env: &Env, ticking: &Ticking) {
+        if self.blocks.data.pistons.is_empty() {
+            return;
+        }
+        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        let mut out = BlockOut::default();
+        let pushes: Vec<crate::entities::piston::Push> = {
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            blocks::tick_pistons(&mut level, ticking);
+            let mut pushes = Vec::new();
+            level.out.effects.retain(|(_, effect)| match effect {
+                kiln_blocks::Effect::PistonMove { pos, piston, progress } => {
+                    pushes.push(crate::entities::piston::Push { pos: *pos, piston: *piston, progress: *progress });
+                    false
+                }
+                _ => true,
+            });
+            pushes
+        };
+        if !pushes.is_empty() && (!self.entities.list.is_empty() || !self.players.is_empty()) {
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            crate::entities::piston::push(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &pushes);
+        }
+        blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
     }
 
     /// `Level.tickBlockEntities`: hoppers and furnaces in ticking chunks. Hoppers take item
@@ -810,7 +840,7 @@ pub(crate) struct PlayerTicked {
 /// (`ServerGamePacketListenerImpl.tick` -> `ServerPlayer.doTick`: the base tick, effects, food,
 /// stats and the health and experience sync, against void air); `ServerPlayer.tick`, which the
 /// level's entity ticking calls, waits for the chunk.
-pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env, entity_ticking: bool) -> PlayerTicked {
+pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_blocks::MovingPistons, env: &Env, entity_ticking: bool) -> PlayerTicked {
     let mut t = PlayerTicked::default();
     let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
     tick_connection(p, env);
@@ -860,7 +890,7 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env, enti
     // The server's body moves on its own (gravity, drag, a ladder's grip) and the blocks it
     // passes through take effect, then the connection puts the position back (`doTick`).
     let snap = p.pos;
-    p.phantom_travel(cells, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
+    p.phantom_travel(cells, pistons, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
     // (`checkFallDamage` in the move: a landing runs them as well.)
     p.landed_location_changed(&block);
     let (_, h, _) = p.dimensions();
@@ -1571,6 +1601,13 @@ fn use_on_block(
         crate::golem::try_spawn(level, placed_at, p, spawns);
     }
     let placed_state = level.block(placed_at);
+    // `BlockItem.place`: the block's place sound, for everyone but the placer's own client.
+    {
+        let sound = kiln_data::block_sounds::sound_type(placed_state);
+        // (`SolidBucketItem.getPlaceSound`: the bucket's own.)
+        let name = if placed_from.item_name() == "minecraft:powder_snow_bucket" { "minecraft:item.bucket.empty_powder_snow" } else { sound.place_sound };
+        level.effect(kiln_blocks::level::Effect::ActorSound { pos: placed_at, sound: name, volume: (sound.volume + 1.0) / 2.0, pitch: sound.pitch * 0.8 });
+    }
     let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     let at = [placed_at.x, placed_at.y, placed_at.z];
     p.used_on_block("minecraft:placed_block", at, placed_state, &placed_from, &probe);

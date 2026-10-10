@@ -559,6 +559,8 @@ struct Player {
     saturation: f32,
     /// Distance fallen since last on the ground.
     fall_distance: f64,
+    /// The block at the feet (`floor(y - 0.2)`) when a landing is checked: `LivingEntity.playBlockFallSound` plays its fall sound.
+    landing_block: u16,
     /// `Entity.mainSupportingBlockPos`, `onGroundNoBlocks` and `wasTouchingWater` (the landing
     /// block of a fall is found through the first, the water state decides the second's reset).
     main_supporting_block: Option<kiln_entity::math::BlockPos>,
@@ -2717,10 +2719,11 @@ impl Sim {
         conns.sort_unstable();
         let envs = self.waiting_envs();
         let no_blocks = kiln_region::CellSet::<Cell>::default();
+        let no_pistons = kiln_blocks::MovingPistons::default();
         let mut outs = Vec::new();
         for conn in conns {
             let p = self.players.get_mut(&conn).unwrap();
-            let t = region::player_tick(p, &no_blocks, &envs[&p.dim], false);
+            let t = region::player_tick(p, &no_blocks, &no_pistons, &envs[&p.dim], false);
             p.decay_velocity();
             let mut out = RegionOut { spawns: t.spawns, deaths: t.deaths, portals: t.portals, ..Default::default() };
             out.saved_entities.append(&mut p.released_shoulders);
@@ -3633,6 +3636,7 @@ impl Sim {
             food: joining.food,
             saturation: joining.saturation,
             fall_distance: 0.0,
+            landing_block: 0,
             main_supporting_block: None,
             on_ground_no_blocks: false,
             was_touching_water: false,

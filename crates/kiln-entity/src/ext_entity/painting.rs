@@ -188,6 +188,19 @@ impl Painting {
 }
 
 impl EntityExt for Painting {
+
+    fn attached(&self) -> bool {
+        true
+    }
+
+    /// `BlockAttachedEntity.move`: killed, and drops itself.
+    fn moved(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, movement: Vec3) {
+        if !e.is_removed() && movement.length_sqr() > 0.0 {
+            e.removed = Some(RemovalReason::Killed);
+            level.emit(Event::GameEvent { event: "minecraft:entity_die", pos: e.position(), entity: Some(e.id) });
+            self.drop_item(e, level, None);
+        }
+    }
     crate::entity_ext_boilerplate!();
 
     fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {

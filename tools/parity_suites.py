@@ -91,6 +91,9 @@ SUITES = {
     # scenarios wp52 had taken out are back in wp52/interact/place52.jsonl and the mobs that pick up loot (pickup53_*) in m6-mobs2/vectors.jsonl.
     "interact53": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp53/interact/*.jsonl"}),
     "container53": (["-p", "kiln-sim", "--lib", "parity"], {"KILN_CONTAINER_VECTORS": "wp53/container/*.jsonl", "KILN_LANG": vec("generated/assets/minecraft/lang/en_us.json")}),
+    # wp54 suites: recorded into <work>/wp54 (pistons moving entities: piston54.jsonl; block sounds: sound54.jsonl for walking, landing and placing,
+    # mannequin54.jsonl for a mob landing). The step / fall sounds of the mobs are folded into m6-mobs2/vectors.jsonl (the `sound_trace` of mob_parity).
+    "interact54": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp54/interact/*.jsonl"}),
     "plugin_compat": (["-p", "kiln-plugin-host", "--test", "api_compat", "--test", "wit_freeze"], {}),
 }
 

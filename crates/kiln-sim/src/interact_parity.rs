@@ -77,7 +77,12 @@ fn pretty(packet: &str) -> String {
 /// What is in one list of packets and not in the other.
 fn packet_diff(got: &[String], want: &[String]) -> String {
     let only = |a: &[String], b: &[String]| -> Vec<String> { a.iter().filter(|p| !b.contains(p)).map(|p| pretty(p)).collect() };
-    format!("kiln only {:?}; vanilla only {:?}", only(got, want), only(want, got))
+    let (a, b) = (only(got, want), only(want, got));
+    if a.is_empty() && b.is_empty() {
+        // The same packets, not as often or not in the same order.
+        return format!("same packets, other count or order; kiln {:?}; vanilla {:?}", got.iter().map(|p| pretty(p)).collect::<Vec<_>>(), want.iter().map(|p| pretty(p)).collect::<Vec<_>>());
+    }
+    format!("kiln only {:?}; vanilla only {:?}", a, b)
 }
 
 /// Two texts that differ, cut around the first difference.
@@ -96,6 +101,8 @@ fn sound_source_name(id: i32) -> &'static str {
 }
 
 thread_local! {
+    /// The case records the pitch of the sounds of blocks, not of voices.
+    static NO_VOICE_PITCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The case does not record sound pitches (an entity's voice pitch comes from its own random).
     static NO_PITCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The teleports (Player Position packets) of the last step.
@@ -121,7 +128,7 @@ fn decode(pkt: &Bytes) -> Option<Value> {
             let (volume, pitch) = (r.f32().ok()?, r.f32().ok()?);
             // (The vectors print floats the way Java does: the shortest text of the float.)
             let java = |f: f32| format!("{f}").parse::<f64>().unwrap_or(f as f64);
-            let pitch = if NO_PITCH.with(|n| n.get()) { 0.0 } else { java(pitch) };
+            let pitch = if NO_PITCH.with(|n| n.get()) || (NO_VOICE_PITCH.with(|n| n.get()) && !name.starts_with("minecraft:block.")) { 0.0 } else { java(pitch) };
             json!({"t": "sound", "name": name, "source": sound_source_name(source), "pos": [x as f64 / 8.0, y as f64 / 8.0, z as f64 / 8.0],
                    "volume": java(volume), "pitch": pitch})
         }
@@ -494,6 +501,21 @@ fn mob_rows(sim: &Sim) -> Vec<(String, f64, f64, f64)> {
     rows
 }
 
+/// Every entity of the level but the players: (type, position, velocity, on ground), as
+/// `InteractVectors.entRows` lists them (sorted by type and position).
+fn ent_rows(sim: &Sim) -> Vec<(String, [f64; 3], [f64; 3], i32)> {
+    let mut rows = Vec::new();
+    for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
+        for e in region.part().0.list.iter().filter(|e| !e.removed) {
+            let Some(phys) = e.phys.as_deref() else { continue };
+            let (p, v) = (phys.position(), phys.delta);
+            rows.push((phys.type_name.to_owned(), [p.x, p.y, p.z], [v.x, v.y, v.z], i32::from(phys.on_ground)));
+        }
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1[0].total_cmp(&b.1[0])).then(a.1[1].total_cmp(&b.1[1])).then(a.1[2].total_cmp(&b.1[2])));
+    rows
+}
+
 /// The armor stands of the level, sorted by position.
 fn stand_rows(sim: &Sim) -> Vec<StandRow> {
     let mut rows: Vec<StandRow> = Vec::new();
@@ -565,6 +587,7 @@ fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
 
 fn run_case(line: &Value) -> Vec<String> {
     NO_PITCH.with(|n| n.set(line["no_pitch"].as_bool() == Some(true)));
+    NO_VOICE_PITCH.with(|n| n.set(line["no_voice_pitch"].as_bool() == Some(true)));
     // (A map covers 128 blocks around the origin: the replay's player sees as far.)
     let maps = line["maps"].as_bool() == Some(true);
     let view = if maps { 8 } else { 2 };
@@ -589,18 +612,29 @@ fn run_case(line: &Value) -> Vec<String> {
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
     }
-    // Another player, standing by, for the scenarios in which one holds a sign's editing lock.
-    if line["steps"].as_array().unwrap().iter().any(|s| s["op"] == "lock_sign") {
+    // Another player, standing by, for the scenarios in which one holds a sign's editing lock, and (`observer`) one that
+    // only listens: the sounds the first player makes are not sent to it, the others' are.
+    let mut observer: Option<(Client, std::sync::Arc<SinkStats>)> = None;
+    if line["steps"].as_array().unwrap().iter().any(|s| s["op"] == "lock_sign") || line["observer"].is_array() {
         let (msg, stats2) = join(2, "Other", 2);
         assert!(sim.step([msg]));
-        let mut other = Client::new(2, stats2);
+        let mut other = Client::new(2, stats2.clone());
         for _ in 0..5 {
             let mut inbox = Vec::new();
             other.tick(None, &mut inbox);
             assert!(sim.step(inbox));
         }
-        let pos: Vec<f64> = line["pos"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
-        sim.players.get_mut(&2).unwrap().pos = [pos[0] + 0.5, pos[1], pos[2]];
+        let pos: Vec<f64> = match line["observer"].as_array() {
+            Some(o) => o.iter().map(|v| v.as_f64().unwrap()).collect(),
+            None => {
+                let pos: Vec<f64> = line["pos"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+                vec![pos[0] + 0.5, pos[1], pos[2]]
+            }
+        };
+        sim.players.get_mut(&2).unwrap().pos = [pos[0], pos[1], pos[2]];
+        if line["observer"].is_array() {
+            observer = Some((other, stats2));
+        }
     }
     // The recorded level's clock stands at 100 as each scenario begins: the setup commands come just before
     // (a block they place that would not last, a kelp plant without support, is ticked as little as in the
@@ -665,7 +699,21 @@ fn run_case(line: &Value) -> Vec<String> {
     while sim.game_time() < start {
         assert!(sim.step([]));
     }
+    // The vectors' level made one tick of its entities before the first step (an item rests in a four-tick cycle of its age
+    // and id): the replay's entities have had that many, whatever the steps it waited.
+    if line["pistons"].as_bool() == Some(true) {
+        for region in sim.dims[crate::OVERWORLD_ID].regions.iter_mut() {
+            for e in region.part_mut().0.list.iter_mut() {
+                if let Some(phys) = e.phys.as_deref_mut() {
+                    phys.tick_count = 1;
+                }
+            }
+        }
+    }
     *stats.log.lock().unwrap() = Some(Vec::new());
+    if let Some((_, obs_stats)) = &observer {
+        *obs_stats.log.lock().unwrap() = Some(Vec::new());
+    }
     // Commands the vectors ran at the start but the replay runs now, after its level has settled (a
     // hive ages with every tick; the vectors' level made one for it, `InteractVectors.run`).
     if let Some(late) = line["late"].as_array().filter(|l| !l.is_empty()) {
@@ -915,11 +963,14 @@ fn run_case(line: &Value) -> Vec<String> {
                 p.add_cooldown(&item, i32_of(&step["ticks"]));
             }
             "lock_sign" => sim.lock_sign(2, arr3(&step["pos"])),
+            // Nothing but the tick that follows every step.
+            "idle" => {}
             other => panic!("unknown op {other}"),
         }
         assert!(sim.step(inbox));
+        let sound_only = line["sound_only"].as_bool() == Some(true);
         let mut eq = |what: &str, got: String, expected: String| {
-            if got != expected {
+            if got != expected && (!sound_only || what == "heard") {
                 errors.push(format!("step {n} ({}) {what}: kiln {got}, vanilla {expected}", step["op"]));
             }
         };
@@ -959,6 +1010,11 @@ fn run_case(line: &Value) -> Vec<String> {
         if line["name"].as_str().is_some_and(|n| n.starts_with("structure50_load_entities")) {
             got_packets.retain(|p| !p.contains("entity.item_frame.add_item"));
             want_packets.retain(|p| !p.contains("entity.item_frame.add_item"));
+        }
+        // (The piston vectors are about where the pushed things go: their packets are not compared.)
+        if line["pistons"].as_bool() == Some(true) {
+            got_packets.clear();
+            want_packets.clear();
         }
         // (The attack sound is the cooldown's: this level does not tick between the vanilla steps.)
         got_packets.retain(|p| !p.contains("entity.player.attack."));
@@ -1026,6 +1082,16 @@ fn run_case(line: &Value) -> Vec<String> {
             eq("player position", format!("{:?}", sim.players[&1].pos), format!("{:?}", [want_pos[0], want_pos[1], want_pos[2]]));
             eq("teleports", TELEPORTS.with(|t| t.get()).to_string(), want["teleports"].to_string());
         }
+        // What the listening player heard.
+        if let (Some((_, obs_stats)), Some(want_obs)) = (&observer, want.get("obs")) {
+            let teleports = TELEPORTS.with(|t| t.get());
+            let mut got: Vec<String> = take_packets(obs_stats, false, false).iter().filter(|v| v["t"] == "sound").map(|v| v.to_string()).collect();
+            TELEPORTS.with(|t| t.set(teleports));
+            let mut want_packets: Vec<String> = want_obs.as_array().unwrap().iter().map(|v| normalize_want(v).to_string()).collect();
+            got.sort();
+            want_packets.sort();
+            eq("heard", format!("{got:?}"), format!("{want_packets:?}"));
+        }
         if let Some(want_templates) = want.get("templates").and_then(Value::as_object) {
             // The templates the manager holds (an id it has none for is null), as the saved NBT.
             for (id, hex_want) in want_templates {
@@ -1065,6 +1131,19 @@ fn run_case(line: &Value) -> Vec<String> {
             // (The flag is an integer in the vectors.)
             let rows: Vec<Value> = fresh.iter().map(|r| json!([r[0], r[1], r[2], r[3] as i64])).collect();
             eq("new bees", Value::Array(rows).to_string(), want_bees.to_string());
+        }
+        if let Some(want_ents) = want.get("ents") {
+            let got: Vec<String> = ent_rows(&sim).iter().map(|r| format!("{r:?}")).collect();
+            let want_rows: Vec<String> = want_ents
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| {
+                    let f = |i: usize| r[i].as_f64().unwrap();
+                    format!("{:?}", (r[0].as_str().unwrap().to_owned(), [f(1), f(2), f(3)], [f(4), f(5), f(6)], r[7].as_i64().unwrap() as i32))
+                })
+                .collect();
+            eq("entities", format!("{got:#?}"), format!("{want_rows:#?}"));
         }
         if let Some(want_mobs) = want.get("mobs") {
             let mut got: Vec<String> = mob_rows(&sim).iter().map(|r| format!("{r:?}")).collect();

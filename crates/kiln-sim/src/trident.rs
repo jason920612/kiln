@@ -141,6 +141,7 @@ fn lift(p: &mut Player, level: &RegionLevel) {
         falling_block: false,
         walks_on_powder_snow: kiln_item::registry::ITEM.id("minecraft:leather_boots").is_some_and(|id| p.worn(EquipmentSlot::Feet).item() == id),
         stands_on_lava: false,
+        piston_noclip: None,
     };
     use kiln_world::Blocks;
     let blocks = |pos: kiln_entity::math::BlockPos| level.cells.get_block(pos.x, pos.y, pos.z);

@@ -678,6 +678,27 @@ pub trait EntityLevel {
 
     fn entity(&self, id: i32) -> Option<&Entity>;
 
+    /// The `PistonMovingBlockEntity` of the `moving_piston` block at `pos`, which gives the block
+    /// its collision shape (`MovingPistonBlock.getCollisionShape`). `None`: no such block entity.
+    fn moving_piston(&self, pos: BlockPos) -> Option<crate::piston::MovingPistonView> {
+        let _ = pos;
+        None
+    }
+
+    /// Whether any `moving_piston` block entity is registered: the level's block epoch does not
+    /// see their progress, so scans that read their shapes are not reused (`false`: none).
+    fn has_moving_pistons(&self) -> bool {
+        false
+    }
+
+    /// Runs `f` on entity `id` taken out of the level (as the entity being ticked is: the level
+    /// cannot find it meanwhile), so `f` can move it through the level. False when the level
+    /// cannot (or there is no such entity).
+    fn with_entity_taken(&mut self, id: i32, f: &mut dyn FnMut(&mut Entity, &mut dyn EntityLevel)) -> bool {
+        let _ = (id, f);
+        false
+    }
+
     /// Adds a new entity (vanilla `addFreshEntity`); it ticks from the next tick on.
     fn add_entity(&mut self, entity: Entity);
 

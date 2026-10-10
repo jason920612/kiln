@@ -413,6 +413,31 @@ impl Aabb {
         self.offset(v.x, v.y, v.z)
     }
 
+    /// `AABB.intersect(other)`: the overlap (the constructor orders the corners, so boxes that do
+    /// not meet give the gap between them).
+    pub fn intersect(&self, o: &Aabb) -> Self {
+        Aabb::new(
+            jmax(self.min_x, o.min_x),
+            jmax(self.min_y, o.min_y),
+            jmax(self.min_z, o.min_z),
+            jmin(self.max_x, o.max_x),
+            jmin(self.max_y, o.max_y),
+            jmin(self.max_z, o.max_z),
+        )
+    }
+
+    /// `AABB.minmax(other)`: the box around both.
+    pub fn minmax(&self, o: &Aabb) -> Self {
+        Aabb::new(
+            jmin(self.min_x, o.min_x),
+            jmin(self.min_y, o.min_y),
+            jmin(self.min_z, o.min_z),
+            jmax(self.max_x, o.max_x),
+            jmax(self.max_y, o.max_y),
+            jmax(self.max_z, o.max_z),
+        )
+    }
+
     pub fn intersects(&self, o: &Aabb) -> bool {
         self.intersects_raw(o.min_x, o.min_y, o.min_z, o.max_x, o.max_y, o.max_z)
     }

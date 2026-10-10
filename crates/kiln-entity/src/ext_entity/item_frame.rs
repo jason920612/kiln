@@ -237,6 +237,19 @@ impl ItemFrame {
 use kiln_javamath::random::RandomSource;
 
 impl EntityExt for ItemFrame {
+
+    fn attached(&self) -> bool {
+        true
+    }
+
+    /// `BlockAttachedEntity.move`: killed, and drops itself and its item.
+    fn moved(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, movement: crate::math::Vec3) {
+        if !e.is_removed() && movement.length_sqr() > 0.0 {
+            e.removed = Some(RemovalReason::Killed);
+            level.emit(Event::GameEvent { event: "minecraft:entity_die", pos: e.position(), entity: Some(e.id) });
+            self.drop_all(e, level, None);
+        }
+    }
     crate::entity_ext_boilerplate!();
 
     /// `BlockAttachedEntity.tick`: every 100 ticks the wall must still be there.

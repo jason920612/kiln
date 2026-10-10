@@ -1462,6 +1462,8 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
     crate::prof!("mob", e.type_name);
     let mut m = take(e);
     m.swing = false;
+    // What a step of this tick depends on in the mob (its data is out of the entity while it moves).
+    e.step_hint = crate::step_sound::hint_of(&m);
     // `Entity.isVehicle()` as the goals of this tick see it (a spider with a rider does not attack).
     m.is_vehicle = !e.passengers.is_empty();
     {
@@ -1874,7 +1876,11 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         travel(e, m, level, input);
     }
     if let Some((distance, multiplier)) = e.pending_fall.take() {
-        cause_fall_damage(e, m, level, distance, multiplier);
+        let hurt = cause_fall_damage(e, m, level, distance, multiplier);
+        // `HoneyBlock.fallOn`: the block's fall sound follows a landing that hurt.
+        if std::mem::take(&mut e.honey_fall) && hurt {
+            e.play_block_fall_sound(level);
+        }
     }
     {
         crate::prof!("mob", "apply_effects_from_blocks");
@@ -2015,24 +2021,22 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
 
 /// `LivingEntity.causeFallDamage` (the landing happened in the move just done): the fall
 /// power above the safe fall distance, scaled by the multiplier attribute, as fall damage
-/// with the small or big fall sound. Approximation: the landing block's fall sound is not
-/// played.
-fn cause_fall_damage(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, distance: f64, multiplier: f32) {
+/// with the small or big fall sound and the landing block's.
+fn cause_fall_damage(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, distance: f64, multiplier: f32) -> bool {
     if entity_type_tag(e.type_name, "minecraft:fall_damage_immune") {
-        return;
+        return false;
     }
     let power = distance + 1.0e-6 - m.attrs.value(Attr::SafeFallDistance);
     let dmg = crate::math::floor(power * multiplier as f64 * m.attrs.value(Attr::FallDamageMultiplier)) - m.kind.ext().map_or(0, |k| k.fall_damage_reduction());
     if dmg <= 0 {
-        return;
+        return false;
     }
-    let (small, big) = if m.kind.category() == Category::Monster {
-        ("minecraft:entity.hostile.small_fall", "minecraft:entity.hostile.big_fall")
-    } else {
-        ("minecraft:entity.generic.small_fall", "minecraft:entity.generic.big_fall")
-    };
+    let (small, big) = crate::step_sound::fall_sounds(e.type_name, m.kind.category() == Category::Monster);
     play_sound(e, m, level, if dmg > 4 { big } else { small }, 1.0, 1.0);
+    // `playBlockFallSound`: the block at the feet lands with a sound of its own.
+    e.play_block_fall_sound(level);
     hurt(e, m, level, DamageSource::of(DamageKind::Fall), dmg as f32);
+    true
 }
 
 /// `LivingEntity.jumpFromGround`.

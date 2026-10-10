@@ -26,11 +26,15 @@ pub(crate) struct PhantomLevel<'a> {
     game_time: i64,
     min_y: i32,
     fast_lava: bool,
+    /// The region's moving pistons, for a body a piston pushes (movement checks do not look at them).
+    pistons: Option<&'a kiln_blocks::MovingPistons>,
+    /// The sounds the body made (its steps), for the players who hear it.
+    sounds: Vec<(Vec3, &'static str, f32, f32)>,
 }
 
 impl<'a> PhantomLevel<'a> {
     pub(crate) fn new(cells: &'a CellSet<Cell>, game_time: i64, min_y: i32, fast_lava: bool) -> Self {
-        PhantomLevel { cells, rng: LegacyRandom::new(0), game_time, min_y, fast_lava }
+        PhantomLevel { cells, rng: LegacyRandom::new(0), game_time, min_y, fast_lava, pistons: None, sounds: Vec::new() }
     }
 }
 
@@ -63,6 +67,14 @@ impl EntityLevel for PhantomLevel<'_> {
         self.fast_lava
     }
 
+    fn moving_piston(&self, pos: BlockPos) -> Option<kiln_entity::piston::MovingPistonView> {
+        self.pistons?.get(kiln_blocks::BlockPos::new(pos.x, pos.y, pos.z)).map(crate::entities::piston::view_of)
+    }
+
+    fn has_moving_pistons(&self) -> bool {
+        self.pistons.is_some_and(|p| !p.is_empty())
+    }
+
     fn entities_in(&self, _area: &Aabb, _filter: EntityFilter, _exclude: i32) -> Vec<i32> {
         Vec::new()
     }
@@ -85,7 +97,11 @@ impl EntityLevel for PhantomLevel<'_> {
         0
     }
 
-    fn emit(&mut self, _event: Event) {}
+    fn emit(&mut self, event: Event) {
+        if let Event::Sound { pos, sound, volume, pitch, .. } = event {
+            self.sounds.push((pos, sound, volume, pitch));
+        }
+    }
 }
 
 /// One movement of the tick, as `Entity.Movement`.
@@ -131,7 +147,7 @@ impl Player {
         e.y_rot = self.rot[0];
         let walks = self.walks_on_powder_snow();
         if let EntityKind::Player(d) = &mut e.kind {
-            *d = PlayerData { flying: false, walks_on_powder_snow: walks, spectator: false };
+            *d = PlayerData { flying: self.flying, walks_on_powder_snow: walks, spectator: false };
         }
         let _ = level;
         e
@@ -156,16 +172,24 @@ impl Player {
         self.phantom = Some(e);
     }
 
+    /// The steps and splashes the body made, heard by the players around (not by this one: its client makes them).
+    fn queue_body_sounds(&mut self, level: &mut PhantomLevel) {
+        for (at, sound, volume, pitch) in std::mem::take(&mut level.sounds) {
+            self.queue_sound_at([at.x, at.y, at.z], sound, volume, pitch);
+        }
+    }
+
     /// `LivingEntity.travel` for the server's body of this player (see the module docs). The
     /// player's position is left where the body went; the caller puts it back after the
     /// tick's block effects.
-    pub(crate) fn phantom_travel(&mut self, cells: &CellSet<Cell>, game_time: i64, min_y: i32, fast_lava: bool) {
+    pub(crate) fn phantom_travel(&mut self, cells: &CellSet<Cell>, pistons: &kiln_blocks::MovingPistons, game_time: i64, min_y: i32, fast_lava: bool) {
         // Spectators, flying players, gliders, riders and the dead are not moved this way.
         if self.game_mode == 3 || self.flying || self.fall_flying || self.vehicle.is_some() || self.dead || self.sleep.pos.is_some() {
             self.server_delta = [0.0; 3];
             return;
         }
         let mut level = PhantomLevel::new(cells, game_time, min_y, fast_lava);
+        level.pistons = Some(pistons);
         let mut e = self.phantom_in(&level);
         // `Entity.baseTick`'s fluid update (currents push the body).
         e.update_fluid_interaction(&mut level);
@@ -181,6 +205,27 @@ impl Player {
         };
         kiln_entity::player::travel(&mut level, &mut e, &t);
         self.phantom_out(e, true);
+        self.queue_body_sounds(&mut level);
+    }
+
+    /// A moving piston moves this player's server body (`f` does what the piston does to an
+    /// entity): the position stays where the body went, as the client moves by the same piston.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn piston_push(
+        &mut self,
+        cells: &CellSet<Cell>,
+        pistons: &kiln_blocks::MovingPistons,
+        game_time: i64,
+        min_y: i32,
+        fast_lava: bool,
+        f: impl FnOnce(&mut Entity, &mut dyn EntityLevel),
+    ) {
+        let mut level = PhantomLevel::new(cells, game_time, min_y, fast_lava);
+        level.pistons = Some(pistons);
+        let mut e = self.phantom_in(&level);
+        f(&mut e, &mut level);
+        self.phantom_out(e, true);
+        self.queue_body_sounds(&mut level);
     }
 
     /// `Player.updatePlayerPose` where the server's body stands.
@@ -248,6 +293,7 @@ impl Player {
         let end = [e.x(), e.y(), e.z()];
         // Everything but the position stays with the body.
         self.phantom_out(e, false);
+        self.queue_body_sounds(&mut level);
         end
     }
 }

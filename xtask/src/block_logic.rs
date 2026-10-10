@@ -264,6 +264,47 @@ pub fn gen_flammability(rows: &Value) -> Result<String> {
     Ok(s)
 }
 
+/// `sound_types.rs`: the distinct `SoundType`s (volume, pitch and the five sound events), each block's type (block
+/// registry order) and, for a block whose states differ, the property that tells them apart.
+pub fn gen_sound_types(doc: &Value) -> Result<String> {
+    let mut s = String::from(HEADER);
+    s.push_str("//! Every block's `SoundType`: how it sounds to step on, place, break, hit and land on.\n\n");
+    s.push_str("/// `SoundType`: the volume and pitch of its sounds and the five sound events.\n");
+    s.push_str("#[derive(Clone, Copy, Debug, PartialEq)]\npub struct SoundType {\n    pub volume: f32,\n    pub pitch: f32,\n    pub break_sound: &'static str,\n    pub step_sound: &'static str,\n    pub place_sound: &'static str,\n    pub hit_sound: &'static str,\n    pub fall_sound: &'static str,\n}\n\n");
+    s.push_str("pub static SOUND_TYPES: &[SoundType] = &[\n");
+    let types = doc["types"].as_array().context("types")?;
+    ensure!(types.len() <= 255, "more than 255 sound types");
+    for t in types {
+        let f = |k: &str| t[k].as_f64().with_context(|| k.to_string());
+        let n = |k: &str| t[k].as_str().with_context(|| k.to_string());
+        writeln!(
+            s,
+            "    SoundType {{ volume: {:?}, pitch: {:?}, break_sound: {:?}, step_sound: {:?}, place_sound: {:?}, hit_sound: {:?}, fall_sound: {:?} }},",
+            f("volume")? as f32,
+            f("pitch")? as f32,
+            n("break")?,
+            n("step")?,
+            n("place")?,
+            n("hit")?,
+            n("fall")?
+        )?;
+    }
+    s.push_str("];\n\n/// The sound type of each block's default state (block, index into `SOUND_TYPES`), block registry order.\n");
+    s.push_str("pub static BLOCK_SOUND_TYPES: &[(&str, u8)] = &[\n");
+    for b in doc["blocks"].as_array().context("blocks")? {
+        writeln!(s, "    ({:?}, {}),", b[0].as_str().context("block")?, b[1].as_u64().context("index")?)?;
+    }
+    s.push_str("];\n\n/// Blocks whose states sound differently: (block, the property that decides, [(value, index into `SOUND_TYPES`)]).\n");
+    s.push_str("pub static SOUND_BY_PROPERTY: &[(&str, &str, &[(&str, u8)])] = &[\n");
+    for r in doc["by_property"].as_array().context("by_property")? {
+        let values: Vec<String> =
+            r[2].as_array().context("values")?.iter().map(|v| format!("({:?}, {})", v[0].as_str().unwrap_or_default(), v[1].as_u64().unwrap_or(0))).collect();
+        writeln!(s, "    ({:?}, {:?}, &[{}]),", r[0].as_str().context("block")?, r[1].as_str().context("property")?, values.join(", "))?;
+    }
+    s.push_str("];\n");
+    Ok(s)
+}
+
 fn screaming(name: &str) -> String {
     let mut out = String::new();
     for (i, ch) in name.chars().enumerate() {

@@ -11,6 +11,7 @@ pub mod blocks;
 pub mod blocks_types;
 pub mod block_props;
 pub mod block_logic;
+pub mod block_sounds;
 
 #[path = "gen/registries.rs"]
 pub mod registries;

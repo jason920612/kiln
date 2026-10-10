@@ -206,6 +206,38 @@ public class InteractVectors {
             return this;
         }
 
+        /** wp54: the level ticks as a whole (block ticks, block events, the entities, block entities: moving pistons) after every step. */
+        boolean pistonWorld;
+
+        /** wp54: every entity (not the player) is recorded after every step: type, position, velocity, on ground. */
+        boolean watchEnts;
+
+        /** wp54: a second player stands here (survival, nothing happens to it) and the sounds it hears are recorded after every step (`obs`). */
+        double[] observer;
+
+        /** wp54: voices have no recorded pitch (an entity's own random), the sounds of blocks keep theirs. */
+        boolean noVoicePitch;
+
+        /** wp54: only what the observer heard is compared (the case is about a sound, not about how the block is placed). */
+        boolean soundOnly;
+
+        /** wp54: the case is left out when the observer heard nothing (the item could not be placed). */
+        boolean dropIfSilent;
+
+        Case observer(double x, double y, double z) {
+            observer = new double[] {x, y, z};
+            return this;
+        }
+
+        Case pistons() {
+            tickLevel = true;
+            fullTicks = true;
+            pistonWorld = true;
+            watchEnts = true;
+            watchMove = true;
+            return this;
+        }
+
         /** wp49: the level ticks the watched block entities after every step (and `wait` is that many ticks). */
         Case ticking() {
             tickLevel = true;
@@ -867,6 +899,26 @@ public class InteractVectors {
         return c;
     }
 
+    /** wp54: a mannequin that falls onto `block` (a stone block under it, the floor the player stands on is the world's). */
+    static Case mannequinFall54(String name, String block, int height) {
+        Case c = new Case("mannequin54_fall_" + name).hanging();
+        c.tickCushions = true;
+        c.noVoicePitch = true;
+        c.cmd("setblock 2 99 0 " + block).cmd("setblock 3 99 0 minecraft:stone").late("summon minecraft:mannequin 2.5 " + height + " 0.5");
+        return c;
+    }
+
+    static void mannequins54(List<Case> out) {
+        Case c;
+        for (String block : new String[] {"minecraft:stone", "minecraft:grass_block", "minecraft:white_wool", "minecraft:glass", "minecraft:oak_planks", "minecraft:iron_block", "minecraft:slime_block", "minecraft:honey_block", "minecraft:snow_block", "minecraft:hay_block"}) {
+            for (int height : new int[] {103, 110}) {
+                c = mannequinFall54(block.replace("minecraft:", "") + "_" + height, block, height);
+                c.step(op("op", "tick_cushions", "ticks", 40));
+                out.add(c);
+            }
+        }
+    }
+
     static void mannequins50(List<Case> out) {
         Case c;
         String at = "summon minecraft:mannequin 2.5 100 0.5";
@@ -1505,6 +1557,231 @@ public class InteractVectors {
 
     static Map<String, Object> useOnAt(int x, int y, int z, int face, int hand, double cx, double cy, double cz) {
         return op("op", "use_on", "hand", hand, "pos", List.of(x, y, z), "face", face, "cursor", List.of(cx, cy, cz));
+    }
+
+    // ---------------------------------------------------------------- wp54: moving pistons push entities
+
+    /** A stone floor at y = 99 (x -4..14, z -6..8), air above; the piston machines stand at x = 4..8, the player at x = 1.5 unless the case moves it. */
+    static Case p54(String name) {
+        Case c = new Case("piston54_" + name).pistons();
+        c.pos = new double[] {1.5, 100.0, 0.5};
+        c.cmd("fill -4 99 -6 14 99 8 minecraft:stone").cmd("fill -4 100 -6 14 108 8 minecraft:air");
+        return c;
+    }
+
+    static String summon54(String type, double x, double y, double z) {
+        String nbt = switch (type) {
+            case "item" -> "{Item:{id:\"minecraft:stone\",count:1},PickupDelay:32767s}";
+            case "oak_boat", "minecart", "armor_stand", "tnt_minecart", "chest_minecart" -> "{}";
+            default -> "{NoAI:1b,Silent:1b}";
+        };
+        return "summon minecraft:" + type + " " + x + " " + y + " " + z + " " + nbt;
+    }
+
+    static final String[] ENTS54 = {"pig", "item", "oak_boat", "minecart", "armor_stand", "cow", "sheep", "villager", "chicken", "slime", "creeper"};
+
+    /** Powers the piston at (4, 100, 0) with a redstone block at `power`, then lets `n` ticks pass; `n2` more after it is unpowered. */
+    static Case cycle54(Case c, String power, int n, int n2) {
+        c.step(op("op", "command", "command", "setblock " + power + " minecraft:redstone_block"));
+        for (int i = 0; i < n; i++) c.step(op("op", "idle"));
+        if (n2 > 0) {
+            c.step(op("op", "command", "command", "setblock " + power + " minecraft:air"));
+            for (int i = 0; i < n2; i++) c.step(op("op", "idle"));
+        }
+        return c;
+    }
+
+    static void pistons54(List<Case> out) {
+        Case c;
+        for (String type : ENTS54) {
+            // the block pushes what is in front of it, first extending, then (sticky) pulling it back
+            c = p54("stone_front_" + type);
+            c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd(summon54(type, 6.3, 100.0, 0.5));
+            if (System.getenv("PISTON_DEBUG") != null) c.watch(5, 100, 0).watch(6, 100, 0);
+            out.add(cycle54(c, "4 100 -1", 5, 6));
+            // a slime block flings it
+            c = p54("slime_front_" + type);
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:slime_block").cmd(summon54(type, 6.3, 100.0, 0.5));
+            out.add(cycle54(c, "4 100 -1", 8, 0));
+            // one that stands on top of a slime block that goes up
+            c = p54("slime_up_" + type);
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=up]").cmd("setblock 4 101 0 minecraft:slime_block").cmd(summon54(type, 4.5, 102.0, 0.5));
+            out.add(cycle54(c, "3 100 0", 8, 0));
+            // honey drags what stands on it
+            c = p54("honey_" + type);
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:honey_block").cmd(summon54(type, 5.5, 100.9375, 0.5));
+            for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
+            out.add(cycle54(c, "4 100 -1", 5, 0));
+        }
+        // ---- players
+        double[][] spots = {{6.3, 100.0, 0.5}, {6.6, 100.0, 0.2}, {5.9, 100.0, 0.9}};
+        for (int k = 0; k < spots.length; k++) {
+            double[] at = spots[k];
+            c = p54("player_stone_front_" + k);
+            c.pos = at;
+            c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone");
+            out.add(cycle54(c, "4 100 -1", 5, 6));
+            c = p54("player_slime_front_" + k);
+            c.pos = at;
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:slime_block");
+            out.add(cycle54(c, "4 100 -1", 8, 0));
+        }
+        c = p54("player_slime_up");
+        c.pos = new double[] {4.5, 102.0, 0.5};
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=up]").cmd("setblock 4 101 0 minecraft:slime_block");
+        out.add(cycle54(c, "3 100 0", 8, 0));
+        c = p54("player_stone_up");
+        c.pos = new double[] {4.5, 102.0, 0.5};
+        c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=up]").cmd("setblock 4 101 0 minecraft:stone");
+        out.add(cycle54(c, "3 100 0", 6, 6));
+        c = p54("player_honey");
+        c.pos = new double[] {5.5, 100.9375, 0.5};
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:honey_block");
+        out.add(cycle54(c, "4 100 -1", 6, 0));
+        c = p54("player_honey_back");
+        c.pos = new double[] {5.5, 100.9375, 0.5};
+        c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:honey_block");
+        out.add(cycle54(c, "4 100 -1", 6, 6));
+        c = p54("player_down");
+        c.pos = new double[] {4.5, 99.0, 0.5};
+        c.cmd("fill 4 99 0 4 99 0 minecraft:air").cmd("setblock 4 102 0 minecraft:piston[facing=down]").cmd("setblock 4 101 0 minecraft:stone");
+        out.add(cycle54(c, "3 102 0", 6, 0));
+        // ---- chains and squeezes
+        for (String type : new String[] {"pig", "item", "armor_stand"}) {
+            c = p54("chain_slime_" + type);
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("fill 5 100 0 6 100 0 minecraft:slime_block").cmd(summon54(type, 7.3, 100.0, 0.5));
+            out.add(cycle54(c, "4 100 -1", 8, 0));
+            c = p54("squeeze_" + type);
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone");
+            c.cmd("setblock 10 100 0 minecraft:piston[facing=west]").cmd("setblock 9 100 0 minecraft:stone").cmd(summon54(type, 7.5, 100.0, 0.5));
+            c.step(op("op", "command", "command", "setblock 4 100 -1 minecraft:redstone_block"));
+            c.step(op("op", "command", "command", "setblock 10 100 -1 minecraft:redstone_block"));
+            for (int i = 0; i < 7; i++) c.step(op("op", "idle"));
+            out.add(c);
+        }
+        // ---- a shulker is pushed (it snaps to the block it ends up in); the shulker box block itself is broken by the piston
+        c = p54("shulker_front");
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd(summon54("shulker", 6.5, 100.0, 0.5));
+        out.add(cycle54(c, "4 100 -1", 6, 0));
+        // ---- what hangs on a block breaks when anything moves it (the drops have randomness of their own: off)
+        c = p54("cushion_front");
+        c.pos = new double[] {6.5, 100.0, 3.0};
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd("gamerule entity_drops false");
+        c.slot("h0", stack("minecraft:red_cushion", 1)).step(useOnAt(6, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(cycle54(c, "4 100 -1", 4, 0).step(op("op", "command", "command", "gamerule entity_drops true")));
+        c = p54("item_frame_front");
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd("gamerule entity_drops false").cmd("summon minecraft:item_frame 6 100 0 {Facing:1b}");
+        c.step(op("op", "idle"));
+        out.add(cycle54(c, "4 100 -1", 4, 0).step(op("op", "command", "command", "gamerule entity_drops true")));
+        c = p54("painting_front");
+        c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd("setblock 6 100 -1 minecraft:stone").cmd("gamerule entity_drops false")
+                .cmd("summon minecraft:painting 6 100 0 {facing:3b,variant:\"minecraft:kebab\"}");
+        c.step(op("op", "idle"));
+        out.add(cycle54(c, "4 100 -1", 4, 0).step(op("op", "command", "command", "gamerule entity_drops true")));
+        // ---- one thing at a time at places around a pushing, pulling piston
+        double[][] places = {{3.4, 100, 0.5}, {5.5, 101, 0.5}, {5.5, 100.9375, 1.5}, {6.4, 100, 0.5}, {6.4, 100, -0.3}, {6.9, 100, 0.9}, {5.2, 102, 0.4}, {7.0, 100, 0.1}};
+        for (String[] m : new String[][] {{"stone", "sticky_piston[facing=east]", "stone"}, {"slime", "sticky_piston[facing=east]", "slime_block"}, {"honey", "sticky_piston[facing=east]", "honey_block"}}) {
+            for (String type : new String[] {"pig", "item"}) {
+                for (int i = 0; i < places.length; i++) {
+                    // (An item that ends up inside a block moves out of it by its own random, which the replay does not share; one in the air has fallen further.)
+                    if ("item".equals(type) && (i == 1 || i == 2 || i == 6)) continue;
+                    c = p54("spot_" + m[0] + "_" + type + "_" + i);
+                    c.cmd("setblock 4 100 0 minecraft:" + m[1]).cmd("setblock 5 100 0 minecraft:" + m[2]).cmd(summon54(type, places[i][0], places[i][1], places[i][2]));
+                    for (int k = 0; k < 3; k++) c.step(op("op", "idle"));
+                    out.add(cycle54(c, "4 100 -1", 6, 6));
+                }
+            }
+        }
+        double[][] below = {{4.5, 100.0, 0.5}, {4.2, 100.0, 0.5}, {4.8, 100.0, 0.2}, {3.9, 100.0, 0.5}};
+        for (String type : new String[] {"pig", "armor_stand"}) {
+            for (int i = 0; i < below.length; i++) {
+                c = p54("down_" + type + "_" + i);
+                c.cmd("setblock 4 102 0 minecraft:sticky_piston[facing=down]").cmd("setblock 4 101 0 minecraft:slime_block").cmd(summon54(type, below[i][0], below[i][1], below[i][2]));
+                out.add(cycle54(c, "3 102 0", 6, 6));
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- wp54: block sounds
+
+    /** A grass floor at y = 99, the placing player at the origin, a listening player two blocks off. */
+    static Case sound54(String name) {
+        Case c = new Case("sound54_" + name).observer(3.5, 100.0, 2.5);
+        c.cmd("fill -4 99 -6 14 99 8 minecraft:grass_block").cmd("fill -4 100 -6 14 108 8 minecraft:air");
+        return c;
+    }
+
+    static void sounds54(List<Case> out) {
+        Case c;
+        // ---- placing: one block item for every sound type there is
+        Map<net.minecraft.world.level.block.SoundType, String> reps = new LinkedHashMap<>();
+        for (net.minecraft.world.item.Item it : BuiltInRegistries.ITEM) {
+            // (Kiln has no placement rule for bamboo: it puts a stalk where vanilla puts a sapling.)
+            if (it instanceof net.minecraft.world.item.BlockItem bi && !(it instanceof net.minecraft.world.item.PlaceOnWaterBlockItem) && it != net.minecraft.world.item.Items.BAMBOO) {
+                reps.putIfAbsent(bi.getBlock().defaultBlockState().getSoundType(), BuiltInRegistries.ITEM.getKey(it).toString());
+            }
+        }
+        List<String> items = new ArrayList<>(reps.values());
+        for (String item : new String[] {"minecraft:oak_door", "minecraft:red_bed", "minecraft:sunflower", "minecraft:oak_sign", "minecraft:torch", "minecraft:chest", "minecraft:white_shulker_box",
+                "minecraft:candle", "minecraft:sea_pickle", "minecraft:snow", "minecraft:redstone", "minecraft:lever", "minecraft:ladder", "minecraft:oak_slab", "minecraft:cake",
+                "minecraft:skeleton_skull", "minecraft:white_banner", "minecraft:oak_trapdoor", "minecraft:repeater", "minecraft:piston", "minecraft:white_carpet", "minecraft:tripwire_hook"}) {
+            if (!items.contains(item)) items.add(item);
+        }
+        // ---- landing and walking on one block of each sound type (a whole block, so that the player stands on it)
+        List<String> floors = new ArrayList<>();
+        for (net.minecraft.world.item.Item it : BuiltInRegistries.ITEM) {
+            if (it instanceof net.minecraft.world.item.BlockItem bi) {
+                BlockState st = bi.getBlock().defaultBlockState();
+                if (!st.isCollisionShapeFullBlock(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, BlockPos.ZERO) || !st.getFluidState().isEmpty()) continue;
+                if (bi.getBlock().hasDynamicShape() || st.hasBlockEntity()) continue;
+                if (st.getBlock() instanceof net.minecraft.world.level.block.FarmlandBlock || st.getBlock() instanceof net.minecraft.world.level.block.TurtleEggBlock
+                        || st.getBlock() instanceof net.minecraft.world.level.block.FallingBlock || st.getBlock() instanceof net.minecraft.world.level.block.InfestedBlock
+                        || st.getBlock() instanceof net.minecraft.world.level.block.LeavesBlock || st.getBlock() instanceof net.minecraft.world.level.block.IceBlock) continue;
+                String name = BuiltInRegistries.ITEM.getKey(it).toString();
+                if (floors.stream().noneMatch(f -> BuiltInRegistries.BLOCK.getValue(Identifier.parse(f)).defaultBlockState().getSoundType() == st.getSoundType())) floors.add(name);
+            }
+        }
+        for (String block : new String[] {"minecraft:oak_leaves", "minecraft:ice", "minecraft:packed_ice", "minecraft:slime_block", "minecraft:honey_block", "minecraft:hay_block", "minecraft:snow_block"}) {
+            if (!floors.contains(block)) floors.add(block);
+        }
+        for (String block : floors) {
+            String name = block.replace("minecraft:", "");
+            for (double fall : new double[] {6.0, 12.0}) {
+                c = new Case("sound54_fall_" + (int) fall + "_" + name).moves().observer(5.5, 99.0, 2.5);
+                c.pos = new double[] {3.5, 99.0, 0.5};
+                c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air").cmd("setblock 3 98 0 " + block);
+                c.step(op("op", "set_fall", "distance", fall)).step(move(3.7, 99.0, 0.5, true));
+                out.add(c);
+                if (fall == 12.0 && !"slime_block".equals(name) && !"honey_block".equals(name)) break;
+            }
+            c = new Case("sound54_walk_" + name).moves().observer(8.5, 99.0, 2.5);
+            c.pos = new double[] {3.5, 99.0, 0.5};
+            c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air").cmd("fill 3 98 0 12 98 1 " + block);
+            for (int i = 1; i <= 8; i++) c.step(move(3.5 + i, 99.0, 0.5, true));
+            out.add(c);
+        }
+        // sneaking is silent on the ground; in the air it is not
+        c = new Case("sound54_walk_sneaking").moves().observer(8.5, 99.0, 2.5);
+        c.pos = new double[] {3.5, 99.0, 0.5};
+        c.sneaking = true;
+        c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air");
+        for (int i = 1; i <= 8; i++) c.step(move(3.5 + i * 0.5, 99.0, 0.5, true));
+        out.add(c);
+        // a thin block on top of the floor sounds with the floor's (the combination, the muffled)
+        for (String top : new String[] {"minecraft:white_carpet", "minecraft:moss_carpet", "minecraft:snow[layers=1]", "minecraft:glow_lichen[down=true]"}) {
+            c = new Case("sound54_walk_over_" + top.replaceAll("[^a-z_]", "_").replace("minecraft_", "")).moves().observer(8.5, 99.0, 2.5);
+            c.pos = new double[] {3.5, 99.0625, 0.5};
+            c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air").cmd("fill 3 99 0 12 99 1 " + top);
+            for (int i = 1; i <= 8; i++) c.step(move(3.5 + i, 99.0625, 0.5, true));
+            out.add(c);
+        }
+        for (String item : items) {
+            c = sound54("place_" + item.replace("minecraft:", ""));
+            c.watch(2, 100, 0).slot("h0", stack(item)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+            c.soundOnly = true;
+            c.dropIfSilent = true;
+            out.add(c);
+        }
     }
 
     /** wp49: campfires (food on the fire), flower pots, chiseled bookshelves. */
@@ -3786,8 +4063,9 @@ public class InteractVectors {
             if (o instanceof net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket) teleports++;
             if (o instanceof ClientboundSoundPacket s) {
                 if (recordNoPitch && soundName(s).startsWith("minecraft:block.")) continue;
+                boolean voice = recordNoVoicePitch && !soundName(s).startsWith("minecraft:block.");
                 out.add(op("t", "sound", "name", soundName(s), "source", s.getSource().getName(),
-                        "pos", new double[] {s.getX(), s.getY(), s.getZ()}, "volume", s.getVolume(), "pitch", recordNoPitch ? 0.0f : s.getPitch()));
+                        "pos", new double[] {s.getX(), s.getY(), s.getZ()}, "volume", s.getVolume(), "pitch", recordNoPitch || voice ? 0.0f : s.getPitch()));
             } else if (o instanceof ClientboundOpenSignEditorPacket e) {
                 out.add(op("t", "open_sign_editor", "pos", List.of(e.pos().getX(), e.pos().getY(), e.pos().getZ()),
                         "front", e.slot() == net.minecraft.world.level.block.entity.SignTextSlot.FRONT));
@@ -3964,6 +4242,52 @@ public class InteractVectors {
 
     static boolean mobCase;
     static boolean recordNoPitch;
+    static boolean recordNoVoicePitch;
+
+    /**
+     * wp54: `Level.tickBlockEntities` for the moving pistons, in the order their tickers were registered. (The level here is not
+     * running: its chunks do not count as ticking, and `tickBlockEntities` would tick nothing.)
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    static void tickMovingPistons(ServerLevel level) throws ReflectiveOperationException {
+        Field tf = net.minecraft.world.level.Level.class.getDeclaredField("blockEntityTickers");
+        Field pf = net.minecraft.world.level.Level.class.getDeclaredField("pendingBlockEntityTickers");
+        Field flag = net.minecraft.world.level.Level.class.getDeclaredField("tickingBlockEntities");
+        tf.setAccessible(true);
+        pf.setAccessible(true);
+        flag.setAccessible(true);
+        List<net.minecraft.world.level.block.entity.TickingBlockEntity> tickers = (List) tf.get(level);
+        List<net.minecraft.world.level.block.entity.TickingBlockEntity> pending = (List) pf.get(level);
+        flag.setBoolean(level, true);
+        if (!pending.isEmpty()) {
+            tickers.addAll(pending);
+            pending.clear();
+        }
+        var it = tickers.iterator();
+        while (it.hasNext()) {
+            var t = it.next();
+            if (t.isRemoved()) {
+                it.remove();
+            } else if (level.getBlockEntity(t.getPos()) instanceof net.minecraft.world.level.block.piston.PistonMovingBlockEntity pm) {
+                net.minecraft.world.level.block.piston.PistonMovingBlockEntity.tick(level, t.getPos(), level.getBlockState(t.getPos()), pm);
+            }
+        }
+        flag.setBoolean(level, false);
+    }
+
+    /** wp54: every entity but the players: [type, x, y, z, vx, vy, vz, on ground], sorted. */
+    static List<Object> entRows() {
+        List<Object[]> rows = new ArrayList<>();
+        for (var e : server.overworld().getEntities(net.minecraft.world.level.entity.EntityTypeTest.forClass(net.minecraft.world.entity.Entity.class), new AABB(-32, 40, -32, 64, 330, 64),
+                x -> !(x instanceof net.minecraft.world.entity.player.Player))) {
+            var v = e.getDeltaMovement();
+            rows.add(new Object[] {BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(), e.getX(), e.getY(), e.getZ(), v.x, v.y, v.z, e.onGround() ? 1 : 0});
+        }
+        rows.sort(Comparator.comparing((Object[] r) -> (String) r[0]).thenComparingDouble(r -> (Double) r[1]).thenComparingDouble(r -> (Double) r[2]).thenComparingDouble(r -> (Double) r[3]));
+        List<Object> out = new ArrayList<>();
+        for (Object[] r : rows) out.add(java.util.Arrays.asList(r));
+        return out;
+    }
 
     static List<Object> itemEntities() {
         ServerLevel level = server.overworld();
@@ -4165,6 +4489,8 @@ public class InteractVectors {
             case "map_wait" -> {
                 for (int i = 0; i < (int) s.get("ticks") - 1; i++) mapTick(p);
             }
+            // wp54: nothing happens but the tick that follows every step.
+            case "idle" -> { }
             case "lock_sign" -> {
                 @SuppressWarnings("unchecked")
                 List<Integer> at = (List<Integer>) s.get("pos");
@@ -4259,7 +4585,18 @@ public class InteractVectors {
                         throw new IllegalStateException(e);
                     }
                 });
-                if (tickPlayer != null) {
+                if (c.pistonWorld) {
+                    // wp54: `ServerLevel.tick` goes on: the block events (a piston starts moving), the entities (not the player),
+                    // then the block entities (the moving blocks push what is in their way).
+                    Method runBlockEvents = ServerLevel.class.getDeclaredMethod("runBlockEvents");
+                    runBlockEvents.setAccessible(true);
+                    runBlockEvents.invoke(level);
+                    List<net.minecraft.world.entity.Entity> ents = new ArrayList<>();
+                    for (var e : level.getAllEntities()) if (!(e instanceof net.minecraft.world.entity.player.Player)) ents.add(e);
+                    ents.sort(Comparator.comparingInt(net.minecraft.world.entity.Entity::getId));
+                    for (var e : ents) if (!e.isRemoved() && !e.isPassenger()) level.tickNonPassenger(e);
+                    tickMovingPistons(level);
+                } else if (tickPlayer != null) {
                     // (`Entity.baseTick` and `LivingEntity.tick` keep the previous tick's rotations, which `getViewVector(0)` reads.)
                     settleRotation(tickPlayer);
                     Method using = net.minecraft.world.entity.LivingEntity.class.getDeclaredMethod("updatingUsingItem");
@@ -4270,6 +4607,7 @@ public class InteractVectors {
                 throw new IllegalStateException(e);
             }
         }
+        if (c.pistonWorld) return;
         for (int[] w : c.watch) {
             BlockPos wp = new BlockPos(w[0], w[1], w[2]);
             BlockState st = level.getBlockState(wp);
@@ -4335,6 +4673,12 @@ public class InteractVectors {
     static String run(Case c) throws Exception {
         // (A level that ticks whole: the ticks the setup schedules count from the case's clock, not the last case's.)
         if (c.fullTicks) ((net.minecraft.world.level.storage.ServerLevelData) server.overworld().getLevelData()).setGameTime(START_TIME);
+        // wp54: the entities of the setup take the ids the replay gives them (the player is 1): an item's physics depend on its id.
+        if (c.pistonWorld) {
+            Field counter = ServerLevel.class.getDeclaredField("ENTITY_COUNTER");
+            counter.setAccessible(true);
+            ((java.util.concurrent.atomic.AtomicInteger) counter.get(null)).set(1);
+        }
         for (String cmd : c.commands) command(cmd);
         if (!c.tickLevel) for (String cmd : c.late) command(cmd);
         // The replay's level makes one tick between these commands and the first step: a hive's bees age by it.
@@ -4375,6 +4719,14 @@ public class InteractVectors {
             System.out.println("DEBUG tracking view " + p.getChunkTrackingView() + " players "
                     + server.overworld().getChunkSource().chunkMap.getPlayers(new net.minecraft.world.level.ChunkPos(0, 0), false).size());
         }
+        ServerPlayer observer = null;
+        if (c.observer != null) {
+            observer = mockPlayer("Observer");
+            observer.snapTo(c.observer[0], c.observer[1], c.observer[2], 0f, 0f);
+            observer.connection.resetPosition();
+            drain(observer);
+            drain(p);
+        }
         List<Object> results = new ArrayList<>();
         // The player's statistics outlive the mock player (the stats counter is kept by uuid): what a
         // case used is counted from where the case began.
@@ -4391,6 +4743,7 @@ public class InteractVectors {
         if (c.watchAdv) resetAdvancements(p);
         java.util.TreeSet<String> advBefore = c.watchAdv ? doneCriteria(p) : null;
         recordNoPitch = c.noPitch;
+        recordNoVoicePitch = c.noVoicePitch;
         if (c.noPitch) addAttackTicks(p, 100);
         recordMaps = c.watchMaps;
         if (c.watchMaps) resetMaps();
@@ -4415,6 +4768,14 @@ public class InteractVectors {
             if (!c.templates.isEmpty()) r.put("templates", templatesOf(c));
             r.put("entities", itemEntities());
             if (c.watchMobs) r.put("mobs", mobRows());
+            if (c.watchEnts) r.put("ents", entRows());
+            if (observer != null) {
+                int keep = teleports;
+                List<Object> heard = new ArrayList<>();
+                for (Object o : packets(observer)) if (o instanceof Map<?, ?> m && "sound".equals(m.get("t"))) heard.add(o);
+                r.put("obs", heard);
+                teleports = keep;
+            }
             Map<String, Object> used = new LinkedHashMap<>();
             for (String item : c.statItems) {
                 used.put(item, p.getStats().getValue(net.minecraft.stats.Stats.ITEM_USED.get(BuiltInRegistries.ITEM.getValue(Identifier.parse(item)))) - usedBefore.get(item));
@@ -4445,6 +4806,7 @@ public class InteractVectors {
             }
             results.add(r);
         }
+        if (observer != null) server.getPlayerList().remove(observer);
         server.getPlayerList().remove(p);
         if (c.op) command("deop " + p.getGameProfile().name());
         command("fill -4 90 -8 15 110 15 minecraft:air");
@@ -4506,17 +4868,26 @@ public class InteractVectors {
         line.put("food", c.watchFood ? c.food : null);
         line.put("hanging", c.watchHanging);
         line.put("no_pitch", c.noPitch);
+        line.put("no_voice_pitch", c.noVoicePitch);
         line.put("stands", c.watchStands);
         line.put("bees", c.watchBees);
         line.put("menus", c.watchMenus);
         line.put("maps", c.watchMaps);
         line.put("ticking", c.tickLevel);
+        line.put("pistons", c.pistonWorld);
+        line.put("observer", c.observer);
         line.put("op", c.op);
         if (c.fullTicks) line.put("clock", startClock);
         line.put("mobs", c.watchMobs);
         line.put("player_uuid", p.getUUID().toString());
         line.put("custom_stats", c.customStats);
         line.put("result", results);
+        line.put("sound_only", c.soundOnly);
+        if (c.dropIfSilent) {
+            boolean heard = false;
+            for (Object r : results) if (r instanceof Map<?, ?> m && m.get("obs") instanceof List<?> l && !l.isEmpty()) heard = true;
+            if (!heard) return null;
+        }
         return toJson(line);
     }
 
@@ -4610,6 +4981,18 @@ public class InteractVectors {
         server.submit(() -> command("gamerule block_drops true")).get();
         // The mock player earns advancements as it uses things; their announcements are not what these vectors are about.
         server.submit(() -> command("gamerule show_advancement_messages false")).get();
+        // wp54: what every living thing sounds like when it takes a step (not a scenario: `--step-sounds` as the filter).
+        if ("--step-sounds".equals(filter)) {
+            server.submit(() -> {
+                try {
+                    stepDump(outPath);
+                } catch (Throwable t) {
+                    t.printStackTrace();
+                }
+            }).get();
+            server.halt(false);
+            System.exit(0);
+        }
         List<Case> all = new ArrayList<>();
         server.submit(() -> {
             equip(all);
@@ -4641,6 +5024,9 @@ public class InteractVectors {
             moves52(all);
             cauldrons50(all);
             commandBlocks49(all);
+            pistons54(all);
+            sounds54(all);
+            mannequins54(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {
@@ -4651,7 +5037,8 @@ public class InteractVectors {
         for (Case c : selected) {
             server.submit(() -> {
                 try {
-                    lines.add(run(c));
+                    String line = run(c);
+                    if (line != null) lines.add(line);
                 } catch (Throwable t) {
                     t.printStackTrace();
                     lines.add("{\"name\":\"" + c.name + "\",\"error\":\"" + t.toString().replace('"', '\'') + "\"}");
@@ -4680,6 +5067,102 @@ public class InteractVectors {
         }
         server.halt(false);
         System.exit(0);
+    }
+
+    /**
+     * wp54: for every living entity type: its `getMovementEmission`, what `playStepSound` makes a listener hear on a stone
+     * floor (twice: a random pitch shows), what its fall sounds are, and the sound source.
+     */
+    static void stepDump(Path out) throws Exception {
+        ServerLevel level = server.overworld();
+        command("fill -8 98 -8 8 110 8 minecraft:air");
+        command("fill -8 99 -8 8 99 8 minecraft:stone");
+        ServerPlayer obs = mockPlayer("Obs");
+        obs.snapTo(2.5, 100.0, 2.5, 0f, 0f);
+        obs.connection.resetPosition();
+        drain(obs);
+        BlockPos below = new BlockPos(0, 99, 0);
+        BlockState stone = net.minecraft.world.level.block.Blocks.STONE.defaultBlockState();
+        List<String> lines = new ArrayList<>();
+        for (net.minecraft.world.entity.EntityType<?> type : BuiltInRegistries.ENTITY_TYPE) {
+            String id = BuiltInRegistries.ENTITY_TYPE.getKey(type).toString();
+            net.minecraft.world.entity.Entity e;
+            try {
+                e = type.create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+            } catch (Throwable t) {
+                continue;
+            }
+            if (!(e instanceof net.minecraft.world.entity.LivingEntity le) || e instanceof net.minecraft.world.entity.player.Player) continue;
+            e.snapTo(0.5, 100.0, 0.5, 0f, 0f);
+            level.addFreshEntity(e);
+            Method step = null;
+            for (Class<?> k = e.getClass(); k != null && step == null; k = k.getSuperclass()) {
+                try {
+                    step = k.getDeclaredMethod("playStepSound", BlockPos.class, BlockState.class);
+                } catch (NoSuchMethodException ex) {
+                    // up the class chain
+                }
+            }
+            step.setAccessible(true);
+            Method emission = null;
+            for (Class<?> k = e.getClass(); k != null && emission == null; k = k.getSuperclass()) {
+                try {
+                    emission = k.getDeclaredMethod("getMovementEmission");
+                } catch (NoSuchMethodException ex) {
+                    // up the class chain
+                }
+            }
+            emission.setAccessible(true);
+            List<Object> samples = new ArrayList<>();
+            for (int i = 0; i < 2; i++) {
+                drain(obs);
+                try {
+                    step.invoke(e, below, stone);
+                } catch (Throwable t) {
+                    samples.add("error " + t);
+                    continue;
+                }
+                List<Object> heard = new ArrayList<>();
+                for (Object o : packets(obs)) if (o instanceof Map<?, ?> m && "sound".equals(m.get("t"))) heard.add(op("name", m.get("name"), "source", m.get("source"), "volume", m.get("volume"), "pitch", m.get("pitch")));
+                samples.add(heard);
+            }
+            // the same as a baby (a pig's has sounds of its own)
+            List<Object> baby = new ArrayList<>();
+            if (e instanceof net.minecraft.world.entity.Mob mob) {
+                mob.setBaby(true);
+                if (mob.isBaby()) {
+                    for (int i = 0; i < 2; i++) {
+                        drain(obs);
+                        try {
+                            step.invoke(e, below, stone);
+                        } catch (Throwable t) {
+                            baby.add("error " + t);
+                            continue;
+                        }
+                        List<Object> heard = new ArrayList<>();
+                        for (Object o : packets(obs)) if (o instanceof Map<?, ?> m && "sound".equals(m.get("t"))) heard.add(op("name", m.get("name"), "source", m.get("source"), "volume", m.get("volume"), "pitch", m.get("pitch")));
+                        baby.add(heard);
+                    }
+                }
+            }
+            String fall = "null";
+            try {
+                Method fs = net.minecraft.world.entity.LivingEntity.class.getDeclaredMethod("getFallSounds");
+                fs.setAccessible(true);
+                Object f = fs.invoke(le);
+                var small = (net.minecraft.sounds.SoundEvent) f.getClass().getMethod("small").invoke(f);
+                var big = (net.minecraft.sounds.SoundEvent) f.getClass().getMethod("big").invoke(f);
+                fall = "[\"" + small.location() + "\",\"" + big.location() + "\"]";
+            } catch (Throwable t) {
+                // none
+            }
+            lines.add("{\"type\":\"" + id + "\",\"emission\":\"" + emission.invoke(e) + "\",\"fall\":" + fall + ",\"steps\":" + toJson(samples) + ",\"baby\":" + toJson(baby) + "}");
+            e.discard();
+        }
+        try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(out))) {
+            for (String l : lines) w.println(l);
+        }
+        System.out.println("InteractVectors: wrote the step sounds of " + lines.size() + " types to " + out);
     }
 
     static void writeServerFiles() throws Exception {

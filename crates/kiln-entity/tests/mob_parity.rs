@@ -18,6 +18,18 @@ fn f(v: &Value) -> f64 {
     v.as_f64().unwrap_or_else(|| panic!("not a number: {v}"))
 }
 
+/// The sounds of footing: steps, landings and what a block makes when something lands on it.
+fn is_footing(name: &str) -> bool {
+    let block = name.strip_prefix("minecraft:block.").is_some_and(|n| n.ends_with(".step") || n.ends_with(".fall"));
+    block || name.contains(".step") || name.ends_with("small_fall") || name.ends_with("big_fall") || name.contains("shamble")
+}
+
+/// A sound as the vectors compare it: the position as the packet carries it (eighths of a block).
+fn sound_row(name: &str, source: &str, volume: f32, pitch: f32, at: [f64; 3]) -> String {
+    let q = |v: f64| (v * 8.0) as i32 as f64 / 8.0;
+    format!("{name} {source} {volume:?} {pitch:?} {:?} {:?} {:?}", q(at[0]), q(at[1]), q(at[2]))
+}
+
 fn vec3(v: &Value) -> Vec3 {
     Vec3::new(f(&v[0]), f(&v[1]), f(&v[2]))
 }
@@ -849,8 +861,22 @@ fn replay(s: &Value) -> Result<usize, String> {
             pin_fresh(&mut level, id, n, tick, pin_yaw, recorded_yaws.next());
             ids.push(id);
         }
+        // wp54: the footing sounds the player heard this tick (steps, landings), before the events are consumed.
+        let mut heard: Vec<String> = Vec::new();
         // Explosions hurt the player through events (it is not an entity of the harness).
         for ev in std::mem::take(&mut level.events) {
+            if let kiln_entity::level::Event::Sound { pos, sound, source, volume, pitch } = &ev
+                && let Some(p) = player
+                && is_footing(sound)
+                // The landing of a long jump (goat, frog) is `playSound(null, mob, ...)`: an entity sound packet, which
+                // the recording of the vanilla side does not take.
+                && !(*volume == 2.0 && (sound.ends_with("goat.step") || sound.ends_with("frog.step")))
+            {
+                let range = if *volume > 1.0 { 16.0 * *volume as f64 } else { 16.0 };
+                if pos.distance_to_sqr(p.pos) < range * range {
+                    heard.push(sound_row(sound, source, *volume, *pitch, [pos.x, pos.y, pos.z]));
+                }
+            }
             if std::env::var_os("KILN_MOB_DEBUG").is_some()
                 && let kiln_entity::level::Event::Explosion { pos, power, blocks, .. } = &ev
             {
@@ -868,6 +894,24 @@ fn replay(s: &Value) -> Result<usize, String> {
             {
                 let source = DamageSource { kind, attacker, direct: attacker, pos: None, attacker_is_player: false };
                 level.hurt_player(target, source, amount);
+            }
+        }
+        // wp54: ... against the ones vanilla's player heard.
+        if let Some(want) = s.get("sound_trace").and_then(Value::as_array).and_then(|t| t.get(tick as usize)).and_then(Value::as_array)
+            && player.is_some()
+            && std::env::var_os("KILN_NO_SOUND_CHECK").is_none()
+        {
+            let mut want_rows: Vec<String> = want
+                .iter()
+                .filter(|r| is_footing(r[0].as_str().unwrap()))
+                .map(|r| sound_row(r[0].as_str().unwrap(), r[1].as_str().unwrap(), f(&r[2]) as f32, f(&r[3]) as f32, [f(&r[4]), f(&r[5]), f(&r[6])]))
+                .collect();
+            want_rows.sort();
+            heard.sort();
+            if heard != want_rows {
+                return Err(format!("tick {tick}: sounds heard
+  kiln    {heard:#?}
+  vanilla {want_rows:#?}"));
             }
         }
         let dealt: f32 = level.player_hits[before..].iter().map(|h| h.1).sum();

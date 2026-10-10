@@ -186,6 +186,14 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
         self.base.blocks_epoch(min, max)
     }
 
+    fn moving_piston(&self, pos: BlockPos) -> Option<kiln_entity::piston::MovingPistonView> {
+        self.base.moving_piston(pos)
+    }
+
+    fn has_moving_pistons(&self) -> bool {
+        self.base.has_moving_pistons()
+    }
+
     fn any_block_in(&self, min: BlockPos, max: BlockPos, pred: &dyn Fn(u16) -> bool) -> bool {
         self.base.any_block_in(min, max, pred)
     }

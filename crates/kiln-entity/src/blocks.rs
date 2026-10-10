@@ -98,7 +98,7 @@ pub fn block_name(state: u16) -> &'static str {
 
 /// Block tags entity code consults.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Tag {
     Fences = 1 << 0,
     Walls = 1 << 1,
@@ -114,6 +114,10 @@ pub enum Tag {
     AnimalsSpawnableOn = 1 << 11,
     BlocksDolphinJump = 1 << 12,
     HappyGhastAvoids = 1 << 13,
+    InsideStepSoundBlocks = 1 << 14,
+    CombinationStepSoundBlocks = 1 << 15,
+    CrystalSoundBlocks = 1 << 16,
+    CamelSandStepSoundBlocks = 1 << 17,
 }
 
 const TAGS: &[(Tag, &str)] = &[
@@ -131,12 +135,16 @@ const TAGS: &[(Tag, &str)] = &[
     (Tag::AnimalsSpawnableOn, "minecraft:animals_spawnable_on"),
     (Tag::BlocksDolphinJump, "minecraft:blocks_dolphin_jump"),
     (Tag::HappyGhastAvoids, "minecraft:happy_ghast_avoids"),
+    (Tag::InsideStepSoundBlocks, "minecraft:inside_step_sound_blocks"),
+    (Tag::CombinationStepSoundBlocks, "minecraft:combination_step_sound_blocks"),
+    (Tag::CrystalSoundBlocks, "minecraft:crystal_sound_blocks"),
+    (Tag::CamelSandStepSoundBlocks, "minecraft:camel_sand_step_sound_blocks"),
 ];
 
 pub fn has_tag(state: u16, tag: Tag) -> bool {
-    static FLAGS: OnceLock<Vec<u16>> = OnceLock::new();
+    static FLAGS: OnceLock<Vec<u32>> = OnceLock::new();
     FLAGS.get_or_init(|| {
-        let mut out = vec![0u16; STATE_COUNT as usize];
+        let mut out = vec![0u32; STATE_COUNT as usize];
         let block_tags = kiln_data::registries::TAGS
             .iter()
             .find(|(r, _)| *r == "minecraft:block")
@@ -147,14 +155,14 @@ pub fn has_tag(state: u16, tag: Tag) -> bool {
             for &id in ids {
                 if let Some(info) = names.get(id as usize).and_then(|n| kiln_data::blocks_types::block_by_name(n)) {
                     for s in &mut out[info.first as usize..=info.last as usize] {
-                        *s |= flag as u16;
+                        *s |= flag as u32;
                     }
                 }
             }
         }
         out
     })[state as usize]
-        & tag as u16
+        & tag as u32
         != 0
 }
 

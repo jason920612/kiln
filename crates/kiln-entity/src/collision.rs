@@ -3,7 +3,7 @@
 
 use crate::blocks::{Kind, kind};
 use crate::level::EntityLevel;
-use crate::math::{Aabb, Axis, BlockPos, Vec3, floor};
+use crate::math::{Aabb, Axis, BlockPos, Direction, Vec3, floor};
 use crate::physics;
 use crate::shape::{BoxShape, Collider, Shape, collide_all, intersects_box};
 use std::borrow::Cow;
@@ -23,6 +23,8 @@ pub struct CollisionContext {
     pub walks_on_powder_snow: bool,
     /// `LivingEntity.canStandOnFluid(lava)` (striders).
     pub stands_on_lava: bool,
+    /// `PistonMovingBlockEntity.NOCLIP`: the direction a piston is pushing this entity in.
+    pub piston_noclip: Option<Direction>,
 }
 
 impl CollisionContext {
@@ -37,6 +39,7 @@ impl CollisionContext {
         falling_block: false,
         walks_on_powder_snow: false,
         stands_on_lava: false,
+        piston_noclip: None,
     };
 
     /// `isAbove(shape, pos, default)`.
@@ -152,6 +155,19 @@ pub fn for_each_block_collision(
                     continue;
                 }
                 if edges == 2 && kind(state) != Kind::MovingPiston {
+                    continue;
+                }
+                // A moving block's shape is its block entity's (`MovingPistonBlock.getCollisionShape`).
+                if kind(state) == Kind::MovingPiston
+                    && let Some(view) = level.moving_piston(pos)
+                {
+                    let (px, py, pz) = (pos.x as f64, pos.y as f64, pos.z as f64);
+                    for shape in view.collision_shapes(ctx.piston_noclip) {
+                        let hit = entity_shape.as_ref().is_some_and(|e| intersects_box(&shape, [px, py, pz], e));
+                        if hit && !visit(pos, shape, false) {
+                            return;
+                        }
+                    }
                     continue;
                 }
                 let (shape, cube) = if ctx.stands_on_lava && stable_lava(level, state, pos, ctx) {
