@@ -8716,6 +8716,45 @@ public class MobVectors {
         scenariosWp50Saddles(out);
         scenariosWp50Mounts(out);
         scenariosWp52Wolf(out);
+        scenariosWp52Eggs(out);
+    }
+
+    // ------------------------------------------------------------------ wp52: a spawn egg used on a mob of its own type
+
+    static void scenariosWp52Eggs(List<Scenario> out) {
+        String[][] types = {
+                {"pig", ""}, {"cow", ""}, {"sheep", ""}, {"sheep", "Color:5b"}, {"chicken", ""}, {"rabbit", ""}, {"cat", ""}, {"ocelot", ""}, {"horse", ""}, {"horse", "Variant:515"},
+                {"donkey", ""}, {"mule", ""}, {"llama", ""}, {"trader_llama", ""}, {"mooshroom", ""}, {"fox", ""}, {"panda", ""}, {"goat", ""}, {"armadillo", ""}, {"camel", ""},
+                {"sniffer", ""}, {"polar_bear", ""}, {"bee", ""}, {"hoglin", ""}, {"strider", ""}, {"villager", ""}, {"wandering_trader", ""},
+                {"zombie", ""}, {"husk", ""}, {"zombie_villager", ""}, {"zombified_piglin", ""}, {"piglin", ""}, {"zoglin", ""},
+                {"skeleton", ""}, {"creeper", ""}, {"spider", ""}, {"enderman", ""}, {"iron_golem", ""}, {"wolf", ""}, {"wolf", "variant:\"minecraft:ashen\"," + owner()},
+                {"cow", "Age:-24000"}};
+        long seed = 60000L;
+        for (String[] t : types) {
+            MobSpec m = new MobSpec("minecraft:" + t[0], 0.5, BY, 0.5, 30f, seed++);
+            m.nbt = "{NoAI:1b,PersistenceRequired:1b" + (t[1].isEmpty() ? "" : "," + t[1]) + "}";
+            Scenario s = eqClick("eggbaby52_" + t[0] + (t[1].isEmpty() ? "" : "_" + Integer.toHexString(t[1].hashCode())), m, "minecraft:" + t[0] + "_spawn_egg", false, false, 40);
+            floor(s, 16, t[0].equals("strider") || t[0].equals("hoglin") || t[0].equals("zoglin") ? "minecraft:netherrack" : "minecraft:grass_block");
+            out.add(s);
+        }
+        // Another type's egg does nothing; creative keeps its egg; sneaking makes no difference.
+        {
+            MobSpec m = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 30f, seed++);
+            m.nbt = "{NoAI:1b,PersistenceRequired:1b}";
+            Scenario s = eqClick("eggbaby52_pig_cow_egg", m, "minecraft:cow_spawn_egg", false, false, 40);
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+            m = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 30f, seed++);
+            m.nbt = "{NoAI:1b,PersistenceRequired:1b}";
+            s = eqClick("eggbaby52_pig_creative", m, "minecraft:pig_spawn_egg", true, false, 40);
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+            m = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 30f, seed++);
+            m.nbt = "{NoAI:1b,PersistenceRequired:1b}";
+            s = eqClick("eggbaby52_pig_sneaking", m, "minecraft:pig_spawn_egg", false, true, 40);
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+        }
     }
 
     // ------------------------------------------------------------------ wp52: wolf armor
