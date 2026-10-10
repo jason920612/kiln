@@ -481,3 +481,121 @@ fn flyer_search4() {
     });
     println!("{} layouts fly", found.load(std::sync::atomic::Ordering::Relaxed));
 }
+
+/// `rows` rows of `w` cells (z = 8, 9, 10...): the layout runs from the piece placed last (each in turn).
+fn run_rows(grid: &[usize], rows: usize, w: usize, ticks: i32) -> Option<(i32, i32)> {
+    let spots: Vec<usize> = (0..grid.len()).filter(|&i| grid[i] != 0).collect();
+    spots.iter().find_map(|&last| run_rows_from(grid, rows, w, ticks, last))
+}
+
+fn run_rows_from(grid: &[usize], rows: usize, w: usize, ticks: i32, last: usize) -> Option<(i32, i32)> {
+    let mut level = TestLevel::void();
+    level.load_chunks((-1, -1), (4, 1));
+    let y = 100;
+    let pos = |i: usize| BlockPos::new(16 + (i % w) as i32, y, 8 + (i / w) as i32);
+    let mut pieces = 0;
+    for (i, &c) in grid.iter().enumerate() {
+        let s = cell(c);
+        if is_air(s) {
+            continue;
+        }
+        pieces += 1;
+        if i != last {
+            level.set_raw(pos(i), s, flags::SKIP_ALL_SIDEEFFECTS);
+        }
+    }
+    crate::update::set_block_and_update(&mut level, pos(last), cell(grid[last]));
+    let measure = |level: &TestLevel| {
+        let (mut min, mut count, mut h) = (i32::MAX, 0, 0u64);
+        for x in 0..80 {
+            for z in 6..8 + rows as i32 + 2 {
+                for yy in 98..103 {
+                    let s = level.block(BlockPos::new(x, yy, z));
+                    if !is_air(s) && !state::is(s, d::PISTON_HEAD) && !state::is(s, d::MOVING_PISTON) {
+                        min = min.min(x);
+                        count += 1;
+                        h = h.wrapping_mul(1_000_003).wrapping_add(s as u64 + (x as u64) * 77 + (z as u64) * 13 + yy as u64);
+                    }
+                }
+            }
+        }
+        (min, count, h)
+    };
+    let (mut at20, mut first) = (0u64, 0);
+    for t in 1..=ticks {
+        level.tick(0, &[(0, 0), (1, 0)]);
+        if t == 20 || t == 30 || t == 40 || t == ticks {
+            let (min, count, h) = measure(&level);
+            if count != pieces {
+                return None;
+            }
+            if t == 20 {
+                at20 = h;
+            }
+            if t == 30 && h == at20 {
+                return None;
+            }
+            if t == 40 {
+                first = min;
+            }
+            if t == ticks {
+                return Some((first, min));
+            }
+        }
+    }
+    None
+}
+
+/// Two sticky pistons (east, west), two observers (any of the four horizontal ways) and `slimes` slime blocks anywhere in `rows` x `w`.
+#[test]
+#[ignore]
+fn flyer_search5() {
+    let w: usize = std::env::var("KILN_FLYER_W").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+    let rows: usize = std::env::var("KILN_FLYER_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+    let slimes: usize = std::env::var("KILN_FLYER_SLIMES").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+    let threads: usize = std::env::var("KILN_FLYER_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
+    let cells = rows * w;
+    let pieces = 4 + slimes;
+    let total: usize = (0..pieces).fold(1, |a, i| a * (cells - i));
+    let found = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|sc| {
+        for t in 0..threads {
+            let found = &found;
+            sc.spawn(move || {
+                let mut n = t;
+                while n < total {
+                    let mut m = n;
+                    n += threads;
+                    let mut free: Vec<usize> = (0..cells).collect();
+                    let mut at = Vec::new();
+                    for i in 0..pieces {
+                        let k = m % (cells - i);
+                        m /= cells - i;
+                        at.push(free.remove(k));
+                    }
+                    if at[0] > at[1] || at[2] > at[3] {
+                        continue;
+                    }
+                    for facing in 0..64usize {
+                        let (p0, p1, o0, o1) = (facing & 1, (facing >> 1) & 1, (facing >> 2) & 3, (facing >> 4) & 3);
+                        let mut grid = vec![0usize; cells];
+                        grid[at[0]] = 2 + p0;
+                        grid[at[1]] = 2 + p1;
+                        grid[at[2]] = [6, 7, 8, 9][o0];
+                        grid[at[3]] = [6, 7, 8, 9][o1];
+                        for &s in &at[4..] {
+                            grid[s] = 1;
+                        }
+                        if let Some((x, y)) = run_rows(&grid, rows, w, 120)
+                            && (y - x).abs() >= 3
+                        {
+                            found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            println!("flies {} blocks: {:?} ({rows} rows of {w}; 0 air, 1 slime, 2/3 sticky east/west, 6/7/8/9 observer east/west/north/south)", y - x, grid);
+                        }
+                    }
+                }
+            });
+        }
+    });
+    println!("{} layouts fly", found.load(std::sync::atomic::Ordering::Relaxed));
+}
