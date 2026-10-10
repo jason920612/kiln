@@ -8735,6 +8735,8 @@ public class MobVectors {
             m.nbt = "{NoAI:1b,PersistenceRequired:1b" + (t[1].isEmpty() ? "" : "," + t[1]) + "}";
             Scenario s = eqClick("eggbaby52_" + t[0] + (t[1].isEmpty() ? "" : "_" + Integer.toHexString(t[1].hashCode())), m, "minecraft:" + t[0] + "_spawn_egg", false, false, 40);
             floor(s, 16, t[0].equals("strider") || t[0].equals("hoglin") || t[0].equals("zoglin") ? "minecraft:netherrack" : "minecraft:grass_block");
+            // (A panda's genes are drawn from the baby's own random, which Kiln stands in for with the parent's.)
+            s.diverges = t[0].equals("panda");
             out.add(s);
         }
         // Another type's egg does nothing; creative keeps its egg; sneaking makes no difference.
