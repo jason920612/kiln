@@ -469,7 +469,7 @@ public class InteractVectors {
                 {"brewing_named", "minecraft:brewing_stand[custom_name='\"Brew\"']"},
                 {"enchanting_named", "minecraft:enchanting_table[custom_name='\"Ench\"']"},
                 {"beacon_named", "minecraft:beacon[custom_name='\"Light\"']"},
-                {"decorated_pot", "minecraft:decorated_pot[pot_decorations=[\"minecraft:brick\",\"minecraft:arms_up_pottery_sherd\",\"minecraft:brick\",\"minecraft:skull_pottery_sherd\"]]"},
+                {"decorated_pot", "minecraft:decorated_pot[pot_decorations={back:\"minecraft:brick\",left:\"minecraft:arms_up_pottery_sherd\",right:\"minecraft:brick\",front:\"minecraft:skull_pottery_sherd\"}]"},
                 {"decorated_pot_container", "minecraft:decorated_pot[container=[{slot:0,item:{id:\"minecraft:diamond\",count:3}}]]"},
                 {"beehive_bees", "minecraft:beehive[bees=[{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:100,ticks_in_hive:5}]]"},
                 {"bee_nest_bees", "minecraft:bee_nest[bees=[{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:100,ticks_in_hive:5}],block_state={honey_level:\"3\"}]"},
