@@ -492,7 +492,8 @@ fn run_rows_from(grid: &[usize], rows: usize, w: usize, ticks: i32, last: usize)
     let mut level = TestLevel::void();
     level.load_chunks((-1, -1), (4, 1));
     let y = 100;
-    let pos = |i: usize| BlockPos::new(16 + (i % w) as i32, y, 8 + (i / w) as i32);
+    let vertical = std::env::var_os("KILN_FLYER_VERTICAL").is_some();
+    let pos = |i: usize| if vertical { BlockPos::new(16 + (i % w) as i32, y + (i / w) as i32, 8) } else { BlockPos::new(16 + (i % w) as i32, y, 8 + (i / w) as i32) };
     let mut pieces = 0;
     for (i, &c) in grid.iter().enumerate() {
         let s = cell(c);
@@ -509,7 +510,7 @@ fn run_rows_from(grid: &[usize], rows: usize, w: usize, ticks: i32, last: usize)
         let (mut min, mut count, mut h) = (i32::MAX, 0, 0u64);
         for x in 0..80 {
             for z in 6..8 + rows as i32 + 2 {
-                for yy in 98..103 {
+                for yy in 98..103 + rows as i32 {
                     let s = level.block(BlockPos::new(x, yy, z));
                     if !is_air(s) && !state::is(s, d::PISTON_HEAD) && !state::is(s, d::MOVING_PISTON) {
                         min = min.min(x);
@@ -558,6 +559,10 @@ fn flyer_search5() {
     let pieces = 4 + slimes;
     let total: usize = (0..pieces).fold(1, |a, i| a * (cells - i));
     let found = std::sync::atomic::AtomicUsize::new(0);
+    let obs: [usize; 4] = std::env::var("KILN_FLYER_OBS").ok().map_or([6, 7, 8, 9], |v| {
+        let l: Vec<usize> = v.split(',').filter_map(|x| x.parse().ok()).collect();
+        [l[0], l[1], l[2], l[3]]
+    });
     std::thread::scope(|sc| {
         for t in 0..threads {
             let found = &found;
@@ -581,8 +586,8 @@ fn flyer_search5() {
                         let mut grid = vec![0usize; cells];
                         grid[at[0]] = 2 + p0;
                         grid[at[1]] = 2 + p1;
-                        grid[at[2]] = [6, 7, 8, 9][o0];
-                        grid[at[3]] = [6, 7, 8, 9][o1];
+                        grid[at[2]] = obs[o0];
+                        grid[at[3]] = obs[o1];
                         for &s in &at[4..] {
                             grid[s] = 1;
                         }
