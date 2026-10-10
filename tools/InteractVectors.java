@@ -3164,7 +3164,7 @@ public class InteractVectors {
     /** Player.attackStrengthTicker moves on (the mock player does not tick). */
     static void addAttackTicks(ServerPlayer p, int n) {
         try {
-            java.lang.reflect.Field f = net.minecraft.world.entity.player.Player.class.getDeclaredField("attackStrengthTicker");
+            java.lang.reflect.Field f = net.minecraft.world.entity.LivingEntity.class.getDeclaredField("attackStrengthTicker");
             f.setAccessible(true);
             f.setInt(p, f.getInt(p) + n);
         } catch (ReflectiveOperationException x) {
