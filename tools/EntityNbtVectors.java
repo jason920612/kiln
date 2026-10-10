@@ -30,6 +30,44 @@ public class EntityNbtVectors {
 
     static List<Case> cases() {
         List<Case> c = new ArrayList<>();
+        // ---- mannequins (wp50)
+        c.add(new Case("mannequin_default", "mannequin", "{}"));
+        c.add(new Case("mannequin_profile_name_string", "mannequin", "{profile:\"Notch\"}"));
+        c.add(new Case("mannequin_profile_name", "mannequin", "{profile:{name:\"Steve\"}}"));
+        c.add(new Case("mannequin_profile_id", "mannequin", "{profile:{id:[I;1,2,3,4]}}"));
+        c.add(new Case("mannequin_profile_name_id", "mannequin", "{profile:{name:\"Alex\",id:[I;5,6,7,8]}}"));
+        c.add(new Case("mannequin_profile_properties", "mannequin", "{profile:{name:\"Skin\",properties:[{name:\"textures\",value:\"abc\"}]}}"));
+        c.add(new Case("mannequin_profile_properties_signed", "mannequin", "{profile:{name:\"Skin\",id:[I;1,1,1,1],properties:[{name:\"textures\",value:\"abc\",signature:\"sig\"},{name:\"x\",value:\"y\"}]}}"));
+        c.add(new Case("mannequin_profile_properties_only", "mannequin", "{profile:{properties:[{name:\"textures\",value:\"abc\"}]}}"));
+        c.add(new Case("mannequin_profile_texture", "mannequin", "{profile:{texture:\"minecraft:entity/player/wide/steve\"}}"));
+        c.add(new Case("mannequin_profile_patch", "mannequin", "{profile:{name:\"P\",texture:\"minecraft:t\",cape:\"minecraft:c\",elytra:\"minecraft:e\",model:\"slim\"}}"));
+        c.add(new Case("mannequin_profile_model_wide", "mannequin", "{profile:{model:\"wide\"}}"));
+        c.add(new Case("mannequin_profile_empty", "mannequin", "{profile:{}}"));
+        c.add(new Case("mannequin_profile_bad_name", "mannequin", "{profile:\"this name is far too long\"}"));
+        c.add(new Case("mannequin_profile_bad_type", "mannequin", "{profile:5}"));
+        c.add(new Case("mannequin_profile_bad_model", "mannequin", "{profile:{name:\"x\",model:\"huge\"}}"));
+        c.add(new Case("mannequin_layers", "mannequin", "{hidden_layers:[\"cape\",\"hat\"]}"));
+        c.add(new Case("mannequin_layers_all", "mannequin", "{hidden_layers:[\"cape\",\"jacket\",\"left_sleeve\",\"right_sleeve\",\"left_pants_leg\",\"right_pants_leg\",\"hat\"]}"));
+        c.add(new Case("mannequin_layers_bad", "mannequin", "{hidden_layers:[\"cape\",\"nonsense\"]}"));
+        c.add(new Case("mannequin_layers_dup", "mannequin", "{hidden_layers:[\"hat\",\"hat\"]}"));
+        c.add(new Case("mannequin_main_hand_left", "mannequin", "{main_hand:\"left\"}"));
+        c.add(new Case("mannequin_main_hand_bad", "mannequin", "{main_hand:\"middle\"}"));
+        for (String pose : new String[] {"standing", "crouching", "swimming", "fall_flying", "sleeping", "dying", "spin_attack", "sitting", "long_jumping"}) {
+            c.add(new Case("mannequin_pose_" + pose, "mannequin", "{pose:\"" + pose + "\"}"));
+        }
+        c.add(new Case("mannequin_immovable", "mannequin", "{immovable:1b}"));
+        c.add(new Case("mannequin_description", "mannequin", "{description:'\"Guard\"'}"));
+        c.add(new Case("mannequin_description_translatable", "mannequin", "{description:{translate:\"entity.minecraft.mannequin.label\"}}"));
+        c.add(new Case("mannequin_description_hidden", "mannequin", "{hide_description:1b,description:'\"Guard\"'}"));
+        c.add(new Case("mannequin_description_bad", "mannequin", "{description:5}"));
+        c.add(new Case("mannequin_living", "mannequin", "{Health:7.5f,HurtTime:3s,DeathTime:0s,AbsorptionAmount:2.0f,Pos:[1.5d,64.0d,-3.5d],Rotation:[90.0f,10.0f],CustomName:'\"Bob\"',CustomNameVisible:1b,Tags:[\"npc\"],NoGravity:1b,Silent:1b,Invulnerable:1b,Glowing:1b}"));
+        c.add(new Case("mannequin_equipment", "mannequin", "{equipment:{head:{id:\"minecraft:diamond_helmet\",count:1},mainhand:{id:\"minecraft:diamond_sword\",count:1},offhand:{id:\"minecraft:shield\",count:1},chest:{id:\"minecraft:leather_chestplate\",count:1,components:{\"minecraft:dyed_color\":255}}}}"));
+        c.add(new Case("mannequin_mob_fields", "mannequin", "{PersistenceRequired:1b,CanPickUpLoot:1b,LeftHanded:1b,NoAI:1b,drop_chances:{head:1.0f},home_pos:[1,2,3],home_radius:4}"));
+        c.add(new Case("mannequin_effects", "mannequin", "{active_effects:[{id:\"minecraft:speed\",amplifier:1b,duration:200}],attributes:[{id:\"minecraft:max_health\",base:40.0d}],Health:40.0f}"));
+        c.add(new Case("mannequin_health_over", "mannequin", "{Health:99.0f}"));
+        c.add(new Case("mannequin_health_zero", "mannequin", "{Health:0.0f}"));
+        c.add(new Case("mannequin_air_fire", "mannequin", "{Air:100s,Fire:50s,FallDistance:3.5f,OnGround:1b,Motion:[0.1d,0.2d,0.3d]}"));
+        c.add(new Case("mannequin_everything", "mannequin", "{profile:{name:\"Boss\"},hidden_layers:[\"cape\"],main_hand:\"left\",pose:\"crouching\",immovable:1b,description:'\"Hi\"',Health:15.0f}"));
         // ---- markers
         c.add(new Case("marker_empty", "marker", "{}"));
         c.add(new Case("marker_data", "marker", "{data:{a:1b,b:\"x\",list:[1,2,3],nested:{c:2.5d}}}"));
