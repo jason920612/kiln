@@ -4355,6 +4355,7 @@ public class InteractVectors {
                     for (var e : level.getAllEntities()) if (!(e instanceof net.minecraft.world.entity.player.Player)) ents.add(e);
                     ents.sort(Comparator.comparingInt(net.minecraft.world.entity.Entity::getId));
                     for (var e : ents) if (!e.isRemoved() && !e.isPassenger()) level.tickNonPassenger(e);
+                    if (System.getenv("PISTON_DEBUG") != null) System.out.println("PDEBUG t=" + level.getGameTime() + " 6,100,0=" + level.getBlockState(new BlockPos(6, 100, 0)) + " tick? " + level.shouldTickBlocksAt(new BlockPos(6, 100, 0)) + " be=" + level.getBlockEntity(new BlockPos(6, 100, 0)));
                     level.tickBlockEntities();
                 } else if (tickPlayer != null) {
                     // (`Entity.baseTick` and `LivingEntity.tick` keep the previous tick's rotations, which `getViewVector(0)` reads.)
