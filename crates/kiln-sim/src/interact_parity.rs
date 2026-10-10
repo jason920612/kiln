@@ -779,6 +779,11 @@ fn run_case(line: &Value) -> Vec<String> {
                 // (The client's tick is over: the next step may move again.)
                 inbox.push(ToSim::Packet(1, PlayIn::ClientTickEnd));
             }
+            "set_fall" => sim.players.get_mut(&1).unwrap().fall_distance = step["distance"].as_f64().unwrap(),
+            "set_grace" => {
+                let p = sim.players.get_mut(&1).unwrap();
+                p.impulse_grace = p.impulse_grace.max(step["ticks"].as_i64().unwrap() as i32);
+            }
             "accept_teleport" => {
                 if let Some(id) = sim.players[&1].awaiting_teleport {
                     inbox.push(ToSim::Packet(1, PlayIn::AcceptTeleport { id }));

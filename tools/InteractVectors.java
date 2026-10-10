@@ -1285,6 +1285,48 @@ public class InteractVectors {
         out.add(c);
     }
 
+    // ---------------------------------------------------------------- wp52: a move that is put back still checks the fall; the grace time after an impulse
+
+    static void moves52(List<Case> out) {
+        Case c;
+        for (double fall : new double[] {2.0, 8.0, 30.0}) {
+            // taken: the fall counts when the client says it landed
+            c = moveCase("fall_taken_" + (int) fall, "survival", false);
+            c.step(op("op", "set_fall", "distance", fall)).step(move(3.7, 99.0, 0.5, true));
+            out.add(c);
+            // put back (into a wall): the fall is checked where the player is
+            c = moveCase("fall_rejected_" + (int) fall, "survival", false);
+            c.cmd("fill 4 99 -2 4 101 2 minecraft:stone");
+            c.step(op("op", "set_fall", "distance", fall)).step(move(4.0, 99.0, 0.5, true));
+            out.add(c);
+            c = moveCase("fall_rejected_air_" + (int) fall, "survival", false);
+            c.cmd("fill 4 99 -2 4 101 2 minecraft:stone");
+            c.step(op("op", "set_fall", "distance", fall)).step(move(4.0, 99.0, 0.5, false));
+            out.add(c);
+            // the edge of a sneaking player: the server's body stays, the claim is wrong
+            c = moveCase("fall_edge_" + (int) fall, "survival", true);
+            c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
+            c.step(op("op", "set_fall", "distance", fall)).step(move(4.9, 99.0, 0.5, true));
+            out.add(c);
+        }
+        // creative players take no fall damage, put back or not
+        c = moveCase("fall_rejected_creative", "creative", false);
+        c.cmd("fill 4 99 -2 4 101 2 minecraft:stone");
+        c.step(op("op", "set_fall", "distance", 20.0)).step(move(4.0, 99.0, 0.5, true));
+        out.add(c);
+        // the grace time after an impulse: a claim far from the body is taken
+        for (int grace : new int[] {0, 1, 40}) {
+            c = moveCase("grace_" + grace, "survival", true);
+            c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
+            c.step(op("op", "set_grace", "ticks", grace)).step(move(4.9, 99.0, 0.5, true));
+            out.add(c);
+        }
+        c = moveCase("grace_into_wall", "survival", false);
+        c.cmd("fill 4 99 -2 4 101 2 minecraft:stone");
+        c.step(op("op", "set_grace", "ticks", 40)).step(move(4.0, 99.0, 0.5, true));
+        out.add(c);
+    }
+
     static void cauldrons50(List<Case> out) {
         Case c;
         String[] customs = {"minecraft:fill_cauldron", "minecraft:use_cauldron", "minecraft:clean_armor", "minecraft:clean_banner", "minecraft:clean_shulker_box"};
@@ -3819,6 +3861,9 @@ public class InteractVectors {
                 field(p.connection.getClass(), "firstGoodY").set(p.connection, p.getY());
                 field(p.connection.getClass(), "firstGoodZ").set(p.connection, p.getZ());
             }
+            // wp52: what the player has fallen so far, and the grace time after an impulse.
+            case "set_fall" -> p.fallDistance = ((Number) s.get("distance")).doubleValue();
+            case "set_grace" -> p.applyPostImpulseGraceTime(((Number) s.get("ticks")).intValue());
             case "accept_teleport" -> {
                 var at = (Vec3) get(p.connection, "awaitingPositionFromClient");
                 if (at != null) p.connection.handleAcceptTeleportPacket(new net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket((int) get(p.connection, "awaitingTeleport"), at.x, at.y, at.z, p.getYRot(), p.getXRot()));
@@ -4351,6 +4396,7 @@ public class InteractVectors {
             mannequins50(all);
             structures50(all);
             moves50(all);
+            moves52(all);
             cauldrons50(all);
             commandBlocks49(all);
         }).get();
