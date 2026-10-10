@@ -2886,8 +2886,8 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
         // `dropEquipment`.
         k.drop_equipment(e, m, level);
     }
-    // `dropExperience`.
-    if killed_by_player && level.mob_drops() && !consumed {
+    // `dropExperience` (`LivingEntity.shouldDropExperience`: not a baby, unless a `Monster`).
+    if killed_by_player && level.mob_drops() && !consumed && (!m.baby() || extends_monster(m.kind)) {
         let xp = experience_reward(e, m);
         award_experience(level, e.position(), xp);
     }
