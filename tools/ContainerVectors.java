@@ -614,8 +614,9 @@ public class ContainerVectors {
         out.add(mob(dispense("equip50_saddle_on_saddled_pig", "saddle", 2).block(1, -1, 0, stone), "pig", 1.5, 0, 0.5, "equipment:{saddle:{id:\"minecraft:saddle\",count:1}}"));
         out.add(mob(dispense("equip50_saddle_on_saddled_nautilus", "saddle", 2).block(1, -1, 0, stone), "nautilus", 1.5, 0, 0.5,
                 "Owner:[I;1,2,3,4],equipment:{saddle:{id:\"minecraft:saddle\",count:1}}"));
-        // (A wolf that picks up loot and wears armor already takes a dispensed wolf armor into its hand by itself: the pick-up of body armor
-        // by mobs is not modelled.)
+        // (wp53: a wolf that picks up loot and wears armor takes a dispensed wolf armor into its hand by itself.)
+        out.add(mob(dispense("equip50_wolf_armor_on_armored_wolf", "wolf_armor", 2).block(1, -1, 0, stone), "wolf", 1.5, 0, 0.5,
+                "Owner:[I;1,2,3,4],CanPickUpLoot:1b,equipment:{body:{id:\"minecraft:wolf_armor\",count:1}}"));
         // A brush on an armadillo: a scute, 16 durability; a baby gives none; nothing there fails.
         out.add(mob(dispense("brush50_armadillo", "brush", 1).block(1, -1, 0, stone), "armadillo", 1.5, 0, 0.5, ""));
         out.add(mob(dispense("brush50_armadillo_baby", "brush", 1).block(1, -1, 0, stone), "armadillo", 1.5, 0, 0.5, "Age:-24000"));
