@@ -4643,6 +4643,7 @@ public class InteractVectors {
             observer.snapTo(c.observer[0], c.observer[1], c.observer[2], 0f, 0f);
             observer.connection.resetPosition();
             drain(observer);
+            drain(p);
         }
         List<Object> results = new ArrayList<>();
         // The player's statistics outlive the mock player (the stats counter is kept by uuid): what a
