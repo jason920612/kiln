@@ -499,7 +499,8 @@ impl RegionWork<'_> {
         // itself and reads the region's blocks, so the players split into windows; what they
         // leave behind is merged in connection order, as a serial loop would have left it.
         let cells = &*self.cells;
-        let ticked = ctx.map_mut_with(PLAYER_TICK_WINDOW, &mut self.players, |_, p| player_tick(p, cells, env, true));
+        let pistons = &self.blocks.data.pistons;
+        let ticked = ctx.map_mut_with(PLAYER_TICK_WINDOW, &mut self.players, |_, p| player_tick(p, cells, pistons, env, true));
         for t in ticked {
             self.out.spawns.extend(t.spawns);
             self.out.deaths.extend(t.deaths);
@@ -839,7 +840,7 @@ pub(crate) struct PlayerTicked {
 /// (`ServerGamePacketListenerImpl.tick` -> `ServerPlayer.doTick`: the base tick, effects, food,
 /// stats and the health and experience sync, against void air); `ServerPlayer.tick`, which the
 /// level's entity ticking calls, waits for the chunk.
-pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env, entity_ticking: bool) -> PlayerTicked {
+pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_blocks::MovingPistons, env: &Env, entity_ticking: bool) -> PlayerTicked {
     let mut t = PlayerTicked::default();
     let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
     tick_connection(p, env);
@@ -889,7 +890,7 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env, enti
     // The server's body moves on its own (gravity, drag, a ladder's grip) and the blocks it
     // passes through take effect, then the connection puts the position back (`doTick`).
     let snap = p.pos;
-    p.phantom_travel(cells, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
+    p.phantom_travel(cells, pistons, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
     // (`checkFallDamage` in the move: a landing runs them as well.)
     p.landed_location_changed(&block);
     let (_, h, _) = p.dimensions();

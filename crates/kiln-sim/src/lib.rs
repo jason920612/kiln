@@ -2717,10 +2717,11 @@ impl Sim {
         conns.sort_unstable();
         let envs = self.waiting_envs();
         let no_blocks = kiln_region::CellSet::<Cell>::default();
+        let no_pistons = kiln_blocks::MovingPistons::default();
         let mut outs = Vec::new();
         for conn in conns {
             let p = self.players.get_mut(&conn).unwrap();
-            let t = region::player_tick(p, &no_blocks, &envs[&p.dim], false);
+            let t = region::player_tick(p, &no_blocks, &no_pistons, &envs[&p.dim], false);
             p.decay_velocity();
             let mut out = RegionOut { spawns: t.spawns, deaths: t.deaths, portals: t.portals, ..Default::default() };
             out.saved_entities.append(&mut p.released_shoulders);

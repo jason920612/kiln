@@ -169,13 +169,14 @@ impl Player {
     /// `LivingEntity.travel` for the server's body of this player (see the module docs). The
     /// player's position is left where the body went; the caller puts it back after the
     /// tick's block effects.
-    pub(crate) fn phantom_travel(&mut self, cells: &CellSet<Cell>, game_time: i64, min_y: i32, fast_lava: bool) {
+    pub(crate) fn phantom_travel(&mut self, cells: &CellSet<Cell>, pistons: &kiln_blocks::MovingPistons, game_time: i64, min_y: i32, fast_lava: bool) {
         // Spectators, flying players, gliders, riders and the dead are not moved this way.
         if self.game_mode == 3 || self.flying || self.fall_flying || self.vehicle.is_some() || self.dead || self.sleep.pos.is_some() {
             self.server_delta = [0.0; 3];
             return;
         }
         let mut level = PhantomLevel::new(cells, game_time, min_y, fast_lava);
+        level.pistons = Some(pistons);
         let mut e = self.phantom_in(&level);
         // `Entity.baseTick`'s fluid update (currents push the body).
         e.update_fluid_interaction(&mut level);
