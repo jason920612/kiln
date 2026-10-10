@@ -1634,10 +1634,12 @@ public class InteractVectors {
         out.add(cycle54(c, "4 100 -1", 4, 0).step(op("op", "command", "command", "gamerule entity_drops true")));
         c = p54("item_frame_front");
         c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd("gamerule entity_drops false").cmd("summon minecraft:item_frame 6 100 0 {Facing:1b}");
+        c.step(op("op", "idle"));
         out.add(cycle54(c, "4 100 -1", 4, 0).step(op("op", "command", "command", "gamerule entity_drops true")));
         c = p54("painting_front");
         c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd("setblock 6 100 -1 minecraft:stone").cmd("gamerule entity_drops false")
                 .cmd("summon minecraft:painting 6 100 0 {facing:3b,variant:\"minecraft:kebab\"}");
+        c.step(op("op", "idle"));
         out.add(cycle54(c, "4 100 -1", 4, 0).step(op("op", "command", "command", "gamerule entity_drops true")));
         // ---- one thing at a time at places around a pushing, pulling piston
         double[][] places = {{3.4, 100, 0.5}, {5.5, 101, 0.5}, {5.5, 100.9375, 1.5}, {6.4, 100, 0.5}, {6.4, 100, -0.3}, {6.9, 100, 0.9}, {5.2, 102, 0.4}, {7.0, 100, 0.1}};
