@@ -72,7 +72,7 @@
 | `melee_parity`（`wp45/combat/melee.jsonl`） | 玩家對生物與玩家的近戰：橫掃、暴擊、重錘、附魔、護甲、效果、騎乘 | **690/690** |
 | `spear_parity`（`wp45/combat/spear.jsonl`） | 矛的刺與衝鋒、打偏火球與風彈、刺船與礦車 | **148/148**（原 127） |
 | `effect_parity`（`wp9-effects`） | 效果、飢餓、溺水、火、飲食 | 131 scenario（5,908 tick）全過 |
-| `effect_parity`（`wp45/effects/vectors.jsonl`） | 上列加玩家的摔落（361）與環境傷害（110）：仙人掌、甜莓、凋零玫瑰、粉雪凍傷、窒息 | **651 相符＋12 個已知差異（3.3 節）**，39,645 tick |
+| `effect_parity`（`wp45/effects/vectors.jsonl`） | 上列加玩家的摔落（361）與環境傷害（110）：仙人掌、甜莓、凋零玫瑰、粉雪凍傷、窒息 | **663 全部相符（wp50 之後，沒有已知差異）**，40,133 tick |
 | `container_parity`（`wp15-containers`、`wp36/containers`） | 漏斗、熔爐、比較器、唱片機 | 30 scenario（8,144 值）、14 scenario（1,400 值）全過 |
 | `sculk_parity`（`m6s3-warden`） | sculk 感測器、催化劑、尖叫者 | 12 scenario、4,160/4,160 值 |
 | `weather_parity`（`wx-weather`） | 天氣週期、天空暗度、降水、睡眠 | 674/674 |
@@ -198,9 +198,9 @@
 | 矛（玩家與生物） | A | 127＋17 | `spear_parity.rs` | – |
 | 三叉戟 riptide | A | 110 | `combat_parity.rs` | – |
 | 盾牌、不死圖騰 | C | 0 | `shield.rs`、`tests/health.rs` | – |
-| 摔落傷害（safe_fall_distance、摔落乘數、乾草 0.2、床 0.5、史萊姆與蜂蜜、蜘蛛網、梯子、粉雪、水與氣泡柱）、方塊彈起 | A | `effect_parity` 的 `fall_*` 361 個 scenario（354 個相符，7 個已知差異） | `EffectVectors.java` | 已知差異見本節表後 |
+| 摔落傷害（safe_fall_distance、摔落乘數、乾草 0.2、床 0.5、史萊姆與蜂蜜、蜘蛛網、梯子、粉雪、水與氣泡柱）、方塊彈起 | A | `effect_parity` 的 `fall_*` 361 個 scenario（全部相符，wp45 的 7 個差異 wp49 補完） | `EffectVectors.java` | – |
 | 溺水、火、岩漿、岩漿塊、營火、飢餓與餓死 | A | 11＋17＋3 | `effect_parity.rs` | – |
-| 仙人掌、甜莓叢、凋零玫瑰、粉雪凍傷、方塊內窒息（含冷卻、難度、盔甲、保護、抗性） | A | `haz_*` 110 個 scenario（105 個相符，5 個已知差異） | `EffectVectors.java` | 見下方已知差異 |
+| 仙人掌、甜莓叢、凋零玫瑰、粉雪凍傷、方塊內窒息（含冷卻、難度、盔甲、保護、抗性） | A | `haz_*` 110 個 scenario（全部相符，wp45 的 5 個差異 wp49、wp50 補完） | `EffectVectors.java` | – |
 | 效果 tick、屬性、堆疊、食物與飲料效果、生物身上的效果 | A | 131＋40＋30 | `effect_parity.rs`、`mob_parity.rs` | 玩家端 weaving／oozing／wind_charged／infested 為 D |
 | 附魔 43 種 | A 31／C 12／D 0 | – | `enchant_parity.rs`、`melee_parity.rs`（density、wind_burst、breach 隨重錘）；wp49：霜行者與靈魂疾行者 `effect_parity` 的 `ench_` 17 個 scenario（`enchant_loc.rs`） | 靈魂疾行者的靴子磨損抽的是 level 亂數，與音效、腳步共用一條序列，向量不比對；C：channeling、flame、infinity、loyalty、lure、mending、multishot、piercing、power、punch、quick_charge、vanishing_curse |
 | 吃喝、弓、弩 | A／A\* | 40／400／300 | `consume`、`item_parity.rs` | 拉弓力道、傷害為 C |
@@ -217,11 +217,11 @@
 | 進度（1,866 個）、統計、配方書解鎖 | B | 0 | `advancement_check.py`、`advancements_view.py` | 54 種 trigger 中約 9 種不會觸發 |
 | 姿勢（游泳、爬行、強迫蹲）、衝刺 | A\* | `effect_parity` 的 `haz_wall_ceiling_slab_top` 等（wp49 `Player.updatePlayerPose`） | `pose.rs`、`players.rs` | 衝刺本身無向量 |
 
-`effect_parity` 663 個 scenario 中（wp49 之後）**662 個逐項相符（40,133 tick）**，另 1 個列在 `effect_parity.rs` 的 `KNOWN_GAPS`（測試對這份清單雙向把關：清單外的差異會失敗，清單上的轉為相符也會失敗，要求移出清單）。wp45 的 12 個差異中，粉雪落下、氣泡柱飢餓、床彈起、只有頭卡住、低天花板強迫蹲姿共 11 個在 wp49 補了：玩家姿勢（游泳、爬行、強迫蹲）、`aiStep` 的 0.003 速度歸零、氣泡柱推玩家（含一次 level 亂數）、封包移動走伺服器身體（`player::server_move`）：
+`effect_parity` 663 個 scenario（wp50 之後）**全部逐項相符（40,133 tick）**，`effect_parity.rs` 的 `KNOWN_GAPS` 清單是空的（測試對這份清單雙向把關：清單外的差異會失敗，清單上的轉為相符也會失敗，要求移出清單）。wp45 的 12 個差異中，粉雪落下、氣泡柱飢餓、床彈起、只有頭卡住、低天花板強迫蹲姿共 11 個在 wp49 補了：玩家姿勢（游泳、爬行、強迫蹲）、`aiStep` 的 0.003 速度歸零、氣泡柱推玩家（含一次 level 亂數）、封包移動走伺服器身體（`player::server_move`）；最後一個 `haz_snow_lava_clears` 在 wp50 查明是錄製端的假象（見下表）：
 
-| 已知差異 | 內容 |
+| 曾經的差異 | 原因與處理 |
 |---|---|
-| `haz_snow_lava_clears` | 燃燒中的玩家在粉雪旁的岩漿：火提早一 tick 熄。wp50 查過，判定是錄製 harness 內事件順序造成的差異（向量與 Kiln 重播的 tick 內順序不同），不是行為缺口；仍留在 `KNOWN_GAPS` |
+| `haz_snow_lava_clears` | 不是 Kiln 的缺口。harness 的「影子用戶端」是第二個站在同一格粉雪裡的玩家，岩漿出現那個 tick 它先著火、先融掉粉雪（把它的 `InsideBlockEffectType` 效果逐一印出來：`LAVA_IGNITE`、`EXTINGUISH` 發生在被測玩家被處理之前），被測玩家於是在粉雪消失後才被點燃，火不被撲滅；單一玩家（Kiln 的情形）則是點燃之後同一步被粉雪撲滅。`EffectVectors` 加 `quietShadow`：這個 scenario 錄製時影子不套用方塊效果，重錄後 Kiln 逐項相符，`KNOWN_GAPS` 清空 |
 
 ### 3.4 生物（90 種 Mob 子類，wp49 之後全部實作）
 
@@ -334,7 +334,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 3 | 刷怪磚與結構生怪覆寫（要塞烈焰人、地牢、沼澤小屋、神殿、哨站） | A（刷怪磚 49 個 scenario、結構覆寫 184,584 張清單） | `MobVectors`、`SpawnVectors` | 完成（wp44-spawner）；試煉刷怪磚、寶庫未做 |
 | 4 | 終界入口：末影之眼、終界傳送門框架、`/locate structure` | A／B | 方塊更新向量＋`command_diff.py --structures` | 完成（wp44-end：locate 393／393，眼的飛行 40 個、框架 28 個） |
 | 5 | 告示牌與書編輯、挖礦經驗、右鍵穿裝備、中鍵挑選 | A | `InteractVectors.java`、loot 的 `block_experience` | 完成（wp44-interact）；創造模式帶資料的中鍵挑選放棄 |
-| 6 | 摔落傷害與落地方塊、玩家環境傷害（仙人掌、甜莓、粉雪、窒息） | A（651／663，12 個已知差異） | `EffectVectors` 加 fall／hazard scenario | 完成（wp44-player）；12 個差異見 3.3 |
+| 6 | 摔落傷害與落地方塊、玩家環境傷害（仙人掌、甜莓、粉雪、窒息） | A（663／663，wp50 之後） | `EffectVectors` 加 fall／hazard scenario | 完成（wp44-player）；wp45 的 12 個差異由 wp49 補 11 個、wp50 補最後 1 個（見 3.3） |
 | 7 | 玩家打生物、橫掃、重錘 | A（690／690） | `CombatVectors` 目標改成生物 | 完成（wp44-combat） |
 | 8 | 世界初始動物、蜜蜂與海豚等 6 種缺失生物、畫與展示框與盔甲座 | A（wp49 之後） | `MobVectors` 照樣板各加 4–8 個 scenario；存檔用 `entity_persist_check` | 完成（wp49，見 6.3）；mannequin、cushion、ominous_item_spawner 在 wp50 補上（見 6.4） |
 | 9 | 難度、遊戲規則、seed 與 `/op` 持久化；遊戲規則接線 | B（27 項互載；59 條規則 54 條有人讀） | 原版先存、Kiln 載入，反過來再一次 | 完成（wp44-admin） |
@@ -408,7 +408,7 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 | 玩家風彈 | `minecraft:wind_charge` 實體（半徑 1.2、擊退乘 1.22、5 tick 內不可被偏轉）、`WindChargeItem.use`、發射器射出；爆炸的 `explosion_knockback_resistance`；拋射物能打中礦車、船、盔甲座、畫與展示框、火球與風彈（`Entity.canBeHitByProjectile`） | `wind_` 27 | `container_parity`（`track`：每 tick 比對所有實體的位置、速度、血量） |
 | 霜行者、靈魂疾行者 | 附魔的 `location_changed`（換方塊或落地時：靈魂疾行者的速度與移動效率修飾子，疊在靈魂沙／土上，靴子磨損；霜行者在腳下半徑 3＋(等級−1) 的水源上鋪霜冰，不騎乘、在地上才鋪）與 `tick`（靈魂粒子與音效）；霜行者對熱地板的傷害免疫本來就由戰利品引擎處理；新屬性 `movement_efficiency` | `ench_` 17 | `effect_parity`（`effects49`） |
 | 村莊圍攻、貓生成 | `Siege`、`CatSpawner`（沼澤小屋的黑貓） | 無（原版錄製不可行） | 單元測試（C） |
-| 玩家姿勢、氣泡柱、封包移動 | `Player.updatePlayerPose`（游泳、爬行、強迫蹲）、`aiStep` 的 0.003 速度歸零、氣泡柱推玩家、封包移動走伺服器身體（`player::server_move`） | `effect_parity` 662／663 | `effect_parity`（已知差異剩 1，見 3.3） |
+| 玩家姿勢、氣泡柱、封包移動 | `Player.updatePlayerPose`（游泳、爬行、強迫蹲）、`aiStep` 的 0.003 速度歸零、氣泡柱推玩家、封包移動走伺服器身體（`player::server_move`） | `effect_parity` 663／663 | `effect_parity`（沒有已知差異，見 3.3） |
 | 初始動物 | 區塊產生時的動物（群組大小、`isValidSpawn` 逐種條件） | 7 個世界、各 169 個區塊的窗口（161 隻中 114 隻逐位元相同，其餘在原版順序相依的容許度內） | `tests/initial_mobs.rs` |
 | 命名牌 | 命名牌命名生物；自訂名稱、靜音、無重力送給觀看者的實體資料 | `tests/` 單元測試 | C |
 
@@ -428,7 +428,6 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 - **豬鞍與胡蘿蔔釣竿、鸚鵡螺鞍與護甲**（wp50 補上）。
 - **發射器**：刷子對犰狳與剪斷拴繩在 wp50 補上；穿裝備時的裝備音效與遊戲事件、拾取戰利品的生物的 `canPickUpLoot` 隨機性只靠生物自己的值。
 - **無法用原版向量驗證的**：貓生成與村莊圍攻（原版的亂數與計時不可重播，只有 Kiln 單元測試）；硫磺方塊的玩家推擠、衝刺擊退與接觸傷害對生物（harness 不 tick 玩家）；初始動物的順序相依（原版的結果依區塊產生順序，以量測到的容許度比對）。
-- **已知差異**：`effect_parity` 的 `haz_snow_lava_clears`（燃燒中的玩家在粉雪旁的岩漿，火提早一 tick 熄）。
 - 與 wp45 相同、這一輪沒碰的：配方書封包位元組、釀造台運作向量、選單點擊向量補鐵砧等（「moved wrongly」、結構方塊與拼圖方塊、旗幟圖樣在 wp50 補上）。
 
 ### 6.4 wp50（`wp50-last-d`）：做完剩下的 D 項
@@ -445,6 +444,7 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 | 旗幟圖樣 | 織布機選單（按鈕順序來自 tag 的 JSON 順序、`slotsChanged` 對任何來源重算）、盾牌上旗幟、鍋釜洗旗與洗盾 | 選單點擊 1,500 序列／35,988 步、`banner50` 19、`cauldron50` 170 | `kiln-inventory/tests/click_parity.rs`、`interact_parity` |
 | 結構方塊 | 螢幕封包（更新資料、存範圍、載入範圍、偵測大小）、模式（存、載入、角落、資料）、範本庫（先找世界 `generated/`，再找 datapack 與遊戲資料；找不到的也記住）、`fillFromWorld`（略過結構空位、帶方塊實體資料）、`placeInWorld`（旋轉、鏡射、完整度的 `BlockRotProcessor` 與種子、`strict` 的旗標 816、方塊實體載入並依模式更新方塊）、紅石觸發（存、載入、角落卸載）、放置者為作者、`StructureTemplate` 預設作者 `?`、`DataVersion` 與 `id`／`properties` 的存檔鍵 | `structure50` 88 | `interact_parity`（含範本 NBT 逐位元組比對） |
 | 拼圖方塊 | 螢幕封包、方塊實體欄位與 `joint` 預設（依朝向）、放置朝向（`getStateForPlacement`）、`JigsawGenerate` 接到 `/place jigsaw` 的機制 | 含在 `structure50`（9 個 jigsaw scenario） | `interact_parity` |
+| `haz_snow_lava_clears` | 效果向量唯一的已知差異：查明是錄製端假象（影子用戶端先融掉粉雪），`EffectVectors` 加 `quietShadow` 重錄，`wp45/effects/vectors.jsonl` 內該行換新（原檔備份為 `.pre-wp50`），`effect_parity` 663／663 | `effect_parity` 的 `KNOWN_GAPS` 清空 | `effect_parity` |
 | 「moved wrongly」 | 封包移動先讓伺服器身體走 `player::server_move`，水平距離平方超過 0.0625（創造、旁觀、睡眠不計；垂直分量被原版的比較式永遠歸零）且舊位置沒有碰撞，或新位置撞到新的碰撞形狀，就退回起點；被退回的移動從方塊效果的移動紀錄中移除；潛行不會走下邊緣的身體退讓是這條檢查的主要來源 | `moves50` 27 | `interact_parity` |
 
 這一輪找到並修掉的 Kiln 錯誤（皆由向量抓到）：
@@ -454,6 +454,7 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 - 站上方塊就移走的標誌牌：standing／wall sign 在放置範圍的邊緣依 `updateShape` 掉落（`StructureTemplate.updateShapeAtEdge`），和旗幟走同一條規則。
 - 結構方塊／拼圖方塊放置時的方塊狀態（`JigsawBlock.getStateForPlacement`）、`loadAdditional` 的 `updateBlockState`（模式改了方塊跟著改）。
 - 資料指令改方塊實體後，區塊副本與「原版解析後再存出」一致（箱子沒有戰利品表就不留 `LootTableSeed`）。
+- 閃電 `ext_thunder_hit`：不是延伸實體的生物（例如被劈中的豬變成的殭屍豬人）在檢查前就被換成佔位狀態，資料遺失而從世界消失；`tests/weather.rs` 的 `lightning_charges_creepers_converts_pigs_and_lights_fire` 抓到，先檢查再換。
 
 仍是 D 或 C 的（以及原因）：
 
@@ -495,6 +496,7 @@ java ... tools/ContainerVectors.java work/wp50/container/c50.jsonl equip50      
 java ... tools/MobVectors.java work/wp50/mobs/eq50.jsonl eq50_                         # 併入 work/m6-mobs2/vectors.jsonl 前先備份
 java ... tools/InventoryVectors.java work/wp50/inventory/loom.jsonl loom
 java ... tools/EntityNbtVectors.java work/wp50/entities/mannequin.jsonl mannequin
+java ... tools/EffectVectors.java work/wp50/effects/lava.jsonl haz_snow_lava      # 單一 scenario；換進 work/wp45/effects/vectors.jsonl 時依 name 取代整行
 # 與原版互載、指令對跑
 python tools/admin_check.py --kiln-exe target/release/kiln
 python tools/command_diff.py --kiln-exe target/release/kiln --bot-exe target/release/kiln-bot

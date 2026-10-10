@@ -480,9 +480,8 @@ fn sort_removal_runs(mut packets: Vec<bytes::Bytes>) -> Vec<bytes::Bytes> {
 /// Scenarios Kiln does not match yet, with what differs (wp45: kept in the vectors so that a fix
 /// shows, and so that nothing else slips in: the test fails on any other difference, and on a
 /// listed scenario that now passes).
-const KNOWN_GAPS: &[(&str, &str)] = &[
-    ("haz_snow_lava_clears", "a burning player in powder snow next to lava: the fire is put out one tick early"),
-];
+/// (wp50: none left. `haz_snow_lava_clears` was one: the recording's shadow client melted the powder snow first.)
+const KNOWN_GAPS: &[(&str, &str)] = &[];
 
 #[test]
 fn effect_parity() {
