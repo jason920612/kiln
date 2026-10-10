@@ -182,7 +182,8 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
 pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     o.put("Health", Tag::Float(m.health));
     o.put("HurtTime", Tag::Short(m.hurt_time as i16));
-    o.put("HurtByTimestamp", Tag::Int(m.last_hurt_by_mob_timestamp));
+    // (`LivingEntity.addAdditionalSaveData`: the grace time after an impulse; no `HurtByTimestamp` since the rewrite of the hurt memories.)
+    o.put("current_impulse_context_reset_grace_time", Tag::Int(0));
     o.put("DeathTime", Tag::Short(m.death_time as i16));
     o.put("AbsorptionAmount", Tag::Float(m.absorption));
     let attrs: Vec<Tag> = m
@@ -190,6 +191,8 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
         .list
         .iter()
         .filter(|i| !i.modifiers.is_empty() || i.base != i.attr.info().1 || (m.kind.is_mob() && matches!(i.attr, Attr::MovementSpeed | Attr::FollowRange)))
+        // (A mannequin has the living entity attributes only.)
+        .filter(|i| m.kind.is_mob() || !matches!(i.attr, Attr::FollowRange | Attr::TemptRange | Attr::AttackDamage))
         .map(|i| {
             let mut c = vec![("id".to_owned(), Tag::String(i.attr.name().to_owned())), ("base".to_owned(), Tag::Double(i.base))];
             if !i.modifiers.is_empty() {

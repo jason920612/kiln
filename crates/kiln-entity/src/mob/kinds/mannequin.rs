@@ -136,16 +136,13 @@ impl Kind for Mannequin {
         s.layers = ALL_LAYERS;
         if let Some(Tag::List(items)) = r.get("hidden_layers") {
             let mut hidden = 0u8;
-            let mut ok = true;
             for t in items {
                 match t.as_str().and_then(|n| PARTS.iter().position(|p| *p == n)) {
                     Some(i) => hidden |= 1 << i,
-                    None => ok = false,
+                    None => {}
                 }
             }
-            if ok {
-                s.layers = ALL_LAYERS & !hidden;
-            }
+            s.layers = ALL_LAYERS & !hidden;
         }
         s.left_handed = matches!(r.get("main_hand").and_then(Tag::as_str), Some("left"));
         s.pose = r.get("pose").and_then(Tag::as_str).and_then(pose_of).unwrap_or(pose::STANDING);
@@ -180,7 +177,9 @@ impl Kind for Mannequin {
             d.set(data::avatar::PLAYER_MAIN_HAND, &DataValue::HumanoidArm(HumanoidArm::Left));
         }
         // (`Mannequin()` sets all layers: a value that differs from the `Avatar` default of 0.)
-        d.set(data::avatar::PLAYER_MODE_CUSTOMISATION, &DataValue::Byte(s.layers as i8));
+        if s.layers != 0 {
+            d.set(data::avatar::PLAYER_MODE_CUSTOMISATION, &DataValue::Byte(s.layers as i8));
+        }
         if let Some(p) = s.profile.as_ref().filter(|p| **p != Profile::default()) {
             let mut b = bytes::BytesMut::new();
             p.write(&mut b);
