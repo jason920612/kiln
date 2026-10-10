@@ -1114,6 +1114,7 @@ name = "kiln-entity"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "kiln-command",
  "kiln-data",
  "kiln-inventory",
  "kiln-item",
@@ -1337,6 +1338,7 @@ dependencies = [
 name = "kiln-worldgen"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "flate2",
  "kiln-blocks",
  "kiln-data",

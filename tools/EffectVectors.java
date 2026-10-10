@@ -96,6 +96,10 @@ public class EffectVectors {
         // wp44 (player hazards): a shadow client drives the player with move packets, as a real
         // client does; the packets it sent are recorded in `moves` (one per tick).
         boolean client;
+        // The shadow client is a second player in the same blocks, so what the blocks do to it (a burning one melts the
+        // powder snow it stands in) happens before the player under test is processed. A lone player never sees that:
+        // with this set, the block effects (`InsideBlockEffectType`) skip the shadow.
+        boolean quietShadow;
         List<Object> moves = new ArrayList<>();
         // Attribute base values set at the start: {attribute id, value}.
         List<Object[]> attrs = new ArrayList<>();
@@ -1152,6 +1156,7 @@ public class EffectVectors {
         snowColumn(s);
         out.add(s);
         s = hazard("haz_snow_lava_clears", 80);
+        s.quietShadow = true;
         snowColumn(s);
         s.at(30, op("op", "setblock", "pos", List.of(0, 99, 0), "state", "minecraft:lava"));
         out.add(s);
@@ -1626,6 +1631,8 @@ public class EffectVectors {
         List<Object> ticks = new ArrayList<>();
         ServerPlayer shadowPlayer = s.client ? startClient(server, p, s) : null;
         shadow = shadowPlayer;
+        quietShadow = s.quietShadow;
+        if (quietShadow) installQuietShadow();
         ClientState cs = new ClientState();
         for (int t = 1; t <= s.ticks; t++) {
             for (Map<String, Object> a : s.actions.getOrDefault(t, List.of())) act(server, p, a);
@@ -1829,6 +1836,25 @@ public class EffectVectors {
     // the on-ground and collision flags). The packets are recorded in the scenario.
 
     static ServerPlayer shadow;
+    static boolean quietShadow;
+    static boolean quietShadowInstalled;
+
+    /** Makes the inside-block effects skip the shadow client while `quietShadow` is set. */
+    @SuppressWarnings("unchecked")
+    static void installQuietShadow() throws Exception {
+        if (quietShadowInstalled) return;
+        quietShadowInstalled = true;
+        for (net.minecraft.world.entity.InsideBlockEffectType type : net.minecraft.world.entity.InsideBlockEffectType.values()) {
+            for (Field f : type.getClass().getDeclaredFields()) {
+                if (!java.util.function.Consumer.class.isAssignableFrom(f.getType())) continue;
+                f.setAccessible(true);
+                java.util.function.Consumer<net.minecraft.world.entity.Entity> effect = (java.util.function.Consumer<net.minecraft.world.entity.Entity>) f.get(type);
+                f.set(type, (java.util.function.Consumer<net.minecraft.world.entity.Entity>) e -> {
+                    if (!(quietShadow && e == shadow)) effect.accept(e);
+                });
+            }
+        }
+    }
 
     static final class ClientState {
         Vec3 last;
