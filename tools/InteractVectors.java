@@ -1711,7 +1711,7 @@ public class InteractVectors {
                 BlockState st = bi.getBlock().defaultBlockState();
                 if (!st.isCollisionShapeFullBlock(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, BlockPos.ZERO) || !st.getFluidState().isEmpty()) continue;
                 if (bi.getBlock().hasDynamicShape() || st.hasBlockEntity()) continue;
-                if (st.getBlock() instanceof net.minecraft.world.level.block.FarmBlock || st.getBlock() instanceof net.minecraft.world.level.block.TurtleEggBlock
+                if (st.getBlock() instanceof net.minecraft.world.level.block.FarmlandBlock || st.getBlock() instanceof net.minecraft.world.level.block.TurtleEggBlock
                         || st.getBlock() instanceof net.minecraft.world.level.block.FallingBlock || st.getBlock() instanceof net.minecraft.world.level.block.InfestedBlock
                         || st.getBlock() instanceof net.minecraft.world.level.block.LeavesBlock || st.getBlock() instanceof net.minecraft.world.level.block.IceBlock) continue;
                 String name = BuiltInRegistries.ITEM.getKey(it).toString();
