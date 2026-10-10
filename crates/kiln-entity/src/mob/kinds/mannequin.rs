@@ -14,7 +14,8 @@ use kiln_data::entities::{data, pose};
 use kiln_item::ItemStack;
 use kiln_javamath::random::RandomSource;
 use kiln_proto::nbt::Tag;
-use kiln_proto::packets::entity::{DataValue, EntityData, HumanoidArm};
+use kiln_proto::packets::entity::metadata::HumanoidArm;
+use kiln_proto::packets::entity::{DataValue, EntityData};
 
 pub struct Mannequin;
 

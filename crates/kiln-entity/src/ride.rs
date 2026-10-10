@@ -85,7 +85,6 @@ fn passenger_point(type_name: &str) -> Option<(f64, f64)> {
         "minecraft:ocelot" => (0.637_499_988_079_071, 0.0),
         "minecraft:parrot" => (0.462_500_005_960_464_5, 0.0),
         "minecraft:phantom" => (0.337_500_005_960_464_5, 0.0),
-        "minecraft:pig" => (0.868_749_976_158_142_1, 0.0),
         "minecraft:piglin" | "minecraft:piglin_brute" | "minecraft:zombie" | "minecraft:drowned" => (2.012_500_047_683_716, 0.0),
         "minecraft:sheep" => (1.237_499_952_316_284_2, 0.0),
         "minecraft:sniffer" => (2.093_75, 0.0),
