@@ -735,6 +735,24 @@ public class InteractVectors {
         c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"nonsense\"}").late("summon minecraft:cushion 3.5 100 0.5 {color:\"purple\"}");
         c.step(op("op", "tick_cushions", "ticks", 100));
         out.add(c);
+        // wp52: fluids in its cell and under it (the water is placed, it does not flow in a level that does not tick).
+        for (String fluid : new String[] {"minecraft:water", "minecraft:lava", "minecraft:water[level=3]", "minecraft:bubble_column[drag=false]"}) {
+            c = cushionCase("tick_in_" + fluid.replaceAll("[^a-z0-9]", "_")); c.tickCushions = true;
+            c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+            c.step(op("op", "command", "command", "setblock 2 100 0 " + fluid)).step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "tick_cushions", "ticks", 100));
+            out.add(c);
+            c = cushionCase("tick_support_" + fluid.replaceAll("[^a-z0-9]", "_")); c.tickCushions = true;
+            c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+            c.step(op("op", "command", "command", "setblock 2 99 0 " + fluid)).step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "tick_cushions", "ticks", 100));
+            out.add(c);
+        }
+        // a piston head or a moving block in the cell
+        for (String block : new String[] {"minecraft:piston_head[facing=up,type=normal]", "minecraft:moving_piston[facing=up,type=normal]", "minecraft:honey_block", "minecraft:slime_block", "minecraft:glass", "minecraft:oak_trapdoor[half=top,open=false]"}) {
+            c = cushionCase("tick_with_" + block.replaceAll("[^a-z0-9]", "_")); c.tickCushions = true;
+            c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+            c.step(op("op", "command", "command", "setblock 2 100 0 " + block)).step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "tick_cushions", "ticks", 100));
+            out.add(c);
+        }
         c = cushionCase("tick_while_sitting"); c.tickCushions = true;
         c.late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
         c.step(useEntity(2.5, 100.0, 0.5, 0, false)).step(op("op", "tick_cushions", "ticks", 100));
