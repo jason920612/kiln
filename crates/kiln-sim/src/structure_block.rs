@@ -720,7 +720,11 @@ impl Sim {
         let (mirror, rotation) = (mirror_of(d.mirror), rotation_of(d.rotation));
         let rot = Processor::BlockRot { rottable: None, integrity: d.integrity.clamp(0.0, 1.0) };
         let seed = if d.seed == 0 { self.game_time as i64 + 1 } else { d.seed };
-        let mut settings = PlaceSettings { mirror, rotation, ignore_entities: d.ignore_entities, known_shape: d.strict, ..PlaceSettings::default() };
+        let mut settings = PlaceSettings::default();
+        settings.mirror = mirror;
+        settings.rotation = rotation;
+        settings.ignore_entities = d.ignore_entities;
+        settings.known_shape = d.strict;
         if d.integrity < 1.0 {
             settings.processors.push(&rot);
             settings.random = Some(kiln_worldgen::random::WorldgenRandom::legacy(seed));
