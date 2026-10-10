@@ -3161,6 +3161,16 @@ public class InteractVectors {
         return best;
     }
 
+    static int invulnerableTime(net.minecraft.world.entity.Entity e) {
+        try {
+            java.lang.reflect.Field f = net.minecraft.world.entity.Entity.class.getDeclaredField("invulnerableTime");
+            f.setAccessible(true);
+            return f.getInt(e);
+        } catch (ReflectiveOperationException x) {
+            throw new IllegalStateException(x);
+        }
+    }
+
     /** The hanging entities in the scenario's area, sorted: [type, x, y, z, facing, item, rotation, painting area]. */
     static List<Object> hangings() {
         ServerLevel level = server.overworld();
@@ -3181,7 +3191,7 @@ public class InteractVectors {
         }
         // wp50: mannequins: [type, x, y, z, 0, "health,pose,hurtTime,deathTime,height,invulnerableTime", 0, 0].
         for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 90, -16, 32, 120, 32))) {
-            String state = String.format(java.util.Locale.ROOT, "%.4f,%s,%d,%d,%.4f,%d", mq.getHealth(), mq.getPose().getSerializedName(), mq.hurtTime, mq.deathTime, mq.getBbHeight(), mq.invulnerableTime);
+            String state = String.format(java.util.Locale.ROOT, "%.4f,%s,%d,%d,%.4f,%d", mq.getHealth(), mq.getPose().getSerializedName(), mq.hurtTime, mq.deathTime, mq.getBbHeight(), invulnerableTime(mq));
             rows.add(new Object[] {BuiltInRegistries.ENTITY_TYPE.getKey(mq.getType()).toString(), mq.getX(), mq.getY(), mq.getZ(), 0, state, 0, 0});
         }
         // wp50: cushions: [type, x, y, z, 0, color, riders, the riders' seat height in ten thousandths].
