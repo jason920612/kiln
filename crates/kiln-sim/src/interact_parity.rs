@@ -841,8 +841,17 @@ fn run_case(line: &Value) -> Vec<String> {
         let mut want_packets: Vec<String> = want["packets"].as_array().unwrap().iter().map(|v| normalize_want(v).to_string()).collect();
         // Vanilla sends two or more changes of one section as a Section Blocks Update, which the
         // vectors do not record (Kiln sends each change on its own).
-        if matches!(step["op"].as_str(), Some("command" | "set_structure")) && got_packets.iter().filter(|p| p.contains("\"t\":\"block_update\"")).count() >= 2 {
+        if step["op"] == "command" && got_packets.iter().filter(|p| p.contains("\"t\":\"block_update\"")).count() >= 2 {
             got_packets.retain(|p| !p.contains("\"t\":\"block_update\""));
+        }
+        // (A structure block's screen: the changes of one tick are sent once, and many of one section as a Section Blocks Update.)
+        if step["op"] == "set_structure" {
+            let mut updates: Vec<String> = got_packets.iter().filter(|p| p.contains("\"t\":\"block_update\"")).cloned().collect();
+            updates.sort();
+            updates.dedup();
+            if updates.len() >= 2 {
+                got_packets.retain(|p| !p.contains("\"t\":\"block_update\""));
+            }
         }
         // (The attack sound is the cooldown's: this level does not tick between the vanilla steps.)
         got_packets.retain(|p| !p.contains("entity.player.attack."));

@@ -498,7 +498,7 @@ impl Sim {
             let s = l.block(bp);
             if logic::is_instance(s, C::StructureBlock) {
                 let ns = state::set(s, "mode", mode.state_name());
-                kiln_blocks::set_block(l, bp, ns, kiln_blocks::flags::CLIENTS);
+                kiln_blocks::set_block(l, bp, ns, 0);
             }
         });
         let message = if let Some(name) = name {

@@ -629,10 +629,10 @@ impl Template {
         let mut out: Vec<(String, Tag)> = Vec::new();
         let write_state = |s: u16| -> Tag {
             let info = block_of(s);
-            let mut c = vec![("Name".to_owned(), Tag::String(info.name.to_owned()))];
+            let mut c = vec![("id".to_owned(), Tag::String(info.name.to_owned()))];
             if !info.properties.is_empty() {
                 let props = info.properties.iter().map(|p| (p.name.to_owned(), Tag::String(crate::blocks::prop(s, p.name).unwrap_or("").to_owned()))).collect();
-                c.push(("Properties".to_owned(), Tag::Compound(props)));
+                c.push(("properties".to_owned(), Tag::Compound(props)));
             }
             Tag::Compound(c)
         };
