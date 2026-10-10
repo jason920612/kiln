@@ -58,8 +58,35 @@ pub struct StepRow {
     /// `getSoundSource()`.
     pub source: &'static str,
     pub step: Step,
+    /// What a baby makes of it, when that is another sound.
+    pub baby: Option<(&'static str, f32)>,
     /// `getFallSounds()`: the small and the big one.
     pub fall: (&'static str, &'static str),
+}
+
+/// What a step depends on in the mob (its data is out of the entity while it moves: the tick leaves this behind).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StepHint {
+    pub baby: bool,
+    /// A sulfur cube with a swallowed item makes no step.
+    pub swallowed: bool,
+    /// A copper golem's `WeatherState` (0 unaffected .. 3 oxidized).
+    pub weather: u8,
+    /// A killer bunny is hostile.
+    pub evil: bool,
+}
+
+/// The hint of a mob.
+pub fn hint_of(m: &crate::mob::MobData) -> StepHint {
+    use crate::mob::MobKind;
+    let mut h = StepHint { baby: m.baby(), ..StepHint::default() };
+    match m.kind {
+        MobKind::CopperGolem => h.weather = crate::mob::kinds::copper_golem::st(m).weather,
+        MobKind::SulfurCube => h.swallowed = crate::mob::kinds::sulfur_cube::has_body(m),
+        MobKind::Rabbit => h.evil = crate::mob::kinds::rabbit::variant(m) == crate::mob::kinds::rabbit::EVIL,
+        _ => {}
+    }
+    h
 }
 
 #[path = "gen/step_sounds.rs"]
@@ -104,6 +131,7 @@ impl Entity {
     fn step_source(&self) -> &'static str {
         match &self.kind {
             EntityKind::Player(_) => "player",
+            _ if self.step_hint.evil => "hostile",
             _ => row(self.type_name).map_or("neutral", |r| r.source),
         }
     }
@@ -233,11 +261,27 @@ impl Entity {
                 let sound = if self.is_in_lava() { "minecraft:entity.strider.step_lava" } else { "minecraft:entity.strider.step" };
                 self.play_own_sound(level, sound, 1.0, 1.0);
             }
-            name => match row(name).map_or(Step::Block, |r| r.step) {
-                Step::Block => self.play_block_step_sound(level, state),
-                Step::Silent => {}
-                Step::Fixed(sound, volume) => self.play_own_sound(level, sound, volume, 1.0),
-            },
+            "minecraft:copper_golem" => {
+                let sound = ["minecraft:entity.copper_golem.step", "minecraft:entity.copper_golem_exposed.step", "minecraft:entity.copper_golem_weathered.step", "minecraft:entity.copper_golem_oxidized.step"]
+                    [self.step_hint.weather.min(3) as usize];
+                self.play_own_sound(level, sound, 1.0, 1.0);
+            }
+            "minecraft:sulfur_cube" => {
+                if !self.step_hint.swallowed {
+                    self.play_block_step_sound(level, state);
+                }
+            }
+            name => {
+                let row = row(name);
+                match row.map_or(Step::Block, |r| r.step) {
+                    Step::Block => self.play_block_step_sound(level, state),
+                    Step::Silent => {}
+                    Step::Fixed(sound, volume) => {
+                        let (sound, volume) = row.and_then(|r| r.baby).filter(|_| self.step_hint.baby).unwrap_or((sound, volume));
+                        self.play_own_sound(level, sound, volume, 1.0);
+                    }
+                }
+            }
         }
     }
 
@@ -283,7 +327,8 @@ impl Entity {
         }
     }
 
-    /// `AbstractHorse.playStepSound` (without the gallop of a ridden horse).
+    /// `AbstractHorse.playStepSound`: wood and the snow on top change the sound; a ridden horse that can gallop
+    /// walks on wood for five steps, then gallops every third.
     fn play_horse_step_sound(&mut self, level: &mut dyn EntityLevel, pos: BlockPos, state: u16) {
         if kiln_data::block_logic::fluid(state).kind != kiln_data::block_logic::FluidKind::Empty {
             return;
@@ -291,8 +336,26 @@ impl Entity {
         let above = level.block(pos.above());
         let t = if crate::blocks::block_name(above) == "minecraft:snow" { sound_type(above) } else { sound_type(state) };
         let wood = ["minecraft:block.wood.step", "minecraft:block.nether_wood.step", "minecraft:block.stem.step", "minecraft:block.cherry_wood.step", "minecraft:block.bamboo_wood.step"];
-        let sound = if wood.contains(&t.step_sound) { "minecraft:entity.horse.step_wood" } else { "minecraft:entity.horse.step" };
-        self.play_own_sound(level, sound, t.volume * 0.15, t.pitch);
+        let wood = wood.contains(&t.step_sound);
+        let can_gallop = !matches!(self.type_name, "minecraft:donkey" | "minecraft:mule");
+        if !self.passengers.is_empty() && can_gallop {
+            self.gallop_sound_counter += 1;
+            if self.gallop_sound_counter > 5 && self.gallop_sound_counter % 3 == 0 {
+                self.play_own_sound(level, "minecraft:entity.horse.gallop", t.volume * 0.15, t.pitch);
+                // `Horse.playGallopSound`: now and then it snorts.
+                if self.type_name == "minecraft:horse" && self.random.next_int_bounded(10) == 0 {
+                    let breathe = if self.step_hint.baby { "minecraft:entity.baby_horse.breathe" } else { "minecraft:entity.horse.breathe" };
+                    self.play_own_sound(level, breathe, t.volume * 0.6, t.pitch);
+                }
+            } else if self.gallop_sound_counter <= 5 {
+                self.play_own_sound(level, "minecraft:entity.horse.step_wood", t.volume * 0.15, t.pitch);
+            }
+        } else if wood {
+            self.play_own_sound(level, "minecraft:entity.horse.step_wood", t.volume * 0.15, t.pitch);
+        } else {
+            let sound = if self.step_hint.baby { "minecraft:entity.baby_horse.step" } else { "minecraft:entity.horse.step" };
+            self.play_own_sound(level, sound, t.volume * 0.15, t.pitch);
+        }
     }
 
     /// `Entity.waterSwimSound`: the splash of a swimmer, louder the faster it goes.

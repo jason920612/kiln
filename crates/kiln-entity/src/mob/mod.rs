@@ -1462,6 +1462,8 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
     crate::prof!("mob", e.type_name);
     let mut m = take(e);
     m.swing = false;
+    // What a step of this tick depends on in the mob (its data is out of the entity while it moves).
+    e.step_hint = crate::step_sound::hint_of(&m);
     // `Entity.isVehicle()` as the goals of this tick see it (a spider with a rider does not attack).
     m.is_vehicle = !e.passengers.is_empty();
     {

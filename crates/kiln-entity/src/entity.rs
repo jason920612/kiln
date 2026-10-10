@@ -133,6 +133,9 @@ pub struct Entity {
     piston_deltas_game_time: i64,
     /// `lastCrystalSoundPlayTick` and `crystalSoundIntensity`: the chime of walking on amethyst.
     pub(crate) last_crystal_sound_play_tick: i32,
+    /// `AbstractHorse.gallopSoundCounter`, and what the mob's last tick said its step depends on.
+    pub(crate) gallop_sound_counter: i32,
+    pub step_hint: crate::step_sound::StepHint,
     pub(crate) crystal_sound_intensity: f32,
     on_ground_no_blocks: bool,
     pub(crate) movement_this_tick: VecDeque<Movement>,
@@ -218,6 +221,8 @@ impl Entity {
             piston_deltas: [0.0; 3],
             piston_deltas_game_time: 0,
             last_crystal_sound_play_tick: 0,
+            gallop_sound_counter: 0,
+            step_hint: Default::default(),
             crystal_sound_intensity: 0.0,
             on_ground_no_blocks: false,
             movement_this_tick: VecDeque::new(),
