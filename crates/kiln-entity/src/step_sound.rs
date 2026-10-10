@@ -230,7 +230,7 @@ impl Entity {
 
     /// `Entity.playAmethystStepSound`: a chime that grows louder the more often one walks on crystal.
     fn play_amethyst_step_sound(&mut self, level: &mut dyn EntityLevel) {
-        self.crystal_sound_intensity *= 0.997f64.powf((self.tick_count - self.last_crystal_sound_play_tick) as f64) as f32;
+        self.crystal_sound_intensity *= kiln_javamath::pow::pow(0.997, (self.tick_count - self.last_crystal_sound_play_tick) as f64) as f32;
         self.crystal_sound_intensity = (self.crystal_sound_intensity + 0.07).min(1.0);
         let pitch = 0.5 + self.crystal_sound_intensity * self.random.next_float() * 1.2;
         let volume = 0.1 + self.crystal_sound_intensity * 1.2;
