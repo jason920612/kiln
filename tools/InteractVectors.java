@@ -1560,6 +1560,7 @@ public class InteractVectors {
             // the block pushes what is in front of it, first extending, then (sticky) pulling it back
             c = p54("stone_front_" + type);
             c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd(summon54(type, 6.3, 100.0, 0.5));
+            if (System.getenv("PISTON_DEBUG") != null) c.watch(5, 100, 0).watch(6, 100, 0);
             out.add(cycle54(c, "4 100 -1", 5, 6));
             // a slime block flings it
             c = p54("slime_front_" + type);
