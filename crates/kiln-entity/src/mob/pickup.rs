@@ -217,7 +217,8 @@ pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let big = e.bounding_box().inflate(6.0, 3.0, 6.0);
         let near = level.entities_in(&big, EntityFilter::Item, e.id);
         let bbs: Vec<_> = near.iter().filter_map(|&i| level.entity(i).map(|x| (i, x.bounding_box(), matches!(&x.kind, EntityKind::Item(d) if d.pickup_delay > 0)))).collect();
-        eprintln!("PDBG {:?} items={:?} near={:?}", m.kind, level.entities_in(&area, EntityFilter::Item, e.id), bbs);
+        let any: Vec<_> = level.entities_in(&big, EntityFilter::Any, e.id).iter().filter_map(|&i| level.entity(i).map(|x| (i, x.type_name, x.bounding_box().min_x, x.bounding_box().min_y))).collect();
+        eprintln!("PDBG t={} {:?} items={:?} near={:?} any={:?}", level.game_time(), m.kind, level.entities_in(&area, EntityFilter::Item, e.id), bbs, any);
     }
     if !m.can_pick_up_loot || !super::is_alive(e, m) || m.dead || !level.mob_griefing() {
         return;
