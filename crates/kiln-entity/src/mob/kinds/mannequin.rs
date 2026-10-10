@@ -153,8 +153,9 @@ impl Kind for Mannequin {
         s.immovable = r.bool_or("immovable", false);
         s.hide_description = r.bool_or("hide_description", false);
         s.description = match r.get("description") {
-            Some(t) if kiln_item::Text::from_nbt(t.clone()).is_some() => Some(t.clone()),
-            _ => None,
+            // (Stored as the component codec writes it back: a list of parts becomes a text with extras.)
+            Some(t) => kiln_item::Text::from_nbt(t.clone()).map(|x| x.nbt().clone()),
+            None => None,
         };
         crate::mob::refresh_dimensions(e, m);
     }

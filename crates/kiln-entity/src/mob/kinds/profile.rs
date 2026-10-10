@@ -33,15 +33,10 @@ fn valid_name(s: &str) -> bool {
     s.chars().count() <= 16 && s.chars().all(|c| c as u32 > 32 && (c as u32) < 127)
 }
 
-/// `UUIDUtil.CODEC`: four ints, or the text form.
+/// `UUIDUtil.CODEC`: four ints.
 fn uuid_of(t: &Tag) -> Option<u128> {
     match t {
         Tag::IntArray(v) if v.len() == 4 => Some(v.iter().fold(0u128, |a, x| a << 32 | *x as u32 as u128)),
-        Tag::String(s) => {
-            let hex: String = s.chars().filter(|c| *c != '-').collect();
-            let dashes_ok = s.len() == 36 && [8, 13, 18, 23].iter().all(|&i| s.as_bytes()[i] == b'-') || s.len() == 32;
-            (dashes_ok && hex.len() == 32).then(|| u128::from_str_radix(&hex, 16).ok()).flatten()
-        }
         _ => None,
     }
 }
