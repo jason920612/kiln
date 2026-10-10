@@ -680,6 +680,17 @@ fn run_case(line: &Value) -> Vec<String> {
     while sim.game_time() < start {
         assert!(sim.step([]));
     }
+    // The vectors' level made one tick of its entities before the first step (an item rests in a four-tick cycle of its age
+    // and id): the replay's entities have had that many, whatever the steps it waited.
+    if line["pistons"].as_bool() == Some(true) {
+        for region in sim.dims[crate::OVERWORLD_ID].regions.iter_mut() {
+            for e in region.part_mut().0.list.iter_mut() {
+                if let Some(phys) = e.phys.as_deref_mut() {
+                    phys.tick_count = 1;
+                }
+            }
+        }
+    }
     *stats.log.lock().unwrap() = Some(Vec::new());
     // Commands the vectors ran at the start but the replay runs now, after its level has settled (a
     // hive ages with every tick; the vectors' level made one for it, `InteractVectors.run`).

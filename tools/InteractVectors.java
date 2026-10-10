@@ -212,9 +212,6 @@ public class InteractVectors {
         /** wp54: every entity (not the player) is recorded after every step: type, position, velocity, on ground. */
         boolean watchEnts;
 
-        /** wp54: more level ticks between the setup and the first step. */
-        int setupTicks = Integer.parseInt(System.getenv().getOrDefault("PISTON_SETUP", "0"));
-
         Case pistons() {
             tickLevel = true;
             fullTicks = true;
@@ -4500,8 +4497,6 @@ public class InteractVectors {
         if (c.tickLevel) {
             for (String cmd : c.late) command(cmd);
             levelTick(c);
-            // wp54: the replay's level ticks its entities `setupTicks` more times before the first step (an item's resting physics have a phase).
-            for (int i = 0; i < c.setupTicks; i++) levelTick(c);
             broadcastChanges();
             drain(p);
         }
