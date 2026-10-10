@@ -2886,6 +2886,13 @@ pub(crate) fn interact_mob(
             c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, &used)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
         });
     }
+    // `Mob.shearItem`: `PlayerShearedEquipmentTrigger` with the piece that came off.
+    if let (Some(seen), Some(worn)) = (&seen, &out.sheared) {
+        let subject = crate::advancements::triggers::seen_subject(seen, crate::DIMENSIONS[level.env.dim].0);
+        p.fire_conds("minecraft:player_sheared_equipment", None, |c, ok, loot| {
+            c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, worn)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
+        });
+    }
     let index = kiln_inventory::inventory::equipment_index(slot, p.inv.selected);
     use kiln_entity::mob::interact::HeldChange;
     match &out.held {
@@ -3142,6 +3149,12 @@ fn carry_out(
     match event {
         Event::Sound { pos, sound, source, volume, pitch } => {
             send_sound(players, env, n, arr(pos), sound, source_of(source), volume, pitch);
+        }
+        Event::ExplosionHit { player, source } => {
+            let cause = source.and_then(|id| list.binary_search_by_key(&id, |e| e.id).ok()).and_then(|i| list[i].phys.as_deref()).map(kiln_entity::level::Seen::of);
+            if let Some(p) = players.iter_mut().find(|p| p.entity_id == player) {
+                p.explosion_hit(cause);
+            }
         }
         Event::ItemParticles { item, pos, count, spread, speed } => {
             if let Some((at, range, pkt)) = item_packet(item, pos, count, spread, speed) {

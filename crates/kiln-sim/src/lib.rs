@@ -689,6 +689,14 @@ struct Player {
     /// `startingToFallPosition` (`fall_from_height`), `enteredNetherPosition`
     /// (`nether_travel`) and `enteredLavaOnVehiclePosition` (`ride_entity_in_lava`).
     starting_to_fall: Option<[f64; 3]>,
+    /// `LivingEntity.currentImpulseImpactPos` (saved as `current_explosion_impact_pos`) and
+    /// `currentImpulseContextResetGraceTime`: after a wind charge's blast or a mace's smash the fall from the impact height
+    /// does not hurt.
+    impulse_pos: Option<[f64; 3]>,
+    impulse_grace: i32,
+    /// `ServerPlayer.currentExplosionImpactPos` (`last_explosion_impact_pos`) and `currentExplosionCause`.
+    explosion_impact: Option<[f64; 3]>,
+    explosion_cause: Option<kiln_entity::level::Seen>,
     entered_nether: Option<[f64; 3]>,
     entered_lava_on_vehicle: Option<[f64; 3]>,
     /// `ServerPlayer.wardenSpawnTracker`.
@@ -3689,6 +3697,10 @@ impl Sim {
             omen_village: false,
             omen_raid_full: false,
             starting_to_fall: None,
+            impulse_pos: persist::vec3_of(joining.saved.raw().get("current_explosion_impact_pos")),
+            impulse_grace: joining.saved.raw().get("current_impulse_context_reset_grace_time").and_then(kiln_proto::nbt::Tag::as_i64).map_or(0, |v| v as i32),
+            explosion_impact: persist::vec3_of(joining.saved.raw().get("last_explosion_impact_pos")),
+            explosion_cause: None,
             entered_nether: None,
             entered_lava_on_vehicle: None,
             warden_tracker,

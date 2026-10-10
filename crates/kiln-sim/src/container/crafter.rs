@@ -137,11 +137,13 @@ pub(crate) fn dispense_from(level: &mut RegionLevel, pos: BlockPos, s: u16) {
     }
     kiln_blocks::set_block(level, pos, state::set_bool(s, "crafting", true), flags::CLIENTS);
     let s = level.block(pos);
-    dispense_item(level, pos, result, s);
+    let recipe = rules.recipes.id(id).to_owned();
+    let taken: Vec<ItemStack> = level.blocks.containers.get(pos).map(|c| c.items.to_vec()).unwrap_or_default();
+    dispense_item(level, pos, result, s, &recipe, &taken);
     // The recipe's remainders (buckets, bottles...) follow.
     for rest in rules.recipes.remaining_items(&input, &world) {
         if !rest.is_empty() {
-            dispense_item(level, pos, rest, s);
+            dispense_item(level, pos, rest, s, &recipe, &taken);
         }
     }
     if let Some(c) = level.blocks.containers.get_mut(pos) {
@@ -156,7 +158,7 @@ pub(crate) fn dispense_from(level: &mut RegionLevel, pos: BlockPos, s: u16) {
 
 /// `CrafterBlock.dispenseItem`: into the container in front, a crafter taking one item at a time; what does not fit is
 /// thrown out of the front face.
-fn dispense_item(level: &mut RegionLevel, pos: BlockPos, stack: ItemStack, s: u16) {
+fn dispense_item(level: &mut RegionLevel, pos: BlockPos, stack: ItemStack, s: u16, recipe: &str, taken: &[ItemStack]) {
     let front: Direction = kiln_blocks::behaviour::container::crafter_front(s);
     let mut rest = stack.copy();
     if let Some(target) = container_at(level, pos.relative(front)) {
@@ -194,6 +196,14 @@ fn dispense_item(level: &mut RegionLevel, pos: BlockPos, stack: ItemStack, s: u1
     let at = [pos.x as f64 + 0.5 + 0.7 * st[0] as f64, pos.y as f64 + 0.5 + 0.7 * st[1] as f64, pos.z as f64 + 0.5 + 0.7 * st[2] as f64];
     let mut rng = super::pos_random(level, pos, 5);
     super::dispense::spawn_item(level, &mut rng, rest, 6, front, at);
+    // The players within 17 blocks (a box that size around the block's centre) are told the crafter crafted.
+    let centre = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+    level.out.player_fx.push(crate::blocks::PlayerFx::CrafterCrafted {
+        min: [centre[0] - 8.5, centre[1] - 8.5, centre[2] - 8.5],
+        max: [centre[0] + 8.5, centre[1] + 8.5, centre[2] + 8.5],
+        recipe: recipe.to_owned(),
+        ingredients: taken.to_vec(),
+    });
     level.effect(Effect::LevelEvent { id: 1049, pos, data: 0 });
     level.effect(Effect::LevelEvent { id: 2010, pos, data: front as i32 });
 }

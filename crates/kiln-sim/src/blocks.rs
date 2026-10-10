@@ -525,6 +525,8 @@ pub(crate) enum PlayerFx {
     Effect { min: [f64; 3], max: [f64; 3], effect: crate::effects::Effect },
     /// A beacon lit: `construct_beacon` with its levels.
     BeaconActivated { min: [f64; 3], max: [f64; 3], levels: i32 },
+    /// A crafter threw its result out of its front: `crafter_recipe_crafted` with the recipe and the slots it took.
+    CrafterCrafted { min: [f64; 3], max: [f64; 3], recipe: String, ingredients: Vec<kiln_item::ItemStack> },
 }
 
 /// A region's cells and block machinery as kiln-blocks' [`Level`].
@@ -1213,7 +1215,7 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
     }
     for fx in std::mem::take(&mut out.player_fx) {
         let (min, max) = match &fx {
-            PlayerFx::Effect { min, max, .. } | PlayerFx::BeaconActivated { min, max, .. } => (*min, *max),
+            PlayerFx::Effect { min, max, .. } | PlayerFx::BeaconActivated { min, max, .. } | PlayerFx::CrafterCrafted { min, max, .. } => (*min, *max),
         };
         // The player's box (0.6 wide, 1.8 tall).
         let inside = |p: &Player| {
@@ -1229,6 +1231,7 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                     let levels = *levels;
                     p.fire_conds("minecraft:construct_beacon", None, |c, _, _| kiln_loot::predicate::item::int_bounds(&c.ints("level"), levels));
                 }
+                PlayerFx::CrafterCrafted { recipe, ingredients, .. } => p.recipe_crafted_by("minecraft:crafter_recipe_crafted", recipe, ingredients),
             }
         }
     }

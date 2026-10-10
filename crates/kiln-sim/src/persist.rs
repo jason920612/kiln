@@ -71,6 +71,12 @@ pub(crate) struct Joining {
     pub saved: PlayerData,
 }
 
+/// A `Vec3` as it is saved (a list of three doubles).
+pub(crate) fn vec3_of(t: Option<&Tag>) -> Option<[f64; 3]> {
+    let l = t?.as_list()?;
+    (l.len() == 3).then(|| [l[0].as_f64().unwrap_or(0.0), l[1].as_f64().unwrap_or(0.0), l[2].as_f64().unwrap_or(0.0)])
+}
+
 /// A saved `RootVehicle` of a joining player: the stack the player rode, waiting to join the level
 /// and take the player back (`ServerPlayer.loadAndSpawnParentVehicle`).
 pub(crate) struct ReturningVehicle {
@@ -306,6 +312,15 @@ impl Sim {
         kiln_inventory::persist::save_player_inventory(&p.inv, &p.inv_extra, &mut nbt);
         p.containers.save_into(&mut nbt);
         if let Tag::Compound(fields) = &mut nbt {
+            // (`storeNullable`: absent when there is none.)
+            for (key, pos) in [("current_explosion_impact_pos", p.impulse_pos), ("last_explosion_impact_pos", p.explosion_impact)] {
+                fields.retain(|(k, _)| k != key);
+                if let Some(v) = pos {
+                    fields.push((key.to_owned(), Tag::List(v.iter().map(|&c| Tag::Double(c)).collect())));
+                }
+            }
+        }
+        if let Tag::Compound(fields) = &mut nbt {
             for (key, value) in [
                 ("Health", Tag::Float(p.health)),
                 ("foodLevel", Tag::Int(p.food)),
@@ -322,6 +337,7 @@ impl Sim {
                 ("PortalCooldown", Tag::Int(p.portal_cooldown)),
                 ("seenCredits", Tag::Byte(p.seen_credits as i8)),
                 ("warden_spawn_tracker", p.warden_tracker.to_nbt()),
+                ("current_impulse_context_reset_grace_time", Tag::Int(p.impulse_grace)),
             ] {
                 match fields.iter_mut().find(|(k, _)| k == key) {
                     Some((_, v)) => *v = value,
