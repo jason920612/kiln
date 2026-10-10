@@ -552,14 +552,16 @@ public class InteractVectors {
         for (net.minecraft.world.item.Item it : BuiltInRegistries.ITEM) {
             if (!(it instanceof net.minecraft.world.item.BlockItem bi) || !bi.getBlock().defaultBlockState().hasBlockEntity()) continue;
             String item = BuiltInRegistries.ITEM.getKey(it).toString();
+            // (a vault picks its display item with the level random: `vaults49` has them)
+            if (item.equals("minecraft:vault")) continue;
             Case c = blockCase("place55_be_" + item.replace("minecraft:", ""), "minecraft:air");
             // (the second half of a bed, the block above)
             c.watch(2, 100, 1).watch(2, 101, 0);
             c.gameMode = "creative";
             c.op = true;
             c.slot("h0", stack(item));
-            // (the level ticks the block entity once, as Kiln's replay does)
-            c.ticking();
+            // (the level ticks the block entity once, as Kiln's replay does; a spawner's tick is Kiln's own business)
+            if (!item.equals("minecraft:spawner")) c.ticking();
             c.step(useOn(2, 99, 0, 1, 0));
             out.add(c);
         }
