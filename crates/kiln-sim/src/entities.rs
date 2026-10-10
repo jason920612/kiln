@@ -2879,9 +2879,9 @@ pub(crate) fn interact_mob(
     let level = level.into_region();
     let p = &mut *players[i];
     // `PlayerInteractTrigger`: the item as it was when the interaction used it.
-    if let Some(seen) = seen {
+    if let Some(seen) = seen.as_ref() {
         let used = if out.held == kiln_entity::mob::interact::HeldChange::None { kiln_item::ItemStack::empty() } else { stack.clone() };
-        let subject = crate::advancements::triggers::seen_subject(&seen, crate::DIMENSIONS[level.env.dim].0);
+        let subject = crate::advancements::triggers::seen_subject(seen, crate::DIMENSIONS[level.env.dim].0);
         p.fire_conds("minecraft:player_interacted_with_entity", None, |c, ok, loot| {
             c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, &used)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
         });

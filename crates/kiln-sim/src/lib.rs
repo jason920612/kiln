@@ -3522,6 +3522,11 @@ impl Sim {
         let returning_vehicle = persist::returning_vehicle(joining.saved.raw().get("RootVehicle"));
         recipe_book.retain_existing(&self.rules);
         let warden_tracker = sculk::shrieker::WardenSpawnTracker::load(joining.saved.raw().get("warden_spawn_tracker"));
+        let (impulse_pos, explosion_impact) = (
+            persist::vec3_of(joining.saved.raw().get("current_explosion_impact_pos")),
+            persist::vec3_of(joining.saved.raw().get("last_explosion_impact_pos")),
+        );
+        let impulse_grace = joining.saved.raw().get("current_impulse_context_reset_grace_time").and_then(kiln_proto::nbt::Tag::as_i64).map_or(0, |v| v as i32);
         let mut player = Player {
             dim,
             conn: j.conn,
@@ -3697,9 +3702,9 @@ impl Sim {
             omen_village: false,
             omen_raid_full: false,
             starting_to_fall: None,
-            impulse_pos: persist::vec3_of(joining.saved.raw().get("current_explosion_impact_pos")),
-            impulse_grace: joining.saved.raw().get("current_impulse_context_reset_grace_time").and_then(kiln_proto::nbt::Tag::as_i64).map_or(0, |v| v as i32),
-            explosion_impact: persist::vec3_of(joining.saved.raw().get("last_explosion_impact_pos")),
+            impulse_pos,
+            impulse_grace,
+            explosion_impact,
             explosion_cause: None,
             entered_nether: None,
             entered_lava_on_vehicle: None,
