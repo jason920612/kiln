@@ -3458,7 +3458,7 @@ public class InteractVectors {
     /** wp50: the structure templates in the manager (the ones asked for, without making any): id to the saved NBT as hex. */
     static Map<String, Object> templatesOf(Case c) throws Exception {
         Map<String, Object> out = new LinkedHashMap<>();
-        Object repo = get(server.getStructureManager(), "structureRepository");
+        Object repo = get(server.overworld().getStructureTemplateManager(), "structureRepository");
         for (String id : c.templates) {
             Object entry = ((Map<?, ?>) repo).get(Identifier.parse(id));
             if (entry instanceof Optional<?> o && o.isPresent()) {
