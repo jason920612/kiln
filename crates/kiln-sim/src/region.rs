@@ -1601,6 +1601,11 @@ fn use_on_block(
         crate::golem::try_spawn(level, placed_at, p, spawns);
     }
     let placed_state = level.block(placed_at);
+    // `BlockItem.place`: the block's place sound, for everyone but the placer's own client.
+    {
+        let sound = kiln_data::block_sounds::sound_type(placed_state);
+        level.effect(kiln_blocks::level::Effect::ActorSound { pos: placed_at, sound: sound.place_sound, volume: (sound.volume + 1.0) / 2.0, pitch: sound.pitch * 0.8 });
+    }
     let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     let at = [placed_at.x, placed_at.y, placed_at.z];
     p.used_on_block("minecraft:placed_block", at, placed_state, &placed_from, &probe);

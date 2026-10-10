@@ -212,6 +212,14 @@ public class InteractVectors {
         /** wp54: every entity (not the player) is recorded after every step: type, position, velocity, on ground. */
         boolean watchEnts;
 
+        /** wp54: a second player stands here (survival, nothing happens to it) and the sounds it hears are recorded after every step (`obs`). */
+        double[] observer;
+
+        Case observer(double x, double y, double z) {
+            observer = new double[] {x, y, z};
+            return this;
+        }
+
         Case pistons() {
             tickLevel = true;
             fullTicks = true;
@@ -1662,6 +1670,37 @@ public class InteractVectors {
                 c.cmd("setblock 4 102 0 minecraft:sticky_piston[facing=down]").cmd("setblock 4 101 0 minecraft:slime_block").cmd(summon54(type, below[i][0], below[i][1], below[i][2]));
                 out.add(cycle54(c, "3 102 0", 6, 6));
             }
+        }
+    }
+
+    // ---------------------------------------------------------------- wp54: block sounds
+
+    /** A grass floor at y = 99, the placing player at the origin, a listening player two blocks off. */
+    static Case sound54(String name) {
+        Case c = new Case("sound54_" + name).observer(3.5, 100.0, 2.5);
+        c.cmd("fill -4 99 -6 14 99 8 minecraft:grass_block").cmd("fill -4 100 -6 14 108 8 minecraft:air");
+        return c;
+    }
+
+    static void sounds54(List<Case> out) {
+        Case c;
+        // ---- placing: one block item for every sound type there is
+        Map<net.minecraft.world.level.block.SoundType, String> reps = new LinkedHashMap<>();
+        for (net.minecraft.world.item.Item it : BuiltInRegistries.ITEM) {
+            if (it instanceof net.minecraft.world.item.BlockItem bi && !(it instanceof net.minecraft.world.item.PlaceOnWaterBlockItem)) {
+                reps.putIfAbsent(bi.getBlock().defaultBlockState().getSoundType(), BuiltInRegistries.ITEM.getKey(it).toString());
+            }
+        }
+        List<String> items = new ArrayList<>(reps.values());
+        for (String item : new String[] {"minecraft:oak_door", "minecraft:red_bed", "minecraft:sunflower", "minecraft:oak_sign", "minecraft:torch", "minecraft:chest", "minecraft:white_shulker_box",
+                "minecraft:candle", "minecraft:sea_pickle", "minecraft:snow", "minecraft:redstone", "minecraft:lever", "minecraft:ladder", "minecraft:oak_slab", "minecraft:cake",
+                "minecraft:skeleton_skull", "minecraft:white_banner", "minecraft:oak_trapdoor", "minecraft:repeater", "minecraft:piston", "minecraft:white_carpet", "minecraft:tripwire_hook"}) {
+            if (!items.contains(item)) items.add(item);
+        }
+        for (String item : items) {
+            c = sound54("place_" + item.replace("minecraft:", ""));
+            c.watch(2, 100, 0).slot("h0", stack(item)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+            out.add(c);
         }
     }
 
@@ -4598,6 +4637,13 @@ public class InteractVectors {
             System.out.println("DEBUG tracking view " + p.getChunkTrackingView() + " players "
                     + server.overworld().getChunkSource().chunkMap.getPlayers(new net.minecraft.world.level.ChunkPos(0, 0), false).size());
         }
+        ServerPlayer observer = null;
+        if (c.observer != null) {
+            observer = mockPlayer("Observer");
+            observer.snapTo(c.observer[0], c.observer[1], c.observer[2], 0f, 0f);
+            observer.connection.resetPosition();
+            drain(observer);
+        }
         List<Object> results = new ArrayList<>();
         // The player's statistics outlive the mock player (the stats counter is kept by uuid): what a
         // case used is counted from where the case began.
@@ -4639,6 +4685,13 @@ public class InteractVectors {
             r.put("entities", itemEntities());
             if (c.watchMobs) r.put("mobs", mobRows());
             if (c.watchEnts) r.put("ents", entRows());
+            if (observer != null) {
+                int keep = teleports;
+                List<Object> heard = new ArrayList<>();
+                for (Object o : packets(observer)) if (o instanceof Map<?, ?> m && "sound".equals(m.get("t"))) heard.add(o);
+                r.put("obs", heard);
+                teleports = keep;
+            }
             Map<String, Object> used = new LinkedHashMap<>();
             for (String item : c.statItems) {
                 used.put(item, p.getStats().getValue(net.minecraft.stats.Stats.ITEM_USED.get(BuiltInRegistries.ITEM.getValue(Identifier.parse(item)))) - usedBefore.get(item));
@@ -4669,6 +4722,7 @@ public class InteractVectors {
             }
             results.add(r);
         }
+        if (observer != null) server.getPlayerList().remove(observer);
         server.getPlayerList().remove(p);
         if (c.op) command("deop " + p.getGameProfile().name());
         command("fill -4 90 -8 15 110 15 minecraft:air");
@@ -4736,6 +4790,7 @@ public class InteractVectors {
         line.put("maps", c.watchMaps);
         line.put("ticking", c.tickLevel);
         line.put("pistons", c.pistonWorld);
+        line.put("observer", c.observer);
         line.put("op", c.op);
         if (c.fullTicks) line.put("clock", startClock);
         line.put("mobs", c.watchMobs);
@@ -4867,6 +4922,7 @@ public class InteractVectors {
             cauldrons50(all);
             commandBlocks49(all);
             pistons54(all);
+            sounds54(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {

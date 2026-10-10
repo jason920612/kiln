@@ -604,18 +604,29 @@ fn run_case(line: &Value) -> Vec<String> {
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
     }
-    // Another player, standing by, for the scenarios in which one holds a sign's editing lock.
-    if line["steps"].as_array().unwrap().iter().any(|s| s["op"] == "lock_sign") {
+    // Another player, standing by, for the scenarios in which one holds a sign's editing lock, and (`observer`) one that
+    // only listens: the sounds the first player makes are not sent to it, the others' are.
+    let mut observer: Option<(Client, std::sync::Arc<SinkStats>)> = None;
+    if line["steps"].as_array().unwrap().iter().any(|s| s["op"] == "lock_sign") || line["observer"].is_array() {
         let (msg, stats2) = join(2, "Other", 2);
         assert!(sim.step([msg]));
-        let mut other = Client::new(2, stats2);
+        let mut other = Client::new(2, stats2.clone());
         for _ in 0..5 {
             let mut inbox = Vec::new();
             other.tick(None, &mut inbox);
             assert!(sim.step(inbox));
         }
-        let pos: Vec<f64> = line["pos"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
-        sim.players.get_mut(&2).unwrap().pos = [pos[0] + 0.5, pos[1], pos[2]];
+        let pos: Vec<f64> = match line["observer"].as_array() {
+            Some(o) => o.iter().map(|v| v.as_f64().unwrap()).collect(),
+            None => {
+                let pos: Vec<f64> = line["pos"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+                vec![pos[0] + 0.5, pos[1], pos[2]]
+            }
+        };
+        sim.players.get_mut(&2).unwrap().pos = [pos[0], pos[1], pos[2]];
+        if line["observer"].is_array() {
+            observer = Some((other, stats2));
+        }
     }
     // The recorded level's clock stands at 100 as each scenario begins: the setup commands come just before
     // (a block they place that would not last, a kelp plant without support, is ticked as little as in the
@@ -692,6 +703,9 @@ fn run_case(line: &Value) -> Vec<String> {
         }
     }
     *stats.log.lock().unwrap() = Some(Vec::new());
+    if let Some((_, obs_stats)) = &observer {
+        *obs_stats.log.lock().unwrap() = Some(Vec::new());
+    }
     // Commands the vectors ran at the start but the replay runs now, after its level has settled (a
     // hive ages with every tick; the vectors' level made one for it, `InteractVectors.run`).
     if let Some(late) = line["late"].as_array().filter(|l| !l.is_empty()) {
@@ -1058,6 +1072,16 @@ fn run_case(line: &Value) -> Vec<String> {
             let want_pos: Vec<f64> = want_pos.iter().map(|v| v.as_f64().unwrap()).collect();
             eq("player position", format!("{:?}", sim.players[&1].pos), format!("{:?}", [want_pos[0], want_pos[1], want_pos[2]]));
             eq("teleports", TELEPORTS.with(|t| t.get()).to_string(), want["teleports"].to_string());
+        }
+        // What the listening player heard.
+        if let (Some((_, obs_stats)), Some(want_obs)) = (&observer, want.get("obs")) {
+            let teleports = TELEPORTS.with(|t| t.get());
+            let mut got: Vec<String> = take_packets(obs_stats, false, false).iter().filter(|v| v["t"] == "sound").map(|v| v.to_string()).collect();
+            TELEPORTS.with(|t| t.set(teleports));
+            let mut want_packets: Vec<String> = want_obs.as_array().unwrap().iter().map(|v| normalize_want(v).to_string()).collect();
+            got.sort();
+            want_packets.sort();
+            eq("heard", format!("{got:?}"), format!("{want_packets:?}"));
         }
         if let Some(want_templates) = want.get("templates").and_then(Value::as_object) {
             // The templates the manager holds (an id it has none for is null), as the saved NBT.
