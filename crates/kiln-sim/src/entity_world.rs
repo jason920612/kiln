@@ -18,6 +18,8 @@ pub(crate) type Deferred = Box<dyn FnOnce(&mut RegionLevel) + Send + Sync>;
 pub(crate) struct IslandWorld<'l> {
     pub cells: &'l CellSet<Cell>,
     pub env: &'l BlockEnv,
+    /// The region's moving pistons (collision reads their shapes).
+    pub pistons: &'l kiln_blocks::MovingPistons,
     /// Blocks this island set, as it reads them until the changes are applied.
     pub overlay: crate::FastMap<(i32, i32, i32), u16>,
     pub deferred: Vec<Deferred>,
@@ -26,8 +28,8 @@ pub(crate) struct IslandWorld<'l> {
 }
 
 impl<'l> IslandWorld<'l> {
-    pub fn new(cells: &'l CellSet<Cell>, env: &'l BlockEnv) -> Self {
-        IslandWorld { cells, env, overlay: Default::default(), deferred: Vec::new(), packets: Vec::new() }
+    pub fn new(cells: &'l CellSet<Cell>, env: &'l BlockEnv, pistons: &'l kiln_blocks::MovingPistons) -> Self {
+        IslandWorld { cells, env, pistons, overlay: Default::default(), deferred: Vec::new(), packets: Vec::new() }
     }
 }
 
@@ -85,6 +87,36 @@ impl<'a, 'l> World<'a, 'l> {
                 Some(&s) => s,
                 None => i.cells.get_block(pos.x, pos.y, pos.z).unwrap_or(kiln_data::blocks::default_state::VOID_AIR),
             },
+        }
+    }
+
+    /// The region's moving piston block entities.
+    pub fn pistons(&self) -> &kiln_blocks::MovingPistons {
+        match self {
+            World::Region(l) => &l.blocks.data.pistons,
+            World::Island(i) => i.pistons,
+        }
+    }
+
+    /// The moving piston block entity at `pos`, as collision reads it.
+    pub fn moving_piston(&self, pos: BlockPos) -> Option<kiln_entity::piston::MovingPistonView> {
+        let pistons = match self {
+            World::Region(l) => &l.blocks.data.pistons,
+            World::Island(i) => i.pistons,
+        };
+        pistons.get(pos).map(|m| kiln_entity::piston::MovingPistonView {
+            moved: m.moved,
+            direction: kiln_entity::math::Direction::ALL[m.direction.index()],
+            extending: m.extending,
+            source: m.source,
+            progress: m.progress,
+        })
+    }
+
+    pub fn has_moving_pistons(&self) -> bool {
+        match self {
+            World::Region(l) => !l.blocks.data.pistons.is_empty(),
+            World::Island(i) => !i.pistons.is_empty(),
         }
     }
 

@@ -226,6 +226,18 @@ pub fn destroy_if_in_fire(e: &mut Entity, level: &mut dyn EntityLevel) {
 }
 
 impl EntityExt for Cushion {
+
+    fn attached(&self) -> bool {
+        true
+    }
+
+    /// `BlockAttachedEntity.move`: killed, and drops itself.
+    fn moved(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, movement: Vec3) {
+        if !e.is_removed() && movement.length_sqr() > 0.0 {
+            self.kill(e, level, Some(e.id));
+            self.drop_item(e, level, None, false);
+        }
+    }
     entity_ext_boilerplate!();
 
     /// `BlockAttachedEntity.tick`: every 100 ticks the fire check, then the support check.

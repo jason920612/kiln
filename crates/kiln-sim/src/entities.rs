@@ -7,6 +7,7 @@ use crate::blocks::{self, RegionLevel};
 use crate::entity_world::World;
 
 mod islands;
+pub(crate) mod piston;
 mod spec;
 use crate::health;
 use bytes::Bytes;
@@ -1152,6 +1153,22 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         }
         let i = self.proxy_index(id)?;
         self.proxies.get(i).map(Proxy::get)
+    }
+
+    fn moving_piston(&self, pos: BlockPos) -> Option<kiln_entity::piston::MovingPistonView> {
+        self.level.moving_piston(kb(pos))
+    }
+
+    fn has_moving_pistons(&self) -> bool {
+        self.level.has_moving_pistons()
+    }
+
+    fn with_entity_taken(&mut self, id: i32, f: &mut dyn FnMut(&mut kiln_entity::Entity, &mut dyn EntityLevel)) -> bool {
+        let Some(i) = self.index(id) else { return false };
+        let Some(mut phys) = self.list[i].phys.take() else { return false };
+        f(&mut phys, self);
+        self.list[i].phys = Some(phys);
+        true
     }
 
     fn add_entity(&mut self, entity: kiln_entity::Entity) {

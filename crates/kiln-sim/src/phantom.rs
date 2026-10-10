@@ -26,11 +26,13 @@ pub(crate) struct PhantomLevel<'a> {
     game_time: i64,
     min_y: i32,
     fast_lava: bool,
+    /// The region's moving pistons, for a body a piston pushes (movement checks do not look at them).
+    pistons: Option<&'a kiln_blocks::MovingPistons>,
 }
 
 impl<'a> PhantomLevel<'a> {
     pub(crate) fn new(cells: &'a CellSet<Cell>, game_time: i64, min_y: i32, fast_lava: bool) -> Self {
-        PhantomLevel { cells, rng: LegacyRandom::new(0), game_time, min_y, fast_lava }
+        PhantomLevel { cells, rng: LegacyRandom::new(0), game_time, min_y, fast_lava, pistons: None }
     }
 }
 
@@ -61,6 +63,14 @@ impl EntityLevel for PhantomLevel<'_> {
 
     fn fast_lava(&self) -> bool {
         self.fast_lava
+    }
+
+    fn moving_piston(&self, pos: BlockPos) -> Option<kiln_entity::piston::MovingPistonView> {
+        self.pistons?.get(kiln_blocks::BlockPos::new(pos.x, pos.y, pos.z)).map(crate::entities::piston::view_of)
+    }
+
+    fn has_moving_pistons(&self) -> bool {
+        self.pistons.is_some_and(|p| !p.is_empty())
     }
 
     fn entities_in(&self, _area: &Aabb, _filter: EntityFilter, _exclude: i32) -> Vec<i32> {
@@ -180,6 +190,25 @@ impl Player {
             sprinting: self.sprinting,
         };
         kiln_entity::player::travel(&mut level, &mut e, &t);
+        self.phantom_out(e, true);
+    }
+
+    /// A moving piston moves this player's server body (`f` does what the piston does to an
+    /// entity): the position stays where the body went, as the client moves by the same piston.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn piston_push(
+        &mut self,
+        cells: &CellSet<Cell>,
+        pistons: &kiln_blocks::MovingPistons,
+        game_time: i64,
+        min_y: i32,
+        fast_lava: bool,
+        f: impl FnOnce(&mut Entity, &mut dyn EntityLevel),
+    ) {
+        let mut level = PhantomLevel::new(cells, game_time, min_y, fast_lava);
+        level.pistons = Some(pistons);
+        let mut e = self.phantom_in(&level);
+        f(&mut e, &mut level);
         self.phantom_out(e, true);
     }
 

@@ -40,6 +40,19 @@ fn block_of(e: &Entity) -> BlockPos {
 }
 
 impl EntityExt for LeashKnot {
+
+    fn attached(&self) -> bool {
+        true
+    }
+
+    /// `BlockAttachedEntity.move`: killed, and the lead comes off.
+    fn moved(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, movement: Vec3) {
+        if !e.is_removed() && movement.length_sqr() > 0.0 {
+            e.removed = Some(RemovalReason::Killed);
+            level.emit(Event::GameEvent { event: "minecraft:entity_die", pos: e.position(), entity: Some(e.id) });
+            drop_item(e, level);
+        }
+    }
     crate::entity_ext_boilerplate!();
 
     /// `BlockAttachedEntity.tick`: every 100 ticks the fence must still be there.

@@ -97,6 +97,7 @@ struct Job<'p> {
 struct Shared<'s> {
     cells: &'s kiln_region::CellSet<kiln_world::Cell>,
     env: &'s blocks::BlockEnv,
+    pistons: &'s kiln_blocks::MovingPistons,
     ticking: &'s blocks::Ticking,
     /// The region's players, for `Mob.checkDespawn` (the nearest player decides).
     nearest: &'s Nearest,
@@ -351,7 +352,7 @@ fn run_batch(
         let SimLevel { level, players, views, despawn, .. } = &mut *sim;
         let region = level.region_ref().expect("a region");
         let nearest = despawn.expect("the region's players");
-        let shared = Shared { cells: &*region.cells, env: region.env, ticking, nearest, any_player };
+        let shared = Shared { cells: &*region.cells, env: region.env, pistons: &region.blocks.data.pistons, ticking, nearest, any_player };
         let mut slots: Vec<Option<&mut Player>> = players.iter_mut().map(|p| Some(&mut **p)).collect();
         let mut job_of: Vec<usize> = vec![usize::MAX; slots.len()];
         for (k, g) in groups.iter().enumerate() {
@@ -514,7 +515,7 @@ fn run_tiles(
         let SimLevel { level, players, views, despawn, .. } = &mut *sim;
         let region = level.region_ref().expect("a region");
         let nearest = despawn.expect("the region's players");
-        let shared = Shared { cells: &*region.cells, env: region.env, ticking, nearest, any_player };
+        let shared = Shared { cells: &*region.cells, env: region.env, pistons: &region.blocks.data.pistons, ticking, nearest, any_player };
         let stand_of: Vec<Option<usize>> = {
             let mut of = vec![None; players.len()];
             for (s, e) in stand_ins.iter().enumerate() {
@@ -676,7 +677,7 @@ fn run_island(job: &mut Job, sh: &Shared) {
     let _enchanting = crate::enchant::install_enchanter(sh.env.loot.as_ref());
     let Job { global, list, players, proxies, views, placeholder, spawns, deaths, events, deferred, packets, marks, ticks, .. } = job;
     let mut sim = SimLevel {
-        level: World::Island(IslandWorld::new(sh.cells, sh.env)),
+        level: World::Island(IslandWorld::new(sh.cells, sh.env, sh.pistons)),
         list,
         players: players.as_mut_slice(),
         deaths,

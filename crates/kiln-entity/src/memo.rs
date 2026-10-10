@@ -51,14 +51,16 @@ pub(crate) fn ctx_bits(c: &CollisionContext) -> [u64; 3] {
         | (c.has_entity as u64) << 3
         | (c.falling_block as u64) << 4
         | (c.walks_on_powder_snow as u64) << 5
-        | (c.stands_on_lava as u64) << 6;
+        | (c.stands_on_lava as u64) << 6
+        | (c.piston_noclip.map_or(0, |d| d.index() as u64 + 1)) << 8;
     [flags, c.entity_bottom.to_bits(), c.fall_distance.to_bits()]
 }
 
 /// The epoch of the chunks a scan of `area` reads: its blocks, one block of margin for the
 /// shape tests and one more for safety.
 pub(crate) fn area_epoch(level: &dyn EntityLevel, area: &Aabb) -> Option<BlocksEpoch> {
-    if !enabled() {
+    // (A moving piston's shape changes with its progress, which no block change announces.)
+    if !enabled() || level.has_moving_pistons() {
         return None;
     }
     let lo = BlockPos::new(floor(area.min_x) - 2, floor(area.min_y) - 2, floor(area.min_z) - 2);

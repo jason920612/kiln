@@ -81,6 +81,7 @@ impl Player {
             falling_block: false,
             walks_on_powder_snow: self.walks_on_powder_snow(),
             stands_on_lava: false,
+            piston_noclip: None,
         }
     }
 

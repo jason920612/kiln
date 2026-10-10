@@ -126,6 +126,11 @@ pub struct Entity {
     pub next_step: f32,
     pub stuck_speed_multiplier: Vec3,
     pub main_supporting_block_pos: Option<BlockPos>,
+    /// `Entity.NOCLIP` while a piston pushes this entity: the direction of the push (blocks moving that way do not stop it).
+    pub piston_noclip: Option<Direction>,
+    /// `pistonDeltas` and `pistonDeltasGameTime`: how far pistons moved it per axis this tick (at most 0.51).
+    piston_deltas: [f64; 3],
+    piston_deltas_game_time: i64,
     on_ground_no_blocks: bool,
     pub(crate) movement_this_tick: VecDeque<Movement>,
     pub(crate) final_movements_this_tick: Vec<Movement>,
@@ -206,6 +211,9 @@ impl Entity {
             next_step: 1.0,
             stuck_speed_multiplier: Vec3::ZERO,
             main_supporting_block_pos: None,
+            piston_noclip: None,
+            piston_deltas: [0.0; 3],
+            piston_deltas_game_time: 0,
             on_ground_no_blocks: false,
             movement_this_tick: VecDeque::new(),
             final_movements_this_tick: Vec::new(),
@@ -397,6 +405,7 @@ impl Entity {
             falling_block: matches!(self.kind, EntityKind::FallingBlock(_)),
             walks_on_powder_snow: matches!(&self.kind, EntityKind::Player(p) if p.walks_on_powder_snow),
             stands_on_lava: self.stands_on_lava,
+            piston_noclip: self.piston_noclip,
         }
     }
 
@@ -707,6 +716,11 @@ impl Entity {
 
     /// `Entity.move(MoverType, Vec3)`.
     pub fn do_move(&mut self, level: &mut dyn EntityLevel, mover: MoverType, mut movement: Vec3) {
+        // `BlockAttachedEntity.move`: whatever hangs on a block breaks when anything moves it.
+        if self.is_block_attached() {
+            crate::ext_entity::attached_moved(self, level, movement);
+            return;
+        }
         if self.no_physics {
             self.set_pos(self.position.add(movement.x, movement.y, movement.z));
             self.horizontal_collision = false;
@@ -714,6 +728,12 @@ impl Entity {
             self.vertical_collision_below = false;
             self.minor_horizontal_collision = false;
             return;
+        }
+        if mover == MoverType::Piston {
+            movement = self.limit_piston_movement(level, movement);
+            if movement == Vec3::ZERO {
+                return;
+            }
         }
         if self.stuck_speed_multiplier.length_sqr() > 1.0e-7 {
             if mover != MoverType::Piston {
@@ -833,6 +853,51 @@ impl Entity {
     /// `maybeBackOffFromEdge`: only players override it.
     fn maybe_back_off_from_edge(&self, level: &dyn EntityLevel, movement: Vec3, mover: MoverType) -> Vec3 {
         crate::player::back_off_from_edge(self, level, movement, mover)
+    }
+
+    /// `limitPistonMovement`: pistons together move an entity at most 0.51 per axis in a tick, one axis at a time.
+    fn limit_piston_movement(&mut self, level: &dyn EntityLevel, movement: Vec3) -> Vec3 {
+        if movement.length_sqr() <= 1.0e-7 {
+            return movement;
+        }
+        let now = level.game_time();
+        if now != self.piston_deltas_game_time {
+            self.piston_deltas = [0.0; 3];
+            self.piston_deltas_game_time = now;
+        }
+        let mut restrict = |axis: usize, d: f64| -> Vec3 {
+            let e = jmax(-0.51, jmin(0.51, d + self.piston_deltas[axis]));
+            let d2 = e - self.piston_deltas[axis];
+            self.piston_deltas[axis] = e;
+            if d2.abs() <= 9.999999747378752e-6 {
+                Vec3::ZERO
+            } else {
+                match axis {
+                    0 => Vec3::new(d2, 0.0, 0.0),
+                    1 => Vec3::new(0.0, d2, 0.0),
+                    _ => Vec3::new(0.0, 0.0, d2),
+                }
+            }
+        };
+        if movement.x != 0.0 {
+            restrict(0, movement.x)
+        } else if movement.y != 0.0 {
+            restrict(1, movement.y)
+        } else if movement.z != 0.0 {
+            restrict(2, movement.z)
+        } else {
+            Vec3::ZERO
+        }
+    }
+
+    /// `removeLatestMovementRecording`.
+    pub fn remove_latest_movement_recording(&mut self) {
+        self.movement_this_tick.pop_back();
+    }
+
+    /// Whether this is a `BlockAttachedEntity` (item frames, paintings, leash knots, cushions).
+    pub fn is_block_attached(&self) -> bool {
+        matches!(self.kind, EntityKind::Ext(ref x) if x.attached())
     }
 
     /// Takes the movements recorded since the last call (`movementThisTick`).

@@ -644,7 +644,6 @@ impl RegionWork<'_> {
                         crate::container::equip::shear(self.entities, &mut level, &mut self.players, id, &tool, &mut self.out.spawns, &mut self.out.deaths);
                     }
                 }
-                blocks::tick_pistons(&mut level, &ticking);
                 crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
             }
         }
@@ -677,6 +676,7 @@ impl RegionWork<'_> {
             self.blocks.sculk.retain_allays(|id| list.binary_search_by_key(&id, |e| e.id).is_ok_and(|i| !list[i].removed));
         }
         if self.entities.list.is_empty() && self.blocks.hearts.is_empty() && (self.players.is_empty() || (env.blocks.spawn_table.is_none() && self.blocks.spawners.is_empty())) {
+            self.tick_pistons(env, ticking_now);
             self.tick_block_entities(env, ticking_now);
             return;
         }
@@ -708,7 +708,36 @@ impl RegionWork<'_> {
             crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+        self.tick_pistons(env, ticking_now);
         self.tick_block_entities(env, ticking_now);
+    }
+
+    /// `Level.tickBlockEntities` for the moving pistons, after the entities: each one that
+    /// advances pushes what is in its way (`PistonMovingBlockEntity.moveCollidedEntities`).
+    fn tick_pistons(&mut self, env: &Env, ticking: &Ticking) {
+        if self.blocks.data.pistons.is_empty() {
+            return;
+        }
+        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        let mut out = BlockOut::default();
+        let pushes: Vec<crate::entities::piston::Push> = {
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            blocks::tick_pistons(&mut level, ticking);
+            let mut pushes = Vec::new();
+            level.out.effects.retain(|(_, effect)| match effect {
+                kiln_blocks::Effect::PistonMove { pos, piston, progress } => {
+                    pushes.push(crate::entities::piston::Push { pos: *pos, piston: *piston, progress: *progress });
+                    false
+                }
+                _ => true,
+            });
+            pushes
+        };
+        if !pushes.is_empty() && (!self.entities.list.is_empty() || !self.players.is_empty()) {
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            crate::entities::piston::push(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &pushes);
+        }
+        blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
     }
 
     /// `Level.tickBlockEntities`: hoppers and furnaces in ticking chunks. Hoppers take item

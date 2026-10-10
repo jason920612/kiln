@@ -98,6 +98,14 @@ pub trait EntityExt: Any + Debug + Send + Sync {
         let _ = (e, level, bolt);
         false
     }
+    /// Whether this is a `BlockAttachedEntity` (item frames, paintings, leash knots, cushions).
+    fn attached(&self) -> bool {
+        false
+    }
+    /// `BlockAttachedEntity.move`: anything that moves it by `movement` breaks it.
+    fn moved(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, movement: crate::math::Vec3) {
+        let _ = (e, level, movement);
+    }
     /// `hurtServer`: whether the hit did something.
     fn hurt(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, amount: f32, attacker: Option<i32>) -> bool {
         let _ = (e, level, kind, amount, attacker);
@@ -256,6 +264,16 @@ pub fn container_mut(e: &mut Entity) -> Option<&mut minecart::Contents> {
     match &mut e.kind {
         EntityKind::Ext(x) => x.container_mut(),
         _ => None,
+    }
+}
+
+/// `BlockAttachedEntity.move` for an entity that is one.
+pub(crate) fn attached_moved(e: &mut Entity, level: &mut dyn EntityLevel, movement: crate::math::Vec3) {
+    let placeholder = EntityKind::Other { type_name: e.type_name };
+    let EntityKind::Ext(mut x) = std::mem::replace(&mut e.kind, placeholder) else { return };
+    x.moved(e, level, movement);
+    if matches!(e.kind, EntityKind::Other { .. }) {
+        e.kind = EntityKind::Ext(x);
     }
 }
 
