@@ -83,6 +83,13 @@ fn firing_y(e: &Entity) -> f64 {
     e.y() + (e.height / 2.0) as f64 + 0.30000001192092896
 }
 
+/// `Level.playSound(null, breeze, sound, HOSTILE, volume, 1)`: the sound follows the breeze.
+fn play_entity(e: &Entity, level: &mut dyn EntityLevel, sound: &'static str, volume: f32) {
+    if !e.silent {
+        level.emit(Event::EntitySound { entity: e.id, pos: e.position(), sound, source: "hostile", volume, pitch: 1.0 });
+    }
+}
+
 fn play(e: &Entity, level: &mut dyn EntityLevel, sound: &'static str, volume: f32) {
     if !e.silent {
         level.emit(Event::Sound { pos: e.position(), sound, source: "hostile", volume, pitch: 1.0 });
@@ -478,7 +485,7 @@ impl Behavior for LongJump {
             cx.b.mem.set_expiring(Mem::BreezeJumpInhaling, Val::Unit, INHALING_DURATION as i64);
         }
         set_pose(cx.e, cx.m, pose::INHALING);
-        play(cx.e, cx.level, "minecraft:entity.breeze.charge", 1.0);
+        play_entity(cx.e, cx.level, "minecraft:entity.breeze.charge", 1.0);
         if let Some(p) = cx.b.mem.block(Mem::BreezeJumpTarget) {
             look_at_eyes(cx.e, cx.m, Vec3::new(p.x as f64 + 0.5, p.y as f64 + 0.5, p.z as f64 + 0.5));
         }

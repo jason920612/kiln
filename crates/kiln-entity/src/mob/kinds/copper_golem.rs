@@ -283,7 +283,7 @@ impl Kind for CopperGolem {
         }
         let axe = !stack.is_empty() && mob::item_tag(stack.item(), "minecraft:axes");
         if name == "minecraft:shears" && !st(m).antenna.is_empty() && mob::item_tag(st(m).antenna.item(), "minecraft:shearable_from_copper_golem") {
-            level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.copper_golem.shear", source: "players", volume: 1.0, pitch: 1.0 });
+            level.emit(Event::EntitySound { entity: e.id, pos: e.position(), sound: "minecraft:entity.copper_golem.shear", source: "players", volume: 1.0, pitch: 1.0 });
             let antenna = std::mem::replace(&mut st_mut(m).antenna, ItemStack::empty());
             mob::spawn_at_location_offset(e, level, antenna, 1.5);
             level.emit(Event::GameEvent { event: "minecraft:shear", pos: e.position(), entity: Some(who.id) });
@@ -297,13 +297,13 @@ impl Kind for CopperGolem {
             return Some(Outcome::success(HeldChange::Consume(1)));
         }
         if axe && st(m).next_weathering_tick == IGNORE_WEATHERING_TICK {
-            level.emit(Event::Sound { pos: e.position(), sound: "minecraft:item.axe.scrape", source: "neutral", volume: 1.0, pitch: 1.0 });
+            level.emit(Event::EntitySound { entity: e.id, pos: e.position(), sound: "minecraft:item.axe.scrape", source: "neutral", volume: 1.0, pitch: 1.0 });
             level.emit(Event::LevelEvent { event: 3004, pos: block, data: 0 });
             st_mut(m).next_weathering_tick = UNSET_WEATHERING_TICK;
             return Some(Outcome::success(HeldChange::Damage(1)));
         }
         if axe && st(m).weather != 0 {
-            level.emit(Event::Sound { pos: e.position(), sound: "minecraft:item.axe.scrape", source: "neutral", volume: 1.0, pitch: 1.0 });
+            level.emit(Event::EntitySound { entity: e.id, pos: e.position(), sound: "minecraft:item.axe.scrape", source: "neutral", volume: 1.0, pitch: 1.0 });
             level.emit(Event::LevelEvent { event: 3005, pos: block, data: 0 });
             let s = st_mut(m);
             s.next_weathering_tick = UNSET_WEATHERING_TICK;

@@ -192,7 +192,7 @@ fn play_eating_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
     }
     // `Frog.playEatingSound`: a loud gulp, by the level.
     if m.kind == MobKind::Frog {
-        level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.frog.eat", source: "neutral", volume: 2.0, pitch: 1.0 });
+        level.emit(Event::EntitySound { entity: e.id, pos: e.position(), sound: "minecraft:entity.frog.eat", source: "neutral", volume: 2.0, pitch: 1.0 });
     }
 }
 

@@ -98,7 +98,7 @@ impl EntityLevel for PhantomLevel<'_> {
     }
 
     fn emit(&mut self, event: Event) {
-        if let Event::Sound { pos, sound, volume, pitch, .. } = event {
+        if let Event::Sound { pos, sound, volume, pitch, .. } | Event::EntitySound { pos, sound, volume, pitch, .. } = event {
             self.sounds.push((pos, sound, volume, pitch));
         }
     }

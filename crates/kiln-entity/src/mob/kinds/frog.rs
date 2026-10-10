@@ -553,7 +553,7 @@ impl ShootTongue {
     /// `eatEntity`.
     fn eat(cx: &mut Cx) {
         let pos = cx.e.position();
-        cx.level.emit(Event::Sound { pos, sound: "minecraft:entity.frog.eat", source: "neutral", volume: 2.0, pitch: 1.0 });
+        cx.level.emit(Event::EntitySound { entity: cx.e.id, pos, sound: "minecraft:entity.frog.eat", source: "neutral", volume: 2.0, pitch: 1.0 });
         let Some(id) = st(cx.m).tongue_target else { return };
         let Some(t) = util::living(cx, id) else { return };
         if !t.alive {
@@ -619,7 +619,7 @@ impl Behavior for ShootTongue {
                 let dist = mth::sqrt_f(dx * dx + dy * dy + dz * dz);
                 if dist < 1.75 {
                     let pos = cx.e.position();
-                    cx.level.emit(Event::Sound { pos, sound: "minecraft:entity.frog.tongue", source: "neutral", volume: 2.0, pitch: 1.0 });
+                    cx.level.emit(Event::EntitySound { entity: cx.e.id, pos, sound: "minecraft:entity.frog.tongue", source: "neutral", volume: 2.0, pitch: 1.0 });
                     st_mut(cx.m).pose = pose::USING_TONGUE;
                     let pull = (p - tp).normalize().scale(0.75);
                     if let Some(te) = cx.level.entity_mut(target) {
