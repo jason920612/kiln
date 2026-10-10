@@ -580,11 +580,19 @@ public class InteractVectors {
         out.add(machine55("two_slimes_pig", "setblock 6 100 0 minecraft:slime_block", new double[] {1.5, 100.0, 3.5}, summon54("pig", 6.5, 101.0, 0.5)));
         out.add(machine55("honey_player", "setblock 5 100 0 minecraft:honey_block", new double[] {5.5, 101.0, 0.5}));
         out.add(machine55("stone_player", "setblock 5 100 0 minecraft:stone", new double[] {5.5, 101.0, 0.5}));
+        // (debugging) honey and slime under a player, by a redstone block that comes and goes three times
+        for (String blk : new String[] {"honey_block", "slime_block"}) {
+            Case c = p54("machine55_pulse_" + blk);
+            c.pos = new double[] {5.5, 101.0, 0.5};
+            c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:" + blk);
+            for (int k = 0; k < 3; k++) cycle54(c, "4 100 -1", 6, 6);
+            out.add(c);
+        }
         // the slime has a block hanging on its side (it is dragged along)
         out.add(machine55("side_block_player", "setblock 5 100 1 minecraft:stone", new double[] {5.5, 101.0, 0.5}));
         // the clock beside the slime instead of under the player: the player stands off to the side and on top of the piston
         out.add(machine55("player_on_piston", "", new double[] {4.5, 101.0, 0.5}));
-        for (Case c : out.subList(Math.max(0, out.size() - 15), out.size())) c.noPitch = true;
+        for (Case c : out.subList(Math.max(0, out.size() - 17), out.size())) c.noPitch = true;
     }
 
     // ---------------------------------------------------------------- wp55: the block entity every block item gets when it is placed
