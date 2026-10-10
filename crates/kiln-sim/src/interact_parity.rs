@@ -494,6 +494,21 @@ fn mob_rows(sim: &Sim) -> Vec<(String, f64, f64, f64)> {
     rows
 }
 
+/// Every entity of the level but the players: (type, position, velocity, on ground), as
+/// `InteractVectors.entRows` lists them (sorted by type and position).
+fn ent_rows(sim: &Sim) -> Vec<(String, [f64; 3], [f64; 3], i32)> {
+    let mut rows = Vec::new();
+    for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
+        for e in region.part().0.list.iter().filter(|e| !e.removed) {
+            let Some(phys) = e.phys.as_deref() else { continue };
+            let (p, v) = (phys.position(), phys.delta);
+            rows.push((phys.type_name.to_owned(), [p.x, p.y, p.z], [v.x, v.y, v.z], i32::from(phys.on_ground)));
+        }
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1[0].total_cmp(&b.1[0])).then(a.1[1].total_cmp(&b.1[1])).then(a.1[2].total_cmp(&b.1[2])));
+    rows
+}
+
 /// The armor stands of the level, sorted by position.
 fn stand_rows(sim: &Sim) -> Vec<StandRow> {
     let mut rows: Vec<StandRow> = Vec::new();
@@ -915,6 +930,8 @@ fn run_case(line: &Value) -> Vec<String> {
                 p.add_cooldown(&item, i32_of(&step["ticks"]));
             }
             "lock_sign" => sim.lock_sign(2, arr3(&step["pos"])),
+            // Nothing but the tick that follows every step.
+            "idle" => {}
             other => panic!("unknown op {other}"),
         }
         assert!(sim.step(inbox));
@@ -1065,6 +1082,19 @@ fn run_case(line: &Value) -> Vec<String> {
             // (The flag is an integer in the vectors.)
             let rows: Vec<Value> = fresh.iter().map(|r| json!([r[0], r[1], r[2], r[3] as i64])).collect();
             eq("new bees", Value::Array(rows).to_string(), want_bees.to_string());
+        }
+        if let Some(want_ents) = want.get("ents") {
+            let got: Vec<String> = ent_rows(&sim).iter().map(|r| format!("{r:?}")).collect();
+            let want_rows: Vec<String> = want_ents
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| {
+                    let f = |i: usize| r[i].as_f64().unwrap();
+                    format!("{:?}", (r[0].as_str().unwrap().to_owned(), [f(1), f(2), f(3)], [f(4), f(5), f(6)], r[7].as_i64().unwrap() as i32))
+                })
+                .collect();
+            eq("entities", format!("{got:#?}"), format!("{want_rows:#?}"));
         }
         if let Some(want_mobs) = want.get("mobs") {
             let mut got: Vec<String> = mob_rows(&sim).iter().map(|r| format!("{r:?}")).collect();

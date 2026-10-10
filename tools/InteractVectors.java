@@ -206,6 +206,21 @@ public class InteractVectors {
             return this;
         }
 
+        /** wp54: the level ticks as a whole (block ticks, block events, the entities, block entities: moving pistons) after every step. */
+        boolean pistonWorld;
+
+        /** wp54: every entity (not the player) is recorded after every step: type, position, velocity, on ground. */
+        boolean watchEnts;
+
+        Case pistons() {
+            tickLevel = true;
+            fullTicks = true;
+            pistonWorld = true;
+            watchEnts = true;
+            watchMove = true;
+            return this;
+        }
+
         /** wp49: the level ticks the watched block entities after every step (and `wait` is that many ticks). */
         Case ticking() {
             tickLevel = true;
@@ -1505,6 +1520,61 @@ public class InteractVectors {
 
     static Map<String, Object> useOnAt(int x, int y, int z, int face, int hand, double cx, double cy, double cz) {
         return op("op", "use_on", "hand", hand, "pos", List.of(x, y, z), "face", face, "cursor", List.of(cx, cy, cz));
+    }
+
+    // ---------------------------------------------------------------- wp54: moving pistons push entities
+
+    /** A stone floor at y = 99 (x -4..14, z -6..8), air above; the piston machines stand at x = 4..8, the player at x = 1.5 unless the case moves it. */
+    static Case p54(String name) {
+        Case c = new Case("piston54_" + name).pistons();
+        c.pos = new double[] {1.5, 100.0, 0.5};
+        c.cmd("fill -4 99 -6 14 99 8 minecraft:stone").cmd("fill -4 100 -6 14 108 8 minecraft:air");
+        return c;
+    }
+
+    static String summon54(String type, double x, double y, double z) {
+        String nbt = switch (type) {
+            case "item" -> "{Item:{id:\"minecraft:stone\",count:1},PickupDelay:32767s}";
+            case "oak_boat", "minecart", "armor_stand", "tnt_minecart", "chest_minecart" -> "{}";
+            default -> "{NoAI:1b,Silent:1b}";
+        };
+        return "summon minecraft:" + type + " " + x + " " + y + " " + z + " " + nbt;
+    }
+
+    static final String[] ENTS54 = {"pig", "item", "oak_boat", "minecart", "armor_stand", "cow", "sheep", "villager", "chicken", "slime", "creeper"};
+
+    /** Powers the piston at (4, 100, 0) with a redstone block at `power`, then lets `n` ticks pass; `n2` more after it is unpowered. */
+    static Case cycle54(Case c, String power, int n, int n2) {
+        c.step(op("op", "command", "command", "setblock " + power + " minecraft:redstone_block"));
+        for (int i = 0; i < n; i++) c.step(op("op", "idle"));
+        if (n2 > 0) {
+            c.step(op("op", "command", "command", "setblock " + power + " minecraft:air"));
+            for (int i = 0; i < n2; i++) c.step(op("op", "idle"));
+        }
+        return c;
+    }
+
+    static void pistons54(List<Case> out) {
+        Case c;
+        for (String type : ENTS54) {
+            // the block pushes what is in front of it, first extending, then (sticky) pulling it back
+            c = p54("stone_front_" + type);
+            c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:stone").cmd(summon54(type, 6.3, 100.0, 0.5));
+            out.add(cycle54(c, "4 100 -1", 5, 6));
+            // a slime block flings it
+            c = p54("slime_front_" + type);
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:slime_block").cmd(summon54(type, 6.3, 100.0, 0.5));
+            out.add(cycle54(c, "4 100 -1", 8, 0));
+            // one that stands on top of a slime block that goes up
+            c = p54("slime_up_" + type);
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=up]").cmd("setblock 4 101 0 minecraft:slime_block").cmd(summon54(type, 4.5, 102.0, 0.5));
+            out.add(cycle54(c, "3 100 0", 8, 0));
+            // honey drags what stands on it
+            c = p54("honey_" + type);
+            c.cmd("setblock 4 100 0 minecraft:piston[facing=east]").cmd("setblock 5 100 0 minecraft:honey_block").cmd(summon54(type, 5.5, 100.9375, 0.5));
+            for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
+            out.add(cycle54(c, "4 100 -1", 5, 0));
+        }
     }
 
     /** wp49: campfires (food on the fire), flower pots, chiseled bookshelves. */
@@ -3965,6 +4035,20 @@ public class InteractVectors {
     static boolean mobCase;
     static boolean recordNoPitch;
 
+    /** wp54: every entity but the players: [type, x, y, z, vx, vy, vz, on ground], sorted. */
+    static List<Object> entRows() {
+        List<Object[]> rows = new ArrayList<>();
+        for (var e : server.overworld().getEntities(net.minecraft.world.level.entity.EntityTypeTest.forClass(net.minecraft.world.entity.Entity.class), new AABB(-32, 40, -32, 64, 330, 64),
+                x -> !(x instanceof net.minecraft.world.entity.player.Player))) {
+            var v = e.getDeltaMovement();
+            rows.add(new Object[] {BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(), e.getX(), e.getY(), e.getZ(), v.x, v.y, v.z, e.onGround() ? 1 : 0});
+        }
+        rows.sort(Comparator.comparing((Object[] r) -> (String) r[0]).thenComparingDouble(r -> (Double) r[1]).thenComparingDouble(r -> (Double) r[2]).thenComparingDouble(r -> (Double) r[3]));
+        List<Object> out = new ArrayList<>();
+        for (Object[] r : rows) out.add(java.util.Arrays.asList(r));
+        return out;
+    }
+
     static List<Object> itemEntities() {
         ServerLevel level = server.overworld();
         List<Object> out = new ArrayList<>();
@@ -4165,6 +4249,8 @@ public class InteractVectors {
             case "map_wait" -> {
                 for (int i = 0; i < (int) s.get("ticks") - 1; i++) mapTick(p);
             }
+            // wp54: nothing happens but the tick that follows every step.
+            case "idle" -> { }
             case "lock_sign" -> {
                 @SuppressWarnings("unchecked")
                 List<Integer> at = (List<Integer>) s.get("pos");
@@ -4259,7 +4345,18 @@ public class InteractVectors {
                         throw new IllegalStateException(e);
                     }
                 });
-                if (tickPlayer != null) {
+                if (c.pistonWorld) {
+                    // wp54: `ServerLevel.tick` goes on: the block events (a piston starts moving), the entities (not the player),
+                    // then the block entities (the moving blocks push what is in their way).
+                    Method runBlockEvents = ServerLevel.class.getDeclaredMethod("runBlockEvents");
+                    runBlockEvents.setAccessible(true);
+                    runBlockEvents.invoke(level);
+                    List<net.minecraft.world.entity.Entity> ents = new ArrayList<>();
+                    for (var e : level.getAllEntities()) if (!(e instanceof net.minecraft.world.entity.player.Player)) ents.add(e);
+                    ents.sort(Comparator.comparingInt(net.minecraft.world.entity.Entity::getId));
+                    for (var e : ents) if (!e.isRemoved() && !e.isPassenger()) level.tickNonPassenger(e);
+                    level.tickBlockEntities();
+                } else if (tickPlayer != null) {
                     // (`Entity.baseTick` and `LivingEntity.tick` keep the previous tick's rotations, which `getViewVector(0)` reads.)
                     settleRotation(tickPlayer);
                     Method using = net.minecraft.world.entity.LivingEntity.class.getDeclaredMethod("updatingUsingItem");
@@ -4270,6 +4367,7 @@ public class InteractVectors {
                 throw new IllegalStateException(e);
             }
         }
+        if (c.pistonWorld) return;
         for (int[] w : c.watch) {
             BlockPos wp = new BlockPos(w[0], w[1], w[2]);
             BlockState st = level.getBlockState(wp);
@@ -4415,6 +4513,7 @@ public class InteractVectors {
             if (!c.templates.isEmpty()) r.put("templates", templatesOf(c));
             r.put("entities", itemEntities());
             if (c.watchMobs) r.put("mobs", mobRows());
+            if (c.watchEnts) r.put("ents", entRows());
             Map<String, Object> used = new LinkedHashMap<>();
             for (String item : c.statItems) {
                 used.put(item, p.getStats().getValue(net.minecraft.stats.Stats.ITEM_USED.get(BuiltInRegistries.ITEM.getValue(Identifier.parse(item)))) - usedBefore.get(item));
@@ -4641,6 +4740,7 @@ public class InteractVectors {
             moves52(all);
             cauldrons50(all);
             commandBlocks49(all);
+            pistons54(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {
