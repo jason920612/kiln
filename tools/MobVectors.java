@@ -8767,6 +8767,7 @@ public class MobVectors {
         scenariosWp52Eggs(out);
         scenariosWp53Pickup(out);
         scenariosWp55Voices(out);
+        scenariosWp55Pushout(out);
     }
 
     // ------------------------------------------------------------------ wp53: Mob.aiStep picks up what lies at its feet
@@ -8788,6 +8789,41 @@ public class MobVectors {
         s.ticks = 30;
         floor(s, 16, "minecraft:grass_block");
         return s;
+    }
+
+    // ------------------------------------------------------------------ wp55: an item inside a block moves out of it by its own random
+
+    /** `Entity.moveTowardsClosestSpace`: an item (with a seeded random) inside a block, at several places of it, and with the open sides closed in turn. */
+    static void scenariosWp55Pushout(List<Scenario> out) {
+        double[] at = {0.15, 0.5, 0.85};
+        int n = 0;
+        for (double dx : at) {
+            for (double dy : at) {
+                for (double dz : at) {
+                    n++;
+                    Scenario s = new Scenario("pushout55_" + n);
+                    MobSpec it = new MobSpec("minecraft:item", 3.0 + dx, BY + dy, 3.0 + dz, 0f, 5500L + n);
+                    it.mainHand = "minecraft:stick";
+                    s.others.add(it);
+                    s.player = new double[] {12.5, BY, 12.5};
+                    s.playerCreative = true;
+                    s.levelSeed = 5500 + n;
+                    s.ticks = 30;
+                    floor(s, 16, "minecraft:grass_block");
+                    block(s, 3, BY, 3, "minecraft:stone");
+                    // every third place has a wall on some sides, so that the nearest open side is not always up
+                    if (n % 3 == 0) {
+                        block(s, 3, BY + 1, 3, "minecraft:stone");
+                        block(s, 2, BY, 3, "minecraft:stone");
+                    }
+                    if (n % 5 == 0) {
+                        block(s, 4, BY, 3, "minecraft:stone");
+                        block(s, 3, BY, 2, "minecraft:stone");
+                    }
+                    out.add(s);
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------ wp55: the voices of the sound variants
