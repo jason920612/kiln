@@ -618,6 +618,85 @@ fn read_state(tag: &Tag) -> u16 {
 }
 
 impl Template {
+    /// `StructureTemplate.fillFromWorld`: a template of `size` made of `blocks` (positions relative to the area).
+    pub fn from_world(size: [i32; 3], blocks: Vec<BlockInfo>, entities: Vec<EntityInfo>) -> Template {
+        Template { size, palettes: vec![palette_of(order_infos(blocks))], entities }
+    }
+
+    /// `StructureTemplate.save`: the compound a template file holds (`data_version` is `DataVersion`).
+    pub fn save(&self, data_version: i32) -> Tag {
+        let ints = |v: [i32; 3]| Tag::List(v.iter().map(|&i| Tag::Int(i)).collect());
+        let mut out: Vec<(String, Tag)> = Vec::new();
+        let write_state = |s: u16| -> Tag {
+            let info = block_of(s);
+            let mut c = vec![("Name".to_owned(), Tag::String(info.name.to_owned()))];
+            if !info.properties.is_empty() {
+                let props = info.properties.iter().map(|p| (p.name.to_owned(), Tag::String(crate::blocks::prop(s, p.name).unwrap_or("").to_owned()))).collect();
+                c.push(("Properties".to_owned(), Tag::Compound(props)));
+            }
+            Tag::Compound(c)
+        };
+        if self.palettes.is_empty() {
+            out.push(("blocks".into(), Tag::List(Vec::new())));
+            out.push(("palette".into(), Tag::List(Vec::new())));
+        } else {
+            // `SimplePalette`: a state gets the next id when it is first seen in the first palette's blocks, the others follow it.
+            let mut palettes: Vec<Vec<u16>> = vec![Vec::new(); self.palettes.len()];
+            let mut blocks = Vec::new();
+            for (i, b) in self.palettes[0].blocks.iter().enumerate() {
+                let id = match palettes[0].iter().position(|&s| s == b.state) {
+                    Some(id) => id,
+                    None => {
+                        palettes[0].push(b.state);
+                        palettes[0].len() - 1
+                    }
+                };
+                let mut c = vec![("pos".to_owned(), ints([b.pos.x, b.pos.y, b.pos.z])), ("state".to_owned(), Tag::Int(id as i32))];
+                if let Some(n) = &b.nbt {
+                    c.push(("nbt".to_owned(), (**n).clone()));
+                }
+                blocks.push(Tag::Compound(c));
+                for (k, p) in self.palettes.iter().enumerate().skip(1) {
+                    if let Some(o) = p.blocks.get(i) {
+                        palettes[k].push(o.state);
+                    }
+                }
+            }
+            out.push(("blocks".into(), Tag::List(blocks)));
+            if palettes.len() == 1 {
+                out.push(("palette".into(), Tag::List(palettes[0].iter().map(|&s| write_state(s)).collect())));
+            } else {
+                out.push(("palettes".into(), Tag::List(palettes.iter().map(|p| Tag::List(p.iter().map(|&s| write_state(s)).collect())).collect())));
+            }
+        }
+        let entities = self
+            .entities
+            .iter()
+            .map(|e| {
+                let mut c = vec![
+                    ("pos".to_owned(), Tag::List(e.pos.iter().map(|&d| Tag::Double(d)).collect())),
+                    ("blockPos".to_owned(), ints([e.block_pos.x, e.block_pos.y, e.block_pos.z])),
+                ];
+                c.push(("nbt".to_owned(), e.nbt.clone()));
+                Tag::Compound(c)
+            })
+            .collect();
+        out.push(("entities".into(), Tag::List(entities)));
+        out.push(("size".into(), ints(self.size)));
+        out.push(("DataVersion".into(), Tag::Int(data_version)));
+        Tag::Compound(out)
+    }
+
+    /// A template file: the gzipped named NBT of [`Template::save`].
+    pub fn to_file(&self, data_version: i32) -> Vec<u8> {
+        use std::io::Write;
+        let mut raw = bytes::BytesMut::new();
+        self.save(data_version).write_named("", &mut raw);
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let _ = gz.write_all(&raw);
+        gz.finish().unwrap_or_default()
+    }
+
     /// `StructureTemplate.load`.
     pub fn load(tag: &Tag) -> Template {
         let size = int_list(tag.get("size"));
@@ -650,15 +729,27 @@ impl Template {
 
 fn load_palette(states: &[Tag], blocks: &[Tag]) -> Palette {
     let states: Vec<u16> = states.iter().map(read_state).collect();
+    let infos = blocks
+        .iter()
+        .map(|b| {
+            let p = int_list(b.get("pos"));
+            let s = states.get(b.get("state").and_then(Tag::as_i64).unwrap_or(0) as usize).copied().unwrap_or(state::AIR);
+            let tag = match b.get("nbt") {
+                Some(t @ Tag::Compound(_)) => Some(Arc::new(t.clone())),
+                _ => None,
+            };
+            BlockInfo { pos: BlockPos::new(p[0], p[1], p[2]), state: s, nbt: tag }
+        })
+        .collect();
+    palette_of(order_infos(infos))
+}
+
+/// `StructureTemplate.buildInfoList`: the blocks that fill a whole cube, then the others, then those with block entity data,
+/// each by y, x, z.
+fn order_infos(infos: Vec<BlockInfo>) -> Vec<BlockInfo> {
     let (mut full, mut nbt, mut other) = (Vec::new(), Vec::new(), Vec::new());
-    for b in blocks {
-        let p = int_list(b.get("pos"));
-        let s = states.get(b.get("state").and_then(Tag::as_i64).unwrap_or(0) as usize).copied().unwrap_or(state::AIR);
-        let tag = match b.get("nbt") {
-            Some(t @ Tag::Compound(_)) => Some(Arc::new(t.clone())),
-            _ => None,
-        };
-        let info = BlockInfo { pos: BlockPos::new(p[0], p[1], p[2]), state: s, nbt: tag };
+    for info in infos {
+        let s = info.state;
         if info.nbt.is_some() {
             nbt.push(info);
         } else if !has_dynamic_shape(s) && kiln_data::block_props::full_collision(s) {
@@ -674,6 +765,10 @@ fn load_palette(states: &[Tag], blocks: &[Tag]) -> Palette {
     let mut blocks = full;
     blocks.append(&mut other);
     blocks.append(&mut nbt);
+    blocks
+}
+
+fn palette_of(blocks: Vec<BlockInfo>) -> Palette {
     let jigsaws = blocks.iter().filter(|b| block_of(b.state).name == "minecraft:jigsaw").map(parse_jigsaw).collect();
     let markers = blocks.iter().enumerate().filter(|(_, b)| block_of(b.state).name == "minecraft:structure_block").map(|(i, _)| i).collect();
     Palette { blocks, jigsaws, markers }
@@ -792,6 +887,11 @@ impl TemplateManager {
         }
         None
     }
+}
+
+/// A template file read from `path` (the world's generated structures).
+pub fn read_template_file(path: &Path) -> Option<Template> {
+    decode_template(&std::fs::read(path).ok()?).map(|t| Template::load(&t))
 }
 
 /// A template file: gzipped named NBT.
