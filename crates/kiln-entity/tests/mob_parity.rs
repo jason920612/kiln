@@ -24,6 +24,11 @@ fn is_footing(name: &str) -> bool {
     block || name.contains(".step") || name.ends_with("small_fall") || name.ends_with("big_fall") || name.contains("shamble")
 }
 
+/// wp55: a mob's own voice (`voice55_*` scenarios compare these too: the sound sets of the sound variants).
+fn is_voice(name: &str) -> bool {
+    name.starts_with("minecraft:entity.") && [".hurt", ".death", ".ambient", ".eat"].iter().any(|w| name.ends_with(w))
+}
+
 /// A sound as the vectors compare it: the position as the packet carries it (eighths of a block).
 fn sound_row(name: &str, source: &str, volume: f32, pitch: f32, at: [f64; 3]) -> String {
     let q = |v: f64| (v * 8.0) as i32 as f64 / 8.0;
@@ -863,11 +868,12 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         // wp54: the footing sounds the player heard this tick (steps, landings), before the events are consumed.
         let mut heard: Vec<String> = Vec::new();
+        let voices = s.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("voice55_"));
         // Explosions hurt the player through events (it is not an entity of the harness).
         for ev in std::mem::take(&mut level.events) {
             if let kiln_entity::level::Event::Sound { pos, sound, source, volume, pitch } = &ev
                 && let Some(p) = player
-                && is_footing(sound)
+                && (is_footing(sound) || voices && is_voice(sound))
                 // The landing of a long jump (goat, frog) is `playSound(null, mob, ...)`: an entity sound packet, which
                 // the recording of the vanilla side does not take.
                 && !(*volume == 2.0 && (sound.ends_with("goat.step") || sound.ends_with("frog.step")))
@@ -903,7 +909,7 @@ fn replay(s: &Value) -> Result<usize, String> {
         {
             let mut want_rows: Vec<String> = want
                 .iter()
-                .filter(|r| is_footing(r[0].as_str().unwrap()))
+                .filter(|r| is_footing(r[0].as_str().unwrap()) || voices && is_voice(r[0].as_str().unwrap()))
                 .map(|r| sound_row(r[0].as_str().unwrap(), r[1].as_str().unwrap(), f(&r[2]) as f32, f(&r[3]) as f32, [f(&r[4]), f(&r[5]), f(&r[6])]))
                 .collect();
             want_rows.sort();
