@@ -1161,6 +1161,47 @@ enum Seen {
     Placed(u32),
     Died { cause: u32, killer: Option<u128> },
     Spawned(SpawnReason),
+    /// The player's block position changed (the observation's `pos` is where to).
+    Moved { from: [i32; 3] },
+}
+
+/// The blocks around an event that a handler may read (`world-read.get-block`): a copy the host
+/// takes before the call (nothing borrowed from the region crosses into the guest), only for
+/// events some subscribed plugin with `world.read` is going to get.
+pub struct BlockWindow {
+    min: [i32; 3],
+    data: Vec<u32>,
+}
+
+impl BlockWindow {
+    /// Blocks within this many of the event's position (in each axis) can be read.
+    pub const RADIUS: i32 = 4;
+    const SIDE: i32 = 2 * Self::RADIUS + 1;
+
+    /// What `block` gives for a block that is not loaded: reads as none.
+    pub const UNLOADED: u32 = u32::MAX;
+
+    /// The box around `center`, each block as `block(x, y, z)` gives it.
+    pub fn new(center: [i32; 3], mut block: impl FnMut(i32, i32, i32) -> u32) -> BlockWindow {
+        let min = [center[0] - Self::RADIUS, center[1] - Self::RADIUS, center[2] - Self::RADIUS];
+        let mut data = Vec::with_capacity((Self::SIDE * Self::SIDE * Self::SIDE) as usize);
+        for y in 0..Self::SIDE {
+            for z in 0..Self::SIDE {
+                for x in 0..Self::SIDE {
+                    data.push(block(min[0] + x, min[1] + y, min[2] + z));
+                }
+            }
+        }
+        BlockWindow { min, data }
+    }
+
+    pub fn get(&self, x: i32, y: i32, z: i32) -> Option<u32> {
+        let (dx, dy, dz) = (x.wrapping_sub(self.min[0]), y.wrapping_sub(self.min[1]), z.wrapping_sub(self.min[2]));
+        if !(0..Self::SIDE).contains(&dx) || !(0..Self::SIDE).contains(&dy) || !(0..Self::SIDE).contains(&dz) {
+            return None;
+        }
+        self.data.get(((dy * Self::SIDE + dz) * Self::SIDE + dx) as usize).copied().filter(|&b| b != Self::UNLOADED)
+    }
 }
 
 struct Observation {
@@ -1179,6 +1220,7 @@ impl Observation {
             Seen::Placed(_) => ObserveKinds::BLOCK_PLACED,
             Seen::Died { .. } => ObserveKinds::PLAYER_DIED,
             Seen::Spawned(_) => ObserveKinds::PLAYER_SPAWNED,
+            Seen::Moved { .. } => ObserveKinds::PLAYER_MOVED,
         }
     }
 
@@ -1256,6 +1298,8 @@ struct RegionInner {
     dim: u32,
     insts: Vec<Option<Inst>>,
     observed: Vec<Observation>,
+    /// The blocks around the next cancellable event (one use: [`RegionPlugins::provide_blocks`]).
+    window: Option<Arc<BlockWindow>>,
     /// Calls made here (added to the statistics in B0: no shared counter on the hot path).
     calls: u64,
 }
@@ -1288,7 +1332,7 @@ fn region_failed<R>(set: &PluginSet, shared: &Shared, insts: &mut [Option<Inst>]
 
 impl RegionInner {
     fn new(set: Arc<PluginSet>, shared: Arc<Shared>, dim: u32) -> RegionInner {
-        let mut r = RegionInner { insts: (0..set.plugins.len()).map(|_| None).collect(), set, shared, dim, observed: Vec::new(), calls: 0 };
+        let mut r = RegionInner { insts: (0..set.plugins.len()).map(|_| None).collect(), set, shared, dim, observed: Vec::new(), window: None, calls: 0 };
         for i in 0..r.insts.len() {
             ensure(&r.set, &r.shared, &mut r.insts, i);
         }
@@ -1310,8 +1354,9 @@ impl RegionInner {
         mut f: impl FnMut(usize, &RegionGuest, &mut Store<HostState>, Handles) -> wasmtime::Result<R>,
         mut decide: impl FnMut(R, Option<Vec<Span>>) -> Option<Verdict>,
     ) -> Verdict {
-        let RegionInner { set, shared, insts, calls, .. } = self;
+        let RegionInner { set, shared, insts, calls, window, .. } = self;
         let set: &Arc<PluginSet> = &*set;
+        let window = window.take();
         let subs = set.subscribers(kind);
         if subs.is_empty() {
             return Verdict::Allow;
@@ -1358,6 +1403,7 @@ impl RegionInner {
                     frame.push_player(a.uuid, a.name, a.operator, Some(&a.info));
                 }
                 frame.cells.extend(cell);
+                frame.window = window.clone();
                 if let Some(e) = entity.as_deref_mut() {
                     frame.entities.push((e.uuid, std::mem::take(e.data)));
                 }
@@ -1667,6 +1713,13 @@ impl RegionInner {
         }
     }
 
+    /// Notes a player's block position changing from `from` to `to`.
+    pub fn observe_move(&mut self, actor: &Actor, from: [i32; 3], to: [i32; 3]) {
+        if self.observing_kind(ObserveKinds::PLAYER_MOVED) {
+            self.push_observation(Seen::Moved { from }, actor, to);
+        }
+    }
+
     /// Sends the observations of this phase to observe subscribers, one batch per plugin
     /// (only what its subscription and filter let through). Demoted plugins still observe;
     /// failures only replace the instance (and strike).
@@ -1728,6 +1781,9 @@ impl RegionInner {
                                 cause,
                                 killer: killer.map(host::wit_uuid),
                             }),
+                            Seen::Moved { from } => {
+                                wit::Observed::PlayerMoved(wit::MoveEvent { player, level: dim_v, from: wit_pos(from), to: wit_pos(o.pos) })
+                            }
                             Seen::Spawned(reason) => wit::Observed::PlayerSpawned(wit::SpawnEvent {
                                 player,
                                 level: dim_v,
@@ -1859,6 +1915,8 @@ struct RegionShared {
     inner: RegionLock<RegionInner>,
     /// Bit `EventKind::index()` set: some plugin has instances here that subscribed to it.
     subs: std::sync::atomic::AtomicU32,
+    /// Bit `EventKind::index()` set: a subscriber of that kind has `world.read`.
+    reads: std::sync::atomic::AtomicU32,
 }
 
 /// A region's plugin instances, one per plugin that exports `region-hooks`. A handle: clones
@@ -1868,6 +1926,13 @@ struct RegionShared {
 #[derive(Clone)]
 pub struct RegionPlugins(Arc<RegionShared>);
 
+fn read_mask(set: &PluginSet) -> u32 {
+    [EventKind::BlockBreak, EventKind::BlockPlace]
+        .iter()
+        .filter(|k| set.subscribers(**k).iter().any(|&i| set.plugins[i].manifest.has(Capability::WorldRead)))
+        .fold(0, |m, k| m | 1 << k.index())
+}
+
 fn subscription_mask(set: &PluginSet) -> u32 {
     EventKind::ALL.iter().filter(|k| !set.subscribers(**k).is_empty()).fold(0, |m, k| m | 1 << k.index())
 }
@@ -1876,7 +1941,12 @@ impl RegionPlugins {
     fn new(set: Arc<PluginSet>, shared: Arc<Shared>, dim: u32) -> RegionPlugins {
         let mask = subscription_mask(&set);
         let inner = RegionInner::new(set, shared, dim);
-        RegionPlugins(Arc::new(RegionShared { inner: RegionLock::new(inner), subs: std::sync::atomic::AtomicU32::new(mask) }))
+        let reads = read_mask(&inner.set);
+        RegionPlugins(Arc::new(RegionShared {
+            inner: RegionLock::new(inner),
+            subs: std::sync::atomic::AtomicU32::new(mask),
+            reads: std::sync::atomic::AtomicU32::new(reads),
+        }))
     }
 
     fn lock(&self) -> RegionGuard<'_, RegionInner> {
@@ -1994,6 +2064,27 @@ impl RegionPlugins {
         }
     }
 
+    /// Notes a player's block position changing from `from` to `to` (1.1; at most once per player
+    /// per tick, for subscribers of the observe kind `player-moved`).
+    pub fn observe_move(&self, actor: &Actor, from: [i32; 3], to: [i32; 3]) {
+        if self.observing() {
+            self.lock().observe_move(actor, from, to);
+        }
+    }
+
+    /// Whether some plugin here is going to read blocks in the handler of `kind` (`block-break`
+    /// or `block-place`): a lock-free check, so that the caller copies the box
+    /// ([`RegionPlugins::provide_blocks`]) only when somebody reads it.
+    pub fn wants_blocks(&self, kind: EventKind) -> bool {
+        self.0.reads.load(Ordering::Relaxed) & (1 << kind.index()) != 0
+    }
+
+    /// The blocks around the position of the next block event handled here (1.1, `world-read`):
+    /// used up by the next call.
+    pub fn provide_blocks(&self, window: BlockWindow) {
+        self.lock().window = Some(Arc::new(window));
+    }
+
     /// Sends the observations of this phase to observe subscribers.
     pub fn flush_observed(&self) {
         if self.observing() {
@@ -2006,10 +2097,11 @@ impl RegionPlugins {
     }
 
     fn swap(&self, set: Arc<PluginSet>, i: usize) {
-        let mask = subscription_mask(&set);
+        let (mask, reads) = (subscription_mask(&set), read_mask(&set));
         let mut inner = self.lock();
         inner.swap(set, i);
         self.0.subs.store(mask, Ordering::Relaxed);
+        self.0.reads.store(reads, Ordering::Relaxed);
     }
 
     fn take_calls(&self) -> u64 {

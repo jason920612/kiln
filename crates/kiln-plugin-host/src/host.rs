@@ -92,6 +92,8 @@ pub(crate) struct Frame {
     pub jobs: Vec<NewJob>,
     /// The message for the acting player if the handler denies (`event.deny-message`).
     pub deny_msg: Option<Vec<Span>>,
+    /// The blocks around the event (`world-read.get-block`), copied by the host before the call.
+    pub window: Option<Arc<crate::BlockWindow>>,
     /// Deterministic id block of the call (reserved on first use): tickets, task handles and
     /// the random stream derive from (tick, source, seq, n).
     seq: Option<u32>,
@@ -180,6 +182,7 @@ impl Frame {
         self.cancels.clear();
         self.jobs.clear();
         self.deny_msg = None;
+        self.window = None;
         self.seq = None;
         self.n = 0;
         self.rng = None;
@@ -545,6 +548,12 @@ impl kiln::api::chat::Host for HostState {
     }
 }
 
+impl kiln::api::world_read::Host for HostState {
+    fn get_block(&mut self, x: i32, y: i32, z: i32) -> wasmtime::Result<Option<u32>> {
+        Ok(self.frame()?.window.as_ref().and_then(|w| w.get(x, y, z)))
+    }
+}
+
 impl kiln::api::hud::Host for HostState {
     fn title(&mut self, to: wit::Uuid, title: Vec<wit::Span>, subtitle: Vec<wit::Span>, fade_in: u32, stay: u32, fade_out: u32) -> wasmtime::Result<u64> {
         self.effect(EffectKind::Title { to: from_wit_uuid(to), title: spans(title), subtitle: spans(subtitle), fade_in, stay, fade_out })
@@ -841,6 +850,9 @@ pub(crate) fn linker(engine: &wasmtime::Engine, manifest: &Manifest) -> anyhow::
     }
     if manifest.has(Capability::WorldWrite) {
         kiln::api::blocks::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
+    }
+    if manifest.has(Capability::WorldRead) {
+        kiln::api::world_read::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
     }
     if manifest.has(Capability::EventsRaise) {
         kiln::api::events::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;

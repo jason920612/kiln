@@ -1,5 +1,7 @@
-// Kiln plugin API 1.0 (design §11, `docs/plugin-api.md`). Frozen: see the semver policy in
+// Kiln plugin API 1.1 (design §11, `docs/plugin-api.md`). Frozen: see the semver policy in
 // `docs/plugin-api.md` and the digest test (`kiln-plugin-host/tests/wit_freeze.rs`).
+// 1.1 only adds (a new interface `world-read`, a new `observed` case, a new record): a plugin
+// built against 1.0 links and runs unchanged.
 //
 // Threading contract: a plugin has exactly one `global` instance (serial phases: command
 // registration, configuration, join/leave, plugin commands, global tasks) and, when it
@@ -19,7 +21,7 @@
 // No numeric registry ids are persisted or fixed: blocks, items, entity types, damage types
 // and levels are per-run ids (`registry.key` gives the resource key, `registry.id` the id of
 // a key).
-package kiln:api@1.0.0;
+package kiln:api@1.1.0;
 
 interface types {
     /// A player in the current call; valid only during the call that received it (a stale
@@ -201,12 +203,17 @@ interface types {
 
     record observed-block { player: player, level: level, pos: block-pos, block: block }
 
+    /// A player's block position changed (at most once per tick per player).
+    record move-event { player: player, level: level, from: block-pos, to: block-pos }
+
     /// What happened in the region since the last phase boundary (sent in batches).
     variant observed {
         block-broken(observed-block),
         block-placed(observed-block),
         player-died(death-event),
         player-spawned(spawn-event),
+        /// 1.1; sent with the observe kind `player-moved`.
+        player-moved(move-event),
     }
 
     variant global-value { int(s64), bytes(list<u8>) }
@@ -478,6 +485,17 @@ interface blocks {
     set-blocks: func(cell: cell-handle, level: level, changes: list<block-change>) -> result<ticket, edit-error>;
 }
 
+/// `world.read` (1.1): the blocks around the event being handled. The host copies a box
+/// (radius 4) around the event's position before the call, only when a subscribed plugin has
+/// this capability; nothing outside the box (or outside a `block-break` or `block-place`
+/// handler) can be read.
+interface world-read {
+    use types.{block};
+
+    /// The block at the position, none when it lies outside the box of this call.
+    get-block: func(x: s32, y: s32, z: s32) -> option<block>;
+}
+
 /// `events.raise`: events between plugins.
 interface events {
     use types.{player-handle, decision};
@@ -563,6 +581,7 @@ world global-plugin {
     import inventory;
     import entities;
     import blocks;
+    import world-read;
     import events;
     import jobs;
     import log;
@@ -581,6 +600,7 @@ world region-plugin {
     import inventory;
     import entities;
     import blocks;
+    import world-read;
     import events;
     import jobs;
     import log;

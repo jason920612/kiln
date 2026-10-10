@@ -1,4 +1,4 @@
-//! Guest SDK for Kiln plugins (WIT package `kiln:api` 1.0, design §11, `docs/plugin-api.md`).
+//! Guest SDK for Kiln plugins (WIT package `kiln:api` 1.1, design §11, `docs/plugin-api.md`).
 //!
 //! A plugin implements [`Plugin`] (every hook has a default) and exports it with
 //! [`export_plugin!`]; the crate is a `cdylib` built for `wasm32-wasip2`, which gives a
@@ -43,7 +43,7 @@ pub mod bindings {
 pub use bindings::kiln::api::types::{
     AtomicOp, BlockChange, BlockEvent, BlockPos, BossColor, BossStyle, CancelReason, CancelledTask, ChatEvent, ChatVerdict, ClickKind,
     CommandEvent, CommandSpec, CompareAndSet, ConfigEntry, ContainerClickEvent, CustomEvent, DamageEvent, Decision, DeathEvent, EditError,
-    EntityEvent, GameMode, GlobalValue, InitInfo, ItemUseEvent, ItemView, Observed, ObservedBlock, OnlinePlayer, OpResult, PlaceEvent,
+    EntityEvent, GameMode, GlobalValue, InitInfo, ItemUseEvent, ItemView, MoveEvent, Observed, ObservedBlock, OnlinePlayer, OpResult, PlaceEvent,
     Player, PlayerInfo, Span, SpawnEvent, SpawnReason, TaskEvent, TaskTarget, TryAdd, Uuid,
 };
 
@@ -545,6 +545,46 @@ pub mod blocks {
     /// position task).
     pub fn set(cell: u64, level: u32, changes: &[BlockChange]) -> Result<Ticket, EditError> {
         raw::set_blocks(cell, level, changes)
+    }
+}
+
+/// `world.read` (1.1): the blocks around the event of a `block-break` or `block-place` handler.
+pub mod world {
+    use crate::bindings::kiln::api::world_read as raw;
+
+    /// The block (a registry id; see `registry`) at the position, none outside the box of 9x9x9
+    /// blocks around the event's position, or where the chunk is not loaded.
+    pub fn block(x: i32, y: i32, z: i32) -> Option<u32> {
+        raw::get_block(x, y, z)
+    }
+}
+
+/// Permission nodes of a plugin: a convention, not a host feature. Operators have every node;
+/// the others have what was granted, kept in the plugin's global namespace (so any context can
+/// ask, from a snapshot at most a tick old). Grant and revoke are atomic operations, applied
+/// at the next serial point (the answer comes in `on_results`).
+pub mod perm {
+    use crate::{GlobalValue, Player, Ticket, Uuid, state, uuid_string};
+
+    fn key(who: &Uuid, node: &str) -> String {
+        format!("perm:{}:{node}", uuid_string(who))
+    }
+
+    /// Whether the player has the node (operators always do).
+    pub fn has(who: &Player, node: &str) -> bool {
+        who.operator || state::global_i64(&key(&who.uuid, node)) == 1
+    }
+
+    /// Gives a player a node.
+    pub fn grant(who: &Uuid, node: &str) -> Ticket {
+        let k = key(who, node);
+        state::compare_and_set(&k, state::global_get(&k), GlobalValue::Int(1))
+    }
+
+    /// Takes a node away.
+    pub fn revoke(who: &Uuid, node: &str) -> Ticket {
+        let k = key(who, node);
+        state::compare_and_set(&k, state::global_get(&k), GlobalValue::Int(0))
     }
 }
 

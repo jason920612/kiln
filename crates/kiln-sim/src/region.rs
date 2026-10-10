@@ -582,6 +582,7 @@ impl RegionWork<'_> {
         let mut out = BlockOut::default();
         if let Some(h) = self.plugins.as_mut() {
             crate::plugins::watch_delayed_breaks(h, &self.players, self.cells);
+            crate::plugins::observe_moves(h, &mut self.players);
         }
         {
             let mut level = RegionLevel {

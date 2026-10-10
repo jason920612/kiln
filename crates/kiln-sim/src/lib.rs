@@ -694,6 +694,8 @@ struct Player {
     /// does not hurt.
     impulse_pos: Option<[f64; 3]>,
     impulse_grace: i32,
+    /// The block the player was in when the plugins last looked (`player-moved` events).
+    plugin_block: Option<(DimId, [i32; 3])>,
     /// `ServerPlayer.currentExplosionImpactPos` (`last_explosion_impact_pos`) and `currentExplosionCause`.
     explosion_impact: Option<[f64; 3]>,
     explosion_cause: Option<kiln_entity::level::Seen>,
@@ -3702,6 +3704,7 @@ impl Sim {
             omen_village: false,
             omen_raid_full: false,
             starting_to_fall: None,
+            plugin_block: None,
             impulse_pos,
             impulse_grace,
             explosion_impact,
