@@ -32,7 +32,7 @@ pub enum HeldChange {
     Fill(ItemStack),
     /// `hurtAndBreak(n)`: durability lost (none in creative).
     Damage(i32),
-    /// `ItemStack.shrink(n)`: taken in every game mode (a lead put on a mob).
+    /// `ItemStack.shrink(n)`: taken in every game mode but creative, where `Player.interactOn` gives the count back.
     Shrink(i32),
     /// `Player.setItemInHand`: the held stack becomes this (an armor stand's swap).
     Replace(ItemStack),

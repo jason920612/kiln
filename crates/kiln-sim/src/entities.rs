@@ -2900,8 +2900,11 @@ pub(crate) fn interact_mob(
                 kiln_inventory::Container::item_mut(&mut p.inv, index).shrink(*n);
             }
         }
+        // (`Player.interactOn` gives a creative player's stack its count back after any click that did something.)
         HeldChange::Shrink(n) => {
-            kiln_inventory::Container::item_mut(&mut p.inv, index).shrink(*n);
+            if p.game_mode != 1 {
+                kiln_inventory::Container::item_mut(&mut p.inv, index).shrink(*n);
+            }
         }
         // `Player.setItemInHand`.
         HeldChange::Replace(stack) => {

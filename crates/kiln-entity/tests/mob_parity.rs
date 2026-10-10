@@ -282,7 +282,7 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
                 mob::interact::HeldChange::Consume(_) if !who.creative => Some(0),
                 mob::interact::HeldChange::Fill(ref f) => Some(f.item()),
                 // `ItemStack.shrink(1)` of a stack of one, whatever the game mode.
-                mob::interact::HeldChange::Shrink(_) => Some(0),
+                mob::interact::HeldChange::Shrink(_) if !who.creative => Some(0),
                 _ => None,
             };
             if let Some(held) = held {
@@ -294,7 +294,7 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
             let mut after = stack.clone();
             match out.held {
                 mob::interact::HeldChange::Consume(n) if !who.creative => after.shrink(n),
-                mob::interact::HeldChange::Shrink(n) => after.shrink(n),
+                mob::interact::HeldChange::Shrink(n) if !who.creative => after.shrink(n),
                 mob::interact::HeldChange::Fill(f) => after = f,
                 mob::interact::HeldChange::Replace(r) => after = r,
                 _ => {}
