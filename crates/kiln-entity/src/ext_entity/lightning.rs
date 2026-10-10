@@ -173,6 +173,9 @@ pub fn thunder_hit(level: &mut dyn EntityLevel, id: i32, bolt: i32) {
 
 /// The `thunderHit` an extension entity brings (`BlockAttachedEntity`: nothing).
 fn ext_thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, bolt: i32) -> bool {
+    if !matches!(e.kind, EntityKind::Ext(_)) {
+        return false;
+    }
     let placeholder = EntityKind::Other { type_name: e.type_name };
     let EntityKind::Ext(mut x) = std::mem::replace(&mut e.kind, placeholder) else { return false };
     let handled = x.thunder_hit(e, level, bolt);
