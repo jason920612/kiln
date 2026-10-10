@@ -204,7 +204,7 @@ interface types {
     record observed-block { player: player, level: level, pos: block-pos, block: block }
 
     /// A player's block position changed (at most once per tick per player).
-    record move-event { player: player, level: level, from: block-pos, to: block-pos }
+    record move-event { player: player, level: level, before: block-pos, after: block-pos }
 
     /// What happened in the region since the last phase boundary (sent in batches).
     variant observed {
