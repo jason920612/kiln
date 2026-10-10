@@ -395,6 +395,11 @@ impl Aabb {
         self.inflate(-x, -y, -z)
     }
 
+    /// `AABB.nextDeflated`: every face one step (an ulp) inwards.
+    pub fn next_deflated(&self) -> Self {
+        Self::new(self.min_x.next_up(), self.min_y.next_up(), self.min_z.next_up(), self.max_x.next_down(), self.max_y.next_down(), self.max_z.next_down())
+    }
+
     pub fn deflate_all(&self, d: f64) -> Self {
         self.deflate(d, d, d)
     }

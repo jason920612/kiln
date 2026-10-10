@@ -80,6 +80,59 @@ fn entries(mut bytes: &[u8]) -> Vec<(u8, i32, String)> {
                 let stack = kiln_item::ItemStack::read_optional(&mut r).unwrap();
                 canon(&stack.to_nbt())
             }
+            // OPTIONAL_COMPONENT.
+            6 => {
+                let present = r.bool().unwrap();
+                if present {
+                    let rest = r.rest();
+                    let (tag, used) = kiln_proto::nbt::read_network(rest).unwrap();
+                    r = Reader::new(&rest[used..]);
+                    canon(&tag)
+                } else {
+                    "none".into()
+                }
+            }
+            // POSE and HUMANOID_ARM.
+            20 | 42 => hex(&r.varint().unwrap().to_le_bytes()),
+            // RESOLVABLE_PROFILE: read through to find where it ends.
+            41 => {
+                let start = r.remaining();
+                let all = r.rest();
+                let mut p = Reader::new(all);
+                let props = |p: &mut Reader| {
+                    for _ in 0..p.varint().unwrap() {
+                        p.string(32767).unwrap();
+                        p.string(32767).unwrap();
+                        if p.bool().unwrap() {
+                            p.string(32767).unwrap();
+                        }
+                    }
+                };
+                if p.bool().unwrap() {
+                    p.bytes(16).unwrap();
+                    p.string(16).unwrap();
+                    props(&mut p);
+                } else {
+                    if p.bool().unwrap() {
+                        p.string(16).unwrap();
+                    }
+                    if p.bool().unwrap() {
+                        p.bytes(16).unwrap();
+                    }
+                    props(&mut p);
+                }
+                for _ in 0..3 {
+                    if p.bool().unwrap() {
+                        p.string(32767).unwrap();
+                    }
+                }
+                if p.bool().unwrap() {
+                    p.varint().unwrap();
+                }
+                let used = start - p.remaining();
+                r = Reader::new(&all[used..]);
+                hex(&all[..used])
+            }
             other => panic!("serializer {other}"),
         };
         let used = bytes.len() - r.remaining();
@@ -136,16 +189,25 @@ fn data_entities_match_vanilla() {
         }
         // The entity data from index 8 on.
         let mut d = EntityData::new();
-        if let EntityKind::Ext(x) = &e.kind {
-            x.entity_data(&e, &mut d);
+        // (A mob type: its own fields, from the avatar's on; the living entity part is the simulation's `mobs::metadata`.)
+        let mut from = 8;
+        match &e.kind {
+            EntityKind::Ext(x) => x.entity_data(&e, &mut d),
+            EntityKind::Mob(m) => {
+                from = 15;
+                if let Some(k) = m.kind.ext() {
+                    k.entity_data(&e, m, &mut d);
+                }
+            }
+            _ => {}
         }
-        let got = entries(d.entries());
+        let got: Vec<_> = entries(d.entries()).into_iter().filter(|g| g.0 >= from).collect();
         let want_bytes: Vec<u8> = v["meta"]
             .as_array()
             .unwrap()
             .iter()
             .map(|m| m.as_str().unwrap())
-            .filter(|m| u8::from_str_radix(&m[..2], 16).unwrap() >= 8)
+            .filter(|m| u8::from_str_radix(&m[..2], 16).unwrap() >= from)
             .flat_map(|m| (0..m.len()).step_by(2).map(|i| u8::from_str_radix(&m[i..i + 2], 16).unwrap()).collect::<Vec<_>>())
             .collect();
         let want_meta = entries(&want_bytes);

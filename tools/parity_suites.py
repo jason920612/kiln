@@ -75,9 +75,15 @@ SUITES = {
     "initial_mobs": (["-p", "kiln-sim", "--test", "initial_mobs"], {"KILN_INITIAL_MOB_VECTORS": ":".join(vec(f"wp49/initial/{n}.jsonl") for n in ("mobs0", "mobs1", "mobs2", "mobs2b", "mobs3", "mobs4", "mobs12345"))}),
     "interact49": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp49/interact/*.jsonl"}),
     "container49": (["-p", "kiln-sim", "--lib", "parity"], {"KILN_CONTAINER_VECTORS": "wp49/container/*.jsonl", "KILN_LANG": vec("generated/assets/minecraft/lang/en_us.json")}),
+    # wp50 suites: recorded into <work>/wp50. The equipment / saddle / steering mobs (eq50_*) are folded into
+    # m6-mobs2/vectors.jsonl (the mob_parity suite); the loom click sequences go through kiln-inventory's click_parity.
+    "interact50": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp50/interact/*.jsonl"}),
+    "container50": (["-p", "kiln-sim", "--lib", "parity"], {"KILN_CONTAINER_VECTORS": "wp50/container/*.jsonl", "KILN_LANG": vec("generated/assets/minecraft/lang/en_us.json")}),
+    "loom_clicks": (["-p", "kiln-inventory", "--test", "click_parity"], {"KILN_PARITY": "1", "KILN_CLICK_VECTORS": vec("wp50/inventory/loom.jsonl")}),
+    "ominous_trial": (["-p", "kiln-sim", "--test", "ominous_trial"], {}),
 }
 
-SUMMARY = re.compile(r"(test result:|skipped|parity|match|scenarios|vectors|rounds|chunks|sequences|cases|agree|mismatch|diverg)", re.I)
+SUMMARY =re.compile(r"(test result:|skipped|parity|match|scenarios|vectors|rounds|chunks|sequences|cases|agree|mismatch|diverg)", re.I)
 
 
 def run(name, cargo_args, env_extra, out, with_data):

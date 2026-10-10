@@ -55,8 +55,51 @@ fn tag_of(h: &str) -> Tag {
     kiln_proto::nbt::read_network(&unhex(h)).unwrap().0
 }
 
+/// A packet as the diff shows it: the NBT hex of a `tag` or `text` as SNBT.
+fn pretty(packet: &str) -> String {
+    let mut out = String::new();
+    let mut rest = packet;
+    while let Some(i) = rest.find("\"tag\":\"").or_else(|| rest.find("\"text\":\"")) {
+        let start = rest[i..].find(":\"").unwrap() + i + 2;
+        let Some(len) = rest[start..].find('"') else { break };
+        let hex_text = &rest[start..start + len];
+        out.push_str(&rest[..start]);
+        match std::panic::catch_unwind(|| tag_of(hex_text)) {
+            Ok(t) => out.push_str(&kiln_command::snbt::to_snbt(&sorted(&t))),
+            Err(_) => out.push_str(hex_text),
+        }
+        rest = &rest[start + len..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// What is in one list of packets and not in the other.
+fn packet_diff(got: &[String], want: &[String]) -> String {
+    let only = |a: &[String], b: &[String]| -> Vec<String> { a.iter().filter(|p| !b.contains(p)).map(|p| pretty(p)).collect() };
+    format!("kiln only {:?}; vanilla only {:?}", only(got, want), only(want, got))
+}
+
+/// Two texts that differ, cut around the first difference.
+fn first_diff(a: &str, b: &str) -> (String, String) {
+    let i = a.bytes().zip(b.bytes()).position(|(x, y)| x != y).unwrap_or(a.len().min(b.len()));
+    let cut = |s: &str| {
+        let from = s.char_indices().map(|(k, _)| k).filter(|&k| k + 200 >= i).next().unwrap_or(0);
+        let to = s.char_indices().map(|(k, _)| k).filter(|&k| k >= i + 300).next().unwrap_or(s.len());
+        format!("@{i}: ...{}...", &s[from..to])
+    };
+    (cut(a), cut(b))
+}
+
 fn sound_source_name(id: i32) -> &'static str {
     ["master", "music", "record", "weather", "block", "hostile", "neutral", "player", "ambient", "voice", "ui"].get(id as usize).copied().unwrap_or("?")
+}
+
+thread_local! {
+    /// The case does not record sound pitches (an entity's voice pitch comes from its own random).
+    static NO_PITCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The teleports (Player Position packets) of the last step.
+    static TELEPORTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Kiln's packet as the vectors print it (`None`: not a kind the vectors record).
@@ -69,13 +112,18 @@ fn decode(pkt: &Bytes) -> Option<Value> {
         ids::SOUND => {
             let holder = r.varint().ok()?;
             let name = if holder == 0 { "?".to_owned() } else { kiln_data::builtin_entries("minecraft:sound_event")?.get(holder as usize - 1)?.to_string() };
+            // (A case without pitches records no block sounds either: mobs do not play the sound of the block they land on.)
+            if NO_PITCH.with(|n| n.get()) && name.starts_with("minecraft:block.") {
+                return None;
+            }
             let source = r.varint().ok()?;
             let (x, y, z) = (r.i32().ok()?, r.i32().ok()?, r.i32().ok()?);
             let (volume, pitch) = (r.f32().ok()?, r.f32().ok()?);
             // (The vectors print floats the way Java does: the shortest text of the float.)
             let java = |f: f32| format!("{f}").parse::<f64>().unwrap_or(f as f64);
+            let pitch = if NO_PITCH.with(|n| n.get()) { 0.0 } else { java(pitch) };
             json!({"t": "sound", "name": name, "source": sound_source_name(source), "pos": [x as f64 / 8.0, y as f64 / 8.0, z as f64 / 8.0],
-                   "volume": java(volume), "pitch": java(pitch)})
+                   "volume": java(volume), "pitch": pitch})
         }
         ids::SOUND_ENTITY => {
             let holder = r.varint().ok()?;
@@ -205,6 +253,7 @@ const INTERESTING: [i32; 15] = [
 fn take_packets(stats: &SinkStats, menus: bool, maps: bool) -> Vec<Value> {
     use kiln_data::packets::play::clientbound as ids;
     let all = std::mem::take(stats.log.lock().unwrap().as_mut().unwrap());
+    TELEPORTS.with(|t| t.set(all.iter().filter(|p| kiln_proto::codec::Reader::new(p).varint().ok() == Some(ids::PLAYER_POSITION)).count()));
     all.iter()
         .filter(|p| {
             kiln_proto::codec::Reader::new(p).varint().ok().is_some_and(|id| {
@@ -266,6 +315,21 @@ fn hangings_json(sim: &Sim) -> Value {
     for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
         for e in region.part().0.list.iter().filter(|e| !e.removed) {
             let Some(phys) = e.phys.as_deref() else { continue };
+            if let Some(m) = kiln_entity::mob::data(phys).filter(|m| m.kind == kiln_entity::mob::MobKind::Mannequin) {
+                // [type, x, y, z, 0, "health,pose,hurtTime,deathTime,height,invulnerableTime", 0, 0].
+                let p = phys.position();
+                let state = format!("{:.4},{},{},{},{:.4},{}", m.health, kiln_entity::mob::kinds::mannequin::pose_name_of(m), m.hurt_time, m.death_time, phys.height, phys.invulnerable_time);
+                rows.push((phys.type_name.to_owned(), p.x, p.y, p.z, json!([phys.type_name, p.x, p.y, p.z, 0, state, 0, 0])));
+                continue;
+            }
+            if let Some(c) = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::cushion::Cushion>(phys) {
+                // [type, x, y, z, 0, color, riders, the riders seat height in ten thousandths].
+                let p = phys.position();
+                let seat = if phys.passengers.is_empty() { 0 } else { (kiln_entity::ride::rider_position(phys, 0, "minecraft:player", 1.0).y * 1.0e4).floor() as i64 };
+                let color = kiln_entity::ext_entity::cushion::COLORS[c.color as usize];
+                rows.push((phys.type_name.to_owned(), p.x, p.y, p.z, json!([phys.type_name, p.x, p.y, p.z, 0, color, phys.passengers.len(), seat])));
+                continue;
+            }
             let Some(dir) = kiln_entity::ext_entity::hanging::direction_of(phys) else { continue };
             let (item, rot, area) = if let Some(f) = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::item_frame::ItemFrame>(phys) {
                 (if f.item.is_empty() { Value::Null } else { Value::String(stack_hex(&f.item)) }, f.rotation, 0)
@@ -341,6 +405,25 @@ fn no_hive_ticks(t: Tag) -> Tag {
         }
     }
     Tag::Compound(fields)
+}
+
+/// A mob spawner's countdown (the recorded level does not tick; Kiln's does between the steps).
+fn no_spawner_delay(t: Tag) -> Tag {
+    match t {
+        Tag::Compound(mut fields) => {
+            // (A furnace of an old save keeps `BurnTime`, which Kiln keeps as an unknown field and vanilla forgets.)
+            if fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:furnace")) {
+                fields.retain(|(k, _)| k != "BurnTime");
+            }
+            let spawner = fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:mob_spawner"));
+            if spawner {
+                fields.retain(|(k, _)| k != "Delay");
+            }
+            Tag::Compound(fields.into_iter().map(|(k, v)| (k, no_spawner_delay(v))).collect())
+        }
+        Tag::List(items) => Tag::List(items.into_iter().map(no_spawner_delay).collect()),
+        other => other,
+    }
 }
 
 /// A trial spawner's saved data with the UUIDs of its mobs made alike (the mobs of the vectors are not Kiln's).
@@ -424,7 +507,7 @@ fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
     for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
         for e in region.part().0.list.iter().filter(|e| !e.removed) {
             let Some(phys) = e.phys.as_deref() else { continue };
-            if kiln_entity::ext_entity::hanging::direction_of(phys).is_none() && phys.type_name != "minecraft:armor_stand" {
+            if kiln_entity::ext_entity::hanging::direction_of(phys).is_none() && phys.type_name != "minecraft:armor_stand" && !kiln_entity::ext_entity::cushion::is_cushion(phys) && phys.type_name != "minecraft:mannequin" {
                 continue;
             }
             let p = phys.position();
@@ -438,6 +521,7 @@ fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
 }
 
 fn run_case(line: &Value) -> Vec<String> {
+    NO_PITCH.with(|n| n.set(line["no_pitch"].as_bool() == Some(true)));
     // (A map covers 128 blocks around the origin: the replay's player sees as far.)
     let maps = line["maps"].as_bool() == Some(true);
     let view = if maps { 8 } else { 2 };
@@ -616,6 +700,14 @@ fn run_case(line: &Value) -> Vec<String> {
                     assert!(sim.step(idle));
                 }
             }
+            // The vectors tick the cushions `ticks` times (the step's own tick is one of them).
+            "tick_cushions" => {
+                for _ in 1..i32_of(&step["ticks"]) {
+                    let mut idle = Vec::new();
+                    client.tick(None, &mut idle);
+                    assert!(sim.step(idle));
+                }
+            }
             "select" => inbox.push(ToSim::Packet(1, PlayIn::SetCarriedItem { slot: i32_of(&step["slot"]) as i16 })),
             "menu_button" => {
                 let id = sim.players[&1].containers.counter;
@@ -640,6 +732,81 @@ fn run_case(line: &Value) -> Vec<String> {
                     })),
                 ));
             }
+            "move" => {
+                let to: Vec<f64> = step["to"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+                inbox.push(ToSim::Packet(
+                    1,
+                    PlayIn::Move { pos: Some([to[0], to[1], to[2]]), rot: None, on_ground: step["on_ground"].as_bool().unwrap(), horizontal_collision: step["hcol"].as_bool().unwrap() },
+                ));
+                // (The client's tick is over: the next step may move again.)
+                inbox.push(ToSim::Packet(1, PlayIn::ClientTickEnd));
+            }
+            "accept_teleport" => {
+                if let Some(id) = sim.players[&1].awaiting_teleport {
+                    inbox.push(ToSim::Packet(1, PlayIn::AcceptTeleport { id }));
+                }
+            }
+            "set_structure" => {
+                use kiln_proto::packets::serverbound as sb;
+                let ints = |k: &str| -> [i32; 3] { arr3(&step[k]) };
+                let (off, size) = (ints("offset"), ints("size"));
+                inbox.push(ToSim::Packet(
+                    1,
+                    PlayIn::SetStructureBlock(Box::new(sb::StructureBlockUpdate {
+                        pos: arr3(&step["pos"]),
+                        update_type: match step["update"].as_str().unwrap() {
+                            "SAVE_AREA" => sb::StructureUpdateType::SaveArea,
+                            "LOAD_AREA" => sb::StructureUpdateType::LoadArea,
+                            "SCAN_AREA" => sb::StructureUpdateType::ScanArea,
+                            _ => sb::StructureUpdateType::UpdateData,
+                        },
+                        mode: match step["mode"].as_str().unwrap() {
+                            "SAVE" => sb::StructureMode::Save,
+                            "LOAD" => sb::StructureMode::Load,
+                            "CORNER" => sb::StructureMode::Corner,
+                            _ => sb::StructureMode::Data,
+                        },
+                        name: step["name"].as_str().unwrap().to_owned(),
+                        offset: off.map(|v| v.clamp(-48, 48) as i8),
+                        size: size.map(|v| v.clamp(0, 48) as i8),
+                        mirror: match step["mirror"].as_str().unwrap() {
+                            "LEFT_RIGHT" => sb::Mirror::LeftRight,
+                            "FRONT_BACK" => sb::Mirror::FrontBack,
+                            _ => sb::Mirror::None,
+                        },
+                        rotation: match step["rotation"].as_str().unwrap() {
+                            "CLOCKWISE_90" => sb::Rotation::Clockwise90,
+                            "CLOCKWISE_180" => sb::Rotation::Clockwise180,
+                            "COUNTERCLOCKWISE_90" => sb::Rotation::CounterClockwise90,
+                            _ => sb::Rotation::None,
+                        },
+                        metadata: step["metadata"].as_str().unwrap().to_owned(),
+                        integrity: (step["integrity"].as_f64().unwrap() as f32).clamp(0.0, 1.0),
+                        seed: step["seed"].as_i64().unwrap(),
+                        ignore_entities: step["ignore_entities"].as_bool().unwrap(),
+                        show_air: step["show_air"].as_bool().unwrap(),
+                        show_bounding_box: step["show_box"].as_bool().unwrap(),
+                        strict: step["strict"].as_bool().unwrap(),
+                    })),
+                ));
+            }
+            "set_jigsaw" => {
+                use kiln_proto::packets::serverbound::JigsawBlockUpdate;
+                inbox.push(ToSim::Packet(
+                    1,
+                    PlayIn::SetJigsawBlock(Box::new(JigsawBlockUpdate {
+                        pos: arr3(&step["pos"]),
+                        name: step["name"].as_str().unwrap().to_owned(),
+                        target: step["target"].as_str().unwrap().to_owned(),
+                        pool: step["pool"].as_str().unwrap().to_owned(),
+                        final_state: step["final_state"].as_str().unwrap().to_owned(),
+                        rollable: step["joint"].as_str() == Some("ROLLABLE"),
+                        selection_priority: i32_of(&step["selection"]),
+                        placement_priority: i32_of(&step["placement"]),
+                    })),
+                ));
+            }
+            "jigsaw_generate" => inbox.push(ToSim::Packet(1, PlayIn::JigsawGenerate { pos: arr3(&step["pos"]), levels: i32_of(&step["levels"]), keep_jigsaws: step["keep"].as_bool().unwrap() })),
             "menu_slot_state" => {
                 let id = sim.players[&1].containers.counter;
                 inbox.push(ToSim::Packet(1, PlayIn::ContainerSlotStateChanged { slot: i32_of(&step["slot"]), container_id: id, enabled: step["enabled"].as_bool().unwrap() }));
@@ -713,6 +880,27 @@ fn run_case(line: &Value) -> Vec<String> {
         if step["op"] == "command" && got_packets.iter().filter(|p| p.contains("\"t\":\"block_update\"")).count() >= 2 {
             got_packets.retain(|p| !p.contains("\"t\":\"block_update\""));
         }
+        // (A structure block's screen: the changes of one tick are sent once, and many of one section as a Section Blocks Update.)
+        if step["op"] == "set_structure" || (step["op"] == "command" && line["name"].as_str().is_some_and(|n| n.starts_with("structure50_"))) {
+            let mut last: std::collections::HashMap<String, usize> = Default::default();
+            for (i, p) in got_packets.iter().enumerate() {
+                if p.contains("\"t\":\"block_entity_data\"") {
+                    let pos = p.split("\"pos\":").nth(1).and_then(|r| r.split(']').next()).unwrap_or("").to_owned();
+                    last.insert(pos, i);
+                }
+            }
+            let mut i = 0;
+            got_packets.retain(|p| {
+                i += 1;
+                !p.contains("\"t\":\"block_entity_data\"") || last.values().any(|&l| l == i - 1)
+            });
+            let mut updates: Vec<String> = got_packets.iter().filter(|p| p.contains("\"t\":\"block_update\"")).cloned().collect();
+            updates.sort();
+            updates.dedup();
+            if updates.len() >= 2 {
+                got_packets.retain(|p| !p.contains("\"t\":\"block_update\""));
+            }
+        }
         // (The attack sound is the cooldown's: this level does not tick between the vanilla steps.)
         got_packets.retain(|p| !p.contains("entity.player.attack."));
         want_packets.retain(|p| !p.contains("entity.player.attack."));
@@ -737,7 +925,13 @@ fn run_case(line: &Value) -> Vec<String> {
         }
         got_packets.sort();
         want_packets.sort();
-        eq("packets", format!("{got_packets:?}"), format!("{want_packets:?}"));
+        let packets_got = format!("{got_packets:?}");
+        let packets_want = format!("{want_packets:?}");
+        if packets_got != packets_want && std::env::var_os("KILN_PACKET_DIFF").is_some() {
+            eq("packets", packet_diff(&got_packets, &want_packets), String::new());
+        } else {
+            eq("packets", packets_got, packets_want);
+        }
         for b in want["blocks"].as_array().unwrap() {
             let at = arr3(&b["pos"]);
             eq(&format!("block {at:?}"), sim.block_at(at[0], at[1], at[2]).map_or(-1, i32::from).to_string(), b["state"].to_string());
@@ -765,8 +959,28 @@ fn run_case(line: &Value) -> Vec<String> {
             });
             let expected = b["be"].as_str().map(|h| sorted(&tag_of(h)));
             // (A hive's bees age with the ticks Kiln's level makes between the steps; the recorded level stands still.)
-            let (got, expected) = (got.map(no_hive_ticks).map(no_mob_uuids), expected.map(no_hive_ticks).map(no_mob_uuids));
+            let (got, expected) = (got.map(no_hive_ticks).map(no_mob_uuids).map(no_spawner_delay), expected.map(no_hive_ticks).map(no_mob_uuids).map(no_spawner_delay));
             eq(&format!("block entity {at:?}"), format!("{got:?}"), format!("{expected:?}"));
+        }
+        if let Some(want_pos) = want.get("ppos").and_then(Value::as_array) {
+            let want_pos: Vec<f64> = want_pos.iter().map(|v| v.as_f64().unwrap()).collect();
+            eq("player position", format!("{:?}", sim.players[&1].pos), format!("{:?}", [want_pos[0], want_pos[1], want_pos[2]]));
+            eq("teleports", TELEPORTS.with(|t| t.get()).to_string(), want["teleports"].to_string());
+        }
+        if let Some(want_templates) = want.get("templates").and_then(Value::as_object) {
+            // The templates the manager holds (an id it has none for is null), as the saved NBT.
+            for (id, hex_want) in want_templates {
+                if id.starts_with("minecraft:") && sim.template_nbt(id).is_none() {
+                    // (A game template an earlier scenario of the recorded run has loaded stays in its manager.)
+                    continue;
+                }
+                let got = sim.template_nbt(id).map(|t| kiln_command::snbt::to_snbt(&no_spawner_delay(sorted(&t))));
+                let expected = hex_want.as_str().map(|h| kiln_command::snbt::to_snbt(&no_spawner_delay(sorted(&tag_of(h)))));
+                if got != expected {
+                    let (a, b) = first_diff(got.as_deref().unwrap_or("none"), expected.as_deref().unwrap_or("none"));
+                    eq(&format!("template {id}"), a, b);
+                }
+            }
         }
         let mut got_items: Vec<String> = sim.item_stacks().iter().filter(|s| line["mobs"].as_bool() != Some(true) || s.item_name() != "minecraft:rotten_flesh").map(stack_hex).collect();
         got_items.sort();

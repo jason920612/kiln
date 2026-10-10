@@ -163,7 +163,8 @@ fn effects_sig(m: &mob::MobData) -> i64 {
 }
 
 /// A scenario action (`MobVectors.Action`), run before the entity ticks of its tick.
-fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, player: Option<PlayerView>, a: &Value) {
+fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, player: Option<PlayerView>, a: &Value) -> Option<kiln_item::ItemStack> {
+    let mut new_held = None;
     let kind = a["kind"].as_str().unwrap();
     let what = a["what"].as_str().unwrap_or("");
     let pos = vec3(&a["pos"]);
@@ -280,6 +281,16 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
                     p.main_hand = held;
                 }
             }
+            // wp50: the stack the player holds afterwards (for the equipment trace).
+            let mut after = stack.clone();
+            match out.held {
+                mob::interact::HeldChange::Consume(n) if !who.creative => after.shrink(n),
+                mob::interact::HeldChange::Shrink(n) => after.shrink(n),
+                mob::interact::HeldChange::Fill(f) => after = f,
+                mob::interact::HeldChange::Replace(r) => after = r,
+                _ => {}
+            }
+            new_held = Some(after);
         }
         // wp32 parrots: the player stands on the ground (a parrot may land on its shoulder).
         "ground" => {
@@ -340,6 +351,7 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
         }
         k => panic!("action {k}"),
     }
+    new_held
 }
 
 /// What the harness does to a mob that appeared (`MobVectors.Adopt.adopt`): its random is seeded from
@@ -383,6 +395,23 @@ fn item_sig(st: &kiln_item::ItemStack) -> i64 {
     }
     let hash = st.item_name().chars().fold(0i32, |h, c| h.wrapping_mul(31).wrapping_add(c as i32));
     hash as i64 * 31 + st.count() as i64
+}
+
+/// `MobVectors.equipSig`: the six slots with their drop chances, then the filled body and saddle slots.
+fn equip_sig(m: &mob::MobData) -> i64 {
+    let mut h = 0i64;
+    for i in 0..6 {
+        h = h.wrapping_add((i as i64 + 1).wrapping_mul(item_sig(&m.equipment[i]).wrapping_mul(131).wrapping_add(m.drop_chances[i].to_bits() as i32 as i64)));
+    }
+    if let Some(k) = m.kind.ext() {
+        let mut c = m.clone();
+        for (stack, chance) in k.take_extra_equipment_for_drop(&mut c) {
+            if !stack.is_empty() {
+                h = h.wrapping_add(item_sig(&stack).wrapping_mul(977).wrapping_add((chance.to_bits() as i32 as i64).wrapping_mul(13)));
+            }
+        }
+    }
+    h
 }
 
 fn replay(s: &Value) -> Result<usize, String> {
@@ -627,6 +656,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     level.immediate_adds = true;
     let mut known = level.len();
     let mut compared = 0;
+    let mut held_stack = player.map_or_else(kiln_item::ItemStack::empty, |p| kiln_item::ItemStack::new(p.main_hand, 1));
     let window = s.get("compare_ticks").and_then(Value::as_u64).filter(|&n| n > 0).map_or(usize::MAX, |n| n as usize);
     for (tick, expected) in trace.iter().enumerate().take(window) {
         let tick = tick as i64;
@@ -653,7 +683,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         for a in s.get("actions").and_then(Value::as_array).into_iter().flatten() {
             if a["tick"].as_i64() == Some(tick) {
-                act(&mut level, &ids, &other_ids, initial, player, a);
+                if let Some(h) = act(&mut level, &ids, &other_ids, initial, player, a) {
+                    held_stack = h;
+                }
                 // The player may have moved or changed game mode.
                 if player.is_some()
                     && let Some(p) = level.players.first()
@@ -774,6 +806,23 @@ fn replay(s: &Value) -> Result<usize, String> {
                 }
             }
         }
+        // wp50: the items a click dropped (shorn equipment) appear where vanilla's did.
+        {
+            let recorded: Vec<Vec3> = s["spawned"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some("minecraft:item") && x["pos"].is_array())
+                .map(|x| vec3(&x["pos"]))
+                .collect();
+            let got: Vec<Vec3> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item").map(|e| e.position()).collect();
+            if s.get("equip_trace").is_some() {
+                let bits = |v: &[Vec3]| v.iter().map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]).collect::<Vec<_>>();
+                if bits(&got) != bits(&recorded) {
+                    return Err(format!("tick {tick}: items appeared at {got:?} (kiln) vs {recorded:?} (vanilla)"));
+                }
+            }
+        }
         // Mobs that appeared get the harness's pinned random and head/body yaw, in the order the
         // harness finds them (`getEntities` over its box: entity sections, then insertion).
         let fresh: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| mob::data(e).is_some()).map(|e| e.id).filter(|id| !ids.contains(id)).collect();
@@ -886,6 +935,17 @@ fn replay(s: &Value) -> Result<usize, String> {
                 return Err(format!("tick {tick} mob {k}: goals [{goals}] (kiln) vs [{want_goals}] (vanilla)"));
             }
             compared += 1;
+        }
+        // wp50: the held item of the player and what each mob wears (slots, drop chances).
+        if let Some(want) = s.get("equip_trace").and_then(Value::as_array).and_then(|t| t.get(tick as usize)).and_then(Value::as_array) {
+            let mut got: Vec<i64> = vec![item_sig(&held_stack)];
+            for k in 0..initial {
+                got.push(level.entity(ids[k]).and_then(mob::data).map_or(0, equip_sig));
+            }
+            let want: Vec<i64> = want.iter().map(|v| v.as_i64().unwrap()).collect();
+            if got != want {
+                return Err(format!("tick {tick}: held item and equipment {got:?} (kiln) vs {want:?} (vanilla)"));
+            }
         }
         // wp49 copper golems: per chest its openers and a signature of its slots, then what each mob holds.
         if let Some(want) = s.get("chest_trace").and_then(Value::as_array).and_then(|t| t.get(tick as usize)).and_then(Value::as_array) {

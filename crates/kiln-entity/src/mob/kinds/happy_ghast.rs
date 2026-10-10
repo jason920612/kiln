@@ -356,13 +356,11 @@ impl Kind for HappyGhast {
         if m.baby() {
             return Some(interact::animal_interact(e, m, level, who, stack));
         }
-        if !stack.is_empty()
-            && mob::is_alive(e, m)
+        // `stack.interactLivingEntity`: `Equippable.equipOnTarget` of a harness (`canUseSlot`: alive and grown).
+        if mob::is_alive(e, m)
             && st(m).body.is_empty()
-            && super::horse::equippable_in_slot(stack, kiln_item::component::EquipmentSlot::Body, e.type_name)
+            && let Some(one) = super::steering::equip_on_target(e, level, stack, kiln_item::component::EquipmentSlot::Body, None)
         {
-            let mut one = stack.clone();
-            one.set_count(1);
             let s = st_mut(m);
             s.body = one;
             s.body_drop = 2.0;
@@ -401,6 +399,10 @@ impl Kind for HappyGhast {
         s.body = stack;
         s.body_drop = 2.0;
         true
+    }
+
+    fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
+        (slot == 6).then(|| std::mem::take(&mut st_mut(m).body))
     }
 
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {

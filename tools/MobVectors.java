@@ -238,6 +238,8 @@ public class MobVectors {
         /// signature of their slots are traced every tick.
         final Map<BlockPos, String> chests = new LinkedHashMap<>();
         boolean spawnerBlocksWork = true;
+        /// wp50: every tick the held item of the player and a signature of what each mob wears (slots and drop chances) are traced.
+        boolean traceEquip;
         /// wp32 parrots: the level's random is compared at the end (what a scenario draws from it, imitations).
         boolean checkLevelRandom;
         Scenario(String name) { this.name = name; }
@@ -598,6 +600,7 @@ public class MobVectors {
             chestsJson.append(String.format(Locale.ROOT, "{\"pos\":[%d,%d,%d],\"items\":[%s]}", ch.getKey().getX(), ch.getKey().getY(), ch.getKey().getZ(), items));
         }
         StringBuilder chestTrace = new StringBuilder();
+        StringBuilder equipTrace = new StringBuilder();
         level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + s.dayTime);
         if (s.noMobDrops) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:mob_drops false");
         level.updateSkyBrightness();
@@ -882,6 +885,13 @@ public class MobVectors {
                         .append(',').append(d(ov.x)).append(',').append(d(ov.y)).append(',').append(d(ov.z)).append(',').append(oe.isRemoved() ? 1 : 0).append(']');
             }
             othersTrace.append(']');
+            // wp50: the player's held item and what each mob wears.
+            if (s.traceEquip) {
+                if (tick > 0) equipTrace.append(',');
+                equipTrace.append('[').append(itemSig(player.getMainHandItem()));
+                for (int i = 0; i < initial; i++) equipTrace.append(',').append(equipSig((Mob) tracked.get(i)));
+                equipTrace.append(']');
+            }
             // wp49 copper golems: per chest its openers and a signature of its slots, then what each mob holds.
             if (!chestBes.isEmpty()) {
                 if (tick > 0) chestTrace.append(',');
@@ -950,8 +960,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp, Float.toString(s.playerHealth));
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
@@ -1245,6 +1255,20 @@ public class MobVectors {
     static long chestSig(net.minecraft.world.level.block.entity.ChestBlockEntity be) {
         long h = 0;
         for (int i = 0; i < be.getContainerSize(); i++) h += (long) (i + 1) * itemSig(be.getItem(i));
+        return h;
+    }
+
+    /// wp50: what a mob wears as one number: the six slots with their drop chances, then the body and saddle slots when filled.
+    static long equipSig(Mob m) throws Exception {
+        var chances = get(m, "dropChances");
+        var by = chances.getClass().getMethod("byEquipment", EquipmentSlot.class);
+        EquipmentSlot[] six = {EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND, EquipmentSlot.FEET, EquipmentSlot.LEGS, EquipmentSlot.CHEST, EquipmentSlot.HEAD};
+        long h = 0;
+        for (int i = 0; i < 6; i++) h += (i + 1) * (itemSig(m.getItemBySlot(six[i])) * 131 + Float.floatToIntBits((Float) by.invoke(chances, six[i])));
+        for (EquipmentSlot slot : new EquipmentSlot[] {EquipmentSlot.BODY, EquipmentSlot.SADDLE}) {
+            ItemStack st = m.getItemBySlot(slot);
+            if (!st.isEmpty()) h += itemSig(st) * 977 + Float.floatToIntBits((Float) by.invoke(chances, slot)) * 13L;
+        }
         return h;
     }
 
@@ -8208,6 +8232,7 @@ public class MobVectors {
         }
         scenariosMounts(out);
         scenariosNautilus(out);
+        scenariosWp50(out);
         scenariosDeflect(out);
     }
 
@@ -8579,6 +8604,164 @@ public class MobVectors {
             s.levelSeed = 412;
             s.ticks = 300;
             out.add(s);
+        }
+    }
+
+    // ------------------------------------------------------------------ wp50: saddles and the equipment clicks put on mounts
+
+    /// The player (survival unless `creative`) holding `item` clicks mob 0 at tick 5.
+    static Scenario eqClick(String name, MobSpec mob, String item, boolean creative, boolean sneaking, int ticks) {
+        Scenario s = new Scenario(name);
+        s.mobs.add(mob);
+        s.player = new double[] {3.5, BY, 0.5};
+        s.playerCreative = creative;
+        s.playerSneaking = sneaking;
+        s.playerMainHand = item;
+        s.traceEquip = true;
+        s.levelSeed = 500 + Math.abs(name.hashCode() % 400);
+        Action a = new Action(5, "interact");
+        a.mob = 0;
+        a.what = item;
+        s.actions.add(a);
+        s.ticks = ticks;
+        return s;
+    }
+
+    /// wp50: equipment clicks on the other mounts (horses, donkeys, camels, nautiluses, the happy ghast) and on wolves.
+    static void scenariosWp50Mounts(List<Scenario> out) {
+        String saddle = "equipment:{saddle:{id:\"minecraft:saddle\",count:1}}";
+        // Horses: tame and not, saddle and armor by hand, shears.
+        for (String kind : new String[] {"horse", "donkey", "camel", "llama"}) {
+            String land = kind.equals("camel") ? "minecraft:sand" : "minecraft:grass_block";
+            for (boolean tame : kind.equals("camel") ? new boolean[] {true} : new boolean[] {true, false}) {
+                String tag = "eq50_" + kind + (tame ? "_tame" : "_wild");
+                String base = "{NoAI:1b,PersistenceRequired:1b" + (tame ? ",Tame:1b" : "");
+                long seed = 52000L + kind.length() * 100 + (tame ? 7 : 0);
+                MobSpec a = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                a.nbt = base + "}";
+                Scenario s1 = eqClick(tag + "_saddle", a, "minecraft:saddle", false, false, 40);
+                floor(s1, 16, land);
+                out.add(s1);
+                if (kind.equals("horse")) {
+                    MobSpec b = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                    b.nbt = base + "}";
+                    Scenario s2 = eqClick(tag + "_armor", b, "minecraft:iron_horse_armor", false, false, 40);
+                    floor(s2, 16, land);
+                    out.add(s2);
+                } else if (kind.equals("llama")) {
+                    MobSpec b = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                    b.nbt = base + "}";
+                    Scenario s2 = eqClick(tag + "_carpet", b, "minecraft:red_carpet", false, false, 40);
+                    floor(s2, 16, land);
+                    out.add(s2);
+                }
+                MobSpec c = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                c.nbt = base + "," + saddle + "}";
+                Scenario s3 = eqClick(tag + "_shears", c, "minecraft:shears", false, false, 40);
+                floor(s3, 16, land);
+                out.add(s3);
+            }
+        }
+        // Nautiluses (in a pool): tame ones take a saddle and armor; shears take them off.
+        for (String kind : new String[] {"nautilus", "zombie_nautilus"}) {
+            double W = BY - 3;
+            String tame = "{PersistenceRequired:1b," + owner() + "}";
+            String armored = "equipment:{body:{id:\"minecraft:iron_nautilus_armor\",count:1}},drop_chances:{body:2.0f}";
+            long seed = 53000L + kind.length();
+            for (String[] c : new String[][] {
+                    {"saddle", "minecraft:saddle", "", "survival"}, {"saddle_creative", "minecraft:saddle", "", "creative"},
+                    {"armor", "minecraft:iron_nautilus_armor", "", "survival"}, {"armor_gold", "minecraft:golden_nautilus_armor", "", "survival"},
+                    {"shears_saddle", "minecraft:shears", saddle, "survival"}, {"shears_armor", "minecraft:shears", armored, "survival"},
+                    {"shears_both", "minecraft:shears", saddle + "," + armored, "survival"}}) {
+                MobSpec m = new MobSpec("minecraft:" + kind, 0.5, W, 0.5, 30f, seed++);
+                m.nbt = tame.substring(0, tame.length() - 1) + (c[2].isEmpty() ? "" : "," + c[2]) + "}";
+                Scenario s = eqClick("eq50_" + kind + "_" + c[0], m, c[1], c[3].equals("creative"), false, 60);
+                s.diverges = kind.startsWith("zombie");
+                s.player = new double[] {10.5, BY, 0.5};
+                poolWorld(s, 14, -6, -6, 6, 6, 5);
+                out.add(s);
+            }
+            // A wild one takes nothing by hand.
+            MobSpec w = new MobSpec("minecraft:" + kind, 0.5, W, 0.5, 30f, seed++);
+            w.nbt = "{PersistenceRequired:1b}";
+            Scenario sw = eqClick("eq50_" + kind + "_wild_saddle", w, "minecraft:saddle", false, false, 40);
+            sw.diverges = kind.startsWith("zombie");
+            sw.player = new double[] {10.5, BY, 0.5};
+            poolWorld(sw, 14, -6, -6, 6, 6, 5);
+            out.add(sw);
+        }
+        // The happy ghast: a harness goes on by hand, shears take it off.
+        for (String item : new String[] {"minecraft:white_harness", "minecraft:shears"}) {
+            MobSpec g = new MobSpec("minecraft:happy_ghast", 0.5, BY + 1, 0.5, 30f, 54000L + item.length());
+            g.nbt = "{NoAI:1b,PersistenceRequired:1b" + (item.endsWith("shears") ? ",equipment:{body:{id:\"minecraft:red_harness\",count:1}}" : "") + "}";
+            Scenario s = eqClick("eq50_ghast_" + item.substring(10), g, item, false, false, 40);
+            floor(s, 16, "minecraft:stone");
+            out.add(s);
+        }
+        // Wolves: armor by hand (the owner), shears.
+        for (String item : new String[] {"minecraft:wolf_armor", "minecraft:shears"}) {
+            MobSpec w = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 30f, 55000L + item.length());
+            w.nbt = "{NoAI:1b,PersistenceRequired:1b," + owner() + (item.endsWith("shears") ? ",equipment:{body:{id:\"minecraft:wolf_armor\",count:1}}" : "") + "}";
+            Scenario s = eqClick("eqwolf50_" + item.substring(10), w, item, false, false, 40);
+            floor(s, 16, "minecraft:grass_block");
+            out.add(s);
+        }
+    }
+
+    static void scenariosWp50(List<Scenario> out) {
+        scenariosWp50Saddles(out);
+        scenariosWp50Mounts(out);
+    }
+
+    static void scenariosWp50Saddles(List<Scenario> out) {
+        String saddled = "equipment:{saddle:{id:\"minecraft:saddle\",count:1}}";
+        for (String kind : new String[] {"pig", "strider"}) {
+            String land = kind.equals("pig") ? "minecraft:grass_block" : "minecraft:netherrack";
+            for (boolean ai : new boolean[] {false, true}) {
+                String tag = "eq50_" + kind + (ai ? "_ai" : "");
+                String base = ai ? "{PersistenceRequired:1b" : "{NoAI:1b,PersistenceRequired:1b";
+                long seed = 51000L + kind.length() * 100 + (ai ? 7 : 0);
+                // A saddle goes on an adult; the player keeps nothing of it (whatever the game mode).
+                for (boolean creative : new boolean[] {false, true}) {
+                    MobSpec m = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                    m.nbt = base + "}";
+                    Scenario s = eqClick(tag + "_saddle" + (creative ? "_creative" : ""), m, "minecraft:saddle", creative, false, 60);
+                    floor(s, 16, land);
+                    out.add(s);
+                }
+                // A baby takes none.
+                MobSpec baby = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                baby.nbt = base + "}";
+                baby.age = -24000;
+                Scenario sb = eqClick(tag + "_saddle_baby", baby, "minecraft:saddle", false, false, 40);
+                floor(sb, 16, land);
+                out.add(sb);
+                // A saddled one is not saddled twice (sneaking, or the click would mount it).
+                MobSpec twice = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                twice.nbt = base + "," + saddled + ",drop_chances:{saddle:2.0f}}";
+                Scenario st = eqClick(tag + "_saddled_again", twice, "minecraft:saddle", false, true, 40);
+                floor(st, 16, land);
+                out.add(st);
+                // Shears take the saddle off (the mount is not ridden, the player does not sneak).
+                for (boolean creative : new boolean[] {false, true}) {
+                    MobSpec sh = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                    sh.nbt = base + "," + saddled + "}";
+                    Scenario ss = eqClick(tag + "_shears" + (creative ? "_creative" : ""), sh, "minecraft:shears", creative, false, 60);
+                    floor(ss, 16, land);
+                    out.add(ss);
+                }
+                MobSpec bare = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                bare.nbt = base + "}";
+                Scenario sbare = eqClick(tag + "_shears_bare", bare, "minecraft:shears", false, false, 40);
+                floor(sbare, 16, land);
+                out.add(sbare);
+                // Food on a saddled one: it falls in love instead of being mounted.
+                MobSpec food = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 30f, seed++);
+                food.nbt = base + "," + saddled + "}";
+                Scenario sf = eqClick(tag + "_saddled_food", food, kind.equals("pig") ? "minecraft:carrot" : "minecraft:warped_fungus", false, false, 60);
+                floor(sf, 16, land);
+                out.add(sf);
+            }
         }
     }
 

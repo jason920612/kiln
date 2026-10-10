@@ -12,6 +12,7 @@ kiln-world.workspace = true
 kiln-proto.workspace = true
 sha2.workspace = true
 flate2.workspace = true
+bytes.workspace = true
 lz4_flex.workspace = true
 thiserror.workspace = true
 

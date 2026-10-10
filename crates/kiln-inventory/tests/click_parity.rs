@@ -27,6 +27,7 @@ fn menu_for(kind: &str, id: i32) -> Menu {
         "smoker" => Menu::furnace(id, FurnaceKind::Smoker),
         "stonecutter" => Menu::stonecutter(id),
         "smithing" => Menu::smithing(id),
+        "loom" => Menu::loom(id),
         _ => panic!("unknown menu kind {kind}"),
     }
 }
@@ -140,10 +141,15 @@ fn compare_state(state: &Json, menu: &Menu, inv: &PlayerInventory, block: &Simpl
 #[test]
 fn click_sequences_match_vanilla() {
     let dir = common::work().join("wp3-inventory");
-    let mut files: Vec<_> = std::fs::read_dir(&dir)
-        .map(|d| d.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default();
-    files.retain(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("clicks") && n.ends_with(".jsonl")));
+    // (`KILN_CLICK_VECTORS`: these files, joined by `:`, instead of the directory's.)
+    let mut files: Vec<std::path::PathBuf> = match std::env::var("KILN_CLICK_VECTORS") {
+        Ok(list) => list.split(':').map(Into::into).collect(),
+        Err(_) => {
+            let mut f: Vec<_> = std::fs::read_dir(&dir).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+            f.retain(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("clicks") && n.ends_with(".jsonl")));
+            f
+        }
+    };
     files.sort();
     if files.is_empty() {
         eprintln!("skipping: no {}/clicks*.jsonl", dir.display());
@@ -181,7 +187,7 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
     inv.selected = seq["selected"].as_u64().unwrap() as usize;
     let mut block = SimpleContainer::from_items(stacks(&seq["block"]));
     block.data = seq["data"].as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect();
-    let has_block = !matches!(kind, "inventory" | "crafting" | "stonecutter" | "smithing");
+    let has_block = !matches!(kind, "inventory" | "crafting" | "stonecutter" | "smithing" | "loom");
     let mut menu = menu_for(kind, id);
     let flags = PlayerFlags { creative, infinite_materials: creative, ..Default::default() };
     let mut world = NoWorld;
@@ -199,7 +205,7 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
         };
     }
     // A crafting grid starts at slot 1, station inputs at slot 0.
-    let first = if matches!(kind, "stonecutter" | "smithing") { 0 } else { 1 };
+    let first = if matches!(kind, "stonecutter" | "smithing" | "loom") { 0 } else { 1 };
     for (i, s) in seq.get("grid").map(stacks).unwrap_or_default().into_iter().enumerate() {
         if !s.is_empty() {
             menu.set_slot(&mut env!(), first + i, s);

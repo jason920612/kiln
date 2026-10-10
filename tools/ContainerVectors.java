@@ -314,6 +314,8 @@ public class ContainerVectors {
         lecternScenarios(out);
         dispenserScenarios(out);
         dispenserScenarios2(out);
+        dispenserScenarios50(out);
+        ominousScenarios(out);
         windScenarios(out);
         cropProbes(out);
         crafterScenarios(out);
@@ -588,6 +590,65 @@ public class ContainerVectors {
         out.add(mob(dispense("swallow_by_baby", "oak_planks", 2).block(1, -1, 0, "minecraft:stone"), "sulfur_cube", 1.5, 0, 0.5, "Size:1,Age:-24000"));
         out.add(mob(dispense("swallow_dirt_when_full", "dirt", 2).block(1, -1, 0, "minecraft:stone"), "sulfur_cube", 1.5, 0, 0.5,
                 "Size:1,equipment:{body:{id:\"minecraft:oak_planks\",count:1}}"));
+    }
+
+    /** wp50: saddles and armor on the other mounts, a brush on an armadillo, shears on leads. */
+    static void dispenserScenarios50(List<Scenario> out) {
+        String stone = "minecraft:stone";
+        for (String[] eq : new String[][] {
+                {"saddle", "pig", ""}, {"saddle", "pig", "Age:-24000"}, {"saddle", "camel", ""}, {"saddle", "camel_husk", ""}, {"saddle", "skeleton_horse", "Tame:1b"}, {"saddle", "mule", "Tame:1b"},
+                {"saddle", "donkey", ""}, {"saddle", "llama", "Tame:1b"}, {"saddle", "nautilus", "Owner:[I;1,2,3,4]"}, {"saddle", "nautilus", ""}, {"saddle", "zombie_nautilus", "Owner:[I;1,2,3,4]"},
+                {"iron_nautilus_armor", "nautilus", "Owner:[I;1,2,3,4]"}, {"copper_nautilus_armor", "zombie_nautilus", "Owner:[I;1,2,3,4]"}, {"diamond_nautilus_armor", "nautilus", ""},
+                {"iron_nautilus_armor", "nautilus", "Owner:[I;1,2,3,4],Age:-24000"}, {"white_harness", "happy_ghast", ""}, {"white_harness", "happy_ghast", "Age:-24000"},
+                {"iron_horse_armor", "zombie_horse", "Tame:1b"}, {"iron_horse_armor", "donkey", "Tame:1b"}}) {
+            String nbt = eq[2];
+            String tag = "equip50_" + eq[0] + "_on_" + eq[1] + (nbt.isEmpty() ? "" : "_" + Integer.toHexString(nbt.hashCode()));
+            Scenario s = dispense(tag, eq[0], 2).block(1, -1, 0, stone);
+            double y = eq[1].equals("happy_ghast") ? 0.5 : 0;
+            out.add(mob(s, eq[1], 1.5, y, 0.5, nbt));
+        }
+        // Already wearing one: the dispenser does not.
+        out.add(mob(dispense("equip50_saddle_on_saddled_pig", "saddle", 2).block(1, -1, 0, stone), "pig", 1.5, 0, 0.5, "equipment:{saddle:{id:\"minecraft:saddle\",count:1}}"));
+        out.add(mob(dispense("equip50_saddle_on_saddled_nautilus", "saddle", 2).block(1, -1, 0, stone), "nautilus", 1.5, 0, 0.5,
+                "Owner:[I;1,2,3,4],equipment:{saddle:{id:\"minecraft:saddle\",count:1}}"));
+        // A brush on an armadillo: a scute, 16 durability; a baby gives none; nothing there fails.
+        out.add(mob(dispense("brush50_armadillo", "brush", 1).block(1, -1, 0, stone), "armadillo", 1.5, 0, 0.5, ""));
+        out.add(mob(dispense("brush50_armadillo_baby", "brush", 1).block(1, -1, 0, stone), "armadillo", 1.5, 0, 0.5, "Age:-24000"));
+        out.add(mob(dispense("brush50_armadillo_pig", "brush", 1).block(1, -1, 0, stone), "pig", 1.5, 0, 0.5, ""));
+        out.add(dispense("brush50_nothing", "brush", 1).block(1, -1, 0, stone));
+        out.add(mob(dispense("brush50_worn_armadillo", "brush", 1).block(1, -1, 0, stone), "armadillo", 1.5, 0, 0.5, ""));
+        // Shears on leads: a leashed pig in front (to a fence knot two blocks away), the knot itself in front, a pig led to the knot.
+        String knotPos = "[I;" + (BASE[0] + 4) + "," + BASE[1] + "," + (BASE[2] + 1) + "]";
+        Scenario led = dispense("shears50_leashed_pig", "shears", 1).block(1, -1, 0, stone).block(4, 0, 1, "minecraft:oak_fence").block(4, -1, 1, stone);
+        out.add(mob(led, "pig", 1.5, 0, 0.5, "leash:" + knotPos).track());
+        Scenario knot = dispense("shears50_knot_in_front", "shears", 1).block(1, -1, 0, stone).block(1, 0, 0, "minecraft:oak_fence");
+        out.add(mob(knot, "pig", 3.5, 0, 0.5, "leash:[I;" + (BASE[0] + 1) + "," + BASE[1] + "," + BASE[2] + "]").track());
+        Scenario both = dispense("shears50_leash_and_sheep", "shears", 1).block(1, -1, 0, stone).block(4, 0, 1, "minecraft:oak_fence").block(4, -1, 1, stone);
+        out.add(mob(mob(both, "sheep", 1.5, 0, 0.5, "leash:" + knotPos), "pig", 1.5, 0, 0.5, "").track());
+        out.add(mob(dispense("shears50_unleashed_pig", "shears", 1).block(1, -1, 0, stone), "pig", 1.5, 0, 0.5, "").track());
+    }
+
+    /** wp50: ominous item spawners (summoned: the trial spawner's own are made with the level's random). */
+    static void ominousScenarios(List<Scenario> out) {
+        String at = (BASE[0] + 0.5) + " " + (BASE[1] + 2.0) + " " + (BASE[2] + 0.5);
+        String summon = "summon minecraft:ominous_item_spawner " + at + " {item:%s,spawn_item_after_ticks:%dL}";
+        String bone = "{id:\"minecraft:bone\",count:1}";
+        // A plain item: dropped where the spawner hangs; the spawner is tracked until it goes.
+        out.add(new Scenario("ominous50_bone", 60).drops().track().at(1, String.format(Locale.ROOT, summon, bone, 20)));
+        out.add(new Scenario("ominous50_bone_later", 60).drops().track().at(1, String.format(Locale.ROOT, summon, bone, 45)));
+        out.add(new Scenario("ominous50_bone_now", 10).drops().track().at(1, String.format(Locale.ROOT, summon, bone, 0)));
+        out.add(new Scenario("ominous50_empty", 40).drops().track().at(1, String.format(Locale.ROOT, summon, "{}", 10)));
+        out.add(new Scenario("ominous50_stack", 40).drops().track().at(1, String.format(Locale.ROOT, summon, "{id:\"minecraft:bone\",count:7}", 10)));
+        // Projectile items are shot down (the shot things themselves fly on their own random: that they appear is compared).
+        for (String item : new String[] {"{id:\"minecraft:arrow\",count:1}", "{id:\"minecraft:fire_charge\",count:1}", "{id:\"minecraft:wind_charge\",count:1}",
+                "{id:\"minecraft:snowball\",count:1}", "{id:\"minecraft:egg\",count:1}", "{id:\"minecraft:experience_bottle\",count:1}",
+                "{id:\"minecraft:spectral_arrow\",count:1}",
+                "{id:\"minecraft:lingering_potion\",count:1,components:{\"minecraft:potion_contents\":{potion:\"minecraft:poison\"}}}",
+                "{id:\"minecraft:splash_potion\",count:1,components:{\"minecraft:potion_contents\":{potion:\"minecraft:healing\"}}}",
+                "{id:\"minecraft:tipped_arrow\",count:1,components:{\"minecraft:potion_contents\":{potion:\"minecraft:swiftness\"}}}"}) {
+            String name = item.substring(item.indexOf("minecraft:") + 10, item.indexOf('"', item.indexOf("minecraft:")));
+            out.add(new Scenario("ominous50_shoots_" + name, 40).entities().at(1, String.format(Locale.ROOT, summon, item, 12)));
+        }
     }
 
     static void cropProbes(List<Scenario> out) {

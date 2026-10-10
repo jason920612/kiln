@@ -646,6 +646,12 @@ pub trait Kind: Sync + Send {
         let _ = m;
         self.info().head.1
     }
+    /// `isEffectiveAi` (and so `isControlledByLocalInstance`): false for a mob that does not move at all, gravity and
+    /// push included (an immovable mannequin).
+    fn effective_ai(&self, m: &MobData) -> bool {
+        let _ = m;
+        true
+    }
     /// `isImmobile` beyond dying (a grazing or rearing horse): no AI and no input this tick.
     fn is_immobile(&self, m: &MobData) -> bool {
         let _ = m;
@@ -663,6 +669,16 @@ pub trait Kind: Sync + Send {
         let first = level.player(*e.passengers.first()?)?;
         self.steerable_by(m, &first).then_some(first.id)
     }
+    /// `FoodOnAStickItem`: the stick that steers the type (its item and the durability one boost
+    /// costs), for the types that are `ItemSteerable`.
+    fn stick(&self) -> Option<(&'static str, i32)> {
+        None
+    }
+    /// `ItemSteerable.boost`: whether a boost began (the stick is used up then).
+    fn boost(&self, e: &mut Entity, m: &mut MobData) -> bool {
+        let _ = (e, m);
+        false
+    }
     /// `tickRidden` with the controlling player (rotations follow the rider).
     fn tick_ridden(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, rider: &crate::level::PlayerView) {
         let _ = (e, m, level, rider);
@@ -679,6 +695,16 @@ pub trait Kind: Sync + Send {
     fn set_extra_equipment(&self, m: &mut MobData, slot: u8, stack: ItemStack) -> bool {
         let _ = (m, slot, stack);
         false
+    }
+    /// `setItemSlot(slot, EMPTY)` for a slot past the six (shears take the piece off): the piece, if the type has one there.
+    fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
+        let _ = (m, slot);
+        None
+    }
+    /// `Mob.canShearEquipment` where it is not "no passenger" (a wolf: only its owner `player`).
+    fn can_shear_equipment(&self, m: &MobData, level: &dyn EntityLevel, player: i32) -> Option<bool> {
+        let _ = (m, level, player);
+        None
     }
     /// A dispenser puts a chest on a pack animal (`AbstractChestedHorse`'s slot 499): whether it has one now.
     fn put_chest(&self, m: &mut MobData) -> bool {

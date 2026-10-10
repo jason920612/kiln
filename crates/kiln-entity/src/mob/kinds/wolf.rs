@@ -196,6 +196,11 @@ impl Kind for Wolf {
         &INFO
     }
 
+    /// `Wolf.canShearEquipment`: only the owner.
+    fn can_shear_equipment(&self, m: &MobData, level: &dyn EntityLevel, player: i32) -> Option<bool> {
+        Some(tame::owned_by(m, level, player))
+    }
+
     fn new_state(&self, m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
         tame::set_malus(m, PathType::PowderSnow, -1.0);
         tame::set_malus(m, PathType::OnTopOfPowderSnow, -1.0);

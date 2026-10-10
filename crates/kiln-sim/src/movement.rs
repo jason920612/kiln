@@ -1,8 +1,7 @@
 //! Player movement checks from vanilla `ServerGamePacketListenerImpl.handleMovePlayer`.
 //!
-//! Implemented: invalid values, the "moved too quickly" distance check and the "colliding
-//! with anything new" block check. The "moved wrongly" check needs the player's collision
-//! physics (`Entity.move`) and arrives with entity physics.
+//! Implemented: invalid values, the "moved too quickly" distance check, the "moved wrongly" check (the claim against where
+//! the server's own body got by `Entity.move`, see `phantom`) and the "colliding with anything new" block check.
 //!
 //! Until the server tracks poses (swimming, crawling and gliding are 0.6 blocks tall), the
 //! collision check uses the smallest pose height, so it can miss a head moving into a block
@@ -77,6 +76,30 @@ pub(crate) fn too_fast(first_good: [f64; 3], to: [f64; 3], velocity_sqr: f64, pa
     let limit = if gliding { 300.0f32 } else { 100.0f32 };
     let d: f64 = (0..3).map(|i| (to[i] - first_good[i]).powi(2)).sum();
     d - velocity_sqr > (limit * packets as f32) as f64
+}
+
+/// `Level.noCollision` for blocks: whether the box overlaps a block collision shape.
+pub(crate) fn collides_with_anything<W: Blocks + ?Sized>(world: &W, b: Aabb) -> bool {
+    let lo = b.min.map(|v| (v - 1.0e-7).floor() as i32 - 1);
+    let hi = b.max.map(|v| (v + 1.0e-7).floor() as i32 + 1);
+    for x in lo[0]..=hi[0] {
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                let Some(state) = world.get_block(x, y, z) else { continue };
+                let hit = kiln_data::block_props::collision(state).iter().any(|c| {
+                    let placed = Aabb {
+                        min: [x as f64 + c[0] as f64, y as f64 + c[1] as f64, z as f64 + c[2] as f64],
+                        max: [x as f64 + c[3] as f64, y as f64 + c[4] as f64, z as f64 + c[5] as f64],
+                    };
+                    placed.intersects(&b)
+                });
+                if hit {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// `isEntityCollidingWithAnythingNew`: whether the box at the new position overlaps a block

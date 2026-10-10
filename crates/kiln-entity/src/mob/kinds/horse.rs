@@ -828,12 +828,14 @@ impl Kind for Equine {
             out.open_container = e.passengers.is_empty() || e.passengers.contains(&who.id);
             return Some(out);
         }
-        // (A llama is not in `#can_equip_saddle`: the saddle does not go on.)
-        if !self.llama() && is(stack, "minecraft:saddle") && st(m).tamed && st(m).saddle.is_empty() && crate::mob::is_alive(e, m) {
-            let mut one = stack.clone();
-            one.set_count(1);
-            st_mut(m).saddle = one;
-            play(e, level, "minecraft:entity.horse.saddle", 0.5, 1.0);
+        // `stack.interactLivingEntity`: `Equippable.equipOnTarget` of a saddle (`canUseSlot`: alive, grown and
+        // tame; a llama is not in `#can_equip_saddle`, so the saddle does not go on it).
+        if st(m).tamed && st(m).saddle.is_empty() && crate::mob::is_alive(e, m)
+            && let Some(one) = super::steering::equip_on_target(e, level, stack, kiln_item::component::EquipmentSlot::Saddle, Some("minecraft:entity.horse.saddle"))
+        {
+            let s = st_mut(m);
+            s.saddle = one;
+            s.saddle_drop = 2.0;
             return Some(Outcome::success(HeldChange::Consume(1)));
         }
         // `equipBodyArmor`: armor from the hand goes on a bare body.
@@ -886,6 +888,15 @@ impl Kind for Equine {
             self.create_inventory(m);
         }
         true
+    }
+
+    fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
+        let s = st_mut(m);
+        match slot {
+            6 => Some(std::mem::take(&mut s.body)),
+            7 => Some(std::mem::take(&mut s.saddle)),
+            _ => None,
+        }
     }
 
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {

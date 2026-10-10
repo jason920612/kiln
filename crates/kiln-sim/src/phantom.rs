@@ -228,8 +228,10 @@ impl Player {
     /// server's body, from where the body stood before the packet): collisions clamp the
     /// request, a body held by cobwebs, berry bushes or powder snow moves a fraction of it and
     /// its velocity is gone. The path it took is the movement of the tick the blocks are judged
-    /// by; the body's ground state is the client's report (`setOnGroundWithMovement`).
-    pub(crate) fn server_packet_move(&mut self, from: [f64; 3], d: [f64; 3], was_on_ground: bool, cells: &CellSet<Cell>, game_time: i64, min_y: i32, fast_lava: bool) {
+    /// by. Returns where the body ended (the connection compares it with the client's claim: "moved wrongly"); the
+    /// player's ground state is the body's now, the client's report (`setOnGroundWithMovement`) is the caller's to
+    /// put back once it takes the move.
+    pub(crate) fn server_packet_move(&mut self, from: [f64; 3], d: [f64; 3], was_on_ground: bool, cells: &CellSet<Cell>, game_time: i64, min_y: i32, fast_lava: bool) -> [f64; 3] {
         let mut level = PhantomLevel::new(cells, game_time, min_y, fast_lava);
         let (to, on_ground) = (self.pos, self.on_ground);
         self.pos = from;
@@ -243,9 +245,9 @@ impl Player {
             }
         }
         kiln_entity::player::server_move(&mut level, &mut e, vec(d));
-        // Everything but the position and the ground state stays with the body.
-        e.on_ground = on_ground;
+        let end = [e.x(), e.y(), e.z()];
+        // Everything but the position stays with the body.
         self.phantom_out(e, false);
-        self.on_ground = on_ground;
+        end
     }
 }

@@ -382,7 +382,11 @@ pub(crate) fn use_cauldron(p: &mut Player, level: &mut RegionLevel, pos: BlockPo
             }
             p.fill_in_hand(off_hand, bottle(), true, spawns);
             p.award_stat(player_stats::custom("minecraft:use_cauldron"), 1);
-            p.award_stat(used, 1);
+            // (`awardStat(ITEM_USED.get(itemInHand.getItem()))` after the bottle was swapped in: a last bottle is an empty
+            // stack by then, whose item is air.)
+            if held.count() > 1 || p.game_mode == 1 {
+                p.award_stat(used, 1);
+            }
             kiln_blocks::set_block_and_update(level, pos, kiln_blocks::state::set_int(state, "level", level_now + 1));
             level.effect(Effect::Sound { pos, sound: "minecraft:item.bottle.empty", volume: 1.0, pitch: 1.0 });
             Some(true)

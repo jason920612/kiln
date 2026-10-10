@@ -31,6 +31,8 @@ pub mod donkey;
 pub mod skeleton_horse;
 pub mod mule;
 pub mod strider;
+pub mod steering;
+pub mod pig;
 pub mod iron_golem;
 pub mod villager;
 pub mod piglin;
@@ -45,6 +47,8 @@ pub mod vex;
 pub mod ravager;
 pub mod illusioner;
 pub mod giant;
+pub mod mannequin;
+pub mod profile;
 
 // -- slice 3: the end
 pub mod ender_dragon;
@@ -135,6 +139,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Mule => &mule::KIND,
         MobKind::SkeletonHorse => &skeleton_horse::KIND,
         MobKind::Strider => &strider::KIND,
+        MobKind::Pig => &pig::KIND,
         MobKind::IronGolem => &iron_golem::KIND,
         MobKind::Villager => &villager::KIND,
         MobKind::Piglin => &piglin::KIND,
@@ -148,6 +153,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Ravager => &ravager::KIND,
         MobKind::Illusioner => &illusioner::KIND,
         MobKind::Giant => &giant::KIND,
+        MobKind::Mannequin => &mannequin::KIND,
 
         // -- slice 3: the end
         MobKind::EnderDragon => &ender_dragon::KIND,

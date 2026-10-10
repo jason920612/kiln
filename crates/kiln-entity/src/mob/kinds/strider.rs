@@ -4,6 +4,7 @@
 //! jockey holding one, one in ten a baby strider rides it. Not modelled: the boost from using the
 //! fungus on a stick.
 
+use super::steering::{Saddle, Steering};
 use crate::custom_goal_boilerplate;
 use crate::entity::Entity;
 use crate::level::{DamageKind, EntityLevel, Event, PlayerView};
@@ -13,12 +14,11 @@ use crate::mob::ext::{self, CustomGoal, Info, Kind, MobExt};
 use crate::mob::goals::{self, Goal, JUMP, LOOK, MOVE};
 use crate::mob::interact::{HeldChange, Interactor, Outcome};
 use crate::mob::mth::reduced_tick_delay;
-use crate::mob::{self, DamageSource, GroupData, MobData, MobKind, SpawnContext, item_name, item_tag, path, random_pos};
+use crate::mob::{self, DamageSource, GroupData, MobData, MobKind, SpawnContext, item_tag, path, random_pos};
 use crate::persist::{Input, Output};
 use kiln_data::entities::data;
 use kiln_item::ItemStack;
 use kiln_javamath::random::RandomSource;
-use kiln_proto::nbt::Tag;
 use kiln_proto::packets::entity::{DataValue, EntityData};
 
 pub struct Strider;
@@ -33,18 +33,17 @@ static INFO: Info = Info {
 #[derive(Clone, Debug)]
 pub struct State {
     pub suffocating: bool,
-    pub saddle: ItemStack,
-    /// `Mob.dropChances` of the saddle slot (0.085, 2.0 for a jockey's: `setGuaranteedDrop`).
-    pub saddle_drop: f32,
-    /// `DATA_BOOST_TIME`.
-    pub boost_time: i32,
+    /// The saddle (its drop chance is 0.085, 2.0 for a jockey's: `setGuaranteedDrop`).
+    pub saddle: Saddle,
+    /// `ItemBasedSteering` (`DATA_BOOST_TIME`).
+    pub steering: Steering,
     /// `isInLava` as of this tick's base tick (for the walk target values).
     in_lava: bool,
 }
 
 impl Default for State {
     fn default() -> State {
-        State { suffocating: false, saddle: ItemStack::default(), saddle_drop: 0.085, boost_time: 0, in_lava: false }
+        State { suffocating: false, saddle: Saddle::default(), steering: Steering::default(), in_lava: false }
     }
 }
 
@@ -187,15 +186,25 @@ impl Kind for Strider {
 
     fn steerable_by(&self, m: &MobData, rider: &PlayerView) -> bool {
         let fungus = kiln_data::builtin_id("minecraft:item", "minecraft:warped_fungus_on_a_stick");
-        !st(m).saddle.is_empty() && (Some(rider.main_hand) == fungus || Some(rider.off_hand) == fungus)
+        st(m).saddle.is_saddled() && (Some(rider.main_hand) == fungus || Some(rider.off_hand) == fungus)
     }
 
+    /// `Strider.tickRidden`: the rider turns the strider, and the boost runs down.
     fn tick_ridden(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, rider: &PlayerView) {
         e.y_rot = rider.yaw % 360.0;
         e.x_rot = (rider.pitch * 0.5) % 360.0;
         e.y_rot_o = e.y_rot;
         m.y_body_rot = e.y_rot;
         m.y_head_rot = e.y_rot;
+        st_mut(m).steering.tick_boost();
+    }
+
+    fn stick(&self) -> Option<(&'static str, i32)> {
+        Some(("minecraft:warped_fungus_on_a_stick", 1))
+    }
+
+    fn boost(&self, e: &mut Entity, m: &mut MobData) -> bool {
+        st_mut(m).steering.boost(&mut e.random)
     }
 
     /// `Strider.shouldPassengersInheritMalus`.
@@ -229,9 +238,7 @@ impl Kind for Strider {
                     pm.equipment[mob::MAINHAND] = fungus;
                 }
                 if let Some(saddle) = ItemStack::of("minecraft:saddle", 1) {
-                    let s = st_mut(m);
-                    s.saddle = saddle;
-                    s.saddle_drop = 2.0;
+                    st_mut(m).saddle.put_guaranteed(saddle);
                 }
                 group.companions.push(mob::Companion { entity: piglin, seat: mob::Seat::OnMob });
             } else if r.next_int_bounded(10) == 0 {
@@ -247,26 +254,25 @@ impl Kind for Strider {
     }
 
     fn take_extra_equipment_for_drop(&self, m: &mut MobData) -> Vec<(ItemStack, f32)> {
-        let s = st_mut(m);
-        vec![(std::mem::take(&mut s.saddle), s.saddle_drop)]
+        let s = &mut st_mut(m).saddle;
+        vec![(std::mem::take(&mut s.stack), s.drop)]
     }
 
     fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
         let food = !stack.is_empty() && self.is_food(stack.item());
-        if !food && !st(m).saddle.is_empty() && e.passengers.is_empty() && !who.sneaking {
+        if !food && st(m).saddle.is_saddled() && e.passengers.is_empty() && !who.sneaking {
             let mut out = Outcome::success(HeldChange::None);
             out.ride = true;
             return Some(out);
         }
         let out = crate::mob::interact::animal_interact(e, m, level, who, stack);
         if !out.success {
-            if !stack.is_empty() && item_name(stack) == "minecraft:saddle" && st(m).saddle.is_empty() && !m.baby() && crate::mob::is_alive(e, m) {
-                let mut one = stack.clone();
-                one.set_count(1);
-                st_mut(m).saddle = one;
-                if !e.silent {
-                    level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.strider.saddle", source: "neutral", volume: 0.5, pitch: 1.0 });
-                }
+            // `isEquippableInSlot(stack, SADDLE)` and `interactLivingEntity`: `Equippable.equipOnTarget`.
+            if !m.baby() && !st(m).saddle.is_saddled() && crate::mob::is_alive(e, m)
+                && let Some(one) = super::steering::equip_on_target(e, level, stack, kiln_item::component::EquipmentSlot::Saddle, Some("minecraft:entity.strider.saddle"))
+            {
+                st_mut(m).saddle.put_guaranteed(one);
+                // `ItemStack.split(1)`; a creative player keeps the item (`Player.interactOn` restores the count).
                 return Some(Outcome::success(HeldChange::Consume(1)));
             }
             return Some(Outcome::PASS);
@@ -282,51 +288,30 @@ impl Kind for Strider {
         if slot != 7 {
             return false;
         }
-        let s = st_mut(m);
-        s.saddle = stack;
-        s.saddle_drop = 2.0;
+        st_mut(m).saddle.put_guaranteed(stack);
         true
     }
 
+    fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
+        (slot == 7).then(|| std::mem::take(&mut st_mut(m).saddle.stack))
+    }
+
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
-        let s = st(m);
-        if s.saddle.is_empty() { Vec::new() } else { vec![(7, s.saddle.clone())] }
+        let s = &st(m).saddle;
+        if s.is_saddled() { vec![(7, s.stack.clone())] } else { Vec::new() }
     }
 
     fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
-        if let Some(Tag::Compound(eq)) = r.get("equipment")
-            && let Some(sd) = eq.iter().find(|(k, _)| k == "saddle").and_then(|(_, v)| ItemStack::from_nbt(v).ok())
-        {
-            st_mut(m).saddle = sd;
-        }
-        if let Some(Tag::Compound(dc)) = r.get("drop_chances")
-            && let Some(f) = dc.iter().find(|(k, _)| k == "saddle").and_then(|(_, v)| v.as_f64())
-        {
-            st_mut(m).saddle_drop = f as f32;
-        }
+        st_mut(m).saddle.load(r);
     }
 
     fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
-        let s = st(m);
-        if !s.saddle.is_empty() {
-            let entry = ("saddle".to_owned(), s.saddle.to_nbt());
-            match o.0.iter_mut().find(|(k, _)| k == "equipment") {
-                Some((_, Tag::Compound(eq))) => eq.push(entry),
-                _ => o.put("equipment", Tag::Compound(vec![entry])),
-            }
-        }
-        if s.saddle_drop != 0.085 {
-            let entry = ("saddle".to_owned(), Tag::Float(s.saddle_drop));
-            match o.0.iter_mut().find(|(k, _)| k == "drop_chances") {
-                Some((_, Tag::Compound(dc))) => dc.push(entry),
-                _ => o.put("drop_chances", Tag::Compound(vec![entry])),
-            }
-        }
+        st(m).saddle.save(o);
     }
 
     fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {
         let s = st(m);
-        d.set(data::strider::BOOST_TIME, &DataValue::Int(s.boost_time));
+        d.set(data::strider::BOOST_TIME, &DataValue::Int(s.steering.total));
         d.set(data::strider::SUFFOCATING, &DataValue::Boolean(s.suffocating));
     }
 }

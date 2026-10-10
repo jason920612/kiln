@@ -33,7 +33,20 @@ pub fn is_loom_pattern(stack: &ItemStack) -> bool {
 /// item provides (`minecraft:banner_pattern` ids, in the set's order).
 fn selectable_patterns(pattern_item: &ItemStack) -> Vec<i32> {
     if pattern_item.is_empty() {
-        return crate::tags::entries("minecraft:banner_pattern", "minecraft:no_item_required").map_or(Vec::new(), <[i32]>::to_vec);
+        // The datapack tag keeps its file's order, which is the order of the loom's buttons; the
+        // generated tag tables are sorted by id, so the names are listed here.
+        const NO_ITEM_REQUIRED: [&str; 32] = [
+            "square_bottom_left", "square_bottom_right", "square_top_left", "square_top_right", "stripe_bottom", "stripe_top", "stripe_left",
+            "stripe_right", "stripe_center", "stripe_middle", "stripe_downright", "stripe_downleft", "small_stripes", "cross", "straight_cross",
+            "triangle_bottom", "triangle_top", "triangles_bottom", "triangles_top", "diagonal_left", "diagonal_up_right", "diagonal_up_left",
+            "diagonal_right", "circle", "rhombus", "half_vertical", "half_horizontal", "half_vertical_right", "half_horizontal_bottom", "border",
+            "gradient", "gradient_up",
+        ];
+        let names = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:banner_pattern").map_or(&[][..], |(_, n)| *n);
+        return NO_ITEM_REQUIRED
+            .iter()
+            .filter_map(|n| names.iter().position(|x| x.strip_prefix("minecraft:").unwrap_or(x) == *n).map(|i| i as i32))
+            .collect();
     }
     match pattern_item.get(keys::PROVIDES_BANNER_PATTERNS).map(|p| &p.0) {
         Some(HolderSet::Direct(ids)) => ids.clone(),

@@ -33,7 +33,7 @@ pub(crate) fn wear_of_player(p: &Player) -> Wear {
             accepts |= 1 << i;
         }
     }
-    Wear { id: p.entity_id, type_name: "minecraft:player", open: !p.dead && p.game_mode != 3, accepts, mob: None, shearable: false }
+    Wear { id: p.entity_id, type_name: "minecraft:player", open: !p.dead && p.game_mode != 3, accepts, mob: None, shearable: false, leads: false }
 }
 
 /// An armor stand or a mob as a dispenser sees it.
@@ -45,7 +45,11 @@ pub(crate) fn wear_of(e: &kiln_entity::Entity) -> Option<Wear> {
                 accepts |= 1 << i;
             }
         }
-        return Some(Wear { id: e.id, type_name: e.type_name, open: e.is_alive(), accepts, mob: None, shearable: false });
+        return Some(Wear { id: e.id, type_name: e.type_name, open: e.is_alive(), accepts, mob: None, shearable: false, leads: false });
+    }
+    // A knot on a fence holds the leads (`Entity.shearOffAllLeashConnections`).
+    if e.type_name == kiln_entity::leash::KNOT {
+        return Some(Wear { id: e.id, type_name: e.type_name, open: true, accepts: 0, mob: None, shearable: false, leads: false });
     }
     let facts = rules::facts(e)?;
     let mut accepts = 0u8;
@@ -55,7 +59,7 @@ pub(crate) fn wear_of(e: &kiln_entity::Entity) -> Option<Wear> {
         }
     }
     let alive = rules::mob(e).is_some_and(|m| kiln_entity::mob::is_alive(e, m));
-    Some(Wear { id: e.id, type_name: e.type_name, open: alive, accepts, mob: Some(facts), shearable: rules::shearable(e) })
+    Some(Wear { id: e.id, type_name: e.type_name, open: alive, accepts, mob: Some(facts), shearable: rules::shearable(e), leads: false })
 }
 
 /// The living things whose box meets the block `target`, in id order.
@@ -127,10 +131,20 @@ pub(super) fn dispense_swallow(level: &mut RegionLevel, pos: BlockPos, facing: D
     true
 }
 
+/// `DispenseItemBehavior$11`: the first grown armadillo in front gives up a scute to the brush. Whether one did.
+pub(super) fn dispense_brush(level: &mut RegionLevel, pos: BlockPos, facing: Direction, tool: &ItemStack) -> bool {
+    let target = pos.relative(facing);
+    let found = in_front(level, target).into_iter().find(|w| w.mob.is_some_and(|f| f.kind == kiln_entity::mob::MobKind::Armadillo && !f.baby));
+    let Some(w) = found else { return false };
+    let id = w.id;
+    level.out.dispenses.push(DispenseOp::Shear { id, tool: tool.clone() });
+    true
+}
+
 /// `ShearsDispenseItemBehavior.tryShearEntity`: the first shearable thing in front is sheared. Whether one was.
 pub(super) fn dispense_shear(level: &mut RegionLevel, pos: BlockPos, facing: Direction, tool: &ItemStack) -> bool {
     let target = pos.relative(facing);
-    let found = in_front(level, target).into_iter().find(|w| w.open && w.shearable);
+    let found = in_front(level, target).into_iter().find(|w| w.leads || (w.open && w.shearable));
     let Some(w) = found else { return false };
     let id = w.id;
     level.out.dispenses.push(DispenseOp::Shear { id, tool: tool.clone() });
@@ -200,6 +214,10 @@ pub(crate) fn shear(
     use kiln_entity::mob::interact::{Interactor, interact};
     let who = Interactor { id: -1, creative: false, sneaking: false, spectator: false, hit: kiln_entity::math::Vec3::ZERO };
     crate::entities::with_entity(entities, level, players, id, spawns, deaths, 0x7368_6172, |e, lv| {
+        // `Entity.shearOffAllLeashConnections(null)` comes first.
+        if tool.item_name() == "minecraft:shears" && kiln_entity::leash::shear_off_all(e, lv, -1) {
+            return;
+        }
         let out = interact(e, lv, &who, tool);
         // A sheep's wool: the loot table comes back with the outcome (a snow golem's and the others' drop through events).
         if let Some(table) = out.shear {

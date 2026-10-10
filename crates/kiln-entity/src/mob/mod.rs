@@ -96,6 +96,8 @@ pub enum MobKind {
     Ravager,
     Illusioner,
     Giant,
+    /// `Mannequin`: a living entity that is not a `Mob` (wp50).
+    Mannequin,
 
     // -- slice 3: the end
     EnderDragon,
@@ -277,6 +279,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Ravager,
     MobKind::Illusioner,
     MobKind::Giant,
+    MobKind::Mannequin,
 
     // -- slice 3: the end
     MobKind::EnderDragon,
@@ -349,6 +352,12 @@ pub const ALL_KINDS: &[MobKind] = &[
 ];
 
 impl MobKind {
+    /// Whether the type extends `Mob` (a mannequin is a plain `LivingEntity`: no AI, leads, name tags, persistence or
+    /// equipment drops).
+    pub fn is_mob(self) -> bool {
+        self != MobKind::Mannequin
+    }
+
     pub fn by_name(name: &str) -> Option<MobKind> {
         // Called per move (fall damage, fluids): a table rather than a scan of the types.
         static BY_NAME: std::sync::OnceLock<std::collections::HashMap<&'static str, MobKind>> = std::sync::OnceLock::new();
@@ -546,7 +555,6 @@ impl DamageSource {
 /// Type-specific state.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Species {
-    Pig,
     Cow,
     Sheep { color: u8, sheared: bool },
     Chicken { egg_time: i32 },
@@ -691,7 +699,6 @@ impl MobData {
         let attrs = kind.attributes();
         let health = attrs.value(Attr::MaxHealth) as f32;
         let species = match kind {
-            MobKind::Pig => Species::Pig,
             MobKind::Cow => Species::Cow,
             MobKind::Sheep => Species::Sheep { color: 0, sheared: false },
             MobKind::Chicken => Species::Chicken { egg_time: 0 },
@@ -1016,17 +1023,6 @@ fn register_goals(m: &mut MobData) {
     let hurt_by = |alert: bool| Goal::HurtByTarget { timestamp: 0, alert_others: alert, target_mob: None, unseen: 0, unseen_memory: 60 };
     match m.kind {
         _ if m.kind.ext().is_some() => {}
-        MobKind::Pig => {
-            g.add(0, Goal::Float);
-            g.add(1, panic(1.25));
-            g.add(3, breed(1.0));
-            g.add(4, tempt(1.2));
-            g.add(4, tempt(1.2));
-            g.add(5, follow_parent(1.1));
-            g.add(6, stroll(1.0));
-            g.add(7, look(6.0));
-            g.add(8, around());
-        }
         MobKind::Cow => {
             g.add(0, Goal::Float);
             g.add(1, panic(2.0));
@@ -1364,6 +1360,22 @@ pub(crate) fn take(e: &mut Entity) -> Box<MobData> {
 
 pub(crate) fn put(e: &mut Entity, m: Box<MobData>) {
     e.kind = EntityKind::Mob(m);
+}
+
+/// `FoodOnAStickItem.use` on the vehicle `e` of the player `rider` using the stick `item`: the
+/// durability the boost costs when the stick steers `e` (it is `ItemSteerable` of that stick, the
+/// player is the one steering) and a boost began; `None` otherwise.
+pub fn boost_with_stick(e: &mut Entity, item: &str, rider: &crate::level::PlayerView) -> Option<i32> {
+    if !matches!(e.kind, EntityKind::Mob(_)) || e.passengers.first() != Some(&rider.id) {
+        return None;
+    }
+    let mut m = take(e);
+    let damage = m.kind.ext().and_then(|k| {
+        let (stick, damage) = k.stick()?;
+        (stick == item && k.steerable_by(&m, rider) && k.boost(e, &mut m)).then_some(damage)
+    });
+    put(e, m);
+    damage
 }
 
 /// One `ItemStack.onUseTick` of a charging spear for the mob `e`, on its own (tests drive the
@@ -1848,7 +1860,7 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             k.tick_ridden(e, m, level, &r);
         }
         e.delta = Vec3::ZERO;
-    } else if !m.no_ai && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
+    } else if !m.no_ai && m.kind.ext().is_none_or(|k| k.effective_ai(m)) && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
         crate::prof!("mob", "travel");
         travel(e, m, level, input);
     }
@@ -1858,6 +1870,20 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     {
         crate::prof!("mob", "apply_effects_from_blocks");
         e.apply_effects_from_blocks(level);
+        // The hurts of fire and lava it met (`Entity.lavaHurt`: the burn sound after a hurt that went through).
+        for action in std::mem::take(&mut e.inside.deferred) {
+            match action {
+                crate::inside::Action::FireHurt(damage) => {
+                    hurt(e, m, level, DamageSource::of(DamageKind::InFire), damage);
+                }
+                crate::inside::Action::LavaHurt if !m.kind.fire_immune() => {
+                    if hurt(e, m, level, DamageSource::of(DamageKind::Lava), 4.0) {
+                        e.lava_hurt_sound(level);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
     // Freezing.
     if !e.is_in_powder_snow {
@@ -2784,7 +2810,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     // `Mob.dropCustomDeathLoot`: equipment with its drop chance.
     for i in 0..6 {
         let chance = m.drop_chances[i];
-        if !should_drop || chance == 0.0 || m.equipment[i].is_empty() {
+        if !m.kind.is_mob() || !should_drop || chance == 0.0 || m.equipment[i].is_empty() {
             continue;
         }
         let preserved = chance > 1.0;
@@ -3248,7 +3274,10 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
         put(e, m);
         return;
     }
-    if let Some(k) = kind.ext() {
+    // (A pig is an extension type for its saddle only: it spawns like the other farm animals.)
+    if kind != MobKind::Pig
+        && let Some(k) = kind.ext()
+    {
         k.finalize_spawn(e, &mut m, r, ctx, group);
         put(e, m);
         return;

@@ -121,102 +121,18 @@ pub(crate) fn dispense_from(level: &mut RegionLevel, pos: BlockPos, s: u16) {
 /// `ProjectileDispenseBehavior` with the default `DispenseConfig` (power 1.1, uncertainty 6):
 /// the projectile flies out of the front face (`Projectile.shoot`), click sound 1002.
 fn dispense_projectile(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> ItemStack {
-    use kiln_entity::math::Vec3;
-    let mut at = dispense_position(pos, facing);
-    let (mut uncertainty, mut power) = (6.0f64, 1.1f64);
-    // `DispenseConfig.overrideDispenseEvent`.
-    let mut event = 1002;
-    let (kind, entity) = {
-        let seed = rng.next_long();
-        let mut origin = Vec3::new(at[0], at[1], at[2]);
-        match stack.item_name() {
-            // (`FireChargeItem` and `WindChargeItem`: a whole block out, the direction spread by the level's random first.)
-            "minecraft:fire_charge" | "minecraft:wind_charge" => {
-                let st = facing.step();
-                at = [pos.x as f64 + 0.5 + st[0] as f64, pos.y as f64 + 0.5 + st[1] as f64, pos.z as f64 + 0.5 + st[2] as f64];
-                origin = Vec3::new(at[0], at[1], at[2]);
-                let dir = Vec3::new(triangle(rng, st[0] as f64, 0.11485000000000001), triangle(rng, st[1] as f64, 0.11485000000000001), triangle(rng, st[2] as f64, 0.11485000000000001));
-                (uncertainty, power) = (6.6666665f32 as f64, 1.0);
-                if stack.item_name() == "minecraft:fire_charge" {
-                    event = 1018;
-                    let e = kiln_entity::ext_entity::fireball::new_unowned_small(origin, dir, seed);
-                    (&kiln_data::entities::types::SMALL_FIREBALL, e)
-                } else {
-                    event = 1051;
-                    let mut e = kiln_entity::ext_entity::wind_charge::new_thrown(None, origin, seed);
-                    e.delta = dir;
-                    (&kiln_data::entities::types::WIND_CHARGE, e)
-                }
-            }
-            "minecraft:firework_rocket" => {
-                (uncertainty, power) = (1.0, 0.5);
-                event = 1004;
-                let e = kiln_entity::ext_entity::firework::new(origin, stack.with_count(1), None, None, true, seed);
-                (&kiln_data::entities::types::FIREWORK_ROCKET, e)
-            }
-            "minecraft:snowball" | "minecraft:egg" | "minecraft:blue_egg" | "minecraft:brown_egg" | "minecraft:splash_potion" | "minecraft:lingering_potion" | "minecraft:experience_bottle" => {
-                use kiln_entity::projectile::Throwable as T;
-                let (t, k) = match stack.item_name() {
-                    "minecraft:snowball" => (T::Snowball, &kiln_data::entities::types::SNOWBALL),
-                    "minecraft:splash_potion" => (T::SplashPotion, &kiln_data::entities::types::SPLASH_POTION),
-                    "minecraft:lingering_potion" => (T::LingeringPotion, &kiln_data::entities::types::LINGERING_POTION),
-                    "minecraft:experience_bottle" => (T::ExperienceBottle, &kiln_data::entities::types::EXPERIENCE_BOTTLE),
-                    _ => (T::Egg, &kiln_data::entities::types::EGG),
-                };
-                // (`ThrowablePotionItem`'s config: half the uncertainty, a quarter more power.)
-                if matches!(t, T::SplashPotion | T::LingeringPotion | T::ExperienceBottle) {
-                    (uncertainty, power) = (3.0, 1.375);
-                }
-                let mut e = kiln_entity::projectile::new(0, 0, t, origin, Vec3::new(0.0, 0.0, 0.0), None, seed);
-                if let kiln_entity::EntityKind::Throwable(d) = &mut e.kind {
-                    d.item = Some(stack.with_count(1));
-                }
-                (k, e)
-            }
-            name => {
-                let (type_name, k) = if name == "minecraft:spectral_arrow" {
-                    ("minecraft:spectral_arrow", &kiln_data::entities::types::SPECTRAL_ARROW)
-                } else {
-                    ("minecraft:arrow", &kiln_data::entities::types::ARROW)
-                };
-                let mut e = kiln_entity::arrow::new(0, 0, type_name, origin, Vec3::new(0.0, 0.0, 0.0), None, seed);
-                // `ArrowItem.asProjectile`: picked up as the item, with a tipped arrow's potion effects.
-                let one = stack.with_count(1);
-                let effects: Vec<_> = match one.get(kiln_item::keys::POTION_CONTENTS) {
-                    Some(c) if name != "minecraft:spectral_arrow" => crate::effects::potion_effects(c, 1.0)
-                        .into_iter()
-                        .filter_map(|fx| kiln_data::builtin_entries("minecraft:mob_effect").and_then(|l| l.get(fx.id as usize).copied()).map(|n| (n, fx.duration, fx.amplifier)))
-                        .collect(),
-                    _ => Vec::new(),
-                };
-                if let kiln_entity::EntityKind::Arrow(a) = &mut e.kind {
-                    a.pickup = kiln_entity::arrow::PICKUP_ALLOWED;
-                    a.pickup_item = Some(one);
-                    a.effects = effects;
-                }
-                (k, e)
-            }
-        }
-    };
-    let mut entity = entity;
-    // `Projectile.getMovementToShoot` and `shoot`: the facing, spread by the entity's random.
+    let at = dispense_position(pos, facing);
     let st = facing.step();
-    let len = ((st[0] * st[0] + st[1] * st[1] + st[2] * st[2]) as f64).sqrt();
-    let spread = 0.0172275 * uncertainty;
-    let mut v = [st[0] as f64 / len, st[1] as f64 / len, st[2] as f64 / len];
-    for c in &mut v {
-        *c += triangle(&mut entity.random, 0.0, spread);
-    }
-    let v = v.map(|c| c * power);
-    entity.delta = Vec3::new(v[0], v[1], v[2]);
-    let horizontal = (v[0] * v[0] + v[2] * v[2]).sqrt();
-    entity.y_rot = (kiln_javamath::mth::atan2(v[0], v[2]) * 57.2957763671875) as f32;
-    entity.x_rot = (kiln_javamath::mth::atan2(v[1], horizontal) * 57.2957763671875) as f32;
-    entity.y_rot_o = entity.y_rot;
-    entity.x_rot_o = entity.x_rot;
-    level.out.spawns.push(crate::entities::Spawn { kind, pos: at, vel: v, body: crate::entities::Body::Ready(Box::new(entity)) });
+    // (Fire and wind charges start a whole block out.)
+    let charge = [pos.x as f64 + 0.5 + st[0] as f64, pos.y as f64 + 0.5 + st[1] as f64, pos.z as f64 + 0.5 + st[2] as f64];
+    let seed = rng.next_long();
+    let Some(mut shot) = crate::projectile_item::as_projectile(&stack, at, charge, st, seed, rng) else { return default_dispense(level, rng, pos, facing, stack) };
+    // `Projectile.getMovementToShoot` and `shoot`: the facing, spread by the entity's random.
+    let v = crate::projectile_item::shoot(&mut shot.entity, st, shot.power, shot.uncertainty);
+    level.out.spawns.push(crate::entities::Spawn { kind: shot.kind, pos: shot.at, vel: v, body: crate::entities::Body::Ready(Box::new(shot.entity)) });
     stack.shrink_count(1);
-    level.effect(Effect::LevelEvent { id: event, pos, data: 0 });
+    // `DispenseConfig.overrideDispenseEvent`, else the click.
+    level.effect(Effect::LevelEvent { id: shot.event.unwrap_or(1002), pos, data: 0 });
     level.effect(Effect::LevelEvent { id: 2000, pos, data: facing as i32 });
     stack
 }

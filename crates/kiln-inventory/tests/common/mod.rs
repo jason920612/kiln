@@ -85,6 +85,9 @@ pub fn show(s: &ItemStack) -> String {
     let mut out = format!("{}x{}", s.count(), s.item_name().trim_start_matches("minecraft:"));
     if !s.patch().is_empty() {
         out += &format!("{:?}", s.patch().iter().map(|(id, v)| (kiln_item::component::name(id), v.is_some())).collect::<Vec<_>>());
+        let mut b = bytes::BytesMut::new();
+        s.write_optional(&mut b);
+        out += &format!(" [{}]", b.iter().map(|x| format!("{x:02x}")).collect::<String>());
     }
     out
 }

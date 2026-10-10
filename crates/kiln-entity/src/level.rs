@@ -1303,6 +1303,22 @@ pub trait EntityLevel {
         false
     }
 
+    /// `TrialSpawnerStateData.getDispensingItems`: what the loot table `table` (rolled with the seed
+    /// of the spawner's low-resolution position) holds, each stack as one item with its count as
+    /// the weight.
+    fn trial_dispensing_items(&mut self, table: &str, pos: BlockPos) -> Vec<(kiln_item::ItemStack, i32)> {
+        let _ = (table, pos);
+        Vec::new()
+    }
+
+    /// `OminousItemSpawner.spawnProjectile`: if `stack` is a projectile item, it is made at `origin`
+    /// (the dispense event first, at `at`), shot downward (`Projectile.spawnProjectileUsingShoot`),
+    /// added to the level and set owned by `owner`; its id. `None` for any other item.
+    fn spawn_item_projectile(&mut self, stack: &kiln_item::ItemStack, origin: Vec3, at: BlockPos, owner: i32) -> Option<i32> {
+        let _ = (stack, origin, at, owner);
+        None
+    }
+
     /// `Level.blockEvent` of the block entity's block at `pos` (a spawner's `1`: its delay was reset).
     fn block_event(&mut self, pos: BlockPos, a: i32, b: i32) {
         self.emit(Event::BlockEvent { pos, a, b });

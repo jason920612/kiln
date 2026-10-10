@@ -207,6 +207,17 @@ impl RegionWork<'_> {
                 p.ack_block_changes = p.ack_block_changes.max(sequence);
                 continue;
             }
+            // A carrot or fungus on a stick boosts the mount it steers.
+            if let PlayIn::UseItem { hand, sequence, .. } = pkt
+                && self.stick_use(conn, &pkt)
+            {
+                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                let off = hand == kiln_proto::packets::serverbound::Hand::Off;
+                crate::steer::use_stick(self.entities, &mut level, &mut self.players, i, off, &mut self.out.spawns, &mut self.out.deaths);
+                let p = &mut *self.players[i];
+                p.ack_block_changes = p.ack_block_changes.max(sequence);
+                continue;
+            }
             // Riding: the steered mount moves, the jump key makes it rear.
             if let PlayIn::MoveVehicle { pos, rot, on_ground } = pkt {
                 entities::move_vehicle(self.entities, &mut self.players, i, pos, rot, on_ground, env.game_time);
@@ -373,6 +384,13 @@ impl RegionWork<'_> {
         let PlayIn::UseItem { hand, .. } = pkt else { return false };
         let off = *hand == kiln_proto::packets::serverbound::Hand::Off;
         self.index_of(conn).is_some_and(|i| !self.players[i].dead && self.players[i].game_mode != 3 && crate::fishing::holds_rod(self.players[i], off))
+    }
+
+    /// A Use Item with a steering stick in that hand, from a living player.
+    fn stick_use(&self, conn: ConnId, pkt: &PlayIn) -> bool {
+        let PlayIn::UseItem { hand, .. } = pkt else { return false };
+        let off = *hand == kiln_proto::packets::serverbound::Hand::Off;
+        self.index_of(conn).is_some_and(|i| !self.players[i].dead && self.players[i].game_mode != 3 && self.players[i].vehicle.is_some() && crate::steer::holds_stick(self.players[i], off))
     }
 
     /// A run of [`is_player_packet`] packets: grouped by player (each keeps its order) and
@@ -895,6 +913,9 @@ pub(crate) fn is_exclusive(pkt: &PlayIn) -> bool {
         PlayIn::ChatCommand { .. }
             | PlayIn::CommandSuggestion { .. }
             | PlayIn::SetCommandBlock(_)
+            | PlayIn::SetStructureBlock(_)
+            | PlayIn::SetJigsawBlock(_)
+            | PlayIn::JigsawGenerate { .. }
             | PlayIn::Chat { .. }
             // Disconnects and per-player protocol state.
             | PlayIn::ResourcePack { .. }
@@ -1006,10 +1027,6 @@ pub(crate) fn player_packet(
                     p.award_stat(*crate::player_stats::stat::JUMP, 1);
                 }
                 p.exhaust_for_jump(d, was_on_ground);
-                if was_on_ground && !on_ground && d[1] > 0.0 {
-                    p.server_jump(from, cells, env.game_time, env.min_y);
-                }
-                p.server_packet_move(from, d, was_on_ground, cells, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
                 let mut ctx = damage_ctx(env, spawns, deaths);
                 let blocks = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z);
                 p.after_move_fall(d, on_ground, p.pos[1] - y0 > 0.0, &blocks, &mut ctx);
@@ -1431,6 +1448,10 @@ fn use_on_block(
     if item_name == Some("minecraft:armor_stand") && crate::stands::use_on(p, level, bp, dir, !main_hand, spawns) {
         return;
     }
+    // `CushionItem.useOn`.
+    if item_name.is_some_and(crate::cushion::is_cushion_item) && actor.may_build && crate::cushion::use_on(p, level, bp, dir, cursor, !main_hand, spawns) {
+        return;
+    }
     // `HangingEntityItem.useOn`: item frames and paintings.
     if item_name.is_some_and(crate::frames::is_hanging_item) && crate::frames::use_on(p, level, bp, dir, !main_hand, spawns) {
         return;
@@ -1494,6 +1515,10 @@ fn use_on_block(
         let entity_data = placed_from.get(kiln_item::keys::BLOCK_ENTITY_DATA).map(|d| &d.tag).filter(|_| p.can_use_gamemaster_blocks());
         let powered = kiln_blocks::redstone::has_neighbor_signal(level, placed_at);
         crate::command_block::placed_by(level, placed_at, powered, placed_from.has(kiln_item::component::ids::BLOCK_ENTITY_DATA), entity_data);
+    }
+    // `StructureBlock.setPlacedBy`: the placer is the author.
+    if kiln_data::block_logic::is_instance(level.block(placed_at), kiln_data::block_logic::BlockClass::StructureBlock) {
+        crate::structure_block::placed_by(level, placed_at, &p.name);
     }
     // `SignBlock.setPlacedBy`: the placer edits the new sign.
     crate::signs::placed_by(p, level, placed_at);
@@ -1566,6 +1591,7 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
         prevents_rest: false,
         player_source: None,
         hanging: None,
+        cushion: false,
         wear: None,
     };
     let origin = [at.x as f64, at.y as f64, at.z as f64];
@@ -1620,12 +1646,34 @@ fn handle_move(
         p.teleport(p.pos, p.rot, now);
         return false;
     }
+    // `jumpFromGround` (when the server holds the player on the ground), then `move(PLAYER, delta)` of the server's body
+    // (see the `phantom` module): what the packet did to the body stays whether the claim is taken or not.
+    let from = p.pos;
+    let d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    let was_on_ground = p.on_ground;
+    if was_on_ground && !on_ground && d[1] > 0.0 {
+        p.server_jump(from, world, env.game_time, env.min_y);
+    }
+    let moves_before = p.movements.len();
+    let end = p.server_packet_move(from, d, was_on_ground, world, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
+    // The claim against where the body got (the vertical part never counts: vanilla zeroes it), outside creative and
+    // spectator mode.
+    let (dx, dz) = (to[0] - end[0], to[2] - end[2]);
+    let sleeping = p.sleep.pos.is_some();
+    let wrongly = dx * dx + dz * dz > 0.0625 && !sleeping && p.game_mode != 1 && p.game_mode != 3;
+    if wrongly {
+        warn!("{} moved wrongly!", p.name);
+    }
     // Spectators have no physics.
-    if p.game_mode != 3 && to != p.pos {
-        let old = movement::Aabb::player(p.pos, movement::MIN_POSE_HEIGHT);
+    if p.game_mode != 3 && !sleeping {
+        let (_, h, _) = p.dimensions();
+        let old_box = movement::Aabb::player(from, h as f64);
+        let stuck_in_place = wrongly && !movement::collides_with_anything(world, old_box);
         let new = movement::Aabb::player(to, movement::MIN_POSE_HEIGHT);
-        if movement::collides_with_anything_new(world, old, new) {
-            p.teleport(p.pos, rot, now);
+        let into_something = to != from && movement::collides_with_anything_new(world, movement::Aabb::player(from, movement::MIN_POSE_HEIGHT), new);
+        if stuck_in_place || into_something {
+            p.movements.truncate(moves_before);
+            p.teleport(from, rot, now);
             return false;
         }
     }

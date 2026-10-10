@@ -8,8 +8,7 @@
 //! an abstract [`EntityLevel`]. The block's `trial_spawner_state` and `ominous` properties are
 //! read from, and written to, the level.
 //!
-//! Gaps: the ominous item spawner entity (`OminousItemSpawner`, the items an ominous trial
-//! rains down) does not exist yet, and the `equipment` of a spawn data is kept but not rolled.
+//! Gap: the `equipment` of a spawn data is kept but not rolled.
 
 use crate::level::{EntityLevel, Event};
 use crate::math::{Aabb, BlockPos, Vec3};
@@ -341,6 +340,8 @@ pub struct TrialBe {
     resolved: [Option<Arc<Config>>; 2],
     /// The display entity of `getOrCreateDisplayEntity` could be made (checked once).
     display_ok: Option<bool>,
+    /// `TrialSpawnerStateData.dispensing`: the ominous loot as (one item, its count as the weight), made once.
+    dispensing: Option<Vec<(kiln_item::ItemStack, i32)>>,
 }
 
 impl Default for TrialBe {
@@ -362,6 +363,7 @@ impl Default for TrialBe {
             changed: false,
             resolved: [None, None],
             display_ok: None,
+            dispensing: None,
         }
     }
 }
@@ -789,7 +791,9 @@ fn tick_and_get_next(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut TrialB
             }
             let additional = be.additional_players();
             be.try_detect_players(level, pos, state, ominous);
-            // (The ominous item spawner of `spawnOminousOminousItemSpawner` is not simulated.)
+            if ominous {
+                spawn_ominous_item_spawner(level, pos, be, &config, r);
+            }
             if be.total_mobs_spawned >= config.target_total(additional) {
                 if be.current_mobs.is_empty() {
                     be.cooldown_ends_at = now + be.target_cooldown_length as i64;
@@ -861,6 +865,87 @@ fn tick_and_get_next(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut TrialB
             }
         }
     }
+}
+
+/// `TrialSpawnerState.spawnOminousOminousItemSpawner`: one item of the ominous loot hangs above a player or a mob of the
+/// trial, to be thrown down 60 to 120 ticks later; then the next one waits 160 ticks.
+fn spawn_ominous_item_spawner(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut TrialBe, config: &Config, r: &mut LegacyRandom) {
+    if be.dispensing.is_none() {
+        be.dispensing = Some(level.trial_dispensing_items(&config.items_when_ominous, pos));
+    }
+    // `WeightedList.getRandom`: one draw over the total weight, when there is any.
+    let list = be.dispensing.as_deref().unwrap_or(&[]);
+    let total: i32 = list.iter().map(|(_, w)| *w).sum();
+    let mut item = kiln_item::ItemStack::empty();
+    if total > 0 {
+        let mut i = r.next_int_bounded(total);
+        for (stack, weight) in list {
+            i -= *weight;
+            if i < 0 {
+                item = stack.clone();
+                break;
+            }
+        }
+    }
+    if item.is_empty() || level.game_time() < be.cooldown_ends_at {
+        return;
+    }
+    let Some(at) = position_to_spawn_spawner(level, pos, be, r) else { return };
+    let id = level.next_entity_id();
+    let seed = level.fresh_seed();
+    let spawner = crate::ext_entity::ominous_item_spawner::new(id, item, at, r, seed);
+    level.add_entity(spawner);
+    let pitch = (r.next_float() - r.next_float()) * 0.2 + 1.0;
+    let b = BlockPos::containing(at.x, at.y, at.z);
+    level.emit(Event::Sound { pos: center(b), sound: "minecraft:block.trial_spawner.spawn_item_begin", source: "block", volume: 1.0, pitch });
+    be.cooldown_ends_at = level.game_time() + 160;
+}
+
+/// `calculatePositionToSpawnSpawner`: above a random player in range (not creative, not spectating) or a
+/// random mob of the trial, a random 2 to 5 blocks over its head, and not inside a block.
+fn position_to_spawn_spawner(level: &mut dyn EntityLevel, pos: BlockPos, be: &TrialBe, r: &mut LegacyRandom) -> Option<Vec3> {
+    let c = center(pos);
+    let range_sqr = (be.required_player_range as i64 * be.required_player_range as i64) as f64;
+    // (Entity position, hit box height.)
+    let players: Vec<(Vec3, f32)> = be
+        .detected
+        .iter()
+        .filter_map(|u| level.player_by_uuid(*u))
+        .filter(|p| !p.creative && !p.spectator && p.alive && p.pos.distance_to_sqr(c) <= range_sqr)
+        .map(|p| (p.pos, p.height))
+        .collect();
+    if players.is_empty() {
+        return None;
+    }
+    let mobs: Vec<(Vec3, f32)> = be
+        .current_mobs
+        .iter()
+        .filter_map(|u| level.entity_by_uuid(*u))
+        .filter(|e| e.is_alive() && e.position().distance_to_sqr(c) <= range_sqr)
+        .map(|e| (e.position(), e.height))
+        .collect();
+    // `selectEntityToSpawnItemAbove`.
+    let list = if r.next_bool() { mobs } else { players };
+    let (from, height) = match list.len() {
+        0 => return None,
+        1 => list[0],
+        n => list[r.next_int_bounded(n as i32) as usize],
+    };
+    // `calculatePositionAbove`.
+    let to = Vec3::new(from.x, from.y + (height + 2.0 + r.next_int_bounded(4) as f32) as f64, from.z);
+    let hit = crate::clip::traverse_blocks(from, to, |p| {
+        let s = level.block(p);
+        let (shape, _) = crate::collision::collision_shape(s, p, &crate::collision::CollisionContext::EMPTY);
+        crate::clip::shape_clips(&shape, from, to, p).then_some(p)
+    })
+    .unwrap_or_else(|| BlockPos::containing(to.x, to.y, to.z));
+    let below = center(hit) - Vec3::new(0.0, 1.0, 0.0);
+    let check = BlockPos::containing(below.x, below.y, below.z);
+    let (shape, _) = crate::collision::collision_shape(level.block(check), check, &crate::collision::CollisionContext::EMPTY);
+    if !shape.is_empty() {
+        return None;
+    }
+    Some(below)
 }
 
 fn center(pos: BlockPos) -> Vec3 {

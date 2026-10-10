@@ -48,11 +48,13 @@ pub struct InsideCollector {
     after: [Vec<Action>; 5],
     effects: Vec<Effect>,
     last_step: i32,
+    /// Hurts of a mob that is mid-tick (its data is out of the entity): the mob applies them itself, in order.
+    pub deferred: Vec<Action>,
 }
 
 impl Default for InsideCollector {
     fn default() -> Self {
-        InsideCollector { in_step: 0, before: Default::default(), after: Default::default(), effects: Vec::new(), last_step: -1 }
+        InsideCollector { in_step: 0, before: Default::default(), after: Default::default(), effects: Vec::new(), last_step: -1, deferred: Vec::new() }
     }
 }
 
@@ -210,6 +212,8 @@ impl Entity {
 
     fn apply_action(&mut self, level: &mut dyn EntityLevel, a: Action) {
         match a {
+            // (A mob mid-tick cannot take damage here: its own tick does, `crate::mob::apply_deferred_hurts`.)
+            Action::FireHurt(_) | Action::LavaHurt if matches!(self.kind, EntityKind::MobTicking { .. }) => self.inside.deferred.push(a),
             Action::FireHurt(damage) => {
                 self.hurt(level, DamageKind::InFire, damage, None);
             }
@@ -219,6 +223,14 @@ impl Entity {
                     level.destroy_block(pos, false);
                 }
             }
+        }
+    }
+
+    /// The burn sound of `Entity.lavaHurt` after a hurt that went through.
+    pub fn lava_hurt_sound(&mut self, level: &mut dyn EntityLevel) {
+        if self.should_play_lava_hurt_sound() && !self.silent {
+            let pitch = 2.0 + self.random.next_float() * 0.4;
+            level.emit(Event::Sound { pos: self.position(), sound: "minecraft:entity.generic.burn", source: "neutral", volume: 0.4, pitch });
         }
     }
 

@@ -1354,6 +1354,7 @@ dependencies = [
 name = "kiln-worldgen"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "flate2",
  "kiln-blocks",
  "kiln-data",

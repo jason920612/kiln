@@ -105,6 +105,14 @@ public class InteractVectors {
         boolean tickLevel;
         // wp49: the living mobs around are recorded.
         boolean watchMobs;
+        // wp50: the cushions tick once after every step (the replay's level does), `tick_cushions` ticks them that many times.
+        boolean tickCushions;
+        // wp50: the player's position and the teleports sent are recorded after every step (and the connection's last good position is the start).
+        boolean watchMove;
+        // wp50: sound pitches are not recorded (an entity's voice pitch comes from its own random).
+        boolean noPitch;
+        // wp50: structure templates (by id) recorded after every step.
+        List<String> templates = new ArrayList<>();
         // wp49: commands the replay runs together with the first step (after the level has settled), not before it
         // (a hive ages while the replay's level ticks; the recorded one stands still).
         List<String> late = new ArrayList<>();
@@ -130,6 +138,16 @@ public class InteractVectors {
 
         Case watch(int x, int y, int z) {
             watch.add(new int[] {x, y, z});
+            return this;
+        }
+
+        Case watchBox(int x0, int y0, int z0, int x1, int y1, int z1) {
+            for (int y = y0; y <= y1; y++) for (int z = z0; z <= z1; z++) for (int x = x0; x <= x1; x++) watch(x, y, z);
+            return this;
+        }
+
+        Case template(String id) {
+            templates.add(id);
             return this;
         }
 
@@ -167,6 +185,11 @@ public class InteractVectors {
         /** wp49: maps are recorded (their data and packets) and every step is followed by a tick of the player's maps. */
         Case maps() {
             watchMaps = true;
+            return this;
+        }
+
+        Case moves() {
+            watchMove = true;
             return this;
         }
 
@@ -409,6 +432,869 @@ public class InteractVectors {
     }
 
     /** `use_on` with a chosen cursor (the hit position inside the block). */
+    // ---------------------------------------------------------------- wp50: banners (placing, breaking) and the cauldron's washing
+
+    static ItemStack parsed(String text) {
+        try {
+            var parser = new net.minecraft.commands.arguments.item.ItemParser(server.registryAccess());
+            var input = parser.parse(new com.mojang.brigadier.StringReader(text));
+            return new ItemStack(input.item(), 1, input.components());
+        } catch (Exception e) {
+            throw new RuntimeException(text + ": " + e.getMessage(), e);
+        }
+    }
+
+    static final String LAYERS = "banner_patterns=[{pattern:\"minecraft:stripe_downright\",color:\"red\"},{pattern:\"minecraft:circle\",color:\"blue\"},{pattern:\"minecraft:border\",color:\"black\"}]";
+
+    static void banners50(List<Case> out) {
+        Case c;
+        // ---- placing: a standing banner on the stone, a wall banner on its side; the block entity carries the layers, name and the rest.
+        for (String[] b : new String[][] {
+                {"plain", "minecraft:white_banner"},
+                {"layers", "minecraft:red_banner[" + LAYERS + "]"},
+                {"one_layer", "minecraft:blue_banner[banner_patterns=[{pattern:\"minecraft:skull\",color:\"white\"}]]"},
+                {"named", "minecraft:green_banner[custom_name='\"Flag\"']"},
+                {"lore", "minecraft:black_banner[lore=['\"x\"'],rarity=epic]"},
+                {"everything", "minecraft:yellow_banner[" + LAYERS + ",custom_name='\"Pennant\"',lore=['\"y\"']]"},
+                {"ominous", "minecraft:white_banner[banner_patterns=[{pattern:\"minecraft:rhombus\",color:\"cyan\"},{pattern:\"minecraft:stripe_bottom\",color:\"brown\"}],tooltip_display={hidden_components:[\"minecraft:banner_patterns\"]},item_name='{translate:\"block.minecraft.ominous_banner\"}']"}}) {
+            c = blockCase("banner50_place_" + b[0], "minecraft:air");
+            c.slot("h0", parsed(b[1])).stat(b[1].substring(0, b[1].indexOf('[') < 0 ? b[1].length() : b[1].indexOf('[')));
+            c.step(useOn(2, 99, 0, 1, 0));
+            out.add(c);
+            c = blockCase("banner50_wall_" + b[0], "minecraft:stone").watch(1, 100, 0);
+            c.slot("h0", parsed(b[1])).stat(b[1].substring(0, b[1].indexOf('[') < 0 ? b[1].length() : b[1].indexOf('[')));
+            c.step(useOn(2, 100, 0, 4, 0));
+            out.add(c);
+        }
+        c = blockCase("banner50_place_creative", "minecraft:air");
+        c.gameMode = "creative";
+        c.slot("h0", parsed("minecraft:red_banner[" + LAYERS + "]"));
+        c.step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = blockCase("banner50_place_stack", "minecraft:air");
+        ItemStack three = parsed("minecraft:red_banner[" + LAYERS + "]");
+        three.setCount(3);
+        c.slot("h0", three).stat("minecraft:red_banner");
+        c.step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        // ---- breaking (`/setblock ... destroy`): the dropped banner keeps the layers and the name.
+        String nbt = "{patterns:[{color:\"red\",pattern:\"minecraft:stripe_downright\"},{color:\"blue\",pattern:\"minecraft:circle\"}],CustomName:'\"Flag\"'}";
+        for (String block : new String[] {"minecraft:white_banner[rotation=4]", "minecraft:orange_wall_banner[facing=east]"}) {
+            c = blockCase("banner50_break_" + block.substring(10, block.indexOf('[')), block + nbt);
+            c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:air destroy"));
+            out.add(c);
+        }
+        c = blockCase("banner50_break_plain", "minecraft:white_banner[rotation=4]");
+        c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:air destroy"));
+        out.add(c);
+    }
+
+    /** wp50: a cushion case: the cushions around are recorded after every step. */
+    static Case cushionCase(String name) {
+        return new Case("cushion50_" + name).hanging();
+    }
+
+    static final String[] DYES = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"};
+
+    static void cushions50(List<Case> out) {
+        Case c;
+        // ---- putting one down on the top of a stone block (2, 99, 0): every color, a few clicks, the way the player faces
+        for (String color : DYES) {
+            c = cushionCase("place_" + color).stat("minecraft:" + color + "_cushion");
+            c.cmd("setblock 2 99 0 minecraft:stone");
+            c.slot("h0", stack("minecraft:" + color + "_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+            out.add(c);
+        }
+        float[] yaws = {0f, 45f, 90f, 135f, 180f, -135f, -90f, -45f, 22f, 359f, 720f};
+        for (float yaw : yaws) {
+            c = cushionCase("yaw_" + (int) yaw).stat("minecraft:red_cushion");
+            c.yaw = yaw;
+            c.cmd("setblock 2 99 0 minecraft:stone");
+            c.slot("h0", stack("minecraft:red_cushion", 1)).step(useOnAt(2, 99, 0, 1, 0, 0.125, 1.0, 0.875));
+            out.add(c);
+        }
+        c = cushionCase("place_twice").stat("minecraft:blue_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:blue_cushion", 5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(2, 99, 0, 1, 0, 0.25, 1.0, 0.25));
+        out.add(c);
+        c = cushionCase("place_beside").stat("minecraft:blue_cushion");
+        c.cmd("fill 2 99 0 3 99 1 minecraft:stone");
+        c.slot("h0", stack("minecraft:blue_cushion", 5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(3, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(2, 99, 1, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
+        c = cushionCase("place_overlapping_heights").stat("minecraft:blue_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone");
+        // (The second click is lower in the same cell: the boxes overlap.)
+        c.slot("h0", stack("minecraft:blue_cushion", 5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 0.875, 0.5));
+        out.add(c);
+        for (String mode : new String[] {"creative", "adventure"}) {
+            c = cushionCase("place_" + mode).stat("minecraft:green_cushion");
+            c.gameMode = mode;
+            c.cmd("setblock 2 99 0 minecraft:stone");
+            c.slot("h0", stack("minecraft:green_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+            out.add(c);
+        }
+        c = cushionCase("place_offhand").stat("minecraft:green_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone");
+        c.slot("offhand", stack("minecraft:green_cushion", 2)).step(useOnAt(2, 99, 0, 1, 1, 0.5, 1.0, 0.5));
+        out.add(c);
+        c = cushionCase("place_named").stat("minecraft:green_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone");
+        c.slot("h0", parsed("minecraft:green_cushion[custom_name='\"Seat\"']")).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5))
+                .step(attackEntity(2.5, 100.0, 0.5));
+        out.add(c);
+        // ---- the other faces, and a block over the place
+        for (int face : new int[] {0, 2, 3, 4, 5}) {
+            c = cushionCase("face_" + face).stat("minecraft:red_cushion");
+            c.cmd("setblock 2 99 0 minecraft:stone");
+            c.slot("h0", stack("minecraft:red_cushion", 2)).step(useOnAt(2, 99, 0, face, 0, 0.5, 0.5, 0.5));
+            out.add(c);
+        }
+        c = cushionCase("blocked_above").stat("minecraft:red_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:red_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
+        c = cushionCase("blocked_above_glass").stat("minecraft:red_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:glass");
+        c.slot("h0", stack("minecraft:red_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
+        c = cushionCase("click_inside_stone").stat("minecraft:red_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:red_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 0.5, 0.5));
+        out.add(c);
+        c = cushionCase("click_in_the_air").stat("minecraft:red_cushion");
+        c.cmd("setblock 2 99 0 minecraft:white_carpet");
+        c.slot("h0", stack("minecraft:red_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
+        // ---- on all sorts of blocks: [block, click height]
+        String[][] grounds = {
+                {"carpet", "minecraft:white_carpet", "0.0625"},
+                {"slab_bottom", "minecraft:stone_slab[type=bottom]", "0.5"},
+                {"slab_top", "minecraft:stone_slab[type=top]", "1.0"},
+                {"slab_double", "minecraft:stone_slab[type=double]", "1.0"},
+                {"stairs", "minecraft:oak_stairs[facing=east,half=bottom,shape=straight]", "1.0"},
+                {"stairs_low", "minecraft:oak_stairs[facing=east,half=bottom,shape=straight]", "0.5"},
+                {"stairs_top", "minecraft:oak_stairs[facing=east,half=top,shape=straight]", "1.0"},
+                {"snow_1", "minecraft:snow[layers=1]", "0.125"},
+                {"snow_2", "minecraft:snow[layers=2]", "0.25"},
+                {"snow_8", "minecraft:snow[layers=8]", "1.0"},
+                {"grass", "minecraft:short_grass", "0.5"},
+                {"tall_grass", "minecraft:tall_grass[half=lower]", "0.875"},
+                {"farmland", "minecraft:farmland[moisture=0]", "0.9375"},
+                {"soul_sand", "minecraft:soul_sand", "0.875"},
+                {"path", "minecraft:dirt_path", "0.9375"},
+                {"honey", "minecraft:honey_block", "0.9375"},
+                {"fence", "minecraft:oak_fence", "1.5"},
+                {"wall", "minecraft:cobblestone_wall", "1.0"},
+                {"glass", "minecraft:glass", "1.0"},
+                {"leaves", "minecraft:oak_leaves", "1.0"},
+                {"ice", "minecraft:ice", "1.0"},
+                {"lily", "minecraft:lily_pad", "0.015625"},
+                {"torch", "minecraft:torch", "0.625"},
+                {"flower", "minecraft:poppy", "0.375"},
+                {"lantern", "minecraft:lantern[hanging=false]", "0.5625"},
+                {"cauldron_full_height", "minecraft:cauldron", "1.0"},
+                {"water_cauldron", "minecraft:water_cauldron[level=3]", "1.0"},
+                {"hopper", "minecraft:hopper[enabled=true,facing=down]", "1.0"},
+                {"composter", "minecraft:composter[level=3]", "1.0"},
+                {"composter_empty", "minecraft:composter[level=0]", "1.0"},
+                {"campfire", "minecraft:campfire[lit=false]", "0.4375"},
+                {"end_portal_frame", "minecraft:end_portal_frame[facing=north,eye=false]", "0.8125"},
+                {"powder_snow", "minecraft:powder_snow", "1.0"},
+                {"azalea", "minecraft:potted_poppy", "0.375"},
+                {"slime", "minecraft:slime_block", "1.0"},
+                {"cobweb", "minecraft:cobweb", "1.0"},
+                {"vine", "minecraft:vine[north=true]", "1.0"},
+                {"ladder", "minecraft:ladder[facing=north]", "1.0"},
+                {"pointed_dripstone", "minecraft:pointed_dripstone[thickness=tip,vertical_direction=up]", "0.625"},
+                {"bamboo", "minecraft:bamboo", "0.5"},
+                {"sea_pickle", "minecraft:sea_pickle[pickles=1]", "0.375"},
+                {"turtle_egg", "minecraft:turtle_egg", "0.4375"},
+                {"conduit", "minecraft:conduit", "0.8125"},
+                {"rail", "minecraft:rail", "0.125"},
+                {"pressure_plate", "minecraft:stone_pressure_plate", "0.0625"},
+                {"skull", "minecraft:skeleton_skull", "0.5"},
+                {"banner", "minecraft:white_banner", "1.0"},
+        };
+        for (String[] g : grounds) {
+            c = cushionCase("on_" + g[0]).stat("minecraft:orange_cushion");
+            c.sneaking = true;
+            c.cmd("setblock 2 98 0 " + (g[0].equals("lily") ? "minecraft:water" : g[0].equals("bamboo") ? "minecraft:dirt" : "minecraft:stone")).cmd("setblock 2 99 0 " + g[1]);
+            c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, Double.parseDouble(g[2]), 0.5));
+            out.add(c);
+        }
+        // ---- cauldrons, hoppers and composters are clicked on their collision shape: the corners and the middle
+        for (String block : new String[] {"minecraft:cauldron", "minecraft:hopper[enabled=true,facing=down]", "minecraft:composter[level=0]"}) {
+            String shortName = block.substring(10, block.contains("[") ? block.indexOf('[') : block.length());
+            double[][] clicks = {{0.5, 1.0, 0.5}, {0.125, 1.0, 0.125}, {0.875, 1.0, 0.5}, {0.5, 0.5, 0.0625}, {0.5, 0.25, 0.5}, {0.0625, 0.875, 0.9375}};
+            for (int i = 0; i < clicks.length; i++) {
+                c = cushionCase("shape_" + shortName + "_" + i).stat("minecraft:orange_cushion");
+                c.sneaking = shortName.equals("hopper");
+                c.cmd("setblock 2 99 0 " + block);
+                c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, clicks[i][0], clicks[i][1], clicks[i][2]));
+                out.add(c);
+            }
+        }
+        // the player looks down at the cauldron (the eyes at 101.62)
+        c = cushionCase("shape_cauldron_pitch").stat("minecraft:orange_cushion");
+        c.pitch = 60f;
+        c.cmd("setblock 2 99 0 minecraft:cauldron");
+        c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.25, 1.0, 0.375));
+        out.add(c);
+        // ---- places that are not air: water, lava, fire, a replaceable plant
+        for (String above : new String[] {"minecraft:water", "minecraft:lava", "minecraft:fire", "minecraft:soul_fire", "minecraft:short_grass", "minecraft:snow[layers=1]", "minecraft:snow[layers=3]", "minecraft:vine[north=true]", "minecraft:oak_sign", "minecraft:cobweb", "minecraft:campfire[lit=true]", "minecraft:torch"}) {
+            c = cushionCase("above_" + above.substring(10).replaceAll("[^a-z_]", "_")).stat("minecraft:orange_cushion");
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 " + above);
+            c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+            out.add(c);
+        }
+        // the clicked block itself is the place (a plant): the cushion sits in it
+        for (String plant : new String[] {"minecraft:short_grass", "minecraft:snow[layers=1]", "minecraft:snow[layers=2]", "minecraft:fire", "minecraft:water"}) {
+            c = cushionCase("clicked_" + plant.substring(10).replaceAll("[^a-z_]", "_")).stat("minecraft:orange_cushion");
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 " + plant);
+            c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 100, 0, 1, 0, 0.5, 0.25, 0.5));
+            out.add(c);
+        }
+        // ---- fire beside it: in the cell next to the cushion nothing happens; in its own cell it burns up
+        c = cushionCase("fire_next_to").stat("minecraft:orange_cushion");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 3 100 0 minecraft:fire");
+        c.slot("h0", stack("minecraft:orange_cushion", 2)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
+        // ---- sitting
+        for (String variant : new String[] {"plain", "sneaking", "item", "creative", "adventure", "named", "twice"}) {
+            c = cushionCase("sit_" + variant);
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"cyan\"" + (variant.equals("named") ? ",CustomName:'\"Sofa\"'" : "") + "}");
+            if (variant.equals("sneaking")) c.sneaking = true;
+            if (variant.equals("creative") || variant.equals("adventure")) c.gameMode = variant;
+            if (variant.equals("item")) c.slot("h0", stack("minecraft:stick", 3));
+            c.step(useEntity(2.5, 100.0, 0.5, 0, variant.equals("sneaking")));
+            if (variant.equals("twice")) c.step(useEntity(2.5, 100.0, 0.5, 0, false));
+            out.add(c);
+        }
+        c = cushionCase("sit_two_cushions");
+        c.cmd("fill 2 99 0 3 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"cyan\"}").cmd("summon minecraft:cushion 3.5 100 0.5 {color:\"red\"}");
+        c.step(useEntity(2.5, 100.0, 0.5, 0, false)).step(useEntity(3.5, 100.0, 0.5, 0, false));
+        out.add(c);
+        c = cushionCase("sit_low");
+        c.cmd("setblock 2 99 0 minecraft:white_carpet").cmd("summon minecraft:cushion 2.5 99.0625 0.5 {color:\"gray\"}");
+        c.step(useEntity(2.5, 99.0625, 0.5, 0, false));
+        out.add(c);
+        // ---- hitting
+        for (String variant : new String[] {"survival", "creative", "adventure"}) {
+            c = cushionCase("hit_" + variant);
+            c.gameMode = variant;
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"magenta\",CustomName:'\"Pouf\"'}");
+            c.step(attackEntity(2.5, 100.0, 0.5));
+            out.add(c);
+        }
+        c = cushionCase("hit_plain");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5");
+        c.step(attackEntity(2.5, 100.0, 0.5));
+        out.add(c);
+        c = cushionCase("hit_no_drops");
+        c.cmd("gamerule entity_drops false").cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"lime\"}");
+        c.step(attackEntity(2.5, 100.0, 0.5)).step(op("op", "command", "command", "gamerule entity_drops true"));
+        out.add(c);
+        c = cushionCase("hit_sitting");
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("summon minecraft:cushion 2.5 100 0.5 {color:\"lime\"}");
+        c.step(useEntity(2.5, 100.0, 0.5, 0, false)).step(attackEntity(2.5, 100.0, 0.5));
+        out.add(c);
+        // ---- the check every 100 ticks (the cushions are ticked by hand)
+        c = cushionCase("tick_on_stone"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"red\"}");
+        c.step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_over_air"); c.tickCushions = true;
+        c.late("summon minecraft:cushion 2.5 100 0.5 {color:\"red\",CustomName:'\"Floating\"'}");
+        c.step(op("op", "tick_cushions", "ticks", 99)).step(op("op", "tick_cushions", "ticks", 1)).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_support_broken"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "command", "command", "setblock 2 99 0 minecraft:air")).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_buried"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:stone")).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_in_fire"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:fire")).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_in_soul_fire"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:soul_sand").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:soul_fire")).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_carpet_support"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:white_carpet").late("summon minecraft:cushion 2.5 99.0625 0.5 {color:\"blue\"}");
+        c.step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_half_under"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone_slab[type=bottom]").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_saved_color"); c.tickCushions = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"nonsense\"}").late("summon minecraft:cushion 3.5 100 0.5 {color:\"purple\"}");
+        c.step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = cushionCase("tick_while_sitting"); c.tickCushions = true;
+        c.late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+        c.step(useEntity(2.5, 100.0, 0.5, 0, false)).step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+    }
+
+    /** A mannequin case: ticked after every step, the mannequins summoned at the start (age 0), no pitches. */
+    static Case mannequinCase(String name, String summon) {
+        Case c = new Case("mannequin50_" + name).hanging();
+        c.tickCushions = true;
+        c.noPitch = true;
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 3 99 0 minecraft:stone").late(summon);
+        return c;
+    }
+
+    static void mannequins50(List<Case> out) {
+        Case c;
+        String at = "summon minecraft:mannequin 2.5 100 0.5";
+        c = mannequinCase("idle", at);
+        c.step(op("op", "tick_cushions", "ticks", 5)).step(op("op", "tick_cushions", "ticks", 40));
+        out.add(c);
+        // ---- hitting: the weapon, the mode, the armor
+        String[][] weapons = {{"fist", ""}, {"stick", "minecraft:stick"}, {"sword", "minecraft:diamond_sword"}, {"axe", "minecraft:iron_axe"}, {"trident", "minecraft:trident"},
+                {"sharp", "minecraft:diamond_sword[enchantments={\"minecraft:sharpness\":5}]"}, {"fire", "minecraft:wooden_sword[enchantments={\"minecraft:fire_aspect\":2}]"},
+                {"knock", "minecraft:stick[enchantments={\"minecraft:knockback\":2}]"}, {"mace", "minecraft:mace"}};
+        for (String[] w : weapons) {
+            c = mannequinCase("hit_" + w[0], at);
+            if (!w[1].isEmpty()) c.slot("h0", parsed(w[1]));
+            c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 3));
+            out.add(c);
+        }
+        for (String mode : new String[] {"creative", "adventure"}) {
+            c = mannequinCase("hit_" + mode, at);
+            c.gameMode = mode;
+            c.slot("h0", parsed("minecraft:diamond_sword"));
+            c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 3));
+            out.add(c);
+        }
+        c = mannequinCase("hit_twice_at_once", at);
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5)).step(attackEntity(2.5, 100.5, 0.5));
+        out.add(c);
+        c = mannequinCase("hit_again_later", at);
+        c.slot("h0", parsed("minecraft:iron_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 12)).step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 12)).step(attackEntity(2.5, 100.5, 0.5));
+        out.add(c);
+        c = mannequinCase("hit_armored", "summon minecraft:mannequin 2.5 100 0.5 {equipment:{chest:{id:\"minecraft:diamond_chestplate\",count:1},head:{id:\"minecraft:iron_helmet\",count:1}}}");
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5));
+        out.add(c);
+        c = mannequinCase("hit_absorption", "summon minecraft:mannequin 2.5 100 0.5 {AbsorptionAmount:4.0f}");
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5));
+        out.add(c);
+        c = mannequinCase("hit_resistance", "summon minecraft:mannequin 2.5 100 0.5 {active_effects:[{id:\"minecraft:resistance\",amplifier:1b,duration:200}]}");
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5));
+        out.add(c);
+        // ---- dying
+        c = mannequinCase("kill", "summon minecraft:mannequin 2.5 100 0.5 {Health:3.0f,equipment:{mainhand:{id:\"minecraft:diamond\",count:1},head:{id:\"minecraft:iron_helmet\",count:1}}}");
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 10)).step(op("op", "tick_cushions", "ticks", 20));
+        out.add(c);
+        c = mannequinCase("kill_creative", "summon minecraft:mannequin 2.5 100 0.5 {Health:3.0f}");
+        c.gameMode = "creative";
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 30));
+        out.add(c);
+        c = mannequinCase("kill_named", "summon minecraft:mannequin 2.5 100 0.5 {Health:3.0f,CustomName:'\"Dummy\"'}");
+        c.slot("h0", parsed("minecraft:diamond_sword"));
+        c.step(attackEntity(2.5, 100.5, 0.5)).step(op("op", "tick_cushions", "ticks", 30));
+        out.add(c);
+        // ---- the body
+        c = mannequinCase("fall", "summon minecraft:mannequin 2.5 112 0.5");
+        c.step(op("op", "tick_cushions", "ticks", 5)).step(op("op", "tick_cushions", "ticks", 20)).step(op("op", "tick_cushions", "ticks", 20));
+        out.add(c);
+        c = mannequinCase("fall_far", "summon minecraft:mannequin 2.5 140 0.5");
+        c.step(op("op", "tick_cushions", "ticks", 40)).step(op("op", "tick_cushions", "ticks", 40));
+        out.add(c);
+        c = mannequinCase("no_gravity", "summon minecraft:mannequin 2.5 105 0.5 {NoGravity:1b}");
+        c.step(op("op", "tick_cushions", "ticks", 20));
+        out.add(c);
+        c = mannequinCase("motion", "summon minecraft:mannequin 2.5 100 0.5 {Motion:[0.3d,0.5d,0.1d]}");
+        c.step(op("op", "tick_cushions", "ticks", 10)).step(op("op", "tick_cushions", "ticks", 30));
+        out.add(c);
+        c = mannequinCase("immovable", "summon minecraft:mannequin 2.5 105 0.5 {immovable:1b,Motion:[0.3d,0.0d,0.0d]}");
+        c.step(op("op", "tick_cushions", "ticks", 10)).step(op("op", "tick_cushions", "ticks", 30));
+        out.add(c);
+        c = mannequinCase("burning", "summon minecraft:mannequin 2.5 100 0.5 {Fire:100s}");
+        c.step(op("op", "tick_cushions", "ticks", 25)).step(op("op", "tick_cushions", "ticks", 25));
+        out.add(c);
+        c = mannequinCase("lava", at);
+        c.cmd("setblock 2 99 0 minecraft:lava");
+        c.step(op("op", "tick_cushions", "ticks", 15));
+        out.add(c);
+        c = mannequinCase("water", at);
+        // (A pool closed all round: the replay's water would flow, the recorded level's does not.)
+        c.cmd("fill 1 98 -1 3 102 1 minecraft:stone").cmd("fill 2 99 0 2 101 0 minecraft:water");
+        c.step(op("op", "tick_cushions", "ticks", 30));
+        out.add(c);
+        c = mannequinCase("suffocate", "summon minecraft:mannequin 2.5 100 0.5");
+        c.cmd("setblock 2 100 0 minecraft:stone").cmd("setblock 2 101 0 minecraft:stone");
+        c.step(op("op", "tick_cushions", "ticks", 12));
+        out.add(c);
+        for (String pose : new String[] {"crouching", "swimming", "fall_flying", "sleeping"}) {
+            c = mannequinCase("pose_" + pose, "summon minecraft:mannequin 2.5 100 0.5 {pose:\"" + pose + "\"}");
+            c.step(op("op", "tick_cushions", "ticks", 5));
+            out.add(c);
+        }
+        c = mannequinCase("effects", "summon minecraft:mannequin 2.5 100 0.5 {Health:10.0f,active_effects:[{id:\"minecraft:poison\",amplifier:0b,duration:300},{id:\"minecraft:regeneration\",amplifier:1b,duration:100}]}");
+        c.step(op("op", "tick_cushions", "ticks", 50)).step(op("op", "tick_cushions", "ticks", 50));
+        out.add(c);
+        c = mannequinCase("wither", "summon minecraft:mannequin 2.5 100 0.5 {active_effects:[{id:\"minecraft:wither\",amplifier:1b,duration:300}]}");
+        c.step(op("op", "tick_cushions", "ticks", 100));
+        out.add(c);
+        c = mannequinCase("instant_damage", "summon minecraft:mannequin 2.5 100 0.5 {Health:15.0f}");
+        c.cmd("effect give @e[type=minecraft:mannequin] minecraft:instant_damage 1 1");
+        c.step(op("op", "tick_cushions", "ticks", 5));
+        out.add(c);
+        // ---- clicking: nothing reacts
+        for (String item : new String[] {"minecraft:name_tag", "minecraft:lead", "minecraft:shears", "minecraft:stick", "minecraft:diamond_chestplate", "minecraft:saddle", "minecraft:bucket", "minecraft:apple"}) {
+            c = mannequinCase("use_" + item.substring(10), at);
+            c.slot("h0", item.equals("minecraft:name_tag") ? parsed("minecraft:name_tag[custom_name='\"Bob\"']") : stack(item));
+            c.step(useEntity(2.5, 100.5, 0.5, 0, false)).step(useEntity(2.5, 100.5, 0.5, 0, true));
+            out.add(c);
+        }
+        c = mannequinCase("use_empty", at);
+        c.step(useEntity(2.5, 100.5, 0.5, 0, false));
+        out.add(c);
+        c = mannequinCase("commands", at);
+        c.step(op("op", "command", "command", "damage @e[type=minecraft:mannequin] 5 minecraft:generic")).step(op("op", "command", "command", "kill @e[type=minecraft:mannequin]"));
+        out.add(c);
+    }
+
+    // ---------------------------------------------------------------- wp50: structure blocks and jigsaw blocks
+
+    static Map<String, Object> setStructure(String update, String mode, String name, int[] off, int[] size, String mirror, String rotation, String metadata,
+            boolean ignoreEntities, boolean strict, boolean showAir, boolean showBox, double integrity, long seed) {
+        return op("op", "set_structure", "pos", List.of(2, 100, 0), "update", update, "mode", mode, "name", name,
+                "offset", List.of(off[0], off[1], off[2]), "size", List.of(size[0], size[1], size[2]), "mirror", mirror, "rotation", rotation,
+                "metadata", metadata, "ignore_entities", ignoreEntities, "strict", strict, "show_air", showAir, "show_box", showBox,
+                "integrity", integrity, "seed", seed);
+    }
+
+    /** A structure block screen's packet with the usual settings (offset (1, 0, 0), size 3x3x3). */
+    static Map<String, Object> structPacket(String update, String mode, String name) {
+        return setStructure(update, mode, name, new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L);
+    }
+
+    static Case structCase(String name, String id) {
+        Case c = new Case("structure50_" + name).hanging();
+        c.op = true;
+        c.gameMode = "creative";
+        c.cmd("fill -2 98 -6 12 98 8 minecraft:stone").cmd("fill -2 99 -6 12 106 8 minecraft:air")
+                .cmd("setblock 2 100 0 minecraft:structure_block[mode=save]");
+        c.watchBox(0, 100, -3, 7, 103, 5);
+        c.watch(2, 100, 0);
+        if (id != null) c.template(id);
+        return c;
+    }
+
+    /** The cube x 3..5, y 100..102, z 0..2 filled with all sorts of blocks. */
+    static void mixedContent(Case c) {
+        c.cmd("setblock 3 100 0 minecraft:stone")
+                .cmd("setblock 4 100 0 minecraft:oak_stairs[facing=east,half=bottom,shape=straight]")
+                .cmd("setblock 5 100 0 minecraft:chest[facing=north]{Items:[{Slot:0b,id:\"minecraft:diamond\",count:3}]}")
+                .cmd("setblock 3 100 1 minecraft:oak_sign[rotation=4]{front_text:{messages:['\"hello\"','\"\"','\"\"','\"\"']}}")
+                .cmd("setblock 4 100 1 minecraft:glass")
+                .cmd("setblock 5 100 1 minecraft:water")
+                .cmd("setblock 3 101 0 minecraft:structure_void")
+                .cmd("setblock 4 101 1 minecraft:lever[face=floor,facing=north,powered=true]")
+                .cmd("setblock 5 100 2 minecraft:stone").cmd("setblock 5 101 2 minecraft:redstone_wire[power=7]")
+                .cmd("setblock 3 102 2 minecraft:oak_fence").cmd("setblock 3 101 2 minecraft:oak_fence")
+                .cmd("setblock 4 102 0 minecraft:jigsaw[orientation=east_up]{pool:\"minecraft:empty\",name:\"minecraft:a\",target:\"minecraft:b\",joint:\"aligned\",final_state:\"minecraft:stone\",placement_priority:3,selection_priority:2}")
+                .cmd("setblock 5 102 1 minecraft:structure_block[mode=data]{metadata:\"chest\",name:\"minecraft:x\"}");
+    }
+
+    static void structures50(List<Case> out) {
+        Case c;
+        // ---- putting one down: a structure block remembers who placed it
+        for (String block : new String[] {"minecraft:structure_block", "minecraft:jigsaw", "minecraft:command_block"}) {
+            c = new Case("structure50_place_" + block.substring(10)).hanging();
+            c.op = true;
+            c.gameMode = "creative";
+            c.cmd("setblock 2 99 0 minecraft:stone").watch(2, 100, 0);
+            c.slot("h0", stack(block));
+            c.step(useOn(2, 99, 0, 1, 0));
+            out.add(c);
+        }
+        // ---- clicking: the structure block takes the click of an operator in creative mode (its screen opens), others put a block on it
+        for (String who : new String[] {"op_creative", "op_survival", "creative", "survival"}) {
+            c = new Case("structure50_click_" + who).hanging();
+            c.op = who.startsWith("op");
+            c.gameMode = who.endsWith("creative") ? "creative" : "survival";
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:structure_block[mode=save]").watch(2, 100, 0).watch(2, 101, 0);
+            c.slot("h0", stack("minecraft:cobblestone", 4)).stat("minecraft:cobblestone");
+            c.step(useOn(2, 100, 0, 1, 0));
+            out.add(c);
+            c = new Case("structure50_click_jigsaw_" + who).hanging();
+            c.op = who.startsWith("op");
+            c.gameMode = who.endsWith("creative") ? "creative" : "survival";
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:jigsaw[orientation=north_up]").watch(2, 100, 0).watch(2, 101, 0);
+            c.slot("h0", stack("minecraft:cobblestone", 4)).stat("minecraft:cobblestone");
+            c.step(useOn(2, 100, 0, 1, 0));
+            out.add(c);
+        }
+        // ---- the screen's settings
+        c = structCase("update_all", null);
+        c.step(setStructure("UPDATE_DATA", "SAVE", "wp50:house", new int[] {-3, 2, 5}, new int[] {7, 8, 9}, "LEFT_RIGHT", "CLOCKWISE_90", "meta data", false, true, true, false, 0.25, 123456789012L));
+        c.step(setStructure("UPDATE_DATA", "LOAD", "wp50:house", new int[] {1, 0, 0}, new int[] {1, 1, 1}, "FRONT_BACK", "COUNTERCLOCKWISE_90", "", true, false, false, true, 1.0, 0L));
+        c.step(setStructure("UPDATE_DATA", "CORNER", "wp50:house", new int[] {1, 0, 0}, new int[] {1, 1, 1}, "NONE", "CLOCKWISE_180", "x", true, false, false, true, 0.5, -5L));
+        c.step(setStructure("UPDATE_DATA", "DATA", "wp50:house", new int[] {0, 0, 0}, new int[] {0, 0, 0}, "NONE", "NONE", "player_spawn", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        for (String name : new String[] {"", "house", "wp50:house", "Bad Name", "a:b:c", "wp50:dir/sub/house", "WP50:upper", "wp50:ok_name.1-2"}) {
+            c = structCase("name_" + name.replaceAll("[^a-zA-Z0-9]", "_"), null);
+            c.step(structPacket("UPDATE_DATA", "SAVE", name));
+            out.add(c);
+        }
+        // a block entity that was not given its fields (made by /setblock): the defaults
+        c = structCase("defaults", null);
+        c.cmd("setblock 6 100 0 minecraft:structure_block").cmd("setblock 7 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:q\",posX:100,posY:-100,sizeX:99,sizeZ:-3,rotation:\"BAD\",mode:\"CORNER\",integrity:7.5f}");
+        c.watch(6, 100, 0).watch(7, 100, 0);
+        c.step(op("op", "command", "command", "data merge block 2 100 0 {mode:\"LOAD\",integrity:0.5f,seed:5L}"));
+        out.add(c);
+        // not an operator (or not in creative): nothing happens
+        for (String who : new String[] {"survival_op", "creative_not_op"}) {
+            c = structCase("denied_" + who, "wp50:denied");
+            c.op = who.equals("survival_op");
+            c.gameMode = who.equals("survival_op") ? "survival" : "creative";
+            mixedContent(c);
+            c.step(structPacket("UPDATE_DATA", "SAVE", "wp50:denied")).step(structPacket("SAVE_AREA", "SAVE", "wp50:denied"));
+            out.add(c);
+        }
+        // ---- saving an area
+        c = structCase("save_mixed", "wp50:mixed");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:mixed"));
+        out.add(c);
+        c = structCase("save_mixed_entities_flag", "wp50:mixed2");
+        mixedContent(c);
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp50:mixed2", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("save_air", "wp50:air");
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:air"));
+        out.add(c);
+        c = structCase("save_one_block", "wp50:one");
+        c.cmd("setblock 3 100 0 minecraft:diamond_block");
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp50:one", new int[] {1, 0, 0}, new int[] {1, 1, 1}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("save_size_zero", "wp50:zero");
+        c.cmd("setblock 3 100 0 minecraft:diamond_block");
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp50:zero", new int[] {1, 0, 0}, new int[] {0, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("save_negative_offset", "wp50:neg");
+        c.cmd("fill -1 100 -2 1 101 0 minecraft:cobblestone");
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp50:neg", new int[] {-3, 0, -2}, new int[] {3, 2, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("save_twice", "wp50:twice");
+        c.cmd("setblock 3 100 0 minecraft:stone");
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:twice")).step(op("op", "command", "command", "setblock 4 100 0 minecraft:gold_block")).step(structPacket("SAVE_AREA", "SAVE", "wp50:twice"));
+        out.add(c);
+        c = structCase("save_no_name", null);
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", ""));
+        out.add(c);
+        c = structCase("save_in_load_mode", "wp50:wrongmode");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "LOAD", "wp50:wrongmode"));
+        out.add(c);
+        c = structCase("save_big", "wp50:big");
+        c.cmd("fill 3 100 0 20 120 20 minecraft:copper_block hollow");
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp50:big", new int[] {1, 0, 0}, new int[] {20, 20, 20}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("save_blocks_with_entities", "wp50:bes");
+        c.cmd("setblock 3 100 0 minecraft:barrel[facing=up]{Items:[{Slot:3b,id:\"minecraft:apple\",count:5},{Slot:4b,id:\"minecraft:stick\",count:1}],CustomName:'\"Box\"'}")
+                .cmd("setblock 4 100 0 minecraft:furnace[facing=south,lit=false]{BurnTime:10s}")
+                .cmd("setblock 5 100 0 minecraft:spawner{SpawnData:{entity:{id:\"minecraft:pig\"}}}")
+                .cmd("setblock 3 100 1 minecraft:white_banner[rotation=3]{patterns:[{color:\"red\",pattern:\"minecraft:stripe_top\"}]}")
+                .cmd("setblock 4 100 1 minecraft:player_head[rotation=2]")
+                .cmd("setblock 5 100 1 minecraft:command_block[facing=north]{Command:\"say hi\"}")
+                .cmd("setblock 3 100 2 minecraft:lectern[facing=west]")
+                .cmd("setblock 4 100 2 minecraft:bell[attachment=floor,facing=north]")
+                .cmd("setblock 5 100 2 minecraft:decorated_pot");
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:bes"));
+        out.add(c);
+        // ---- loading an area it saved (cleared in between)
+        String[][] places = {
+                {"same", "NONE", "NONE"}, {"rot90", "NONE", "CLOCKWISE_90"}, {"rot180", "NONE", "CLOCKWISE_180"}, {"rot270", "NONE", "COUNTERCLOCKWISE_90"},
+                {"mirror_lr", "LEFT_RIGHT", "NONE"}, {"mirror_fb", "FRONT_BACK", "NONE"}, {"mirror_lr_rot90", "LEFT_RIGHT", "CLOCKWISE_90"}, {"mirror_fb_rot270", "FRONT_BACK", "COUNTERCLOCKWISE_90"}};
+        for (String[] pl : places) {
+            c = structCase("load_" + pl[0], "wp50:l_" + pl[0]);
+            mixedContent(c);
+            c.step(structPacket("SAVE_AREA", "SAVE", "wp50:l_" + pl[0]));
+            c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+            c.step(setStructure("LOAD_AREA", "LOAD", "wp50:l_" + pl[0], new int[] {1, 0, 0}, new int[] {3, 3, 3}, pl[1], pl[2], "", true, false, false, true, 1.0, 0L));
+            out.add(c);
+        }
+        c = structCase("load_other_offset", "wp50:off");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:off"));
+        c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:off", new int[] {2, 1, 2}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_over_blocks", "wp50:over");
+        c.cmd("setblock 3 100 0 minecraft:stone").cmd("setblock 4 101 1 minecraft:oak_planks");
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:over"));
+        c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:obsidian"));
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:over", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        for (double integrity : new double[] {0.0, 0.3, 0.5, 0.9}) {
+            for (long seed : new long[] {42L, -7L, 9999999999L}) {
+                c = structCase("load_integrity_" + (int) (integrity * 10) + "_" + seed, "wp50:i" + (int) (integrity * 10) + "s" + Math.abs(seed));
+                c.cmd("fill 3 100 0 5 102 2 minecraft:bricks");
+                c.step(structPacket("SAVE_AREA", "SAVE", "wp50:i" + (int) (integrity * 10) + "s" + Math.abs(seed)));
+                c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+                c.step(setStructure("LOAD_AREA", "LOAD", "wp50:i" + (int) (integrity * 10) + "s" + Math.abs(seed), new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, integrity, seed));
+                out.add(c);
+            }
+        }
+        c = structCase("load_strict", "wp50:strict");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:strict"));
+        c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:strict", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, true, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_not_found", null);
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:nowhere", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_wrong_mode", "wp50:lm");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:lm"));
+        c.step(setStructure("LOAD_AREA", "DATA", "wp50:lm", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_other_size", "wp50:size");
+        mixedContent(c);
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:size"));
+        c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:size", new int[] {1, 0, 0}, new int[] {5, 1, 2}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp50:size", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_vanilla_template", "minecraft:igloo/top");
+        c.step(setStructure("LOAD_AREA", "LOAD", "minecraft:igloo/top", new int[] {1, 0, 0}, new int[] {7, 5, 8}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        c.step(setStructure("LOAD_AREA", "LOAD", "minecraft:igloo/top", new int[] {1, 0, 0}, new int[] {7, 5, 8}, "NONE", "CLOCKWISE_90", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        c = structCase("load_updates_data", "minecraft:igloo/top");
+        c.step(op("op", "command", "command", "data merge block 2 100 0 {mode:\"LOAD\",name:\"minecraft:igloo/top\"}"));
+        c.step(setStructure("LOAD_AREA", "LOAD", "minecraft:igloo/top", new int[] {1, 0, 0}, new int[] {1, 1, 1}, "NONE", "NONE", "", true, false, false, true, 1.0, 0L));
+        out.add(c);
+        // ---- scanning for corners
+        for (String variant : new String[] {"two", "one", "three", "none", "other_name", "far", "flat", "mode_load", "inverted"}) {
+            c = structCase("scan_" + variant, null);
+            c.cmd("setblock 2 100 0 minecraft:structure_block[mode=save]{name:\"wp50:scan\"}");
+            switch (variant) {
+                case "two" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 7 104 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "one" -> c.cmd("setblock 6 103 4 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "three" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 7 104 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}")
+                        .cmd("setblock 9 101 -3 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "other_name" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:other\"}").cmd("setblock 7 104 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "far" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 90 104 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "flat" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 7 100 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "mode_load" -> c.cmd("setblock 3 100 0 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 7 104 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                case "inverted" -> c.cmd("setblock -1 104 -3 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}").cmd("setblock 7 100 5 minecraft:structure_block[mode=corner]{name:\"wp50:scan\"}");
+                default -> { }
+            }
+            c.step(structPacket("SCAN_AREA", variant.equals("mode_load") ? "LOAD" : "SAVE", "wp50:scan"));
+            out.add(c);
+        }
+        // ---- redstone: save when powered, load when powered, unload a corner
+        for (String mode : new String[] {"SAVE", "LOAD", "CORNER", "DATA"}) {
+            c = structCase("power_" + mode.toLowerCase(), "wp50:p_" + mode.toLowerCase());
+            mixedContent(c);
+            c.step(structPacket("UPDATE_DATA", "SAVE", "wp50:p_" + mode.toLowerCase()));
+            c.step(structPacket("SAVE_AREA", "SAVE", "wp50:p_" + mode.toLowerCase()));
+            c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+            c.step(structPacket("UPDATE_DATA", mode, "wp50:p_" + mode.toLowerCase()));
+            c.step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"));
+            c.step(op("op", "command", "command", "fill 3 100 0 5 102 2 minecraft:air"));
+            c.step(op("op", "command", "command", "setblock 2 101 0 minecraft:air"));
+            c.step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"));
+            out.add(c);
+        }
+        c = structCase("power_save_new_content", "wp50:p_new");
+        c.cmd("setblock 3 100 0 minecraft:stone");
+        c.step(structPacket("UPDATE_DATA", "SAVE", "wp50:p_new"));
+        c.step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block")).step(op("op", "command", "command", "setblock 3 100 0 minecraft:gold_block"))
+                .step(op("op", "command", "command", "setblock 2 101 0 minecraft:air")).step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"));
+        out.add(c);
+        c = structCase("power_load_missing", null);
+        c.step(structPacket("UPDATE_DATA", "LOAD", "wp50:missing")).step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"));
+        out.add(c);
+        c = structCase("power_by_item", "wp50:p_item");
+        c.cmd("setblock 3 100 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:redstone_block"));
+        c.step(structPacket("UPDATE_DATA", "SAVE", "wp50:p_item")).step(useOn(2, 100, 0, 5, 0));
+        out.add(c);
+        c = structCase("power_corner_unload", "wp50:p_corner");
+        c.cmd("setblock 3 100 0 minecraft:stone");
+        c.step(structPacket("SAVE_AREA", "SAVE", "wp50:p_corner"))
+                .step(structPacket("UPDATE_DATA", "CORNER", "wp50:p_corner")).step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"))
+                .step(structPacket("UPDATE_DATA", "LOAD", "wp50:p_corner")).step(op("op", "command", "command", "setblock 2 101 0 minecraft:air")).step(op("op", "command", "command", "setblock 2 101 0 minecraft:redstone_block"));
+        out.add(c);
+        // ---- jigsaw blocks
+        String[][] jigsaws = {
+                {"all", "minecraft:a", "minecraft:b", "minecraft:village/plains/houses", "minecraft:stone", "ALIGNED", "5", "-3"},
+                {"rollable", "minecraft:door", "minecraft:door", "minecraft:empty", "minecraft:air", "ROLLABLE", "0", "0"},
+                {"namespaced", "wp50:x/y", "wp50:z", "wp50:pool/sub", "minecraft:oak_stairs[facing=east]", "ALIGNED", "100", "100"},
+                {"bad_state", "minecraft:a", "minecraft:b", "minecraft:empty", "not a block state", "ROLLABLE", "1", "1"},
+                {"long_state", "minecraft:a", "minecraft:b", "minecraft:empty", "x".repeat(300), "ROLLABLE", "1", "1"}};
+        for (String[] j : jigsaws) {
+            c = new Case("structure50_jigsaw_" + j[0]).hanging();
+            c.op = true;
+            c.gameMode = "creative";
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:jigsaw[orientation=up_north]").watch(2, 100, 0);
+            c.step(op("op", "set_jigsaw", "pos", List.of(2, 100, 0), "name", j[1], "target", j[2], "pool", j[3], "final_state", j[4], "joint", j[5], "selection", Integer.parseInt(j[6]), "placement", Integer.parseInt(j[7])));
+            out.add(c);
+        }
+        for (String who : new String[] {"survival", "creative_not_op"}) {
+            c = new Case("structure50_jigsaw_denied_" + who).hanging();
+            c.op = who.equals("survival");
+            c.gameMode = who.equals("survival") ? "survival" : "creative";
+            c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 minecraft:jigsaw[orientation=up_north]").watch(2, 100, 0);
+            c.step(op("op", "set_jigsaw", "pos", List.of(2, 100, 0), "name", "minecraft:a", "target", "minecraft:b", "pool", "minecraft:empty", "final_state", "minecraft:air", "joint", "ROLLABLE", "selection", 0, "placement", 0));
+            out.add(c);
+        }
+        c = new Case("structure50_jigsaw_wrong_block").hanging();
+        c.op = true;
+        c.gameMode = "creative";
+        c.cmd("setblock 2 100 0 minecraft:stone").watch(2, 100, 0);
+        c.step(op("op", "set_jigsaw", "pos", List.of(2, 100, 0), "name", "minecraft:a", "target", "minecraft:b", "pool", "minecraft:empty", "final_state", "minecraft:air", "joint", "ROLLABLE", "selection", 0, "placement", 0));
+        out.add(c);
+        c = new Case("structure50_jigsaw_defaults").hanging();
+        c.op = true;
+        c.gameMode = "creative";
+        c.cmd("setblock 2 100 0 minecraft:jigsaw[orientation=north_up]").cmd("setblock 3 100 0 minecraft:jigsaw[orientation=up_east]").cmd("setblock 4 100 0 minecraft:jigsaw[orientation=east_up]{joint:\"bad\",pool:\"bad pool\",placement_priority:\"x\"}")
+                .watch(2, 100, 0).watch(3, 100, 0).watch(4, 100, 0);
+        c.step(op("op", "command", "command", "data merge block 2 100 0 {name:\"minecraft:set\"}"));
+        out.add(c);
+    }
+
+    // ---------------------------------------------------------------- wp50: "moved wrongly"
+
+    static Map<String, Object> move(double x, double y, double z, boolean onGround) {
+        return op("op", "move", "to", List.of(x, y, z), "on_ground", onGround, "hcol", false);
+    }
+
+    /** A flat floor of stone at y = 98 over x = -4..12 (z = -6..8) with air above, the player standing at (3.5, 99, 0.5). */
+    static Case moveCase(String name, String mode, boolean sneaking) {
+        Case c = new Case("moves50_" + name).moves();
+        c.gameMode = mode;
+        c.sneaking = sneaking;
+        c.pos = new double[] {3.5, 99.0, 0.5};
+        c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air");
+        return c;
+    }
+
+    static void moves50(List<Case> out) {
+        Case c;
+        // ---- plain moves are taken as they come
+        for (double d : new double[] {0.0, 0.1, 0.25, 0.9}) {
+            c = moveCase("walk_" + (int) (d * 100), "survival", false);
+            c.step(move(3.5 + d, 99.0, 0.5, true));
+            out.add(c);
+        }
+        c = moveCase("jump", "survival", false);
+        c.step(move(3.5, 99.4, 0.5, false)).step(op("op", "accept_teleport"));
+        out.add(c);
+        c = moveCase("fall_through_floor", "survival", false);
+        c.step(move(3.5, 97.6, 0.5, false));
+        out.add(c);
+        c = moveCase("into_wall", "survival", false);
+        c.cmd("fill 4 99 -2 4 101 2 minecraft:stone");
+        c.step(move(4.0, 99.0, 0.5, true));
+        out.add(c);
+        c = moveCase("up_a_step", "survival", false);
+        c.cmd("setblock 4 99 0 minecraft:stone");
+        c.step(move(4.2, 100.0, 0.5, true));
+        out.add(c);
+        c = moveCase("up_a_step_too_high", "survival", false);
+        c.cmd("fill 4 99 0 4 100 0 minecraft:stone");
+        c.step(move(4.2, 101.0, 0.5, true));
+        out.add(c);
+        // ---- a sneaking player does not walk off an edge: the server's body stays and the client's claim is wrong beyond a quarter block
+        for (String mode : new String[] {"survival", "creative", "spectator", "adventure"}) {
+            for (double d : new double[] {0.5, 0.9, 1.05, 1.4}) {
+                c = moveCase("edge_" + mode + "_" + (int) (d * 100), mode, true);
+                c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
+                c.step(move(3.5 + d, 99.0, 0.5, true));
+                out.add(c);
+            }
+        }
+        c = moveCase("edge_not_sneaking", "survival", false);
+        c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
+        c.step(move(4.9, 99.0, 0.5, false));
+        out.add(c);
+        // ---- a teleport waits for its answer: moves before it are not heard
+        c = moveCase("edge_then_walk", "survival", true);
+        c.cmd("fill 4 98 -6 12 98 8 minecraft:air");
+        c.step(move(4.9, 99.0, 0.5, true)).step(move(3.6, 99.0, 0.5, true)).step(op("op", "accept_teleport")).step(move(3.6, 99.0, 0.5, true));
+        out.add(c);
+    }
+
+    static void cauldrons50(List<Case> out) {
+        Case c;
+        String[] customs = {"minecraft:fill_cauldron", "minecraft:use_cauldron", "minecraft:clean_armor", "minecraft:clean_banner", "minecraft:clean_shulker_box"};
+        List<String[]> held = new ArrayList<>(List.of(
+                new String[] {"empty_hand", ""},
+                new String[] {"bucket", "minecraft:bucket"},
+                new String[] {"water_bucket", "minecraft:water_bucket"},
+                new String[] {"lava_bucket", "minecraft:lava_bucket"},
+                new String[] {"powder_snow_bucket", "minecraft:powder_snow_bucket"},
+                new String[] {"glass_bottle", "minecraft:glass_bottle"},
+                new String[] {"water_bottle", "minecraft:potion[potion_contents={potion:\"minecraft:water\"}]"},
+                new String[] {"healing_potion", "minecraft:potion[potion_contents={potion:\"minecraft:healing\"}]"},
+                new String[] {"leather_dyed", "minecraft:leather_chestplate[dyed_color=16711680]"},
+                new String[] {"leather_plain", "minecraft:leather_chestplate"},
+                new String[] {"leather_horse_armor_dyed", "minecraft:leather_horse_armor[dyed_color=255]"},
+                new String[] {"red_shulker", "minecraft:red_shulker_box"},
+                new String[] {"plain_shulker", "minecraft:shulker_box"},
+                new String[] {"banner_layers", "minecraft:red_banner[" + LAYERS + "]"},
+                new String[] {"banner_one", "minecraft:blue_banner[banner_patterns=[{pattern:\"minecraft:skull\",color:\"white\"}]]"},
+                new String[] {"banner_plain", "minecraft:white_banner"},
+                new String[] {"banner_stack", "minecraft:red_banner[" + LAYERS + "]"},
+                new String[] {"tipped_arrow", "minecraft:tipped_arrow[potion_contents={potion:\"minecraft:healing\"}]"},
+                new String[] {"stone", "minecraft:stone"}));
+        for (String[] cauldron : new String[][] {
+                {"empty", "minecraft:cauldron"}, {"water1", "minecraft:water_cauldron[level=1]"}, {"water2", "minecraft:water_cauldron[level=2]"},
+                {"water3", "minecraft:water_cauldron[level=3]"}, {"lava", "minecraft:lava_cauldron"}, {"snow1", "minecraft:powder_snow_cauldron[level=1]"},
+                {"snow3", "minecraft:powder_snow_cauldron[level=3]"}}) {
+            for (String[] h : held) {
+                for (boolean creative : new boolean[] {false, true}) {
+                    if (creative && !(h[0].equals("bucket") || h[0].equals("water_bucket") || h[0].equals("glass_bottle") || h[0].equals("banner_layers") || h[0].equals("water_bottle"))) continue;
+                    c = blockCase("cauldron50_" + cauldron[0] + "_" + h[0] + (creative ? "_creative" : ""), cauldron[1]);
+                    if (creative) c.gameMode = "creative";
+                    if (!h[1].isEmpty()) {
+                        ItemStack s = parsed(h[1]);
+                        if (h[0].equals("banner_stack")) s.setCount(3);
+                        c.slot("h0", s);
+                        c.stat(h[1].contains("[") ? h[1].substring(0, h[1].indexOf('[')) : h[1]);
+                    }
+                    for (String custom : customs) c.custom(custom);
+                    c.step(useOn(2, 100, 0, 1, 0));
+                    out.add(c);
+                }
+            }
+        }
+        // Rain and snow filling are server ticks (verified elsewhere); a sneaking player with an item uses the item, not the cauldron.
+        c = blockCase("cauldron50_sneaking_bucket", "minecraft:water_cauldron[level=3]");
+        c.sneaking = true;
+        c.slot("h0", stack("minecraft:bucket")).stat("minecraft:bucket");
+        for (String custom : customs) c.custom(custom);
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("cauldron50_adventure_bucket", "minecraft:water_cauldron[level=3]");
+        c.gameMode = "adventure";
+        c.slot("h0", stack("minecraft:bucket")).stat("minecraft:bucket");
+        for (String custom : customs) c.custom(custom);
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+    }
+
     static Map<String, Object> useOnAt(int x, int y, int z, int face, int hand, double cx, double cy, double cz) {
         return op("op", "use_on", "hand", hand, "pos", List.of(x, y, z), "face", face, "cursor", List.of(cx, cy, cz));
     }
@@ -2533,6 +3419,7 @@ public class InteractVectors {
         p.setDeltaMovement(Vec3.ZERO);
         p.setOnGround(true);
         p.fallDistance = 0.0;
+        if (c.watchMove) p.connection.resetPosition();
         if (c.sneaking) {
             p.setShiftKeyDown(true);
             p.setPose(Pose.CROUCHING);
@@ -2587,12 +3474,16 @@ public class InteractVectors {
     /// wp49: map packets (and the entity sounds around them) are recorded for cases that watch maps.
     static boolean recordMaps;
 
+    static int teleports;
+
     static List<Object> packets(ServerPlayer p) throws Exception {
         List<Object> out = new ArrayList<>();
         for (Object o : drain(p)) {
+            if (o instanceof net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket) teleports++;
             if (o instanceof ClientboundSoundPacket s) {
+                if (recordNoPitch && soundName(s).startsWith("minecraft:block.")) continue;
                 out.add(op("t", "sound", "name", soundName(s), "source", s.getSource().getName(),
-                        "pos", new double[] {s.getX(), s.getY(), s.getZ()}, "volume", s.getVolume(), "pitch", s.getPitch()));
+                        "pos", new double[] {s.getX(), s.getY(), s.getZ()}, "volume", s.getVolume(), "pitch", recordNoPitch ? 0.0f : s.getPitch()));
             } else if (o instanceof ClientboundOpenSignEditorPacket e) {
                 out.add(op("t", "open_sign_editor", "pos", List.of(e.pos().getX(), e.pos().getY(), e.pos().getZ()),
                         "front", e.slot() == net.minecraft.world.level.block.entity.SignTextSlot.FRONT));
@@ -2637,6 +3528,22 @@ public class InteractVectors {
         return out;
     }
 
+    /** wp50: the structure templates in the manager (the ones asked for, without making any): id to the saved NBT as hex. */
+    static Map<String, Object> templatesOf(Case c) throws Exception {
+        Map<String, Object> out = new LinkedHashMap<>();
+        Object repo = get(server.overworld().getStructureTemplateManager(), "structureRepository");
+        for (String id : c.templates) {
+            Object entry = ((Map<?, ?>) repo).get(Identifier.parse(id));
+            if (entry instanceof Optional<?> o && o.isPresent()) {
+                var t = (net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate) o.get();
+                out.put(id, nbtHex(t.save(new net.minecraft.nbt.CompoundTag())));
+            } else {
+                out.put(id, null);
+            }
+        }
+        return out;
+    }
+
     static List<Object> blocks(Case c) throws Exception {
         ServerLevel level = server.overworld();
         List<Object> out = new ArrayList<>();
@@ -2654,12 +3561,33 @@ public class InteractVectors {
         ServerLevel level = server.overworld();
         net.minecraft.world.entity.Entity best = null;
         double bd = 1e18;
-        for (var e : level.getEntities((net.minecraft.world.entity.Entity) null, new AABB(x - 2, y - 2, z - 2, x + 2, y + 2, z + 2),
-                en -> en instanceof net.minecraft.world.entity.decoration.HangingEntity || en instanceof net.minecraft.world.entity.decoration.ArmorStand)) {
+        for (var e : level.getEntities((net.minecraft.world.entity.Entity) null, new AABB(x - 8, y - 8, z - 8, x + 8, y + 8, z + 8),
+                en -> en instanceof net.minecraft.world.entity.decoration.HangingEntity || en instanceof net.minecraft.world.entity.decoration.ArmorStand || en instanceof net.minecraft.world.entity.decoration.Cushion || en instanceof net.minecraft.world.entity.decoration.Mannequin)) {
             double d = e.position().distanceToSqr(x, y, z);
             if (d < bd) { bd = d; best = e; }
         }
         return best;
+    }
+
+    /** Player.attackStrengthTicker moves on (the mock player does not tick). */
+    static void addAttackTicks(ServerPlayer p, int n) {
+        try {
+            java.lang.reflect.Field f = net.minecraft.world.entity.LivingEntity.class.getDeclaredField("attackStrengthTicker");
+            f.setAccessible(true);
+            f.setInt(p, f.getInt(p) + n);
+        } catch (ReflectiveOperationException x) {
+            throw new IllegalStateException(x);
+        }
+    }
+
+    static int invulnerableTime(net.minecraft.world.entity.Entity e) {
+        try {
+            java.lang.reflect.Field f = net.minecraft.world.entity.Entity.class.getDeclaredField("invulnerableTime");
+            f.setAccessible(true);
+            return f.getInt(e);
+        } catch (ReflectiveOperationException x) {
+            throw new IllegalStateException(x);
+        }
     }
 
     /** The hanging entities in the scenario's area, sorted: [type, x, y, z, facing, item, rotation, painting area]. */
@@ -2679,6 +3607,20 @@ public class InteractVectors {
                 if (System.getenv("INTERACT_DEBUG") != null) System.out.println("DEBUG painting " + pt.getVariant().getRegisteredName() + " " + pt.getVariant().value().width() + "x" + pt.getVariant().value().height() + " bb " + pt.getBoundingBox());
             }
             rows.add(new Object[] {type, e.getX(), e.getY(), e.getZ(), e.getDirection().get3DDataValue(), item, rot, area});
+        }
+        // wp50: mannequins: [type, x, y, z, 0, "health,pose,hurtTime,deathTime,height,invulnerableTime", 0, 0].
+        for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 60, -16, 32, 330, 32))) {
+            String state = String.format(java.util.Locale.ROOT, "%.4f,%s,%d,%d,%.4f,%d", mq.getHealth(), mq.getPose().getSerializedName(), mq.hurtTime, mq.deathTime, mq.getBbHeight(), invulnerableTime(mq));
+            rows.add(new Object[] {BuiltInRegistries.ENTITY_TYPE.getKey(mq.getType()).toString(), mq.getX(), mq.getY(), mq.getZ(), 0, state, 0, 0});
+        }
+        // wp50: cushions: [type, x, y, z, 0, color, riders, the riders' seat height in ten thousandths].
+        for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) {
+            long seat = 0;
+            if (!cu.getPassengers().isEmpty()) {
+                var rider = cu.getPassengers().get(0);
+                seat = (long) Math.floor(cu.getPassengerRidingPosition(rider).subtract(rider.getVehicleAttachmentPoint(cu)).y * 1.0e4);
+            }
+            rows.add(new Object[] {BuiltInRegistries.ENTITY_TYPE.getKey(cu.getType()).toString(), cu.getX(), cu.getY(), cu.getZ(), 0, cu.getColor().getName(), cu.getPassengers().size(), seat});
         }
         rows.sort(Comparator.comparing((Object[] r) -> (String) r[0]).thenComparingDouble(r -> (Double) r[1]).thenComparingDouble(r -> (Double) r[2]).thenComparingDouble(r -> (Double) r[3]));
         List<Object> out = new ArrayList<>();
@@ -2717,6 +3659,7 @@ public class InteractVectors {
     }
 
     static boolean mobCase;
+    static boolean recordNoPitch;
 
     static List<Object> itemEntities() {
         ServerLevel level = server.overworld();
@@ -2804,6 +3747,56 @@ public class InteractVectors {
                     var data = (net.minecraft.world.level.storage.ServerLevelData) level.getLevelData();
                     data.setGameTime(data.getGameTime() + (int) s.get("ticks"));
                 }
+            }
+            // wp50: the cushions in the area tick `ticks` times (the level itself does not tick here).
+            case "tick_cushions" -> {
+                if (c.noPitch) addAttackTicks(p, (int) s.get("ticks"));
+                for (int i = 0; i < (int) s.get("ticks"); i++) {
+                    for (var cu : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) cu.tick();
+                    for (var mq : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 60, -16, 32, 330, 32))) mq.tick();
+                }
+            }
+            // wp50: the client says it moved to a position (`ServerboundMovePlayerPacket.Pos`); the server may put it back.
+            case "move" -> {
+                @SuppressWarnings("unchecked") List<Number> to = (List<Number>) s.get("to");
+                // (The player's own tick sets the key from its input; the scenario keeps it held.)
+                if (c.sneaking) p.setShiftKeyDown(true);
+                p.connection.handleMovePlayer(new net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.Pos(to.get(0).doubleValue(), to.get(1).doubleValue(), to.get(2).doubleValue(),
+                        (boolean) s.get("on_ground"), (boolean) s.get("hcol")));
+                // (Each step is a tick of its own: the connection takes one position per tick.)
+                field(p.connection.getClass(), "receivedPositionThisTick").set(p.connection, false);
+                field(p.connection.getClass(), "knownMovePacketCount").set(p.connection, get(p.connection, "receivedMovePacketCount"));
+                field(p.connection.getClass(), "firstGoodX").set(p.connection, p.getX());
+                field(p.connection.getClass(), "firstGoodY").set(p.connection, p.getY());
+                field(p.connection.getClass(), "firstGoodZ").set(p.connection, p.getZ());
+            }
+            case "accept_teleport" -> {
+                var at = (Vec3) get(p.connection, "awaitingPositionFromClient");
+                if (at != null) p.connection.handleAcceptTeleportPacket(new net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket((int) get(p.connection, "awaitingTeleport"), at.x, at.y, at.z, p.getYRot(), p.getXRot()));
+            }
+            // wp50: the structure block screen's packet.
+            case "set_structure" -> {
+                @SuppressWarnings("unchecked") List<Integer> at = (List<Integer>) s.get("pos");
+                @SuppressWarnings("unchecked") List<Integer> off = (List<Integer>) s.get("offset");
+                @SuppressWarnings("unchecked") List<Integer> size = (List<Integer>) s.get("size");
+                p.connection.handleSetStructureBlock(new net.minecraft.network.protocol.game.ServerboundSetStructureBlockPacket(new BlockPos(at.get(0), at.get(1), at.get(2)),
+                        net.minecraft.world.level.block.entity.StructureBlockEntity.UpdateType.valueOf((String) s.get("update")),
+                        net.minecraft.world.level.block.state.properties.StructureMode.valueOf((String) s.get("mode")), (String) s.get("name"),
+                        new BlockPos(off.get(0), off.get(1), off.get(2)), new net.minecraft.core.Vec3i(size.get(0), size.get(1), size.get(2)),
+                        net.minecraft.world.level.block.Mirror.valueOf((String) s.get("mirror")), net.minecraft.world.level.block.Rotation.valueOf((String) s.get("rotation")),
+                        (String) s.get("metadata"), (boolean) s.get("ignore_entities"), (boolean) s.get("strict"), (boolean) s.get("show_air"), (boolean) s.get("show_box"),
+                        ((Number) s.get("integrity")).floatValue(), ((Number) s.get("seed")).longValue()));
+            }
+            // wp50: the jigsaw block screen's packets.
+            case "set_jigsaw" -> {
+                @SuppressWarnings("unchecked") List<Integer> at = (List<Integer>) s.get("pos");
+                p.connection.handleSetJigsawBlock(new net.minecraft.network.protocol.game.ServerboundSetJigsawBlockPacket(new BlockPos(at.get(0), at.get(1), at.get(2)),
+                        Identifier.parse((String) s.get("name")), Identifier.parse((String) s.get("target")), Identifier.parse((String) s.get("pool")), (String) s.get("final_state"),
+                        net.minecraft.world.level.block.entity.JigsawBlockEntity.JointType.valueOf((String) s.get("joint")), (int) s.get("selection"), (int) s.get("placement")));
+            }
+            case "jigsaw_generate" -> {
+                @SuppressWarnings("unchecked") List<Integer> at = (List<Integer>) s.get("pos");
+                p.connection.handleJigsawGenerate(new net.minecraft.network.protocol.game.ServerboundJigsawGeneratePacket(new BlockPos(at.get(0), at.get(1), at.get(2)), (int) s.get("levels"), (boolean) s.get("keep")));
             }
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
             // wp49: a click on a menu button (`ServerboundContainerButtonClickPacket`) of the player's open menu.
@@ -3074,16 +4067,29 @@ public class InteractVectors {
         recordMenus = c.watchMenus;
         long startClock = server.overworld().getGameTime();
         mobCase = c.watchMobs;
+        recordNoPitch = c.noPitch;
+        if (c.noPitch) addAttackTicks(p, 100);
         recordMaps = c.watchMaps;
         if (c.watchMaps) resetMaps();
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
+            if (c.tickCushions && !"tick_cushions".equals(s.get("op"))) {
+                if (c.noPitch) addAttackTicks(p, 1);
+                for (var cu : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) cu.tick();
+                for (var mq : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-16, 60, -16, 32, 330, 32))) mq.tick();
+            }
             if (c.watchMaps) mapTick(p);
             Map<String, Object> r = new LinkedHashMap<>();
             if (c.watchMaps) r.put("maps", mapsOf(p));
             r.put("inv", inventory(p));
             r.put("packets", packets(p));
+            if (c.watchMove) {
+                r.put("ppos", List.of(p.getX(), p.getY(), p.getZ()));
+                r.put("teleports", teleports);
+                teleports = 0;
+            }
             r.put("blocks", blocks(c));
+            if (!c.templates.isEmpty()) r.put("templates", templatesOf(c));
             r.put("entities", itemEntities());
             if (c.watchMobs) r.put("mobs", mobRows());
             Map<String, Object> used = new LinkedHashMap<>();
@@ -3136,6 +4142,9 @@ public class InteractVectors {
         command("kill @e[type=minecraft:item_frame]");
         command("kill @e[type=minecraft:glow_item_frame]");
         command("kill @e[type=minecraft:painting]");
+        command("kill @e[type=minecraft:cushion]");
+        command("kill @e[type=minecraft:mannequin]");
+        for (var mq : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-64, -64, -64, 64, 320, 64))) mq.discard();
         command("kill @e[type=minecraft:armor_stand]");
         command("kill @e[type=minecraft:falling_block]");
         command("kill @e[type=minecraft:item]");
@@ -3158,8 +4167,10 @@ public class InteractVectors {
         for (int[] w : c.watch) watch.add(List.of(w[0], w[1], w[2]));
         line.put("watch", watch);
         line.put("stat_items", c.statItems);
+        line.put("templates", c.templates);
         line.put("food", c.watchFood ? c.food : null);
         line.put("hanging", c.watchHanging);
+        line.put("no_pitch", c.noPitch);
         line.put("stands", c.watchStands);
         line.put("bees", c.watchBees);
         line.put("menus", c.watchMenus);
@@ -3284,6 +4295,12 @@ public class InteractVectors {
             trials49(all);
             crafters49(all);
             brushes49(all);
+            banners50(all);
+            cushions50(all);
+            mannequins50(all);
+            structures50(all);
+            moves50(all);
+            cauldrons50(all);
             commandBlocks49(all);
         }).get();
         List<Case> selected = new ArrayList<>();

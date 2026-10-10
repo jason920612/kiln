@@ -1558,6 +1558,40 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         true
     }
 
+    /// `TrialSpawnerStateData.getDispensingItems`: the table rolled with the world seed plus the low-resolution position.
+    fn trial_dispensing_items(&mut self, table: &str, pos: BlockPos) -> Vec<(kiln_item::ItemStack, i32)> {
+        let loot = self.level.env().loot.clone();
+        let (Some(loot), Some(id)) = (loot, kiln_item::ident::Identifier::parse(table)) else { return Vec::new() };
+        let low = BlockPos::new(
+            kiln_javamath::math::floor_f32(pos.x as f32 / 30.0),
+            kiln_javamath::math::floor_f32(pos.y as f32 / 20.0),
+            kiln_javamath::math::floor_f32(pos.z as f32 / 30.0),
+        );
+        let mut rng = kiln_javamath::random::LegacyRandom::new(self.level.env().seed.wrapping_add(low.as_long()));
+        loot.random_items(&id, &kiln_loot::EmptyContext, &mut rng).into_iter().map(|s| (s.with_count(1), s.count())).collect()
+    }
+
+    fn spawn_item_projectile(&mut self, stack: &kiln_item::ItemStack, origin: Vec3, at: BlockPos, _owner: i32) -> Option<i32> {
+        if !crate::projectile_item::is_projectile_item(stack.item_name()) {
+            return None;
+        }
+        let seed = self.fresh_seed();
+        let origin = [origin.x, origin.y, origin.z];
+        let mut shot = {
+            let rng = self.random();
+            crate::projectile_item::as_projectile(stack, origin, origin, [0, -1, 0], seed, rng)?
+        };
+        // `DispenseConfig.overrideDispenseEvent`.
+        if let Some(event) = shot.event {
+            self.emit(Event::LevelEvent { event, pos: at, data: 0 });
+        }
+        crate::projectile_item::shoot(&mut shot.entity, [0, -1, 0], shot.power, shot.uncertainty);
+        let id = self.next_entity_id();
+        shot.entity.id = id;
+        self.add_entity(shot.entity);
+        Some(id)
+    }
+
     fn block_light(&self, pos: BlockPos) -> i32 {
         kiln_world::light::light_at(self.level.cells(), kiln_world::chunk::LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
     }
@@ -2320,6 +2354,17 @@ fn settle(sim: &mut SimLevel, i: usize) {
     }
 }
 
+/// `Entity.removePassenger` of the vehicle at `idx`: a cushion that stays plays its get-up sound.
+fn remove_rider(sim: &mut SimLevel, idx: Option<usize>, pid: i32) {
+    let Some(j) = idx else { return };
+    let Some(mut vp) = sim.list[j].phys.take() else { return };
+    kiln_entity::ride::remove_passenger(&mut vp, pid);
+    if kiln_entity::ext_entity::cushion::is_cushion(&vp) {
+        kiln_entity::ext_entity::cushion::Cushion::passenger_left(&mut vp, sim);
+    }
+    sim.list[j].phys = Some(vp);
+}
+
 /// `Player.rideTick` for the region's riding players, after the entities ticked: a sneaking
 /// player (or one whose mount is gone or threw it off) gets off at the mount's dismount
 /// location; the others sit where the mount carries them.
@@ -2333,9 +2378,7 @@ fn ride_players(sim: &mut SimLevel) {
         // A teleport of the player's own got it off at once (`Entity.teleport`: `stopRiding`): it
         // stays where it went.
         if std::mem::take(&mut sim.players[k].dismount_on_teleport) {
-            if let Some(vp) = idx.and_then(|j| sim.list[j].phys.as_deref_mut()) {
-                kiln_entity::ride::remove_passenger(vp, pid);
-            }
+            remove_rider(sim, idx, pid);
             let p = &mut *sim.players[k];
             p.vehicle = None;
             p.vehicle_type = None;
@@ -2357,9 +2400,7 @@ fn ride_players(sim: &mut SimLevel) {
         // `stopRiding` → `dismountVehicle`.
         let mut to = sim.players[k].pos;
         if let Some(j) = idx {
-            if let Some(vp) = sim.list[j].phys.as_deref_mut() {
-                kiln_entity::ride::remove_passenger(vp, pid);
-            }
+            remove_rider(sim, Some(j), pid);
             let vp = sim.list[j].phys.clone().expect("vehicle state");
             let height = sim.players[k].dimensions().1 as f64;
             to = arr(kiln_entity::ride::dismount_location(&*sim, &vp, 0.6, height));
@@ -2786,8 +2827,13 @@ pub(crate) fn interact_mob(
     }
     // `startRiding` (`Entity.canRide`: not sneaking), then `ServerPlayer.startRiding`: the
     // rider takes the mount's facing and goes to its seat.
-    if out.ride && sim.players[i].vehicle.is_none() && !sim.players[i].sneaking {
+    if out.ride && sim.players[i].vehicle != Some(target) && !sim.players[i].sneaking {
         let pid = sim.players[i].entity_id;
+        // `Entity.startRiding`: a rider that sits on another vehicle gets off it first.
+        if let Some(old) = sim.players[i].vehicle {
+            let at = sim.index(old);
+            remove_rider(&mut sim, at, pid);
+        }
         let first_is_player = phys.passengers.first().is_some_and(|f| sim.views.iter().any(|v| v.id == *f));
         kiln_entity::ride::add_passenger(&mut phys, pid, true, first_is_player);
         let at = phys.passengers.iter().position(|&x| x == pid).unwrap_or(0);
@@ -2798,6 +2844,10 @@ pub(crate) fn interact_mob(
         p.vehicle_type = Some(phys.type_name);
         p.teleport(arr(seat), [phys.y_rot, phys.x_rot], now);
         p.started_riding();
+        // `Cushion.interact`: the sit sound once the player sits.
+        if kiln_entity::ext_entity::cushion::is_cushion(&phys) {
+            phys.play_sound(&mut sim, "minecraft:entity.cushion.sit", 1.0, 1.0);
+        }
     }
     let seen = out.success.then(|| kiln_entity::level::Seen::of(&phys));
     let e = &mut sim.list[idx];

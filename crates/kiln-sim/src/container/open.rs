@@ -426,7 +426,7 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         // `LecternBlock.getMenuProvider`: only with a book.
         BeKind::Lectern if state::get_bool(s, "has_book") => single(Menu::lectern),
         BeKind::Lectern => return None,
-        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock => return None,
+        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw => return None,
     })
 }
 
@@ -478,6 +478,11 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
     if logic::block_class(s) == C::CommandBlock {
         return crate::command_block::use_without_item(p, level, pos);
     }
+    // `StructureBlock.useWithoutItem` / `JigsawBlock.useWithoutItem`: a game master gets the block's screen (opened by the client: the
+    // server has nothing to send), everybody else clicks through.
+    if matches!(logic::block_class(s), C::StructureBlock | C::JigsawBlock) {
+        return p.can_use_gamemaster_blocks().then_some(true);
+    }
     // `LecternBlock.useWithoutItem`: a lectern with a book opens its menu; without one the click is consumed.
     if logic::block_class(s) == C::LecternBlock {
         if state::get_bool(s, "has_book")
@@ -489,7 +494,7 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
         return Some(true);
     }
     // (A jukebox has no menu: its own `useWithoutItem` takes the disc out.)
-    if matches!(level.blocks.containers.get(pos)?.kind, BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock) {
+    if matches!(level.blocks.containers.get(pos)?.kind, BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw) {
         return None;
     }
     if let Some(provider) = container_provider(level, pos, s) {
@@ -888,6 +893,16 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
         }
         touched = true;
     }
+    // `BannerBlockEntity.applyImplicitComponents`: the pattern layers (the name is read above).
+    if c.kind == BeKind::Banner {
+        c.extra.retain(|(k, _)| k != "patterns" && k != "components");
+        // `BlockEntity.applyComponents`: what the block entity did not read stays in `components`.
+        c.extra.push(("components".into(), leftover_components(stack, &["minecraft:banner_patterns", "minecraft:custom_name"])));
+        if let Some(layers) = stack.get(keys::BANNER_PATTERNS).filter(|l| !l.0.is_empty()) {
+            c.extra.push(("patterns".into(), <kiln_item::component::BannerPatternLayers as kiln_item::component::ComponentValue>::to_value(layers).to_nbt()));
+        }
+        touched = true;
+    }
     // `DecoratedPotBlockEntity.applyImplicitComponents`: the sherds.
     if c.kind == BeKind::DecoratedPot {
         let decorations = stack.get(keys::POT_DECORATIONS).cloned().unwrap_or_default();
@@ -921,6 +936,16 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
         // The chunk's copy is what the update packet clients get is made of (a decorated pot shows its sherds).
         sync_chunk_copy(level, pos);
     }
+}
+
+/// The components the item added that the block entity did not read (`BlockEntity.applyComponents`: what is left of the patch).
+fn leftover_components(stack: &ItemStack, read: &[&str]) -> Tag {
+    let all = stack.to_nbt();
+    let kept = match all.get("components") {
+        Some(Tag::Compound(fields)) => fields.iter().filter(|(k, _)| !k.starts_with('!') && !read.contains(&k.as_str()) && !matches!(k.as_str(), "minecraft:block_entity_data" | "minecraft:block_state")).cloned().collect(),
+        _ => Vec::new(),
+    };
+    Tag::Compound(kept)
 }
 
 /// Writes the live block entity at `pos` into its chunk (the copy that is saved and sent to clients).

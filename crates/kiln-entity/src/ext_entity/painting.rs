@@ -191,8 +191,10 @@ impl EntityExt for Painting {
     crate::entity_ext_boilerplate!();
 
     fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {
+        // (`ticksSinceLastCheck++ >= 100`: the check is the 101st tick.)
+        let before = self.since_check;
         self.since_check += 1;
-        if self.since_check >= 100 {
+        if before >= 100 {
             self.since_check = 0;
             if !e.is_removed() && !self.survives(e, &hanging::LevelWorld { level: &*level, e }) {
                 e.discard();
@@ -220,6 +222,11 @@ impl EntityExt for Painting {
     }
 
     fn attackable(&self) -> bool {
+        true
+    }
+
+    /// `BlockAttachedEntity.thunderHit`: nothing.
+    fn thunder_hit(&mut self, _e: &mut Entity, _level: &mut dyn EntityLevel, _bolt: i32) -> bool {
         true
     }
 

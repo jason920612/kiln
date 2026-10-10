@@ -9,11 +9,13 @@ use std::any::Any;
 use std::fmt::Debug;
 
 pub mod boat;
+pub mod cushion;
 pub mod area_effect_cloud;
 pub mod armor_stand;
 pub mod display;
 pub mod interaction;
 pub mod marker;
+pub mod ominous_item_spawner;
 pub mod evoker_fangs;
 pub mod dragon_fireball;
 pub mod end_crystal;
@@ -90,6 +92,12 @@ pub trait EntityExt: Any + Debug + Send + Sync {
         let _ = (e, by, look);
         false
     }
+    /// `Entity.thunderHit` of an entity that does its own (a block-attached entity ignores lightning, a cushion breaks): true
+    /// when handled, so the plain fire and lightning damage does not follow.
+    fn thunder_hit(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, bolt: i32) -> bool {
+        let _ = (e, level, bolt);
+        false
+    }
     /// `hurtServer`: whether the hit did something.
     fn hurt(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, amount: f32, attacker: Option<i32>) -> bool {
         let _ = (e, level, kind, amount, attacker);
@@ -158,6 +166,9 @@ pub const TYPES: &[&str] = &[
     "minecraft:text_display",
     "minecraft:interaction",
     "minecraft:marker",
+    // -- wp50
+    "minecraft:ominous_item_spawner",
+    "minecraft:cushion",
 ];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
@@ -185,6 +196,8 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         n if display::is_display(n) => display::load(n, r),
         "minecraft:interaction" => interaction::load(r),
         "minecraft:marker" => marker::load(r),
+        "minecraft:ominous_item_spawner" => ominous_item_spawner::load(r),
+        "minecraft:cushion" => cushion::load(r),
         _ => None,
     }
 }

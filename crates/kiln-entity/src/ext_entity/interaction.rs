@@ -108,6 +108,6 @@ impl EntityExt for Interaction {
     fn interact(&mut self, _e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, _stack: &ItemStack) -> Option<Outcome> {
         let uuid = level.player(who.id)?.uuid;
         self.interaction = Some(PlayerAction { player: uuid, timestamp: level.game_time() });
-        Some(Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None, ride: false, open_container: false })
+        Some(Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None, ride: false, open_container: false, sheared: None })
     }
 }

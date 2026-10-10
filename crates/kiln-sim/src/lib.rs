@@ -41,6 +41,8 @@ mod bell;
 mod campfire;
 mod stands;
 mod frames;
+mod structure_block;
+mod cushion;
 mod bookshelf;
 mod use_item;
 mod ranged;
@@ -78,6 +80,8 @@ mod enchant_loc;
 mod entities;
 mod entity_world;
 mod fishing;
+mod steer;
+mod projectile_item;
 mod gametest;
 mod profiles;
 mod generation;
@@ -1737,6 +1741,7 @@ impl Sim {
         for (conn, pkt) in exclusive {
             self.exclusive_packet(conn, pkt);
         }
+        self.run_structure_triggers();
         self.answer_suggestions();
         // Leaves last, so the packets a player sent before leaving still apply.
         for conn in leaves {
@@ -1750,6 +1755,7 @@ impl Sim {
         for command in console {
             self.run_console_command(command.trim_start_matches('/'));
         }
+        self.run_structure_triggers();
         for (request, result) in profile_results {
             self.profile_lookup_finished(request, result);
         }
@@ -1801,6 +1807,7 @@ impl Sim {
         }
         // The command blocks whose tick came run their commands (they may change anything).
         self.run_command_blocks();
+        self.run_structure_triggers();
         // Entities from here on have newer ids.
         let first_new = self.next_entity_id;
         self.materialize_spawns();
@@ -1988,7 +1995,12 @@ impl Sim {
     /// The saved form of the live sculk block entity (sensor, shrieker, catalyst) at an
     /// overworld position (for tests and tools).
     pub fn block_entity_nbt(&self, x: i32, y: i32, z: i32) -> Option<kiln_proto::nbt::Tag> {
-        let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;
+        self.block_entity_live(OVERWORLD_ID, x, y, z)
+    }
+
+    /// [`Self::block_entity_nbt`] in any level.
+    pub(crate) fn block_entity_live(&self, dim: DimId, x: i32, y: i32, z: i32) -> Option<kiln_proto::nbt::Tag> {
+        let region = self.dims[dim].regions.at(ChunkPos::of_block(x, z).cell())?;
         let p = kiln_blocks::BlockPos::new(x, y, z);
         let part = &region.part().1;
         part.sculk
@@ -3200,6 +3212,9 @@ impl Sim {
             }
             PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
             PlayIn::SetCommandBlock(update) => self.set_command_block(conn, &update),
+            PlayIn::SetStructureBlock(update) => self.set_structure_block(conn, &update),
+            PlayIn::SetJigsawBlock(update) => self.set_jigsaw_block(conn, &update),
+            PlayIn::JigsawGenerate { pos, levels, keep_jigsaws } => self.jigsaw_generate(conn, pos, levels, keep_jigsaws),
             PlayIn::ResourcePack { id, action } => self.resource_pack_response(conn, id, action),
             PlayIn::CookieResponse(response) => self.cookie_response(conn, response),
             PlayIn::Chat { message } => {

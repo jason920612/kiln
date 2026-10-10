@@ -52,13 +52,15 @@ pub struct Outcome {
     pub ride: bool,
     /// The player opens the entity's container menu (a chest or hopper minecart).
     pub open_container: bool,
+    /// `Mob.shearItem`: the equipment the shears took off (for the `player_sheared_equipment` trigger).
+    pub sheared: Option<ItemStack>,
 }
 
 impl Outcome {
-    pub const PASS: Outcome = Outcome { success: false, held: HeldChange::None, shear: None, player_sound: None, ride: false, open_container: false };
+    pub const PASS: Outcome = Outcome { success: false, held: HeldChange::None, shear: None, player_sound: None, ride: false, open_container: false, sheared: None };
 
     pub fn success(held: HeldChange) -> Outcome {
-        Outcome { success: true, held, shear: None, player_sound: None, ride: false, open_container: false }
+        Outcome { success: true, held, shear: None, player_sound: None, ride: false, open_container: false, sheared: None }
     }
 }
 
@@ -68,6 +70,16 @@ fn is(stack: &ItemStack, name: &str) -> bool {
 
 /// `Player.interactOn` for a mob: the mob's own handler first, then the held item's.
 pub fn interact(e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Outcome {
+    // A mannequin is no `Mob`: no lead or shears (`Mob.checkAndHandleImportantInteractions`); a name tag still names it
+    // (`NameTagItem.interactLivingEntity`).
+    if super::data(e).is_some_and(|m| !m.kind.is_mob()) {
+        return name_tag(e, stack).unwrap_or(Outcome::PASS);
+    }
+    // `Mob.checkAndHandleImportantInteractions`: a named name tag names the mob before anything else reacts.
+    if let Some(out) = name_tag(e, stack) {
+        level.emit(Event::GameEvent { event: "minecraft:entity_interact", pos: e.position(), entity: Some(who.id) });
+        return out;
+    }
     // `Entity.interact`'s share (leads and shears) comes before the type's own handler, for
     // living mobs and for boats.
     if crate::leash::is_leashable(e) && super::data(e).is_none_or(|m| super::is_alive(e, m)) && let Some(out) = crate::leash::interact(e, level, who, stack) {
@@ -92,7 +104,12 @@ pub fn interact(e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, s
         return Outcome::PASS;
     }
     let mut m = super::take(e);
-    let mut out = mob_interact(e, &mut m, level, who, stack);
+    // `Entity.interact`: shears take off the equipment that can be sheared (after the leads).
+    let sheared = shear_equipment(e, &mut m, level, who, stack);
+    let mut out = match sheared {
+        Some(out) => out,
+        None => mob_interact(e, &mut m, level, who, stack),
+    };
     if !out.success && !stack.is_empty() {
         out = item_interact(e, &mut m, level, who, stack);
     }
@@ -121,7 +138,7 @@ fn mob_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, wh
             let ready = matches!(m.species, Species::Sheep { sheared: false, .. }) && !m.baby();
             if !ready {
                 // `CONSUME`: nothing happens, but the click is taken.
-                return Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None, ride: false, open_container: false };
+                return Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None, ride: false, open_container: false, sheared: None };
             }
             let table = super::species::shear_table(m);
             level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.sheep.shear", source: "players", volume: 1.0, pitch: 1.0 });
@@ -174,21 +191,96 @@ fn play_eating_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
     }
 }
 
+/// `NameTagItem.interactLivingEntity` of a named tag on a living mob, which then never despawns.
+fn name_tag(e: &mut Entity, stack: &ItemStack) -> Option<Outcome> {
+    if !is(stack, "minecraft:name_tag") {
+        return None;
+    }
+    let name = stack.get(kiln_item::keys::CUSTOM_NAME)?.nbt().clone();
+    let alive = e.is_alive();
+    let m = super::data_mut(e)?;
+    if !alive || m.health <= 0.0 {
+        return None;
+    }
+    if m.kind.is_mob() {
+        m.persistence_required = true;
+    }
+    e.extra.retain(|(k, _)| k != "CustomName");
+    e.extra.push(("CustomName".into(), name));
+    Some(Outcome::success(HeldChange::Consume(1)))
+}
+
+/// `Mob.attemptToShearEquipment` for shears in hand: the first worn piece that can be sheared
+/// comes off (and drops where the mob's passengers would sit), the shears wear 1 and the shear
+/// sound plays. `None`: nothing to take, or the type does not let this player.
+fn shear_equipment(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
+    use kiln_item::component::EquipmentSlot;
+    // (A dispenser, who.id < 0, only shears what is `Shearable`.)
+    if !is(stack, "minecraft:shears") || !super::is_alive(e, m) || who.sneaking || who.id < 0 {
+        return None;
+    }
+    // `canShearEquipment`: a wolf lets only its owner, the others unless they carry a passenger.
+    let allowed = match m.kind.ext().and_then(|k| k.can_shear_equipment(m, &*level, who.id)) {
+        Some(allowed) => allowed,
+        None => e.passengers.is_empty(),
+    };
+    if !allowed {
+        return None;
+    }
+    let curse = kiln_item::registry::ENCHANTMENT.id("minecraft:binding_curse");
+    for slot in [
+        EquipmentSlot::MainHand,
+        EquipmentSlot::OffHand,
+        EquipmentSlot::Feet,
+        EquipmentSlot::Legs,
+        EquipmentSlot::Chest,
+        EquipmentSlot::Head,
+        EquipmentSlot::Body,
+        EquipmentSlot::Saddle,
+    ] {
+        let index = slot as usize;
+        let worn = if index < 6 {
+            m.equipment[index].clone()
+        } else {
+            m.kind.ext().and_then(|k| k.extra_equipment(m).into_iter().find(|(s, _)| *s as usize == index)).map(|(_, s)| s).unwrap_or_default()
+        };
+        let Some(equippable) = worn.get(kiln_item::keys::EQUIPPABLE) else { continue };
+        if !equippable.can_be_sheared {
+            continue;
+        }
+        let locked = curse.is_some_and(|c| worn.get(kiln_item::keys::ENCHANTMENTS).is_some_and(|en| en.level(c) > 0));
+        if locked && !who.creative {
+            continue;
+        }
+        let sound = match &equippable.shearing_sound {
+            kiln_item::Holder::Reference(id) => kiln_data::builtin_entries("minecraft:sound_event").and_then(|n| n.get(*id as usize).copied()),
+            kiln_item::Holder::Direct(_) => None,
+        };
+        // `shearItem`: `setItemSlot(slot, EMPTY)` (the unequip game event), the shear game event, the piece drops.
+        if index < 6 {
+            m.equipment[index] = ItemStack::empty();
+            super::sync_equipment_modifiers(m);
+        } else if let Some(k) = m.kind.ext() {
+            k.remove_extra_equipment(m, index as u8);
+        }
+        level.emit(Event::GameEvent { event: "minecraft:unequip", pos: e.position(), entity: Some(e.id) });
+        level.emit(Event::GameEvent { event: "minecraft:shear", pos: e.position(), entity: Some(who.id) });
+        super::spawn_at(e.position() + crate::ride::passenger_attachment_unrotated(e, m), level, worn.clone(), 0.0);
+        if let Some(sound) = sound
+            && !e.silent
+        {
+            level.emit(Event::Sound { pos: e.position(), sound, source: m.kind.sound_source(), volume: 1.0, pitch: 1.0 });
+        }
+        let mut out = Outcome::success(HeldChange::Damage(1));
+        out.sheared = Some(worn);
+        return Some(out);
+    }
+    None
+}
+
 /// The held item's `interactLivingEntity` (`DyeItem` on sheep).
 fn item_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Outcome {
     let _ = who;
-    // `NameTagItem.interactLivingEntity`: a named tag names a living mob, which then never despawns.
-    if is(stack, "minecraft:name_tag")
-        && let Some(name) = stack.get(kiln_item::keys::CUSTOM_NAME)
-    {
-        if e.is_alive() && m.health > 0.0 {
-            e.extra.retain(|(k, _)| k != "CustomName");
-            e.extra.push(("CustomName".into(), name.nbt().clone()));
-            m.persistence_required = true;
-            return Outcome::success(HeldChange::Consume(1));
-        }
-        return Outcome::PASS;
-    }
     if let Some(color) = dye_color(stack)
         && let Species::Sheep { color: c, sheared: false } = &mut m.species
         && *c != color

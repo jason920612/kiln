@@ -33,8 +33,7 @@ impl Sim {
 
     /// The loaded chunk `(cx, cz)` of `dim` as a proto-chunk (an empty one when it is not
     /// loaded), with the generator's biomes.
-    fn live_proto(&self, dim: DimId, world: &Worldgen, gs: &mut GenScratch, cx: i32, cz: i32) -> (Box<ProtoChunk>, bool) {
-        let g = &world.generator;
+    fn live_proto(&self, dim: DimId, g: &kiln_worldgen::generator::Generator, gs: &mut GenScratch, cx: i32, cz: i32) -> (Box<ProtoChunk>, bool) {
         let biomes = gs.chunk_biomes(g, cx, cz).to_vec();
         let mut p = ProtoChunk::new(cx, cz, g.min_y, g.sections(), biomes);
         let live = self.dims[dim].regions.chunk(ChunkPos::new(cx, cz));
@@ -59,31 +58,37 @@ impl Sim {
 
     /// Runs `f` over a window of `(2 * radius + 1)` chunks around `center` and writes what it
     /// changed back into the loaded ones. `None` when the level has no generator.
-    fn with_live_region<R>(
+    fn with_live_region<R>(&mut self, dim: DimId, center: (i32, i32), radius: i32, flags: u32, f: impl FnOnce(&mut Region, &Worldgen) -> R) -> Option<R> {
+        let pipeline = self.world.pipelines.get(dim).cloned().flatten()?;
+        let world: Arc<Worldgen> = pipeline.world().clone();
+        self.with_live_region_in(dim, center, radius, flags, &world.generator, |r| f(r, &world))
+    }
+
+    /// [`Self::with_live_region`] over a generator of the caller's (structure blocks place templates in levels that generate no
+    /// terrain of their own).
+    pub(crate) fn with_live_region_in<R>(
         &mut self,
         dim: DimId,
         center: (i32, i32),
         radius: i32,
         flags: u32,
-        f: impl FnOnce(&mut Region, &Worldgen) -> R,
+        g: &kiln_worldgen::generator::Generator,
+        f: impl FnOnce(&mut Region) -> R,
     ) -> Option<R> {
-        let pipeline = self.world.pipelines.get(dim).cloned().flatten()?;
-        let world: Arc<Worldgen> = pipeline.world().clone();
-        let g = &world.generator;
         let mut gs = GenScratch::default();
         let (cx, cz) = center;
         let mut chunks = Vec::new();
         let mut loaded = Vec::new();
         for dz in -radius..=radius {
             for dx in -radius..=radius {
-                let (p, is_loaded) = self.live_proto(dim, &world, &mut gs, cx + dx, cz + dz);
+                let (p, is_loaded) = self.live_proto(dim, g, &mut gs, cx + dx, cz + dz);
                 chunks.push(p);
                 loaded.push(is_loaded);
             }
         }
         let mut region = Region::with_radius(chunks, cx, cz, radius, g, &mut gs);
         region.start_log();
-        let out = f(&mut region, &world);
+        let out = f(&mut region);
         let log = region.take_log();
         let chunks = region.into_chunks();
         let w = 2 * radius + 1;

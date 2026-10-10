@@ -783,6 +783,10 @@ impl Kind for SulfurCube {
         true
     }
 
+    fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
+        (slot == 6).then(|| std::mem::take(&mut sul_mut(m).body))
+    }
+
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let s = sul(m);
         if s.body.is_empty() { Vec::new() } else { vec![(6, s.body.clone())] }
