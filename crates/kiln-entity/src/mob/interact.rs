@@ -70,6 +70,10 @@ fn is(stack: &ItemStack, name: &str) -> bool {
 
 /// `Player.interactOn` for a mob: the mob's own handler first, then the held item's.
 pub fn interact(e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Outcome {
+    // A mannequin is no `Mob`: no name tag, lead or shears (`Mob.checkAndHandleImportantInteractions`).
+    if super::data(e).is_some_and(|m| !m.kind.is_mob()) {
+        return Outcome::PASS;
+    }
     // `Mob.checkAndHandleImportantInteractions`: a named name tag names the mob before anything else reacts.
     if let Some(out) = name_tag(e, stack) {
         level.emit(Event::GameEvent { event: "minecraft:entity_interact", pos: e.position(), entity: Some(who.id) });

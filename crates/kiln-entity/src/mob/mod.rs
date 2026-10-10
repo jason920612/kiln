@@ -96,6 +96,8 @@ pub enum MobKind {
     Ravager,
     Illusioner,
     Giant,
+    /// `Mannequin`: a living entity that is not a `Mob` (wp50).
+    Mannequin,
 
     // -- slice 3: the end
     EnderDragon,
@@ -277,6 +279,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Ravager,
     MobKind::Illusioner,
     MobKind::Giant,
+    MobKind::Mannequin,
 
     // -- slice 3: the end
     MobKind::EnderDragon,
@@ -349,6 +352,12 @@ pub const ALL_KINDS: &[MobKind] = &[
 ];
 
 impl MobKind {
+    /// Whether the type extends `Mob` (a mannequin is a plain `LivingEntity`: no AI, leads, name tags, persistence or
+    /// equipment drops).
+    pub fn is_mob(self) -> bool {
+        self != MobKind::Mannequin
+    }
+
     pub fn by_name(name: &str) -> Option<MobKind> {
         // Called per move (fall damage, fluids): a table rather than a scan of the types.
         static BY_NAME: std::sync::OnceLock<std::collections::HashMap<&'static str, MobKind>> = std::sync::OnceLock::new();
@@ -2787,7 +2796,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     // `Mob.dropCustomDeathLoot`: equipment with its drop chance.
     for i in 0..6 {
         let chance = m.drop_chances[i];
-        if !should_drop || chance == 0.0 || m.equipment[i].is_empty() {
+        if !m.kind.is_mob() || !should_drop || chance == 0.0 || m.equipment[i].is_empty() {
             continue;
         }
         let preserved = chance > 1.0;

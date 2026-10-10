@@ -82,7 +82,7 @@ pub struct GlobalPos {
     pub pos: [i32; 3],
 }
 
-/// A value for one data field. Not implemented: `RESOLVABLE_PROFILE` (mannequin profiles).
+/// A value for one data field. 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DataValue {
     Byte(i8),
@@ -98,6 +98,8 @@ pub enum DataValue {
     /// `ITEM_STACK` already encoded with `ItemStack.OPTIONAL_STREAM_CODEC` (stacks with data
     /// components, encoded by kiln-item).
     EncodedItemStack(bytes::Bytes),
+    /// `RESOLVABLE_PROFILE` already encoded (`ResolvableProfile.STREAM_CODEC`).
+    EncodedProfile(bytes::Bytes),
     Boolean(bool),
     Rotations([f32; 3]),
     BlockPos([i32; 3]),
@@ -172,6 +174,7 @@ impl DataValue {
                         V::Component(_) => s::COMPONENT,
                         V::OptionalComponent(_) => s::OPTIONAL_COMPONENT,
                         V::ItemStack(_) | V::EncodedItemStack(_) => s::ITEM_STACK,
+                        V::EncodedProfile(_) => s::RESOLVABLE_PROFILE,
                         V::Boolean(_) => s::BOOLEAN,
                         V::Rotations(_) => s::ROTATIONS,
                         V::BlockPos(_) => s::BLOCK_POS,
@@ -219,7 +222,7 @@ impl DataValue {
                 b.put_varint(0); // component patch: nothing added
                 b.put_varint(0); // nothing removed
             }
-            V::EncodedItemStack(bytes) => b.put_slice(bytes),
+            V::EncodedItemStack(bytes) | V::EncodedProfile(bytes) => b.put_slice(bytes),
             V::Boolean(v) => b.put_bool(*v),
             V::Rotations(v) | V::Vector3(v) => v.iter().for_each(|f| b.put_f32(*f)),
             V::Quaternion(v) => v.iter().for_each(|f| b.put_f32(*f)),

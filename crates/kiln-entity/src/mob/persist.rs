@@ -101,9 +101,11 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
         }
     }
     // `Mob.readAdditionalSaveData`.
-    m.can_pick_up_loot = r.bool_or("CanPickUpLoot", false);
-    m.persistence_required = r.bool_or("PersistenceRequired", false);
-    if let Some(Tag::Compound(dc)) = r.get("drop_chances") {
+    if kind.is_mob() {
+        m.can_pick_up_loot = r.bool_or("CanPickUpLoot", false);
+        m.persistence_required = r.bool_or("PersistenceRequired", false);
+    }
+    if let Some(Tag::Compound(dc)) = r.get("drop_chances").filter(|_| kind.is_mob()) {
         for (k, v) in dc {
             if let (Some(i), Some(f)) = (SLOT_NAMES.iter().position(|s| s == k), v.as_f64()) {
                 m.drop_chances[i] = f as f32;
@@ -111,13 +113,15 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
         }
     }
     // `home_radius` (below 0: no home) and `home_pos`.
-    let home_radius = r.int_or("home_radius", -1);
+    let home_radius = if kind.is_mob() { r.int_or("home_radius", -1) } else { -1 };
     m.home = (home_radius >= 0).then(|| match r.get("home_pos") {
         Some(Tag::IntArray(v)) if v.len() == 3 => (crate::math::BlockPos::new(v[0], v[1], v[2]), home_radius),
         _ => (crate::math::BlockPos::new(0, 0, 0), home_radius),
     });
-    m.left_handed = r.bool_or("LeftHanded", false);
-    m.no_ai = r.bool_or("NoAI", false);
+    if kind.is_mob() {
+        m.left_handed = r.bool_or("LeftHanded", false);
+        m.no_ai = r.bool_or("NoAI", false);
+    }
     // `AgeableMob` and `Animal`.
     if super::breed::is_ageable(kind) && kind.ext().is_none_or(|k| k.can_be_baby()) {
         m.age = r.int_or("Age", 0);
@@ -185,7 +189,7 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
         .attrs
         .list
         .iter()
-        .filter(|i| !i.modifiers.is_empty() || i.base != i.attr.info().1 || matches!(i.attr, Attr::MovementSpeed | Attr::FollowRange))
+        .filter(|i| !i.modifiers.is_empty() || i.base != i.attr.info().1 || (m.kind.is_mob() && matches!(i.attr, Attr::MovementSpeed | Attr::FollowRange)))
         .map(|i| {
             let mut c = vec![("id".to_owned(), Tag::String(i.attr.name().to_owned())), ("base".to_owned(), Tag::Double(i.base))];
             if !i.modifiers.is_empty() {
@@ -218,8 +222,10 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     if m.last_hurt_by_player_memory > 0 {
         o.put("last_hurt_by_player_memory_time", Tag::Int(m.last_hurt_by_player_memory));
     }
-    o.put("CanPickUpLoot", Tag::Byte(m.can_pick_up_loot as i8));
-    o.put("PersistenceRequired", Tag::Byte(m.persistence_required as i8));
+    if m.kind.is_mob() {
+        o.put("CanPickUpLoot", Tag::Byte(m.can_pick_up_loot as i8));
+        o.put("PersistenceRequired", Tag::Byte(m.persistence_required as i8));
+    }
     let dc: Vec<(String, Tag)> = m
         .drop_chances
         .iter()
@@ -227,10 +233,12 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
         .filter(|(c, _)| **c != 0.085)
         .map(|(c, n)| (n.to_owned(), Tag::Float(*c)))
         .collect();
-    if !dc.is_empty() {
+    if !dc.is_empty() && m.kind.is_mob() {
         o.put("drop_chances", Tag::Compound(dc));
     }
-    o.put("LeftHanded", Tag::Byte(m.left_handed as i8));
+    if m.kind.is_mob() {
+        o.put("LeftHanded", Tag::Byte(m.left_handed as i8));
+    }
     if m.no_ai {
         o.put("NoAI", Tag::Byte(1));
     }
@@ -271,7 +279,7 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
         k.save(e, m, o);
     }
     // `Mob.addAdditionalSaveData`: the home (types with a home of their own wrote it).
-    if let Some((p, radius)) = m.home
+    if let Some((p, radius)) = m.home.filter(|_| m.kind.is_mob())
         && !o.has("home_radius")
     {
         o.put("home_radius", Tag::Int(radius));
