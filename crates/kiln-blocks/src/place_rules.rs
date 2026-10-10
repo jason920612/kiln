@@ -125,7 +125,7 @@ pub(crate) fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, 
     let facing = || state::get_dir(s, "facing").unwrap_or(Direction::North);
     for &class in logic::class_info(logic::block_index(s)).classes {
         return Some(match class {
-        C::StandingSignBlock | C::BannerBlock | C::CakeBlock | C::CandleBlock => breaks(dir == Direction::Down),
+        C::StandingSignBlock | C::BannerBlock | C::CakeBlock => breaks(dir == Direction::Down),
         C::WallSignBlock | C::ShelfMushroomBlock => breaks(dir.opposite() == facing()),
         C::WallBannerBlock | C::AmethystClusterBlock => breaks(dir == facing().opposite()),
         C::CeilingHangingSignBlock | C::SporeBlossomBlock | C::HangingRootsBlock => breaks(dir == Direction::Up),
@@ -150,7 +150,9 @@ pub(crate) fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, 
             if !(Direction::ALL.iter().any(|&f| state::get_bool(s, f.name()))) {
                 d::AIR
             } else if state::get_bool(s, dir.name()) && !multiface_attach(level, pos, dir) {
-                state::set_bool(s, dir.name(), false)
+                // `MultifaceBlock.removeFace`: the last face takes the block with it.
+                let n = state::set_bool(s, dir.name(), false);
+                if Direction::ALL.iter().any(|&f| state::get_bool(n, f.name())) { n } else { d::AIR }
             } else {
                 s
             }
