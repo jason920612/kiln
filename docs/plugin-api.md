@@ -125,7 +125,8 @@ host 把同情境中訂閱 `custom` 的其他實例從槽位「借」進它的 s
   region 內從 global 快照裡的備註複製（`claims`）。
 - **逐呼叫預算、strike、降級、速率限制**對新的可取消事件全部適用（`player-damage` 受害者、`container-click` 點擊者各有 token bucket）。
 - **fail-closed**：保護類範例（`claims`、`spawn-protection`）每個訂閱都是 fail-closed，trap／逾時／預算用完一律拒絕；
-  降級（3 次 strike）後仍拒絕。
+  降級（3 次 strike）後仍拒絕。（wp53：strict 模式的降級在**下一個 B0** 才生效；原本是第三次 strike 一發生就立刻生效，平行的 region 在同一個 tick 裡有的看得到旗標、有的看不到，
+  `plugin_api_determinism` 因此約 3% 的執行會多／少算一次呼叫與逾時。改成 B0 後 300 次連跑 0 次失敗；ordered 模式維持立刻降級。）
 
 ## 5. 版本政策（WIT 1.0 凍結）
 
