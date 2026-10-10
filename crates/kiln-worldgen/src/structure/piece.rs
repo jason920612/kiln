@@ -40,6 +40,9 @@ pub trait Piece: Send + Sync + std::fmt::Debug {
         pivot: BlockPos,
     );
 
+    /// `keepJigsaws` of `PoolElementStructurePiece.place`: only jigsaw pieces have a use for it.
+    fn keep_jigsaws(&mut self, _keep: bool) {}
+
     /// `addAdditionalSaveData`: the piece type's own NBT fields.
     fn save_extra(&self, tag: &mut Vec<(String, Tag)>);
 

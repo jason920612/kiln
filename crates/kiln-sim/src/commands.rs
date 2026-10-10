@@ -1895,7 +1895,7 @@ impl Host for Sim {
                 self.place_template(dim, id.as_str(), pos, *rotation, *mirror, *integrity, *seed, *strict)
             }
             Placement::Feature { id, .. } => self.place_generated_feature(dim, id.as_ref().map(|i| i.as_str()), pos),
-            Placement::Jigsaw { pool, target, max_depth } => self.place_generated_jigsaw(dim, pool.as_str(), target.as_str(), *max_depth, pos),
+            Placement::Jigsaw { pool, target, max_depth } => self.place_generated_jigsaw(dim, pool.as_str(), target.as_str(), *max_depth, pos, false),
             Placement::Structure(id) => self.place_generated_structure(dim, id.as_str(), pos),
         }
     }

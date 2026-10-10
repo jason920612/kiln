@@ -179,13 +179,13 @@ impl Sim {
 
     /// `/place jigsaw`: pieces grown from `pool` at `pos` (their `target` jigsaw on it) to
     /// `max_depth`, all placed at once, in the loaded chunks they reach.
-    pub(crate) fn place_generated_jigsaw(&mut self, dim: DimId, pool: &str, target: &str, max_depth: i32, pos: [i32; 3]) -> Result<(), CommandError> {
+    pub(crate) fn place_generated_jigsaw(&mut self, dim: DimId, pool: &str, target: &str, max_depth: i32, pos: [i32; 3], keep_jigsaws: bool) -> Result<(), CommandError> {
         let Some(pipeline) = self.world.pipelines.get(dim).cloned().flatten() else { return Err(CommandError::unsupported("place jigsaw")) };
         let world = pipeline.world().clone();
         let failed = || CommandError::new(tr!("commands.place.jigsaw.failed"));
         let mut gs = GenScratch::default();
         let at = BlockPos::new(pos[0], pos[1], pos[2]);
-        let Some(pieces) = world.structures.generate_jigsaw(&world.generator, &mut gs.structures, pool, target, max_depth, at) else {
+        let Some(pieces) = world.structures.generate_jigsaw(&world.generator, &mut gs.structures, pool, target, max_depth, at, keep_jigsaws) else {
             return Err(failed());
         };
         let mut b = pieces[0].base().bbox;

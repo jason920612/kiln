@@ -43,11 +43,14 @@ pub struct PoolElementPiece {
     pub rotation: Rotation,
     pub junctions: Vec<Junction>,
     pub liquid: LiquidSettings,
+    /// `place(..., keepJigsaws)`: the jigsaw blocks stay as they are instead of turning into their final state (only the
+    /// jigsaw block screen's generate asks for it; not part of the piece's NBT).
+    pub keep_jigsaws: bool,
 }
 
 impl PoolElementPiece {
     pub fn new(element: Arc<PoolElement>, position: BlockPos, ground_level_delta: i32, rotation: Rotation, bbox: BoundingBox, liquid: LiquidSettings) -> Self {
-        Self { base: PieceBase::new("minecraft:jigsaw", 0, bbox), element, position, ground_level_delta, rotation, junctions: Vec::new(), liquid }
+        Self { base: PieceBase::new("minecraft:jigsaw", 0, bbox), element, position, ground_level_delta, rotation, junctions: Vec::new(), liquid, keep_jigsaws: false }
     }
 
     /// `move`.
@@ -67,7 +70,11 @@ impl Piece for PoolElementPiece {
     }
 
     fn place(&self, cx: &PlaceContext, r: &mut Region, random: &mut WorldgenRandom, chunk_box: &BoundingBox, _chunk: (i32, i32), pivot: BlockPos) {
-        self.element.place(cx, r, self.position, pivot, self.rotation, chunk_box, random, self.liquid, false);
+        self.element.place(cx, r, self.position, pivot, self.rotation, chunk_box, random, self.liquid, self.keep_jigsaws);
+    }
+
+    fn keep_jigsaws(&mut self, keep: bool) {
+        self.keep_jigsaws = keep;
     }
 
     fn save_extra(&self, tag: &mut Vec<(String, Tag)>) {

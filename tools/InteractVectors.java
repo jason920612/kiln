@@ -912,6 +912,20 @@ public class InteractVectors {
                 .cmd("setblock 5 102 1 minecraft:structure_block[mode=data]{metadata:\"chest\",name:\"minecraft:x\"}");
     }
 
+    /** wp52: entities in the cube x 3..5, y 100..102, z 0..2 (and two just outside it). */
+    static void entitiesContent(Case c) {
+        c.cmd("setblock 3 100 0 minecraft:stone").cmd("setblock 5 101 2 minecraft:stone").cmd("setblock 5 102 1 minecraft:stone")
+                .cmd("summon minecraft:armor_stand 3.5 100.0 0.5 {UUID:[I;1,0,0,1],NoGravity:1b,ShowArms:1b}")
+                .cmd("summon minecraft:pig 4.5 100.0 1.5 {UUID:[I;1,0,0,2],NoAI:1b,Silent:1b,Passengers:[{id:\"minecraft:chicken\",UUID:[I;1,0,0,3],NoAI:1b,Silent:1b}]}")
+                .cmd("summon minecraft:item 4.5 101.0 0.5 {UUID:[I;1,0,0,4],Item:{id:\"minecraft:stone\",count:3},Age:100s,PickupDelay:5s}")
+                .cmd("summon minecraft:marker 3.2 102.0 2.2 {UUID:[I;1,0,0,5],data:{a:1b}}")
+                .cmd("summon minecraft:armor_stand 5.9 100.0 0.5 {UUID:[I;1,0,0,6],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand 6.7 100.0 0.5 {UUID:[I;1,0,0,7],NoGravity:1b}")
+                .cmd("summon minecraft:pig 8.5 100.0 1.5 {UUID:[I;1,0,0,8],NoAI:1b,Silent:1b}")
+                .cmd("summon minecraft:item_frame 5 101 1 {UUID:[I;1,0,0,9],Facing:2b,Item:{id:\"minecraft:stick\",count:1}}")
+                .cmd("summon minecraft:painting 5 102 0 {UUID:[I;1,0,0,10],Facing:2b,variant:\"minecraft:kebab\"}");
+    }
+
     static void structures50(List<Case> out) {
         Case c;
         // ---- putting one down: a structure block remembers who placed it
@@ -976,6 +990,34 @@ public class InteractVectors {
         c = structCase("save_mixed_entities_flag", "wp50:mixed2");
         mixedContent(c);
         c.step(setStructure("SAVE_AREA", "SAVE", "wp50:mixed2", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        out.add(c);
+        // ---- wp52: the entities of the area (`fillEntityList`): not the players, a rider inside its vehicle, a painting by the block it hangs on
+        for (String ignore : new String[] {"with", "ignored"}) {
+            c = structCase("save_entities_" + ignore, "wp52:ents_" + ignore);
+            entitiesContent(c);
+            c.step(setStructure("SAVE_AREA", "SAVE", "wp52:ents_" + ignore, new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", ignore.equals("ignored"), false, false, true, 1.0, 0L));
+            out.add(c);
+        }
+        // the area reaches over section borders (the order of the entities is the order of the sections)
+        c = structCase("save_entities_sections", "wp52:sects");
+        c.cmd("setblock -3 100 -2 minecraft:stone")
+                .cmd("summon minecraft:armor_stand 3.5 100.0 -0.5 {UUID:[I;2,0,0,1],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand -1.5 100.0 -0.5 {UUID:[I;2,0,0,2],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand 3.5 100.0 0.5 {UUID:[I;2,0,0,3],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand -1.5 100.0 0.5 {UUID:[I;2,0,0,4],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand 1.5 100.0 0.5 {UUID:[I;2,0,0,5],NoGravity:1b}")
+                .cmd("summon minecraft:armor_stand 1.5 120.0 0.5 {UUID:[I;2,0,0,6],NoGravity:1b}");
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp52:sects", new int[] {-5, 0, -2}, new int[] {9, 3, 4}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        out.add(c);
+        // a template with entities comes back (the hanging ones, the stands and the items are what the vectors can see)
+        c = structCase("load_entities", "wp52:back");
+        entitiesContent(c);
+        c.step(setStructure("SAVE_AREA", "SAVE", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        c.step(op("op", "command", "command", "kill @e[type=minecraft:armor_stand]")).step(op("op", "command", "command", "kill @e[type=minecraft:item_frame]"))
+                .step(op("op", "command", "command", "kill @e[type=minecraft:painting]")).step(op("op", "command", "command", "kill @e[type=minecraft:item]"));
+        c.step(setStructure("UPDATE_DATA", "LOAD", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        c.step(setStructure("LOAD_AREA", "LOAD", "wp52:back", new int[] {1, 0, 0}, new int[] {3, 3, 3}, "NONE", "NONE", "", false, false, false, true, 1.0, 0L));
+        c.stands();
         out.add(c);
         c = structCase("save_air", "wp50:air");
         c.step(structPacket("SAVE_AREA", "SAVE", "wp50:air"));
@@ -4146,6 +4188,8 @@ public class InteractVectors {
         command("kill @e[type=minecraft:mannequin]");
         for (var mq : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Mannequin.class, new AABB(-64, -64, -64, 64, 320, 64))) mq.discard();
         command("kill @e[type=minecraft:armor_stand]");
+        command("kill @e[type=minecraft:marker]");
+        command("kill @e[type=minecraft:minecart]");
         command("kill @e[type=minecraft:falling_block]");
         command("kill @e[type=minecraft:item]");
         for (var bee : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.bee.Bee.class, new AABB(-64, -64, -64, 64, 320, 64))) bee.discard();
