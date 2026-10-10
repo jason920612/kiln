@@ -1334,7 +1334,7 @@ pub fn equippable_in_slot(stack: &ItemStack, slot: kiln_item::component::Equipme
 
 /// `onEquipItem` for a mount: the equip sound (the saddle's own for a saddle), with the seed
 /// drawn from the animal's random, unless the same item was swapped for itself.
-fn equip_sound(e: &mut Entity, level: &mut dyn EntityLevel, slot: kiln_item::component::EquipmentSlot, old: &ItemStack, new: &ItemStack) {
+pub(crate) fn equip_sound(e: &mut Entity, level: &mut dyn EntityLevel, slot: kiln_item::component::EquipmentSlot, old: &ItemStack, new: &ItemStack) {
     if let Some(sound) = equip_sound_drawn(e, slot, old, new) {
         level.emit(Event::Sound { pos: e.position(), sound, source: "neutral", volume: 1.0, pitch: 1.0 });
     }

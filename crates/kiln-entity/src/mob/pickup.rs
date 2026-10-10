@@ -79,6 +79,19 @@ fn is_armor(slot: usize) -> bool {
     (super::FEET..=super::HEAD).contains(&slot) || slot == BODY
 }
 
+fn slot_enum(i: usize) -> EquipmentSlot {
+    match i {
+        0 => EquipmentSlot::MainHand,
+        1 => EquipmentSlot::OffHand,
+        2 => EquipmentSlot::Feet,
+        3 => EquipmentSlot::Legs,
+        4 => EquipmentSlot::Chest,
+        5 => EquipmentSlot::Head,
+        BODY => EquipmentSlot::Body,
+        _ => EquipmentSlot::Saddle,
+    }
+}
+
 fn item_in(m: &MobData, slot: usize) -> ItemStack {
     if slot < 6 {
         return m.equipment[slot].clone();
@@ -179,7 +192,7 @@ pub fn equip_item_if_possible(e: &mut Entity, m: &mut MobData, level: &mut dyn E
     }
     let chance = drop_chance(m, slot) as f64;
     if !current.is_empty() && ((e.random.next_float() - 0.1f32).max(0.0) as f64) < chance {
-        super::spawn_at_location(e, level, current);
+        super::spawn_at_location(e, level, current.clone());
     }
     // `EquipmentSlot.limit`: one piece of armor, a whole stack in a hand.
     let limited = if slot == MAINHAND || slot == 1 { stack } else { stack.with_count(1) };
@@ -192,6 +205,8 @@ pub fn equip_item_if_possible(e: &mut Entity, m: &mut MobData, level: &mut dyn E
         k.set_extra_equipment(m, slot as u8, limited.clone());
     }
     m.persistence_required = true;
+    // `LivingEntity.onEquipItem`: the equip sound of armor (its seed comes off the mob's random).
+    kinds::horse::equip_sound(e, level, slot_enum(slot), &current, &limited);
     limited
 }
 
