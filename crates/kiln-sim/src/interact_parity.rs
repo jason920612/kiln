@@ -77,7 +77,12 @@ fn pretty(packet: &str) -> String {
 /// What is in one list of packets and not in the other.
 fn packet_diff(got: &[String], want: &[String]) -> String {
     let only = |a: &[String], b: &[String]| -> Vec<String> { a.iter().filter(|p| !b.contains(p)).map(|p| pretty(p)).collect() };
-    format!("kiln only {:?}; vanilla only {:?}", only(got, want), only(want, got))
+    let (a, b) = (only(got, want), only(want, got));
+    if a.is_empty() && b.is_empty() {
+        // The same packets, not as often or not in the same order.
+        return format!("same packets, other count or order; kiln {:?}; vanilla {:?}", got.iter().map(|p| pretty(p)).collect::<Vec<_>>(), want.iter().map(|p| pretty(p)).collect::<Vec<_>>());
+    }
+    format!("kiln only {:?}; vanilla only {:?}", a, b)
 }
 
 /// Two texts that differ, cut around the first difference.
