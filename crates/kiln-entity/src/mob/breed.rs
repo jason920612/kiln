@@ -128,44 +128,9 @@ pub fn spawn_child(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
         }
         return;
     }
-    let partner_variant = pm.variant;
-    let partner_color = match pm.species {
-        Species::Sheep { color, .. } => Some(color),
-        _ => None,
-    };
+    let pm = pm.clone();
     // `getBreedOffspring`.
-    let id = level.next_entity_id();
-    let seed = level.fresh_seed();
-    let child_kind = match (m.kind.ext(), level.entity(partner).and_then(super::data)) {
-        (Some(k), Some(p)) => k.offspring_kind(m, p),
-        _ => m.kind,
-    };
-    let mut child = super::new(child_kind, id, 0, seed);
-    {
-        let cm = super::data_mut(&mut child).expect("a mob");
-        match m.kind {
-            MobKind::Pig | MobKind::Cow | MobKind::Chicken => {
-                cm.variant = if e.random.next_bool() { m.variant } else { partner_variant };
-            }
-            MobKind::Sheep => {
-                let mine = match m.species {
-                    Species::Sheep { color, .. } => color,
-                    _ => 0,
-                };
-                let color = offspring_color(level, mine, partner_color.unwrap_or(0));
-                if let Species::Sheep { color: c, .. } = &mut cm.species {
-                    *c = color;
-                }
-            }
-            _ => {
-                if let Some(k) = m.kind.ext()
-                    && let Some(p) = level.entity(partner).and_then(super::data).cloned()
-                {
-                    k.breed_offspring(e, m, &p, cm, level);
-                }
-            }
-        }
-    }
+    let mut child = breed_offspring(e, m, &pm, level);
     // `setBaby(true)`, then `snapTo(x, y, z, 0, 0)`.
     let mut cm = super::take(&mut child);
     super::set_age(&mut child, &mut cm, BABY_START_AGE);
@@ -217,6 +182,69 @@ pub fn spawn_child(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
         return;
     }
     level.add_entity(child);
+}
+
+/// `AgeableMob.getBreedOffspring(level, partner)` for the mob `e` (its data `m`) and `partner`'s data: the child with its
+/// variant or colour from the parents, a grown one until the caller makes it a baby.
+pub fn breed_offspring(e: &mut Entity, m: &mut MobData, partner: &MobData, level: &mut dyn EntityLevel) -> Entity {
+    let partner_variant = partner.variant;
+    let partner_color = match partner.species {
+        Species::Sheep { color, .. } => Some(color),
+        _ => None,
+    };
+    let id = level.next_entity_id();
+    let seed = level.fresh_seed();
+    let child_kind = m.kind.ext().map_or(m.kind, |k| k.offspring_kind(m, partner));
+    let mut child = super::new(child_kind, id, 0, seed);
+    {
+        let cm = super::data_mut(&mut child).expect("a mob");
+        match m.kind {
+            MobKind::Pig | MobKind::Cow | MobKind::Chicken => {
+                cm.variant = if e.random.next_bool() { m.variant } else { partner_variant };
+            }
+            MobKind::Sheep => {
+                let mine = match m.species {
+                    Species::Sheep { color, .. } => color,
+                    _ => 0,
+                };
+                let color = offspring_color(level, mine, partner_color.unwrap_or(0));
+                if let Species::Sheep { color: c, .. } = &mut cm.species {
+                    *c = color;
+                }
+            }
+            _ => {
+                if let Some(k) = m.kind.ext() {
+                    k.breed_offspring(e, m, partner, cm, level);
+                }
+            }
+        }
+    }
+    child
+}
+
+/// `SpawnEggItem.spawnOffspringFromSpawnEgg` for a spawn egg of the mob's own type used on it: a baby (`getBreedOffspring` for an
+/// ageable mob, a fresh mob for the others) at its place, or `None` when the type has no babies.
+pub fn offspring_from_egg(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> Option<Entity> {
+    let mut child = if is_ageable(m.kind) {
+        let me = m.clone();
+        breed_offspring(e, m, &me, level)
+    } else {
+        let id = level.next_entity_id();
+        let seed = level.fresh_seed();
+        super::new(m.kind, id, 0, seed)
+    };
+    let mut cm = super::take(&mut child);
+    super::convert::set_baby(&mut child, &mut cm, true);
+    let baby = cm.baby();
+    super::put(&mut child, cm);
+    if !baby {
+        return None;
+    }
+    child.set_pos(e.position());
+    child.y_rot = 0.0;
+    child.x_rot = 0.0;
+    child.set_old_pos_and_rot();
+    Some(child)
 }
 
 /// `Sheep.getOffspringColor`: the dye two wool colors mix into (vanilla looks the pair up in

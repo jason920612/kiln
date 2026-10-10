@@ -80,6 +80,11 @@ pub fn interact(e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, s
         level.emit(Event::GameEvent { event: "minecraft:entity_interact", pos: e.position(), entity: Some(who.id) });
         return out;
     }
+    // ... then a spawn egg of the mob's own type brings a baby of it.
+    if let Some(out) = spawn_egg_offspring(e, level, who, stack) {
+        level.emit(Event::GameEvent { event: "minecraft:entity_interact", pos: e.position(), entity: Some(who.id) });
+        return out;
+    }
     // `Entity.interact`'s share (leads and shears) comes before the type's own handler, for
     // living mobs and for boats.
     if crate::leash::is_leashable(e) && super::data(e).is_none_or(|m| super::is_alive(e, m)) && let Some(out) = crate::leash::interact(e, level, who, stack) {
@@ -207,6 +212,44 @@ fn name_tag(e: &mut Entity, stack: &ItemStack) -> Option<Outcome> {
     }
     e.extra.retain(|(k, _)| k != "CustomName");
     e.extra.push(("CustomName".into(), name));
+    Some(Outcome::success(HeldChange::Consume(1)))
+}
+
+/// `Mob.checkAndHandleImportantInteractions` for a spawn egg of the mob's own type (`SpawnEggItem.spawnOffspringFromSpawnEgg`): the
+/// baby appears where the mob is (named like the egg), the egg is used up. `None`: not such an egg, or the type has no babies.
+fn spawn_egg_offspring(e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
+    if stack.is_empty() || super::item_name(stack).strip_suffix("_spawn_egg") != Some(e.type_name) {
+        return None;
+    }
+    let mut m = super::data_mut(e).map(|_| super::take(e))?;
+    if !super::is_alive(e, &m) {
+        super::put(e, m);
+        return None;
+    }
+    let baby = super::breed::offspring_from_egg(e, &mut m, level);
+    let Some(mut baby) = baby else {
+        super::put(e, m);
+        return None;
+    };
+    // `applyComponentsFromItemStack`: the egg's name.
+    if let Some(name) = stack.get(kiln_item::keys::CUSTOM_NAME) {
+        baby.extra.retain(|(k, _)| k != "CustomName");
+        baby.extra.push(("CustomName".into(), name.nbt().clone()));
+    }
+    // `onOffspringSpawnedFromEgg`: a fox trusts the player; a zombie's baby may pick up loot.
+    if m.kind.is_zombie() {
+        let at = baby.position();
+        let effective = level.effective_difficulty(crate::math::BlockPos::containing(at.x, at.y, at.z));
+        let special = if effective < 2.0 { 0.0 } else if effective > 4.0 { 1.0 } else { (effective - 2.0) / 2.0 };
+        let loot = e.random.next_float() < 0.55 * special;
+        if let Some(bm) = super::data_mut(&mut baby) {
+            bm.can_pick_up_loot = loot;
+        }
+    } else if let Some(k) = m.kind.ext() {
+        k.offspring_from_egg(&mut m, &mut baby, level, who.id);
+    }
+    level.add_entity(baby);
+    super::put(e, m);
     Some(Outcome::success(HeldChange::Consume(1)))
 }
 

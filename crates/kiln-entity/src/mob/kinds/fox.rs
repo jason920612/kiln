@@ -513,6 +513,15 @@ impl Kind for Fox {
         Some(block_in_tag(view.block(pos.below()), "minecraft:foxes_spawnable_on") && view.raw_brightness(pos, 0) > 8)
     }
 
+    /// `Fox.onOffspringSpawnedFromEgg`: the baby trusts the player who used the egg.
+    fn offspring_from_egg(&self, _m: &mut MobData, baby: &mut Entity, level: &mut dyn EntityLevel, player: i32) {
+        if let Some(uuid) = level.player(player).map(|p| p.uuid)
+            && let Some(bm) = crate::mob::data_mut(baby)
+        {
+            add_trusted(bm, uuid);
+        }
+    }
+
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, level: &mut dyn EntityLevel) {
         st_mut(child).variant = if e.random.next_bool() { st(m).variant } else { ext::state::<State>(partner).map_or(RED, |s| s.variant) };
         // `FoxBreedGoal.breed`: the players who fed the parents are trusted.
