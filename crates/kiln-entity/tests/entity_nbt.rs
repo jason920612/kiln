@@ -92,8 +92,8 @@ fn entries(mut bytes: &[u8]) -> Vec<(u8, i32, String)> {
                     "none".into()
                 }
             }
-            // HUMANOID_ARM.
-            42 => hex(&r.varint().unwrap().to_le_bytes()),
+            // POSE and HUMANOID_ARM.
+            20 | 42 => hex(&r.varint().unwrap().to_le_bytes()),
             // RESOLVABLE_PROFILE: read through to find where it ends.
             41 => {
                 let start = r.remaining();
