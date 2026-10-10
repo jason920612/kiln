@@ -149,11 +149,12 @@ fn run_claims(steps: Vec<ClaimStep>) {
                 true
             };
             assert_eq!(got == Verdict::Allow, allowed, "step {n}: placing at ({x}, {z}) by P{p}: {got:?}");
+            // The copies into neighbouring cells come a tick later, from the regions owning them: a claim placed in the same tick as
+            // an overlapping one across a cell border would not be seen (the model has them one after the other).
+            rt.begin_tick_in(&world);
+            rt.begin_tick_in(&world);
+            rt.take_effects();
         }
-        // The copies into neighbouring cells come a tick later, from the regions owning them.
-        rt.begin_tick_in(&world);
-        rt.begin_tick_in(&world);
-        rt.take_effects();
         for &(p, x, z) in &s.breaks {
             let r = rt.region_mut(0, s.layout.region_of_block(x, z)).unwrap();
             let got = r.block_break(&actor(p), [x, 64, z], 1);

@@ -199,7 +199,9 @@ impl Kind for Dolphin {
             let Some(item) = level.entity_mut(id) else { continue };
             let EntityKind::Item(d) = &mut item.kind else { continue };
             let stack = std::mem::replace(&mut d.stack, ItemStack::empty());
+            let thrower = d.thrower;
             item.discard();
+            mob::on_item_pickup(e, m, level, thrower, &stack);
             hold(m, stack);
         }
     }

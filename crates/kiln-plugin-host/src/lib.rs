@@ -40,7 +40,8 @@
 //!   the tick, the acting player and the call's position among that player's calls, never
 //!   from arrival order. Batched calls (observe) take their first player as the source, so
 //!   operations from them are only layout-independent when they commute (`add`).
-//! - A timeout is a strike; three strikes in 1,200 ticks demote the plugin to observe-only. A
+//! - A timeout is a strike; three strikes in 1,200 ticks demote the plugin to observe-only (strict mode: at the next B0, so that
+//!   the calls of one tick do not depend on which region's thread struck first). A
 //!   failed or demoted fail-closed subscription denies; fail-open carries on. Running out of
 //!   the per-tick budget of an instance or the acting player's event bucket (a token bucket
 //!   refilled per tick) applies the policy without a strike.
@@ -67,7 +68,7 @@ pub use manifest::{Area, Capability, EventKind, FailPolicy, Filter, Manifest, Ob
 pub use ns::{CellKey, CellSidecars, EntityData, GlobalValue};
 
 use anyhow::{Context, Result, bail};
-use host::{Frame, GlobalGuest, GlobalIndices, HostState, NewTask, Pre, RegionGuest, RegionIndices, wit};
+use host::{Frame, GlobalGuest, GlobalIndices, HostState, MoveGuest, MoveIndices, NewTask, Pre, RegionGuest, RegionIndices, wit};
 use ns::{CellTable, FastMap, Globals, Ns, Persist};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -631,6 +632,20 @@ impl Shared {
         while s.front().is_some_and(|t| now - *t > STRIKE_WINDOW) {
             s.pop_front();
         }
+        // Strict mode demotes at the next B0 ([`Shared::demote_struck`]): regions work in parallel, and which of their calls of this
+        // tick saw the flag already would depend on the threads.
+        if !self.strict && s.len() >= STRIKES && !self.health[plugin].demoted.swap(true, Ordering::Relaxed) {
+            warn!("plugin {id}: {STRIKES} calls over budget within {STRIKE_WINDOW} ticks, demoted to observe-only");
+        }
+    }
+
+    /// B0 of strict mode: the plugin with [`STRIKES`] strikes in the window, counted over the whole of the tick that ended, is demoted.
+    fn demote_struck(&self, plugin: usize, id: &str) {
+        let now = self.tick();
+        let mut s = self.health[plugin].strikes.lock().unwrap();
+        while s.front().is_some_and(|t| now - *t > STRIKE_WINDOW) {
+            s.pop_front();
+        }
         if s.len() >= STRIKES && !self.health[plugin].demoted.swap(true, Ordering::Relaxed) {
             warn!("plugin {id}: {STRIKES} calls over budget within {STRIKE_WINDOW} ticks, demoted to observe-only");
         }
@@ -828,6 +843,8 @@ struct PluginDef {
     pre: Pre,
     global: GlobalIndices,
     region: Option<RegionIndices>,
+    /// 1.1's `move-hooks` (a plugin built against 1.0 does not export it).
+    moves: Option<MoveIndices>,
     data_dir: Option<PathBuf>,
     /// Where it was loaded from (reloads read it again).
     source: Option<PathBuf>,
@@ -919,6 +936,7 @@ struct Inst {
     store: Store<HostState>,
     global: Option<GlobalGuest>,
     region: Option<RegionGuest>,
+    moves: Option<MoveGuest>,
     /// Budget spent in `spent_tick` (epoch ticks or fuel).
     spent_tick: u64,
     spent: u64,
@@ -929,7 +947,7 @@ impl Inst {
     fn new(set: &PluginSet, shared: &Arc<Shared>, i: usize, region: bool) -> Result<(Inst, Vec<wit::CommandSpec>)> {
         let def = &set.plugins[i];
         let store = host::new_store(&set.engine, i, def.generation, def.id.clone(), shared.clone(), def.data_dir.as_deref());
-        let mut inst = Inst { store, global: None, region: None, spent_tick: 0, spent: 0 };
+        let mut inst = Inst { store, global: None, region: None, moves: None, spent_tick: 0, spent: 0 };
         // Instantiation runs guest code too (start functions, allocations).
         match set.init {
             Budget::Epoch(d) => inst.store.set_epoch_deadline(d),
@@ -940,6 +958,9 @@ impl Inst {
         let mut commands = Vec::new();
         if region {
             inst.region = Some(def.region.as_ref().context("no region-hooks export")?.load(&mut inst.store, &instance)?);
+            if let Some(m) = &def.moves {
+                inst.moves = Some(m.load(&mut inst.store, &instance)?);
+            }
         } else {
             inst.global = Some(def.global.load(&mut inst.store, &instance)?);
         }
@@ -964,6 +985,18 @@ impl Inst {
         budget: Budget,
         f: impl FnOnce(&mut Store<HostState>, Option<&GlobalGuest>, Option<&RegionGuest>) -> wasmtime::Result<R>,
     ) -> Outcome<R> {
+        self.run(shared, budget, |i| f(&mut i.store, i.global.as_ref(), i.region.as_ref()))
+    }
+
+    /// `call` for the exports of `move-hooks` (none: nothing is called and nothing happens).
+    fn call_moves(&mut self, shared: &Shared, budget: Budget, events: &[wit::MoveEvent]) -> Outcome<()> {
+        if self.moves.is_none() {
+            return Outcome::Ok(());
+        }
+        self.run(shared, budget, |i| i.moves.as_ref().expect("move guest").call_on_moved(&mut i.store, events))
+    }
+
+    fn run<R>(&mut self, shared: &Shared, budget: Budget, f: impl FnOnce(&mut Inst) -> wasmtime::Result<R>) -> Outcome<R> {
         let tick = shared.tick();
         if self.spent_tick != tick {
             self.spent_tick = tick;
@@ -980,7 +1013,7 @@ impl Inst {
             }
         };
         self.store.data_mut().active = true;
-        let r = f(&mut self.store, self.global.as_ref(), self.region.as_ref());
+        let r = f(self);
         self.store.data_mut().active = false;
         self.spent += match budget {
             Budget::Epoch(_) => shared.epoch.load(Ordering::Relaxed) - start,
@@ -1765,39 +1798,51 @@ impl RegionInner {
                         frame.push_player(o.uuid, &o.name, o.operator, Some(&o.info));
                     }
                 }
-                let batch: Vec<wit::Observed> = mine
-                    .iter()
-                    .map(|o| {
-                        let h = frame.player_handle(generation, frame.players.iter().position(|p| *p == o.uuid).unwrap());
-                        let player = wit::Player { handle: h, uuid: host::wit_uuid(o.uuid), operator: o.operator };
-                        let block = |b| wit::ObservedBlock { player, level: dim_v, pos: wit_pos(o.pos), block: b };
-                        match o.what {
-                            Seen::Broken(b) => wit::Observed::BlockBroken(block(b)),
-                            Seen::Placed(b) => wit::Observed::BlockPlaced(block(b)),
-                            Seen::Died { cause, killer } => wit::Observed::PlayerDied(wit::DeathEvent {
-                                player,
-                                level: dim_v,
-                                pos: wit_pos(o.pos),
-                                cause,
-                                killer: killer.map(host::wit_uuid),
-                            }),
-                            Seen::Moved { from } => {
-                                wit::Observed::PlayerMoved(wit::MoveEvent { player, level: dim_v, before: wit_pos(from), after: wit_pos(o.pos) })
-                            }
-                            Seen::Spawned(reason) => wit::Observed::PlayerSpawned(wit::SpawnEvent {
-                                player,
-                                level: dim_v,
-                                pos: wit_pos(o.pos),
-                                reason: match reason {
-                                    SpawnReason::Join => wit::SpawnReason::Join,
-                                    SpawnReason::Respawn => wit::SpawnReason::Respawn,
-                                    SpawnReason::LevelChange => wit::SpawnReason::LevelChange,
-                                },
-                            }),
+                let player_of = |frame: &Frame, o: &Observation| {
+                    let h = frame.player_handle(generation, frame.players.iter().position(|p| *p == o.uuid).unwrap());
+                    wit::Player { handle: h, uuid: host::wit_uuid(o.uuid), operator: o.operator }
+                };
+                // Moves go to `move-hooks` (1.1), everything else in one `on-observe` batch: a guest built against 1.0 has no
+                // export for the first and an `observed` without the new cases would not match.
+                let mut moves: Vec<wit::MoveEvent> = Vec::new();
+                let mut batch: Vec<wit::Observed> = Vec::with_capacity(mine.len());
+                for o in &mine {
+                    let player = player_of(frame, o);
+                    let block = |b| wit::ObservedBlock { player, level: dim_v, pos: wit_pos(o.pos), block: b };
+                    batch.push(match o.what {
+                        Seen::Broken(b) => wit::Observed::BlockBroken(block(b)),
+                        Seen::Placed(b) => wit::Observed::BlockPlaced(block(b)),
+                        Seen::Died { cause, killer } => wit::Observed::PlayerDied(wit::DeathEvent {
+                            player,
+                            level: dim_v,
+                            pos: wit_pos(o.pos),
+                            cause,
+                            killer: killer.map(host::wit_uuid),
+                        }),
+                        Seen::Moved { from } => {
+                            moves.push(wit::MoveEvent { player, level: dim_v, before: wit_pos(from), after: wit_pos(o.pos) });
+                            continue;
                         }
-                    })
-                    .collect();
-                inst.call(shared_ref, serial, |store, _, g| g.expect("region guest").call_on_observe(store, &batch))
+                        Seen::Spawned(reason) => wit::Observed::PlayerSpawned(wit::SpawnEvent {
+                            player,
+                            level: dim_v,
+                            pos: wit_pos(o.pos),
+                            reason: match reason {
+                                SpawnReason::Join => wit::SpawnReason::Join,
+                                SpawnReason::Respawn => wit::SpawnReason::Respawn,
+                                SpawnReason::LevelChange => wit::SpawnReason::LevelChange,
+                            },
+                        }),
+                    });
+                }
+                let mut outcome = Outcome::Ok(());
+                if !batch.is_empty() {
+                    outcome = inst.call(shared_ref, serial, |store, _, g| g.expect("region guest").call_on_observe(store, &batch));
+                }
+                if matches!(outcome, Outcome::Ok(())) && !moves.is_empty() {
+                    outcome = inst.call_moves(shared_ref, serial, &moves);
+                }
+                outcome
             });
             let _ = set_ref;
             if !matches!(outcome, Outcome::Ok(())) {
@@ -2281,6 +2326,7 @@ fn prepare(
         .map_err(|e| e.context("an import is not linked: is a capability missing from the manifest?"))?;
     let global = GlobalIndices::new(&pre)?;
     let region = RegionIndices::new(&pre).ok();
+    let moves = MoveIndices::new(&pre).ok();
     let data_dir = match (data_root, manifest.has(Capability::FsData)) {
         (Some(root), true) => Some(root.join("data").join(&manifest.id)),
         _ => None,
@@ -2313,7 +2359,7 @@ fn prepare(
         (Some(_), None) => bail!("the async-tasks engine could not be started"),
         _ => None,
     };
-    Ok(PluginDef { id: manifest.id.as_str().into(), manifest, pre, global, region, data_dir, source, init, generation, filters, raises, tasks })
+    Ok(PluginDef { id: manifest.id.as_str().into(), manifest, pre, global, region, moves, data_dir, source, init, generation, filters, raises, tasks })
 }
 
 fn read_plugin(dir: &Path) -> Result<(Manifest, Vec<u8>)> {
@@ -2606,6 +2652,11 @@ impl PluginRuntime {
     pub fn begin_tick_in(&mut self, world: &dyn World) {
         self.shared.tick.fetch_add(1, Ordering::Relaxed);
         self.shared.seqs.lock().unwrap().clear();
+        if self.shared.strict {
+            for (i, def) in self.set.plugins.iter().enumerate() {
+                self.shared.demote_struck(i, &def.id);
+            }
+        }
         self.fold_calls();
         let tick = self.shared.tick();
         let staged = std::mem::take(&mut *self.staged.lock().unwrap());

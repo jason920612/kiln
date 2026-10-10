@@ -1334,8 +1334,11 @@ fn use_item_on(
     if pos[1] <= top && p.awaiting_teleport.is_none() && may_interact {
         if p.game_mode == 3 {
             crate::container::open::spectator_use(p, level, BlockPos::new(pos[0], pos[1], pos[2]), spawns);
-        } else {
-            use_on_block(p, level, hand, pos, dir, cursor, spawns);
+        } else if use_on_block(p, level, hand, pos, dir, cursor, spawns) {
+            // `handleUseItemOn`: an interaction that did something fires `any_block_use` (the stack as it is left in the hand).
+            let held = p.in_hand(hand != 0).clone();
+            let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
+            p.used_on_block("minecraft:any_block_use", pos, level.block(BlockPos::new(pos[0], pos[1], pos[2])), &held, &probe);
         }
     }
     p.resend_block(level, pos);
@@ -1350,7 +1353,7 @@ fn use_on_block(
     dir: kiln_blocks::Direction,
     cursor: [f32; 3],
     spawns: &mut Vec<Spawn>,
-) {
+) -> bool {
     use kiln_item::component::EquipmentSlot;
     let main_hand = hand == 0;
     let have_something = !p.inv.selected_item().is_empty() || !p.inv.equipped(EquipmentSlot::OffHand).is_empty();
@@ -1359,7 +1362,7 @@ fn use_on_block(
     // `SignBlock.useItemOn`, then `useWithoutItem` for the main hand: dyes and honeycomb, the
     // editor, the refusal of waxed signs.
     if !(p.sneaking && have_something) && crate::signs::use_on(p, level, bp, !main_hand) {
-        return;
+        return true;
     }
     let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
     // `BlockState.useItemOn` of blocks that react to the item itself (either hand).
@@ -1375,7 +1378,7 @@ fn use_on_block(
         if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, cursor, !main_hand, spawns) {
             let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
             p.used_on_block("minecraft:item_used_on_block", pos, level.block(bp), &used, &probe);
-            return;
+            return true;
         }
     }
     let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
@@ -1385,37 +1388,40 @@ fn use_on_block(
         kiln_data::builtin_entries("minecraft:item").and_then(|e| e.get(held.item() as usize).copied())
     };
     if !(p.sneaking && have_something) && main_hand && !interact::passes_to_item(level.block(bp), item_name, dir) {
-        if let Some(consumed) = crate::container::open::use_block(p, level, bp, spawns) {
-            if consumed {
-                return;
-            }
-        } else if crate::tools::block_use_without_item(p, level, bp, dir, cursor, spawns) || interact::use_without_item(level, bp, &actor) {
-            return;
+        let consumed = match crate::container::open::use_block(p, level, bp, spawns) {
+            Some(consumed) => consumed,
+            None => crate::tools::block_use_without_item(p, level, bp, dir, cursor, spawns) || interact::use_without_item(level, bp, &actor),
+        };
+        if consumed {
+            // `ServerPlayerGameMode.useItemOn`: the empty-hand interaction took the click (no tool in this trigger's context).
+            let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
+            p.used_on_block("minecraft:default_block_use", pos, level.block(bp), &kiln_item::ItemStack::empty(), &probe);
+            return true;
         }
     }
     // `Item.useOn` of tools (hoes, shovels, axes, shears, honeycomb, bone meal, fire charges,
     // flint and steel on campfires and candles).
     if item_name.is_some_and(crate::boats::is_minecart_item) && actor.may_build && crate::boats::use_minecart_on(p, level, bp, !main_hand, spawns) {
-        return;
+        return true;
     }
     if item_name == Some(crate::firework::ITEM) && actor.may_build && crate::firework::use_on(p, level, bp, dir, cursor, !main_hand, spawns) {
-        return;
+        return true;
     }
     if item_name == Some(crate::end_eye::ITEM) && actor.may_build && crate::end_eye::use_on(p, level, bp, !main_hand) {
-        return;
+        return true;
     }
     // `MapItem.useOn`: a banner is put on the map or taken off it.
     if item_name == Some("minecraft:filled_map")
         && crate::map_items::use_on_banner(p, !main_hand, &*level.cells, level.env.min_y, crate::map_items::has_ceiling(level.env.dim), pos, level.env.game_time).is_some()
     {
-        return;
+        return true;
     }
     if actor.may_build && crate::tools::item_use_on(p, level, bp, dir, !main_hand, spawns) {
-        return;
+        return true;
     }
     if item_name == Some("minecraft:flint_and_steel") && actor.may_build {
         light_fire(p, level, main_hand, pos, dir);
-        return;
+        return true;
     }
     // `SpawnEggItem.useOn` on a mob spawner: its next spawn data's entity becomes the egg's.
     if let Some(entity) = item_name.and_then(|n| n.strip_suffix("_spawn_egg"))
@@ -1425,7 +1431,7 @@ fn use_on_block(
         if !worked {
             // `advMode.notEnabled.spawner`.
             p.send(kiln_proto::packets::system_chat(crate::container::translatable("advMode.notEnabled.spawner"), false));
-            return;
+            return false;
         }
         let egg = if main_hand { p.inv.selected_item().item() } else { p.inv.equipped(EquipmentSlot::OffHand).item() };
         p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, egg), 1);
@@ -1433,7 +1439,7 @@ fn use_on_block(
             let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
             kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
         }
-        return;
+        return true;
     }
     // `SpawnEggItem.useOn`: the mob appears in the clicked block if it has no collision,
     // else next to it, facing a random way.
@@ -1457,34 +1463,34 @@ fn use_on_block(
             let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
             kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
         }
-        return;
+        return true;
     }
     // `ArmorStandItem.useOn`.
     if item_name == Some("minecraft:armor_stand") && crate::stands::use_on(p, level, bp, dir, !main_hand, spawns) {
-        return;
+        return true;
     }
     // `CushionItem.useOn`.
     if item_name.is_some_and(crate::cushion::is_cushion_item) && actor.may_build && crate::cushion::use_on(p, level, bp, dir, cursor, !main_hand, spawns) {
-        return;
+        return true;
     }
     // `HangingEntityItem.useOn`: item frames and paintings.
     if item_name.is_some_and(crate::frames::is_hanging_item) && crate::frames::use_on(p, level, bp, dir, !main_hand, spawns) {
-        return;
+        return true;
     }
     // `EndCrystalItem.useOn`: on obsidian or bedrock with air above and no entity in the two
     // blocks there; the fight looks for its respawn crystals.
     if item_name == Some("minecraft:end_crystal") {
         let s = level.block(bp);
         if !kiln_blocks::state::is(s, kiln_data::blocks::default_state::OBSIDIAN) && !kiln_blocks::state::is(s, kiln_data::blocks::default_state::BEDROCK) {
-            return;
+            return false;
         }
         let above = bp.relative(kiln_blocks::Direction::Up);
         if !kiln_data::blocks_types::is_air(level.block(above)) {
-            return;
+            return false;
         }
         let (x, y, z) = (above.x as f64, above.y as f64, above.z as f64);
         if level.bodies.iter().any(|b| b.intersects([x, y, z], [x + 1.0, y + 2.0, z + 1.0])) {
-            return;
+            return false;
         }
         let env = level.env;
         let seed = crate::mobs::loot_seed(env.seed, env.game_time, p.entity_id, (above.x as u64) << 32 ^ above.z as u64 ^ (above.y as u64) << 16);
@@ -1501,12 +1507,12 @@ fn use_on_block(
             let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
             kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
         }
-        return;
+        return true;
     }
     // `ItemStack.useOn` for block items (adventure players cannot place).
-    let Some(item) = item_name.and_then(BlockItem::of_item) else { return };
+    let Some(item) = item_name.and_then(BlockItem::of_item) else { return false };
     if !actor.may_build {
-        return;
+        return false;
     }
     // `GameMasterBlockItem.getPlacementState`: command blocks, jigsaws and structure blocks only for game masters.
     if matches!(
@@ -1514,16 +1520,16 @@ fn use_on_block(
         Some("minecraft:command_block" | "minecraft:chain_command_block" | "minecraft:repeating_command_block" | "minecraft:jigsaw" | "minecraft:structure_block" | "minecraft:test_block" | "minecraft:test_instance_block")
     ) && !p.can_use_gamemaster_blocks()
     {
-        return;
+        return false;
     }
     let click = [pos[0] as f64 + cursor[0] as f64, pos[1] as f64 + cursor[1] as f64, pos[2] as f64 + cursor[2] as f64];
     let ctx = PlaceContext { hit: bp, face: dir, click, yaw: p.rot[0], pitch: p.rot[1], sneaking: p.sneaking };
-    let Some((at, state)) = placement::placement(level, &item, &ctx) else { return };
+    let Some((at, state)) = placement::placement(level, &item, &ctx) else { return false };
     if obstructed(p, level.bodies, at, state) {
-        return;
+        return false;
     }
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
-    let Some((placed_at, placed_state)) = placement::place(level, &item, &ctx) else { return };
+    let Some((placed_at, placed_state)) = placement::place(level, &item, &ctx) else { return false };
     // `BlockItem.updateBlockStateFromTag`: the item's `block_state` properties the block has are set (clients only).
     if let Some(props) = placed_from.get(kiln_item::keys::BLOCK_STATE) {
         let mut s = placed_state;
@@ -1535,6 +1541,12 @@ fn use_on_block(
         }
     }
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
+    // `BlockItem.updateCustomBlockEntityTag`: a spawner's data from the item, for a game master only.
+    if let Some(data) = placed_from.get(kiln_item::keys::BLOCK_ENTITY_DATA)
+        && p.can_use_gamemaster_blocks()
+    {
+        crate::mob_spawner::apply_item_data(level, placed_at, data.kind, &data.tag);
+    }
     // `CommandBlock.setPlacedBy` (after the item's block entity data, which only a game master may set).
     if kiln_data::block_logic::is_instance(level.block(placed_at), kiln_data::block_logic::BlockClass::CommandBlock) {
         let entity_data = placed_from.get(kiln_item::keys::BLOCK_ENTITY_DATA).map(|d| &d.tag).filter(|_| p.can_use_gamemaster_blocks());
@@ -1568,12 +1580,13 @@ fn use_on_block(
         if !p.infinite_materials() {
             p.set_in_hand(!main_hand, kiln_item::ItemStack::of("minecraft:bucket", 1).unwrap_or_else(kiln_item::ItemStack::empty));
         }
-        return;
+        return true;
     }
     if p.game_mode != 1 {
         let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
         kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
     }
+    true
 }
 
 /// `FlintAndSteelItem.useOn` beside a block (campfires and candles are not lit by Kiln): fire

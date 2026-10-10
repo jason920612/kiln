@@ -281,9 +281,12 @@ impl Kind for Panda {
             if removed || d.stack.is_empty() || d.pickup_delay > 0 || !eats_from_ground(&d.stack) {
                 continue;
             }
+            let thrower = d.thrower;
             m.equipment[MAINHAND] = std::mem::replace(&mut d.stack, ItemStack::empty());
             m.drop_chances[MAINHAND] = 2.0;
             item.discard();
+            let taken = m.equipment[MAINHAND].clone();
+            crate::mob::on_item_pickup(e, m, level, thrower, &taken);
         }
     }
 

@@ -159,7 +159,7 @@ fn equippable_slot(stack: &ItemStack) -> Option<usize> {
 
 /// `getApproximateAttributeWith`: the base of a piglin's attribute with the item's modifiers of
 /// that slot (`ItemAttributeModifiers.compute`).
-fn approximate_attribute(m: &MobData, stack: &ItemStack, attr: Attr, slot: usize) -> f64 {
+pub(crate) fn approximate_attribute(m: &MobData, stack: &ItemStack, attr: Attr, slot: usize) -> f64 {
     use kiln_item::component::{AttributeOperation, EquipmentSlotGroup as G};
     let base = m.attrs.get(attr).map_or(0.0, |a| a.base);
     let Some(mods) = stack.get(kiln_item::keys::ATTRIBUTE_MODIFIERS) else { return base };
@@ -178,7 +178,9 @@ fn approximate_attribute(m: &MobData, stack: &ItemStack, attr: Attr, slot: usize
             G::Legs => slot == mob::LEGS,
             G::Chest => slot == mob::CHEST,
             G::Head => slot == mob::HEAD,
-            G::Armor => slot >= mob::FEET,
+            G::Armor => (mob::FEET..=mob::HEAD).contains(&slot) || slot == 6,
+            G::Body => slot == 6,
+            G::Saddle => slot == 7,
             _ => false,
         };
         if !fits {
@@ -195,7 +197,7 @@ fn approximate_attribute(m: &MobData, stack: &ItemStack, attr: Attr, slot: usize
 }
 
 /// `Mob.canReplaceEqualItem`.
-fn can_replace_equal_item(candidate: &ItemStack, current: &ItemStack) -> bool {
+pub(crate) fn can_replace_equal_item(candidate: &ItemStack, current: &ItemStack) -> bool {
     let enchants = |s: &ItemStack| s.get(kiln_item::keys::ENCHANTMENTS).map_or(0, |e| e.0.len());
     let (a, b) = (enchants(candidate), enchants(current));
     if a != b {
@@ -485,6 +487,7 @@ fn pick_up_item(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, me
     stop_walking(m, mem);
     let Some(item) = level.entity_mut(id) else { return };
     let EntityKind::Item(d) = &mut item.kind else { return };
+    let (thrower, whole) = (d.thrower, d.stack.clone());
     let taken = if is_item(&d.stack, "minecraft:gold_nugget") {
         let s = std::mem::replace(&mut d.stack, ItemStack::empty());
         item.discard();
@@ -496,6 +499,7 @@ fn pick_up_item(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, me
         }
         s
     };
+    mob::on_item_pickup(e, m, level, thrower, &whole);
     if is_loved(&taken) {
         mem.erase(Mem::TimeTryingToReachAdmireItem);
         hold_in_offhand(e, m, level, taken);
@@ -534,14 +538,19 @@ pub fn pick_up_loot(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
         if m.kind == MobKind::PiglinBrute {
             // `Mob.pickUpItem`.
             let equipped = equip_item_if_possible(e, m, level, stack.clone());
+            let mut picked = None;
             if !equipped.is_empty()
                 && let Some(item) = level.entity_mut(id)
                 && let EntityKind::Item(d) = &mut item.kind
             {
+                picked = Some((d.thrower, d.stack.clone()));
                 d.stack.shrink(equipped.count());
                 if d.stack.is_empty() {
                     item.discard();
                 }
+            }
+            if let Some((thrower, whole)) = picked {
+                mob::on_item_pickup(e, m, level, thrower, &whole);
             }
         } else {
             pick_up_item(e, m, level, &mut brain.st.mem, id);

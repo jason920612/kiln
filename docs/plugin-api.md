@@ -69,7 +69,7 @@ region 實例（每個 region 一個，綁 region 不綁執行緒）：
 | `on-container-click` | 可取消 | **新**：`ContainerClick`；插件選單一律鎖定（回傳值被忽略、點擊被吃掉、畫面重送），一般容器需 `vanilla = true` |
 | `on-chat` / `on-command` | 可取消 | 取消或改寫 |
 | `on-custom` | 可取消 | **新**：其他插件用 `events.raise` 發出的事件 |
-| `on-observe` | 批次 | 方塊破壞／放置；**新**：`player-died`（死亡訊息宣告的序列點）、`player-spawned`（加入、重生、換世界，玩家有 region 之後的第一個 B0）；**1.1**：`player-moved`（方塊位置改變） |
+| `on-observe` | 批次 | 方塊破壞／放置；**新**：`player-died`（死亡訊息宣告的序列點）、`player-spawned`（加入、重生、換世界，玩家有 region 之後的第一個 B0）；**1.1**：`player-moved`（方塊位置改變）改走選用的匯出 `move-hooks.on-moved`（§5） |
 | `on-task` / `on-results(player, results)` | B0 | 工作與原子操作／動作／工作（job）的結果；**新**：結果帶著來源玩家 |
 
 global 實例（每個插件一個）：`init`、`on-enable`、`on-disable`、`on-join`、`on-leave`、`on-command`（註冊的指令）、`on-task`、
@@ -125,24 +125,31 @@ host 把同情境中訂閱 `custom` 的其他實例從槽位「借」進它的 s
   region 內從 global 快照裡的備註複製（`claims`）。
 - **逐呼叫預算、strike、降級、速率限制**對新的可取消事件全部適用（`player-damage` 受害者、`container-click` 點擊者各有 token bucket）。
 - **fail-closed**：保護類範例（`claims`、`spawn-protection`）每個訂閱都是 fail-closed，trap／逾時／預算用完一律拒絕；
-  降級（3 次 strike）後仍拒絕。
+  降級（3 次 strike）後仍拒絕。（wp53：strict 模式的降級在**下一個 B0** 才生效；原本是第三次 strike 一發生就立刻生效，平行的 region 在同一個 tick 裡有的看得到旗標、有的看不到，
+  `plugin_api_determinism` 因此約 3% 的執行會多／少算一次呼叫與逾時。改成 B0 後 300 次連跑 0 次失敗；ordered 模式維持立刻降級。）
 
 ## 5. 版本政策（WIT 1.0 凍結）
 
 - `kiln:api@1.0.0` 起適用 semver。`wit/kiln-api.wit` 去掉註解與空白後的 SHA-256 寫在 `crates/kiln-plugin-host/tests/wit_freeze.rs`，
   改動 WIT 的形狀必須同時改雜湊與版本號（只改註解不用）；測試也檢查 WIT 的 package 版本號與 manifest 的 `api` major 一致。
-- **只增不破壞的改動 = minor**：新增介面、新增函式到**新**介面、`observed` 新增分支（舊 guest 不會收到：host 依 manifest 的 `kinds` 只送訂閱過的）、
-  新增 manifest capability、新增事件種類（host 只送訂閱過的）。**不能**往既有 record 加欄位、往既有函式加參數、往既有 enum 中間插入：
-  那些改 canonical ABI，屬 major。
+- **只增不破壞的改動 = minor**：新增介面、新增函式到**新**介面（包含新的匯出介面，host 把它當選用的）、新增 record、新增 manifest capability、
+  新增事件種類（host 只送訂閱過的）。**不能**往既有 record 加欄位、往既有 variant／enum 加分支（連在尾端也不行）、往既有函式加參數：
+  這些改的是既有函式的型別，而 host 在取得 guest 的匯出函式時會把 guest 自己的型別和 host 的逐結構比對，不同就拒絕那個實例（1.1 一開始把
+  `player-moved` 加在 `observed` 尾端，以 1.0 WIT 建置的 guest 在 region 實例化時就失敗：`type mismatch with parameters: expected variant of 5
+  cases, found 4 cases`；現在改成新的選用匯出介面 `move-hooks`，見 §10）。屬 major。`wit_freeze.rs` 的 `the_1_0_declarations_are_all_still_there`
+  逐宣告檢查：1.0 的每個介面與 world 的每一條宣告在目前的 WIT 裡必須一字不差地還在（只能多不能少、不能改）。
 - **破壞性改動 = major**：移除或改簽名的函式、改 record 欄位、改語意。major 需要**兩次改版的淘汰期**：新 major 發佈時，舊 major 仍照常載入
   （host 以套件名稱的 major 分別連結）至少再一個 major。
 - manifest 的 `api = "1"`（預設 1）宣告相容的 major；host 拒絕載入它不支援的 major。
 - `async-tasks.wit` 依賴 WASI 0.3 的 component-model async，在其穩定前**不在 1.0 的承諾內**：它的形狀雜湊同樣被追蹤，但可在 1.x 內變動
   （changelog 註明）。
-- 1.1.0（wp52）：新介面 `world-read`、新記錄 `move-event`、`observed` 的新分支 `player-moved`、新 capability `world.read`、新 observe kind
-  `player-moved`；沒有改任何既有型別、函式或分支順序。`wit_freeze.rs` 同時追蹤摘要與套件版本。host 的版本相容仰賴 wasmtime 的 component linker
-  對介面名稱（`kiln:api/state@1.0.0` 之類）做 semver 相容比對——**尚未用真正以 1.0 WIT 建置的 guest 驗證**（examples 全都以 1.1 重建）。
-  `observed` 的 list 步幅由最大分支決定：`move-event`（64 位元組）小於 `death-event`（80），所以舊 guest 讀同一種批次不會走位。
+- 1.1.0（wp52，wp53 修正）：新介面 `world-read`、新介面 `move-hooks`（選用的匯出：`on-moved(list<move-event>)`）、新記錄 `move-event`、新 capability
+  `world.read`、新 observe kind `player-moved`；沒有改任何既有型別、函式或分支。`wit_freeze.rs` 同時追蹤摘要與套件版本。版本相容的證明：
+  `crates/kiln-plugin-host/tests/fixtures/compat10` 是直接以凍結的 1.0 WIT（`git show c1b432fb:wit/kiln-api.wit`）建置的 guest（沒用 SDK），
+  `compat10.wasm`（70 KB）進版控，`tests/api_compat.rs` 在 1.1 host 上載入它、跑兩種實例的鉤子（全域指令、可取消的 `block-break`、`chat` 改寫、
+  `on-observe` 批次與 `state.submit`）。wasmtime 的 component linker 對介面名稱（`kiln:api/state@1.0.0` 之類）確實做 semver 相容比對；
+  過不了的是 `observed` 這種**型別**——wp52 把 `player-moved` 放在 `observed` 尾端時，這個測試第一次跑就失敗，所以搬到 `move-hooks`。
+  1.0 的 guest 不匯出 `move-hooks`，host 就不送移動（manifest 訂閱了 `player-moved` 也一樣，靜默略過）。
 - 這個 PR 內從 0.2.0 → 1.0.0 的破壞性改動（遊戲內尚無外部插件，一次做完）：`on-results` 多了 `player` 參數；`entity-event` 與
   `damage-event` 帶 `cell`；`atomic-op`、`observed`、`registry.kind` 多了分支；介面 `chat` 多了 `tell`；`players` 有 `kill`。
 
@@ -230,7 +237,7 @@ region 走無鎖路徑（見缺口）。
 - `take` 依物品 key 計，不分標籤。
 - `async-tasks`：strict 不可用；沒有逐工作 CPU 上限；一個插件一個實例；不支援 `wasi:*@0.3` 介面。
 
-## 10. 1.1（wp52）：方塊讀取、權限節點、移動事件
+## 10. 1.1（wp52，wp53 修正）：方塊讀取、權限節點、移動事件
 
 照同樣的方法（質疑、刪、簡化）逐項決定：
 
@@ -238,11 +245,19 @@ region 走無鎖路徑（見缺口）。
 | --- | --- | --- |
 | 方塊讀取 | 需要，但只有一個窄用途：`block-place` 只給位置，保護類插件（上鎖的箱子、只能開的門）不知道被點的是什麼 | **加**，最簡單的形狀：介面 `world-read`（capability `world.read`），`get-block(x, y, z) -> option<block>`。host 在呼叫處理器**之前**複製事件位置周圍 9x9x9（半徑 4）的方塊到一個擁有的緩衝區（沒有借用、沒有 `unsafe`），超出盒子或區塊未載入回傳 none。只在 `block-break` 與 `block-place` 的處理器裡有（sim 的兩個呼叫點）；只有「某個訂閱者帶了 `world.read`」時 host 才複製（無鎖旗標檢查，其餘情況每個事件多一次原子讀取）。盒子沿用 `scheduler.at-position` 之外的做法：不跨 cell 借指標、不讀別的 region |
 | 權限節點 | 不需要新的 host 呼叫（§3） | **不加 WIT**；SDK 加 `perm::{has, grant, revoke}`：operator 一律有，其他玩家看 global 命名空間的 `perm:<uuid>:<node>`（任何情境都能讀的快照），授與／撤銷用原子操作。跨插件的節點查詢需要同步跨情境呼叫，不做；指令樹（`command-spec.permission`）仍是 0–4 |
-| 移動事件 | 需要的是「進出區域、步數、離開出生點」，不是每個封包 | **加**，節流在 host 端：observe 的新 kind `player-moved`（`move-event`：`before`、`after` 方塊位置），每個 tick 每位玩家至多一次（比對上一個 tick 的方塊位置，換世界不算移動——那是 `player-spawned`）。成本只在有訂閱者時才付；不能取消（要擋就用 `teleport` 動作），因此不碰「moved wrongly」的伺服器端驗證 |
+| 移動事件 | 需要的是「進出區域、步數、離開出生點」，不是每個封包 | **加**，節流在 host 端：observe 的新 kind `player-moved`（`move-event`：`before`、`after` 方塊位置），每個 tick 每位玩家至多一次（比對上一個 tick 的方塊位置，換世界不算移動——那是 `player-spawned`）。成本只在有訂閱者時才付；不能取消（要擋就用 `teleport` 動作），因此不碰「moved wrongly」的伺服器端驗證。**wp53**：事件不放進 `observed`（見 §5），而是新的選用匯出 `move-hooks.on-moved(list<move-event>)`；SDK 的 `Plugin::on_player_moved` |
 
 沒有加的：任意位置的 `get-block`、`item-use`／實體事件的方塊盒（呼叫點沒有 cell 集合可用，要的時候用 `block-place` 的位置）、可取消的移動事件、
 host 端權限節點。範例 `lockbox` 三項都用到；測試：`kiln-sim/tests/plugin_api.rs::lockbox_*`（箱子被點時用 `get-block` 判斷、授權後放行、步數）、
 `kiln-plugin-host/tests/wit_freeze.rs`（摘要與版本）。
 
-成本（未量測，估計）：沒有帶 `world.read` 的訂閱者時，每個方塊事件多一次 `AtomicU32` 讀取；有的時候，每個事件複製 729 個方塊（每個一次 `CellSet::get_block`，估計數 µs）。
-`player-moved` 沒有訂閱者時每 tick 每 region 一次旗標檢查。
+成本（wp53 量測，`kiln-sim` 的 `plugins::tests::block_window_copy_cost`，release，12 核 VM，真實區塊上的 9x9x9 窗）：沒有帶 `world.read` 的訂閱者時，每個方塊事件多一次
+`AtomicU32` 讀取（量不到）；有的時候，每個事件複製 729 個方塊：
+
+| 作法 | 每個事件 | 每個方塊 |
+| --- | --- | --- |
+| wp52：每個方塊一次 `CellSet::get_block`（每次查 cell 的雜湊） | 7012 ns | 9.6 ns |
+| wp53：每個 chunk 只找一次（窗最多橫跨 4 個 chunk；上一個 chunk 快取在閉包裡） | 3709 ns | 5.1 ns |
+
+3.7 µs 是只有「帶 `world.read` 的訂閱者聽得到的 `block-break`／`block-place`」才付的錢；一般事件的呼叫成本仍是 §8 的 0.1–1 µs。測試同時逐方塊比對新舊兩種複製的結果。
+`player-moved` 沒有訂閱者時每 tick 每 region 一次旗標檢查。要再省可以只複製被點的方塊所在的 section 範圍，或把視窗縮到半徑 2（125 個方塊，依方塊數比例估計約 0.6 µs，未量）；目前不值得改 API。

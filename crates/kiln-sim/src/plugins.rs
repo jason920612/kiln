@@ -198,8 +198,25 @@ fn registries() -> Arc<Registries> {
 /// `world-read`: when a plugin that reads blocks is going to hear of the event, the blocks around `pos` are copied for it.
 fn provide_blocks(hook: &RegionHook, kind: EventKind, pos: [i32; 3], cells: &CellSet<Cell>) {
     if hook.rp.wants_blocks(kind) {
-        hook.rp.provide_blocks(BlockWindow::new(pos, |x, y, z| cells.get_block(x, y, z).map_or(BlockWindow::UNLOADED, block_id)));
+        hook.rp.provide_blocks(block_window(cells, pos));
     }
+}
+
+/// The 9x9x9 blocks around `pos`, each chunk found once (a row of the box lies in one or two chunks, the whole box in at most four).
+fn block_window(cells: &CellSet<Cell>, pos: [i32; 3]) -> BlockWindow {
+    let mut last: Option<(kiln_world::ChunkPos, Option<&kiln_world::chunk::Chunk>)> = None;
+    BlockWindow::new(pos, |x, y, z| {
+        let at = kiln_world::ChunkPos::of_block(x, z);
+        let chunk = match last {
+            Some((p, c)) if p == at => c,
+            _ => {
+                let c = cells.chunk(at);
+                last = Some((at, c));
+                c
+            }
+        };
+        chunk.map_or(BlockWindow::UNLOADED, |c| block_id(c.get((x & 15) as usize, y, (z & 15) as usize)))
+    })
 }
 
 /// `player-moved`: a player whose block position changed since the last tick (a level change is a spawn, not a move).
@@ -992,5 +1009,51 @@ impl Sim {
         if let Some(pl) = &self.plugins {
             pl.rt.hash_state(h);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{Client, join};
+    use crate::{OVERWORLD_ID, SimConfig};
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    /// What `world-read` costs an event: the copy of the 9x9x9 blocks around it (`provide_blocks`, 729 `get_block` calls and
+    /// a `Vec`), measured over the chunks of a running level. Prints the numbers (`--nocapture`); the bound only catches a
+    /// copy that went wrong by an order of magnitude.
+    #[test]
+    fn block_window_copy_cost() {
+        let mut sim = Sim::new(SimConfig::new(2, 2, None));
+        let (msg, stats) = join(1, "Cost", 2);
+        assert!(sim.step([msg]));
+        let mut client = Client::new(1, stats);
+        for _ in 0..10 {
+            let mut inbox = Vec::new();
+            client.tick(None, &mut inbox);
+            assert!(sim.step(inbox));
+        }
+        let centre = sim.players.get(&1).unwrap().pos.map(|c| c.floor() as i32);
+        let region = sim.dims[OVERWORLD_ID].regions.iter().next().expect("a region");
+        let cells = region.cells();
+        let window = |c: [i32; 3]| block_window(cells, c);
+        // (Block for block the same as asking the cell set one at a time.)
+        let reference = BlockWindow::new(centre, |x, y, z| cells.get_block(x, y, z).map_or(BlockWindow::UNLOADED, block_id));
+        for i in 0..729 {
+            let at = [centre[0] - 4 + i % 9, centre[1] - 4 + i / 81, centre[2] - 4 + i / 9 % 9];
+            assert_eq!(window(centre).get(at[0], at[1], at[2]), reference.get(at[0], at[1], at[2]), "{at:?}");
+        }
+        let loaded = (0..729).filter(|i| window(centre).get(centre[0] - 4 + i % 9, centre[1] - 4 + i / 81, centre[2] - 4 + i / 9 % 9).is_some()).count();
+        assert!(loaded > 100, "the window is over loaded chunks ({loaded} blocks)");
+        const N: u32 = 20_000;
+        let start = Instant::now();
+        for i in 0..N {
+            // (The centre moves a little, as events do.)
+            black_box(window(black_box([centre[0] + (i % 5) as i32, centre[1], centre[2] + (i % 3) as i32])));
+        }
+        let per_window = start.elapsed().as_nanos() as f64 / N as f64;
+        println!("world-read window: {per_window:.0} ns per event ({:.2} ns per block, {loaded} of 729 loaded)", per_window / 729.0);
+        assert!(per_window < 200_000.0, "{per_window} ns");
     }
 }

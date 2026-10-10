@@ -1,4 +1,4 @@
-# Kiln 與原版 26.3 的一致性涵蓋矩陣（wp44 稽核，wp45 整合後的狀態，wp49、wp50、wp52 補 D 項後更新）
+# Kiln 與原版 26.3 的一致性涵蓋矩陣（wp44 稽核，wp45 整合後的狀態，wp49、wp50、wp52、wp53 補 D 項後更新）
 
 基準：`main` 的 e5dd225 加上 wp41、wp44 及其十條子分支（wp45 整合成 `wp45-integrate`），再加 wp49（`wp49-d-gaps`，接在 wp48 之後）與 wp50（`wp50-last-d`，把第 4 節剩下的 D 項做完，見 6.4）。第 1～5 節是整合後的狀態（每個區域的 A/B/C/D 在 wp45 時重算，數字是 wp45 在 VM 上重錄並重放的結果；wp49 補完的 D 項已在各表的對應列改成現況，第 1 節的總計欄沒有重算），第 6 節記錄 wp44／wp45／wp49／wp50 做了什麼、完成了什麼、放棄了什麼。
 稽核範圍是玩家能觀察到的行為。方法：先問「完整驗證」要涵蓋什麼，刪掉不可觀察的工作，不另建新框架；只有稽核指出的洞才補。
@@ -487,14 +487,50 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 
 仍是 C 或 D 的（以及原因）：
 
-- **進度 trigger 還缺**：`spear_mobs`（長矛 `KineticWeapon` 的命中數）、`bee_nest_destroyed`（絲綢之觸蜂巢，`BeehiveBlock.playerDestroy` 沒有玩家事件的接線）、`thrown_item_picked_up_by_entity`（猴子／豬布林撿起玩家丟的金錠，`distract_piglin`、`uh_oh`）、`allay_drop_item_on_block`、`used_ender_eye`、`any_block_use`／`default_block_use`（沒有原版進度用到）。已接的 trigger 沒有原版向量。
-- **放置物品的方塊實體預設**：漏斗 `TransferCooldown`（原版不 tick 為 -1，Kiln 放置後 tick 一次）與釀造台 `total_brew_time`／`total_fuel`（原版新建為 0／0，Kiln 載入預設 400／20）、刷怪磚 `SpawnPotentials` 預設（原版 `[]`）與「op 帶 `block_entity_data` 的刷怪磚物品」（目前只有指令方塊吃 `block_entity_data`）：這 7 個 `place52_*` scenario（`hopper_named_*`、`brewing_named_*`、`spawner_data_*`、`op_spawner_data`）從向量檔移除，沒有修。
-- **鎧甲被「撿起」**：持有 `CanPickUpLoot` 的生物不會把發射器丟出的狼鎧甲撿到身上（`c52` 該 scenario 已拿掉）。
-- **cushion 活塞推動、mannequin 落地方塊音效**：harness 不 tick 實體／不錄落地音效，無法比對（Kiln 有實作，沒有向量）。
+- **進度 trigger 還缺**（wp53 已接，見 6.6）：`spear_mobs`（長矛 `KineticWeapon` 的命中數）、`bee_nest_destroyed`（絲綢之觸蜂巢，`BeehiveBlock.playerDestroy` 沒有玩家事件的接線）、`thrown_item_picked_up_by_entity`（猴子／豬布林撿起玩家丟的金錠，`distract_piglin`、`uh_oh`）、`allay_drop_item_on_block`、`used_ender_eye`、`any_block_use`／`default_block_use`（沒有原版進度用到）。已接的 trigger 沒有原版向量。
+- **放置物品的方塊實體預設**（wp53 已修，7 個 scenario 放回，見 6.6）：漏斗 `TransferCooldown`（原版不 tick 為 -1，Kiln 放置後 tick 一次）與釀造台 `total_brew_time`／`total_fuel`（原版新建為 0／0，Kiln 載入預設 400／20）、刷怪磚 `SpawnPotentials` 預設（原版 `[]`）與「op 帶 `block_entity_data` 的刷怪磚物品」（目前只有指令方塊吃 `block_entity_data`）：這 7 個 `place52_*` scenario（`hopper_named_*`、`brewing_named_*`、`spawner_data_*`、`op_spawner_data`）從向量檔移除，沒有修。
+- **鎧甲被「撿起」**（wp53 已做，見 6.6）：持有 `CanPickUpLoot` 的生物不會把發射器丟出的狼鎧甲撿到身上（`c52` 該 scenario 已拿掉）。
+- **cushion 活塞推動、mannequin 落地方塊音效**（wp53 查過：harness 其實可以 tick，缺的是 Kiln 的功能，見 6.6）：harness 不 tick 實體／不錄落地音效，無法比對（Kiln 有實作，沒有向量）。
 - 命令回饋的 `show_entity` 懸停事件 Kiln 沒有送（`kill` 之類的回饋）；向量因此避開。
 - 實體 NBT 差異：豬的 `attributes` 與雞的 `variant` 的存檔欄位和原版不同（向量改用礦車／盔甲座場景）。
 
 外掛 API 的 1.1 增補見 `docs/plugin-api.md` §10。
+
+### 6.6 wp53（`wp53-gaps`）：關掉 wp52 留下的缺口，並用 1.0 guest 驗證外掛 API 的相容
+
+方法照舊：原版 javap 讀行為、原版內錄向量、Kiln 重播；沒辦法錄的就說沒辦法。向量在 `work/wp53/`（`interact/adv53.jsonl`、`container/c53.jsonl`、`mobs/pickup53.jsonl`），
+`tools/parity_suites.py` 新增 `interact53`、`container53`、`plugin_compat`；wp52 的 `place52.jsonl` 補回 7 個 scenario（62 個），生物向量併入 `work/m6-mobs2/vectors.jsonl`
+（原檔備份為 `.pre-wp53`，依 name 去重後 +34）。
+
+驗證（VM，release，`--no-fail-fast`）：workspace 測試在沒有與有 `KILN_DATAPACK` 時各 161 個測試目標全綠；`tools/parity_suites.py` 全部 86 次執行 exit 0：`mob_parity` **1346**／1346
+（wp52 是 1312，+34 `pickup53_*`，564,811 個生物狀態逐項相同）、`interact52-place52` 62／62（+7）、`interact53-adv53` 13／13、`container53-c53` 1／1、`container52-c52` 5／5、`determinism` 6／6、`plugin_compat` 6 個。
+這一輪還抓到並修掉兩個**早就存在**的測試問題：`claims_do_not_depend_on_the_region_layout`（proptest 的模型假設同一 tick 內的兩次放置立刻互相看得到，跨 cell 邊界的複寫晚一個 tick；
+抽到相鄰重疊的種子就失敗，種子存進 regressions 檔後每次都失敗）與 `plugin_api_determinism` 約 3%（120 次中 4 次）的失敗（strict 模式的降級在第三次 strike 發生的當下生效，平行 region 的同 tick 呼叫是否看到旗標取決於執行緒；
+改成下一個 B0 生效，300 次連跑 0 次失敗；見 `docs/plugin-api.md` §4.5）。另外 `plugins/Cargo.lock` 少列 `lockbox`。
+
+| 項目 | 內容 | 原版向量 | 驗證端 |
+|---|---|---|---|
+| 進度 trigger | `bee_nest_destroyed`（`BeehiveBlock.playerDestroy` 只要玩家用得上掉落就觸發，**絲綢之觸也觸發**；`num_bees_inside` 是破壞後還留在方塊裡的蜂數）、`used_ender_eye`（`EnderEyeItem.use`：玩家到最近要塞的水平距離平方，`matchesSqr`）、`spear_mobs`（`KineticWeapon.damageEntities` 有命中時，近期刺過的活生物數 ≥ `count`）、`thrown_item_picked_up_by_entity`（`LivingEntity.onItemPickup`：玩家丟的物品被生物撿起；接在豬布林、硫磺方塊、悅靈、狐狸、貓熊、海豚與新的通用撿拾）、`allay_drop_item_on_block`（`AllayAi.throwItem`：喜歡的玩家、目標下方的方塊、丟出的那一個物品）、`any_block_use`（`handleUseItemOn`：凡是 `consumesAction` 的點擊，帶手上剩下的物品）、`default_block_use`（空手 `useWithoutItem` 被方塊接走） | `adv53` 13（`husbandry/silk_touch_nest`：蜂巢／蜂窩 × 0／2／3 隻蜂 × 絲綢／非絲綢 + 創造模式；只有「絲綢＋3 隻＋蜂巢（nest）」完成準則） | `interact_parity`（InteractVectors 現在可以 `advancements()` 記錄每一步完成的準則）；其餘 6 個 trigger 沒有原版向量，見下，由 `advancements/wp53_tests.rs` 6 個測試覆蓋 |
+| 放置物品的方塊實體預設 | **新建**的釀造台 `total_brew_time`／`total_fuel` 是 0／0（`loadAdditional` 的 400／20 只給缺這兩個鍵的存檔）；**新建**的刷怪磚沒有 `SpawnData`、`SpawnPotentials` 是 `[]`，且它的存檔欄位立刻寫進區塊副本（更新封包有 `Delay`、`MaxNearbyEntities`… 而不是空 tag）；`BlockItem.updateCustomBlockEntityTag` 對刷怪磚：只有 `canUseGameMasterBlocks` 的玩家，`block_entity_data` 與存檔合併（`CompoundTag.merge`）後讀回；漏斗 `TransferCooldown` -1 本來就對（原版未 tick 的區塊副本是 -1，Kiln 的重播多 tick 一次到 0），所以那兩個 scenario 改錄成「關卡有 tick」（`ticking`）。**這是 wp52 的「放置後 tick 一次」差異，不是 Kiln 的錯誤** | `place52` 55 → 62（hopper_named、brewing_named、spawner_data ×2 模式 + op_spawner_data） | `interact_parity` |
+| 持有 `CanPickUpLoot` 的生物撿東西 | 新模組 `mob/pickup.rs`：`Mob.aiStep` 的撿拾迴圈（1×0×1 範圍、`mob_griefing`）→ `wantsToPickUp` → `pickUpItem` → `equipItemIfPossible`（`getEquipmentSlotForItem`、`isEquippableInSlot`、`canReplaceCurrentItem`：護甲看護甲值與韌性、綁定詛咒不換、武器看偏好武器 tag 與攻擊傷害、`canReplaceEqualItem`；護甲不比較好就改放空的主手；舊的依掉落機率掉出、一次穿 1 件、`onEquipItem` 的音效種子）；`Zombie`／`ZombifiedPiglin`／`Drowned`／`AbstractSkeleton`／`WitherSkeleton` 的 `canHoldItem`／`wantsToPickUp`／偏好武器；狼的身體護甲（BODY 槽）與豬的鞍都走這條。有自己撿法的（豬布林、狐狸、貓熊、海豚、悅靈、村民、襲擊者、硫磺方塊）不經過它。順手修了 `wither_skeleton` 不在 `#burn_in_daylight` 的錯（它免火但仍抽 `isSunBurnTick` 的亂數） | `pickup53` 34（殭屍／屍殼／溺屍／殭屍豬人／骷髏／凋零骷髏／牛／豬／苦力怕／狼 × 護甲、武器、綁定、矛、發光墨囊、鞍、狼鎧甲）；`c53` 1（發射器丟狼鎧甲、穿著鎧甲的狼自己撿進嘴裡）| `mob_parity`、`container_parity`（`mobs_lag`：發射器在方塊階段做的物品，Kiln 在下一個 tick 才被撿起，原版同 tick——和 `drops_lag` 同一個架構差異） |
+| 外掛 API 1.0 guest 在 1.1 host 上跑 | `tests/fixtures/compat10`：直接以凍結的 1.0 WIT 建置的 guest（70 KB `compat10.wasm` 進版控，附原始碼與 `build.sh`）；`tests/api_compat.rs` 載入並呼叫它。**第一次跑就失敗**：1.1 在 `observed` 尾端加了 `player-moved`，1.0 guest 的 region 實例化被 wasmtime 以 `expected variant of 5 cases, found 4 cases` 拒絕。改成新的選用匯出 `move-hooks.on-moved`（WIT、host、SDK、`lockbox`），`wit_freeze.rs` 新增逐宣告檢查，把「1.0 的宣告必須一字不差地還在」變成測試 | – | `api_compat`、`wit_freeze`（`plugin_compat` 套件） |
+| `get-block` 視窗的複製成本 | 7012 ns／事件 → 每個 chunk 只找一次後 **3709 ns／事件**（729 個方塊，5.1 ns／方塊），逐方塊與舊作法比對相同 | – | `plugins::tests::block_window_copy_cost` |
+
+仍是 C 或 D 的（以及原因）：
+
+- **進度 trigger 的原版向量**：只有 `bee_nest_destroyed` 有。`any_block_use`、`default_block_use`、`used_ender_eye` 沒有任何原版進度用到（要錄就得在原版伺服器放自訂 datapack，Kiln 的重播也要載同一份；沒做）。`spear_mobs`
+  （`adventure/spear_many_mobs`）需要玩家蓄力刺中 5 隻會動的生物，InteractVectors 不 tick 生物；`thrown_item_picked_up_by_entity`（`nether/distract_piglin`、`husbandry/uh_oh`）與 `allay_drop_item_on_block`
+  需要 tick 生物並記錄玩家的進度，這是 MobVectors 的範圍，而 `mob_parity` 在 kiln-entity 裡沒有進度系統可比對（只能比事件發出的 tick，不比條件）。這 5 個 trigger 的條件判斷有單元測試，
+  生物端的事件只有「發出」沒有與原版比對 tick。
+- **村民與襲擊者的非旗幟撿拾**：村民（`Villager.pickUpItem`／`wantsToPickUp`，只撿食物與種子進背包）與襲擊者（`Raider.pickUpItem`、掠奪者的 `wantsItem`）在 Kiln 沒有撿起一般物品的路徑，通用撿拾也跳過它們。
+- **撿拾不送 `take_item_entity` 封包**：生物撿起物品時原版送 `ClientboundTakeItemEntityPacket`（客戶端看到物品飛向生物），Kiln 的生物撿拾（包含豬布林）只讓物品消失。
+- **cushion 活塞推動、mannequin 落地方塊音效**：**不是 harness 的問題**。InteractVectors 從 wp50 起就有 `tick_cushions`（每步 tick 一次，或 `ticks` 次）並 tick mannequin，封包也錄音效；缺的是 Kiln 本身：
+  (1) 活塞根本不推實體——`PistonMovingBlockEntity.moveCollidedEntities` 沒有實作（玩家、生物、掉落物、cushion 都不會被活塞推或夾），cushion 被推時該有的 `BlockAttachedEntity.move(PISTON)` 破壞也就沒發生；
+  (2) Kiln 沒有任何方塊 `SoundType` 的表（`kiln-data` 沒有），所以玩家與生物的 `LivingEntity.playBlockFallSound`（摔傷時的方塊落地音）、方塊腳步聲、放置音都不會出——重播時 `no_pitch` 的 scenario 乾脆略過所有 `block.*` 音效。
+  兩者都不是「便宜地擴充 harness」能解決的，要先做成一個子系統（活塞推實體要和原版逐 tick 比對碰撞與位移；方塊音效要先從 `Blocks.java` 抽出 `SoundType` 表）。
+- 命令回饋的 `show_entity` 懸停事件、實體 NBT 的兩處存檔欄位差異（見 6.5）。
+
+外掛 API 的修正見 `docs/plugin-api.md` §5、§10。
 
 
 ## 7. 重跑
@@ -534,6 +570,11 @@ java ... tools/ContainerVectors.java work/wp52/container/c52.jsonl dispenser_equ
 java ... tools/CombatVectors.java work/wp52/combat/melee.jsonl melee/wolf_armor             # 狼鎧的近戰
 java ... tools/EffectVectors.java work/wp52/effects/impulse.jsonl fall_impulse         # 衝擊上下文
 java ... tools/MobVectors.java work/wp52/mobs/wolf52.jsonl eqwolf                      # 另有 egg52（eggbaby52_）；併入 work/m6-mobs2/vectors.jsonl 前先備份（.pre-wp52）
+# wp53 的向量
+java ... tools/InteractVectors.java work/wp53/interact/adv53.jsonl "adv53_.*"        # 蜂巢進度（InteractVectors 的篩選字串是整串比對的 regex，或 name 的一部分）；place52 的 7 個：篩選 "place52_(hopper|brewing|spawner|op_spawner).*"
+java ... tools/ContainerVectors.java work/wp53/container/c53.jsonl dispenser_equip50_wolf_armor_on_armored_wolf
+java ... tools/MobVectors.java work/wp53/mobs/pickup53.jsonl pickup53_              # 併入 work/m6-mobs2/vectors.jsonl 前先備份（.pre-wp53）；PICKUP_DEBUG=1 印出撿拾條件
+# 外掛 1.0 guest：sh crates/kiln-plugin-host/tests/fixtures/compat10/build.sh（要 wasm32-wasip2 target）；cargo test -p kiln-plugin-host --test api_compat --test wit_freeze
 # 與原版互載、指令對跑
 python tools/admin_check.py --kiln-exe target/release/kiln
 python tools/command_diff.py --kiln-exe target/release/kiln --bot-exe target/release/kiln-bot

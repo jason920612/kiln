@@ -72,6 +72,10 @@ pub enum Criterion {
     KilledByArrow { victims: Vec<Seen>, weapon: Option<kiln_item::ItemStack> },
     /// `TargetBlockTrigger`: a projectile hit a target block at `pos` for `signal`.
     TargetHit { projectile: Seen, pos: BlockPos, signal: i32 },
+    /// `LivingEntity.onItemPickup`: `entity` took `item`, a stack the player had thrown (`thrown_item_picked_up_by_entity`).
+    ThrownItemPickedUp { item: kiln_item::ItemStack, entity: Seen },
+    /// `AllayAi.throwItem`: the allay threw `item` at the block `pos` (which holds `state`) for the player it likes.
+    AllayDropItem { pos: BlockPos, state: u16, item: kiln_item::ItemStack },
     /// `KILL_MOB_NEAR_SCULK_CATALYST` (a `KilledTrigger`): a catalyst took the victim's
     /// experience; `kind` and `direct` describe the killing blow.
     KillMobNearSculkCatalyst { victim: Seen, kind: DamageKind, direct: bool },

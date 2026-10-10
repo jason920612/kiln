@@ -675,6 +675,7 @@ fn run_case(line: &Value) -> Vec<String> {
         let _ = take_packets(&stats, false, false);
     }
     let mut errors = Vec::new();
+    let mut adv_before: Vec<String> = if line["adv"].as_bool() == Some(true) { sim.players.get(&1).unwrap().advancements.done_criteria() } else { Vec::new() };
     let mut seen_bees: std::collections::HashSet<i32> = Default::default();
     let steps = line["steps"].as_array().unwrap();
     let results = line["result"].as_array().unwrap();
@@ -1086,6 +1087,13 @@ fn run_case(line: &Value) -> Vec<String> {
                 let stat = crate::player_stats::Stat::custom(name).unwrap_or_else(|| panic!("stat {name}"));
                 eq(&format!("custom {name}"), p.stats.get(stat).to_string(), want_count.to_string());
             }
+        }
+        // The advancement criteria this step completed.
+        if let Some(want_adv) = want.get("adv") {
+            let now = p.advancements.done_criteria();
+            let fresh: Vec<&String> = now.iter().filter(|c| !adv_before.contains(*c)).collect();
+            eq("advancement criteria", format!("{fresh:?}"), format!("{:?}", want_adv.as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect::<Vec<_>>()));
+            adv_before = now;
         }
         for (item, want_count) in want["used"].as_object().unwrap() {
             let id = kiln_item::registry::ITEM.id(item).unwrap();

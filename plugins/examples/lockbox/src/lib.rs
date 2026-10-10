@@ -13,7 +13,7 @@
 use kiln_plugin_sdk::registry::{self, Kind};
 use kiln_plugin_sdk::state::{self, Scope};
 use kiln_plugin_sdk::{
-    BlockEvent, CommandSpec, InitInfo, Observed, PlaceEvent, Player, Plugin, Span, Text, Verdict, export_plugin, perm, uuid_from_u128, uuid_u128,
+    BlockEvent, CommandSpec, InitInfo, MoveEvent, PlaceEvent, Player, Plugin, Span, Text, Verdict, export_plugin, perm, uuid_from_u128, uuid_u128,
     world,
 };
 use std::sync::Mutex;
@@ -108,11 +108,9 @@ impl Plugin for Lockbox {
         Verdict::Allow
     }
 
-    fn on_observe(events: Vec<Observed>) {
-        for ev in events {
-            if let Observed::PlayerMoved(m) = ev {
-                state::bump(Scope::Player(m.player.handle), "steps", 1);
-            }
+    fn on_player_moved(events: Vec<MoveEvent>) {
+        for m in events {
+            state::bump(Scope::Player(m.player.handle), "steps", 1);
         }
     }
 }

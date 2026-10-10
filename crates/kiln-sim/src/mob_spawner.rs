@@ -99,18 +99,23 @@ impl Spawners {
     /// Writes the chunk's changed spawners into its NBT.
     pub fn store(&mut self, pos: ChunkPos, chunk: &mut Chunk) {
         for p in self.chunk_positions(pos) {
-            let Some(e) = self.map.get_mut(&p).filter(|e| e.dirty) else { continue };
-            e.dirty = false;
-            let (x, z) = ((p.x & 15) as usize, (p.z & 15) as usize);
-            if chunk.block_entity(x, p.y, z).is_none_or(|old| old.kind != e.type_id) {
-                continue;
-            }
-            let mut out = BlockEntity::new(e.type_id);
-            if let (Tag::Compound(o), Tag::Compound(fields)) = (&mut out.nbt, e.save()) {
-                o.extend(fields.into_iter().filter(|(k, _)| k != "id"));
-            }
-            chunk.set_block_entity(x, p.y, z, out);
+            self.store_at(p, chunk);
         }
+    }
+
+    /// Writes the spawner at `p`, if it changed, into its chunk's NBT.
+    pub fn store_at(&mut self, p: BlockPos, chunk: &mut Chunk) {
+        let Some(e) = self.map.get_mut(&p).filter(|e| e.dirty) else { return };
+        e.dirty = false;
+        let (x, z) = ((p.x & 15) as usize, (p.z & 15) as usize);
+        if chunk.block_entity(x, p.y, z).is_none_or(|old| old.kind != e.type_id) {
+            return;
+        }
+        let mut out = BlockEntity::new(e.type_id);
+        if let (Tag::Compound(o), Tag::Compound(fields)) = (&mut out.nbt, e.save()) {
+            o.extend(fields.into_iter().filter(|(k, _)| k != "id"));
+        }
+        chunk.set_block_entity(x, p.y, z, out);
     }
 
     /// A chunk left the region (after [`Spawners::store`]).
@@ -135,7 +140,11 @@ impl Spawners {
         if let Some(be) = now
             && !self.map.contains_key(&pos)
         {
-            self.map.insert(pos, SpawnerEntry::load(be.kind, &be.nbt));
+            // A block entity the block just made (no saved fields) is a new `SpawnerBlockEntity`, whose `BaseSpawner` has no
+            // potentials; reading its NBT would give it the one potential `load` makes up for a missing list.
+            let fresh = type_name(be.kind) == TYPE && matches!(&be.nbt, Tag::Compound(f) if f.iter().all(|(k, _)| matches!(k.as_str(), "id" | "x" | "y" | "z")));
+            let entry = if fresh { SpawnerEntry { be: Be::Mob(SpawnerBe::default()), type_id: be.kind, dirty: true } } else { SpawnerEntry::load(be.kind, &be.nbt) };
+            self.map.insert(pos, entry);
         }
     }
 
@@ -162,6 +171,30 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos) {
     let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
     let now = level.cells.chunk(chunk_of(pos)).and_then(|c| c.block_entity(x, pos.y, z)).cloned();
     level.blocks.spawners.block_changed(pos, now.as_ref());
+    // A new spawner's state is in the chunk's copy at once: the update packet of the block entity is made of it.
+    if let Some(chunk) = level.cells.chunk_mut(chunk_of(pos)) {
+        level.blocks.spawners.store_at(pos, chunk);
+    }
+}
+
+/// `BlockItem.updateCustomBlockEntityTag` for a spawner the item made: its `block_entity_data` (of block entity type `kind`)
+/// is merged into the saved state and read back. The caller checked that the placer is a game master.
+pub(crate) fn apply_item_data(level: &mut RegionLevel, pos: BlockPos, kind: i32, data: &Tag) {
+    let Some(entry) = level.blocks.spawners.map.get_mut(&pos) else { return };
+    if entry.type_id as i32 != kind {
+        return;
+    }
+    let (Tag::Compound(before), Tag::Compound(extra)) = (entry.save(), data) else { return };
+    let mut merged = before.clone();
+    kiln_command::nbt_path::merge_compound(&mut merged, extra);
+    if merged == before {
+        return;
+    }
+    *entry = SpawnerEntry::load(entry.type_id, &Tag::Compound(merged));
+    entry.dirty = true;
+    if let Some(chunk) = level.cells.chunk_mut(chunk_of(pos)) {
+        level.blocks.spawners.store_at(pos, chunk);
+    }
 }
 
 /// `Level.tickBlockEntities` for the spawners in ticking chunks, in position order.

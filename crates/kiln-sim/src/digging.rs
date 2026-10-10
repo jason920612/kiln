@@ -263,6 +263,10 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     // `BeehiveBlock.playerDestroy`: for a player who harvests the block.
     if drops && kiln_data::block_logic::block_class(state) == kiln_data::block_logic::BlockClass::BeehiveBlock {
         crate::beehive::player_destroy(level, bp, state, p);
+        // `BeeNestDestroyedTrigger`: with the bees that stayed inside (all of them for a silk touch tool).
+        let bees = level.blocks.containers.get(bp).and_then(|c| c.hive.as_ref()).map_or(0, |h| h.occupants.len() as i32);
+        let tool = p.inv.selected_item().clone();
+        p.bee_nest_destroyed(state, &tool, bees);
     }
     let removed = interact::player_destroy(level, bp, &actor, drops);
     level.actor = previous;

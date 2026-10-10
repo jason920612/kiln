@@ -26,7 +26,11 @@ fn is_horse_like(kind: MobKind) -> bool {
 
 /// The facts about the mob `e`, `None` for anything else.
 pub fn facts(e: &Entity) -> Option<Facts> {
-    let m = data(e)?;
+    Some(facts_of(data(e)?))
+}
+
+/// The facts about a mob's data.
+pub fn facts_of(m: &MobData) -> Facts {
     let mut worn = 0u8;
     for (i, s) in m.equipment.iter().enumerate() {
         if !s.is_empty() {
@@ -48,7 +52,7 @@ pub fn facts(e: &Entity) -> Option<Facts> {
         MobKind::Nautilus | MobKind::ZombieNautilus => super::kinds::nautilus::is_tame(m),
         k => is_horse_like(k) && super::kinds::horse::is_tamed(m),
     };
-    Some(Facts { kind: m.kind, baby: m.baby(), tamed, pick_up_loot: m.can_pick_up_loot, worn, body_item })
+    Facts { kind: m.kind, baby: m.baby(), tamed, pick_up_loot: m.can_pick_up_loot, worn, body_item }
 }
 
 /// `canUseSlot(slot)` of the type (for a living mob that is alive).

@@ -15,7 +15,8 @@ pub struct WitherSkeleton;
 pub static KIND: WitherSkeleton = WitherSkeleton;
 
 static INFO: Info = Info {
-    burns_in_daylight: false,
+    // (`#burn_in_daylight` lists it: fire immune, it still draws `isSunBurnTick`'s random.)
+    burns_in_daylight: true,
     breathes_under_water: true,
     fire_immune: true,
     ..Info::monster("minecraft:wither_skeleton", &[(MovementSpeed, 0.25)])

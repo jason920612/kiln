@@ -750,6 +750,8 @@ pub trait Plugin {
         Verdict::Allow
     }
     fn on_observe(_events: Vec<Observed>) {}
+    /// 1.1: players whose block position changed (observe kind `player-moved`; at most one event per player per tick).
+    fn on_player_moved(_events: Vec<MoveEvent>) {}
     /// A task ran (in the global instance or a region instance, by its target).
     fn on_task(_t: TaskEvent) {}
     /// Outcomes of this plugin's atomic operations and effects (with the `op-results`
@@ -847,6 +849,11 @@ macro_rules! export_plugin {
             }
             fn on_custom(ev: $crate::CustomEvent) -> $crate::Decision {
                 <$t as $crate::Plugin>::on_custom(ev).into_decision()
+            }
+        }
+        impl $crate::bindings::exports::kiln::api::move_hooks::Guest for __KilnExports {
+            fn on_moved(events: ::std::vec::Vec<$crate::MoveEvent>) {
+                <$t as $crate::Plugin>::on_player_moved(events)
             }
         }
         $crate::bindings::export_raw!(__KilnExports with_types_in $crate::bindings);

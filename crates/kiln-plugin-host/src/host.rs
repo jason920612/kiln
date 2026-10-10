@@ -21,6 +21,7 @@ wasmtime::component::bindgen!({
 });
 
 pub(crate) use exports::kiln::api::global_hooks::{Guest as GlobalGuest, GuestIndices as GlobalIndices};
+pub(crate) use exports::kiln::api::move_hooks::{Guest as MoveGuest, GuestIndices as MoveIndices};
 pub(crate) use exports::kiln::api::region_hooks::{Guest as RegionGuest, GuestIndices as RegionIndices};
 pub(crate) use kiln::api::types as wit;
 
