@@ -17,6 +17,7 @@ use crate::mob::{DamageSource, GroupData, MobData, MobKind, SpawnContext, item_n
 use crate::math::{BlockPos, Vec3};
 use crate::persist::{Input, Output};
 use kiln_data::entities::data;
+use kiln_item::component::EquipmentSlot;
 use kiln_item::ItemStack;
 use kiln_javamath::random::{LegacyRandom, RandomSource};
 use kiln_proto::nbt::Tag;
@@ -30,6 +31,33 @@ static INFO: Info = Info::animal("minecraft:wolf", &[(MovementSpeed, 0.300000011
 
 /// `DyeColor.RED`.
 const DEFAULT_COLLAR: u8 = 14;
+/// `DropChances.DEFAULT_EQUIPMENT_DROP_CHANCE`.
+const DEFAULT_DROP: f32 = 0.085;
+
+/// `Crackiness.WOLF_ARMOR.byDamage(damage, maxDamage)` as a level (0 none to 3 high).
+fn crackiness(damage: i32, max_damage: i32) -> u8 {
+    let fraction = (max_damage - damage) as f32 / max_damage as f32;
+    if fraction < 0.32 {
+        3
+    } else if fraction < 0.69 {
+        2
+    } else if fraction < 0.95 {
+        1
+    } else {
+        0
+    }
+}
+
+/// `Repairable.isValidRepairItem`: `repair` is one of the items the armor's `repairable` component names.
+fn valid_repair_item(armor: &ItemStack, repair: &ItemStack) -> bool {
+    use kiln_item::HolderSet;
+    let Some(r) = armor.get(kiln_item::keys::REPAIRABLE) else { return false };
+    let item = repair.item();
+    match &r.items {
+        HolderSet::Direct(ids) => ids.contains(&item),
+        HolderSet::Tag(tag) => kiln_inventory::tags::contains("minecraft:item", tag.as_str(), item),
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct State {
@@ -43,6 +71,9 @@ pub struct State {
     pub shaking: bool,
     pub shake_anim: f32,
     pub shake_anim_o: f32,
+    /// `EquipmentSlot.BODY` (wolf armor) and its drop chance.
+    pub body: ItemStack,
+    pub body_drop: f32,
 }
 
 fn st(m: &MobData) -> &State {
@@ -201,6 +232,73 @@ impl Kind for Wolf {
         Some(tame::owned_by(m, level, player))
     }
 
+    /// `Wolf.actuallyHurt`: wolf armor takes the blow (a damage type the armor does not stop goes through): the armor wears by
+    /// the damage, and cracks, with a sound and scute particles, when it gets to a worse level.
+    fn override_actually_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> bool {
+        let body = &st(m).body;
+        if !is(body, "minecraft:wolf_armor") || source.kind.is_tag("minecraft:bypasses_wolf_armor") {
+            return false;
+        }
+        let (damage, max_damage) = (body.damage(), body.max_damage());
+        // `hurtAndBreak(ceil(amount), this, BODY)`.
+        let n = amount.ceil() as i32;
+        let broke = {
+            let body = &mut st_mut(m).body;
+            if body.is_damageable_item() && n != 0 {
+                let new_damage = body.damage() + n;
+                body.insert(kiln_item::keys::DAMAGE, new_damage.clamp(0, body.max_damage()));
+                if new_damage >= body.max_damage() {
+                    body.shrink(1);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if broke {
+            // `onEquippedItemBroken`: the break event for the viewers, the armor's modifiers go at once.
+            level.emit(Event::EntityEvent { entity: e.id, event: 65 });
+            crate::mob::sync_equipment_modifiers(m);
+        }
+        let now = &st(m).body;
+        let after = if now.is_empty() || !now.is_damageable_item() { 0 } else { crackiness(now.damage(), now.max_damage()) };
+        if crackiness(damage, max_damage) != after {
+            if !e.silent {
+                level.emit(Event::Sound { pos: e.position(), sound: "minecraft:item.wolf_armor.crack", source: "neutral", volume: 1.0, pitch: 1.0 });
+            }
+            if let Some(scute) = kiln_item::registry::ITEM.id("minecraft:armadillo_scute") {
+                level.item_particles(scute, Vec3::new(e.x(), e.y() + 1.0, e.z()), 20, Vec3::new(0.2, 0.1, 0.2), 0.1);
+            }
+        }
+        true
+    }
+
+    fn set_extra_equipment(&self, m: &mut MobData, slot: u8, stack: ItemStack) -> bool {
+        if slot != 6 {
+            return false;
+        }
+        let s = st_mut(m);
+        s.body = stack;
+        s.body_drop = 2.0;
+        true
+    }
+
+    fn remove_extra_equipment(&self, m: &mut MobData, slot: u8) -> Option<ItemStack> {
+        (slot == 6).then(|| std::mem::take(&mut st_mut(m).body))
+    }
+
+    fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
+        let body = &st(m).body;
+        if body.is_empty() { Vec::new() } else { vec![(6, body.clone())] }
+    }
+
+    fn take_extra_equipment_for_drop(&self, m: &mut MobData) -> Vec<(ItemStack, f32)> {
+        let s = st_mut(m);
+        vec![(std::mem::take(&mut s.body), s.body_drop)]
+    }
+
     fn new_state(&self, m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
         tame::set_malus(m, PathType::PowderSnow, -1.0);
         tame::set_malus(m, PathType::OnTopOfPowderSnow, -1.0);
@@ -215,6 +313,8 @@ impl Kind for Wolf {
             shaking: false,
             shake_anim: 0.0,
             shake_anim_o: 0.0,
+            body: ItemStack::empty(),
+            body_drop: DEFAULT_DROP,
         }))
     }
 
@@ -389,7 +489,33 @@ impl Kind for Wolf {
                 }
                 return Some(crate::mob::interact::animal_interact(e, m, level, who, stack));
             }
-            // Wolf armor is not modelled: straight to `Animal.mobInteract`, then sit or stand.
+            // Armor goes on a grown wolf of the owner that wears none (`setItemSlotAndDropWhenKilled(BODY, ..)`).
+            if !stack.is_empty()
+                && st(m).body.is_empty()
+                && owned
+                && !m.baby()
+                && super::horse::equippable_in_slot(stack, EquipmentSlot::Body, e.type_name)
+            {
+                let mut one = stack.clone();
+                one.set_count(1);
+                super::steering::on_equip_item(e, level, EquipmentSlot::Body, &one, None);
+                let s = st_mut(m);
+                s.body = one;
+                s.body_drop = 2.0;
+                return Some(Outcome::success(HeldChange::Consume(1)));
+            }
+            // A sitting wolf's damaged armor is mended by an armadillo scute: an eighth of its durability.
+            if !stack.is_empty() && tame::get(m).is_some_and(|t| t.sitting) && owned && !st(m).body.is_empty() && st(m).body.is_damaged() && valid_repair_item(&st(m).body, stack) {
+                if !e.silent {
+                    level.emit(Event::Sound { pos: e.position(), sound: "minecraft:item.wolf_armor.repair", source: "neutral", volume: 1.0, pitch: 1.0 });
+                }
+                let body = &mut st_mut(m).body;
+                let repair = (body.max_damage() as f32 * 0.125) as i32;
+                let damage = (body.damage() - repair).max(0);
+                body.insert(kiln_item::keys::DAMAGE, damage);
+                return Some(Outcome::success(HeldChange::Shrink(1)));
+            }
+            // Then `Animal.mobInteract`, and sit or stand.
             let out = crate::mob::interact::animal_interact(e, m, level, who, stack);
             if !out.success && owned {
                 let sit = !tame::ordered_to_sit(m);
@@ -454,6 +580,21 @@ impl Kind for Wolf {
         if let Some(v) = r.get("sound_variant").and_then(Tag::as_str).and_then(|v| kiln_data::synced_id("minecraft:wolf_sound_variant", v)) {
             m.sound_variant = v;
         }
+        let body = match r.get("equipment") {
+            Some(Tag::Compound(eq)) => eq.iter().find(|(k, _)| k == "body").and_then(|(_, v)| ItemStack::from_nbt(v).ok()),
+            _ => None,
+        };
+        let body_drop = match r.get("drop_chances") {
+            Some(Tag::Compound(dc)) => dc.iter().find(|(k, _)| k == "body").and_then(|(_, v)| v.as_f64()).map(|f| f as f32),
+            _ => None,
+        };
+        let s = st_mut(m);
+        if let Some(b) = body {
+            s.body = b;
+        }
+        if let Some(d) = body_drop {
+            s.body_drop = d;
+        }
     }
 
     fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
@@ -466,6 +607,20 @@ impl Kind for Wolf {
         o.put("anger_end_time", Tag::Long(s.anger.end));
         if let Some(v) = synced_name("minecraft:wolf_sound_variant", m.sound_variant) {
             o.put("sound_variant", Tag::String(v.to_owned()));
+        }
+        if !s.body.is_empty() {
+            let entry = ("body".to_owned(), s.body.to_nbt());
+            match o.0.iter_mut().find(|(k, _)| k == "equipment") {
+                Some((_, Tag::Compound(eq))) => eq.push(entry),
+                _ => o.put("equipment", Tag::Compound(vec![entry])),
+            }
+        }
+        if s.body_drop != DEFAULT_DROP {
+            let entry = ("body".to_owned(), Tag::Float(s.body_drop));
+            match o.0.iter_mut().find(|(k, _)| k == "drop_chances") {
+                Some((_, Tag::Compound(dc))) => dc.push(entry),
+                _ => o.put("drop_chances", Tag::Compound(vec![entry])),
+            }
         }
     }
 

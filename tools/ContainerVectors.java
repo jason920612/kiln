@@ -600,7 +600,10 @@ public class ContainerVectors {
                 {"saddle", "donkey", ""}, {"saddle", "llama", "Tame:1b"}, {"saddle", "nautilus", "Owner:[I;1,2,3,4]"}, {"saddle", "nautilus", ""}, {"saddle", "zombie_nautilus", "Owner:[I;1,2,3,4]"},
                 {"iron_nautilus_armor", "nautilus", "Owner:[I;1,2,3,4]"}, {"copper_nautilus_armor", "zombie_nautilus", "Owner:[I;1,2,3,4]"}, {"diamond_nautilus_armor", "nautilus", ""},
                 {"iron_nautilus_armor", "nautilus", "Owner:[I;1,2,3,4],Age:-24000"}, {"white_harness", "happy_ghast", ""}, {"white_harness", "happy_ghast", "Age:-24000"},
-                {"iron_horse_armor", "zombie_horse", "Tame:1b"}, {"iron_horse_armor", "donkey", "Tame:1b"}}) {
+                {"iron_horse_armor", "zombie_horse", "Tame:1b"}, {"iron_horse_armor", "donkey", "Tame:1b"},
+                {"wolf_armor", "wolf", "Owner:[I;1,2,3,4],CanPickUpLoot:1b"}, {"wolf_armor", "wolf", "CanPickUpLoot:1b"}, {"wolf_armor", "wolf", "Owner:[I;1,2,3,4]"},
+                {"wolf_armor", "wolf", "Owner:[I;1,2,3,4],CanPickUpLoot:1b,Age:-24000"}, {"iron_horse_armor", "wolf", "Owner:[I;1,2,3,4],CanPickUpLoot:1b"},
+                {"wolf_armor", "horse", "Tame:1b"}}) {
             String nbt = eq[2];
             String tag = "equip50_" + eq[0] + "_on_" + eq[1] + (nbt.isEmpty() ? "" : "_" + Integer.toHexString(nbt.hashCode()));
             Scenario s = dispense(tag, eq[0], 2).block(1, -1, 0, stone);
@@ -611,6 +614,8 @@ public class ContainerVectors {
         out.add(mob(dispense("equip50_saddle_on_saddled_pig", "saddle", 2).block(1, -1, 0, stone), "pig", 1.5, 0, 0.5, "equipment:{saddle:{id:\"minecraft:saddle\",count:1}}"));
         out.add(mob(dispense("equip50_saddle_on_saddled_nautilus", "saddle", 2).block(1, -1, 0, stone), "nautilus", 1.5, 0, 0.5,
                 "Owner:[I;1,2,3,4],equipment:{saddle:{id:\"minecraft:saddle\",count:1}}"));
+        out.add(mob(dispense("equip50_wolf_armor_on_armored_wolf", "wolf_armor", 2).block(1, -1, 0, stone), "wolf", 1.5, 0, 0.5,
+                "Owner:[I;1,2,3,4],CanPickUpLoot:1b,equipment:{body:{id:\"minecraft:wolf_armor\",count:1}}"));
         // A brush on an armadillo: a scute, 16 durability; a baby gives none; nothing there fails.
         out.add(mob(dispense("brush50_armadillo", "brush", 1).block(1, -1, 0, stone), "armadillo", 1.5, 0, 0.5, ""));
         out.add(mob(dispense("brush50_armadillo_baby", "brush", 1).block(1, -1, 0, stone), "armadillo", 1.5, 0, 0.5, "Age:-24000"));

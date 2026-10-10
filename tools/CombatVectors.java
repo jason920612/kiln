@@ -2278,6 +2278,23 @@ class MeleeVectors {
         out.get(out.size() - 1).attacker.sprinting = true;
         out.add(new Case("type_ground/iron_golem").weapon("minecraft:netherite_sword").mob("minecraft:iron_golem", 2.0, "OnGround:1b"));
         out.add(new Case("type_ground/ravager_kb").weapon("minecraft:diamond_sword").ench("minecraft:knockback", 2).mob("minecraft:ravager", 2.0, "OnGround:1b"));
+        wolfArmor(out);
+    }
+
+    /** wp52: a wolf's armor takes the player's blows (the wolf keeps its health), wears, cracks and breaks. */
+    static void wolfArmor(List<Case> out) {
+        for (String w : new String[] {null, "minecraft:wooden_sword", "minecraft:iron_sword", "minecraft:diamond_axe", "minecraft:netherite_sword"}) {
+            for (int damage : new int[] {0, 3, 17, 18, 19, 40, 43, 44, 58, 63}) {
+                String name = "wolf_armor/" + (w == null ? "fist" : w.substring(10)) + "/d" + damage;
+                Case c = new Case(name).weapon(w).mob("minecraft:wolf", 2.0, equipment("body", "minecraft:wolf_armor", damage == 0 ? "" : "\"minecraft:damage\":" + damage) + ",drop_chances:{body:2.0f}");
+                if (w != null && w.contains("sword")) c.attacker.sprinting = true;
+                out.add(c);
+            }
+        }
+        out.add(new Case("wolf_armor/bare").weapon("minecraft:iron_sword").mob("minecraft:wolf", 2.0, ""));
+        out.add(new Case("wolf_armor/other_body").weapon("minecraft:iron_sword").mob("minecraft:wolf", 2.0, equipment("body", "minecraft:iron_horse_armor", "")));
+        out.add(new Case("wolf_armor/twice").weapon("minecraft:iron_sword").mob("minecraft:wolf", 2.0, equipment("body", "minecraft:wolf_armor", "\"minecraft:damage\":40") + ",drop_chances:{body:2.0f}"));
+        out.get(out.size() - 1).later = new int[] {20, 20};
     }
 
     static void weapons(List<Case> out) {

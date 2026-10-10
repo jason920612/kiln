@@ -2575,7 +2575,9 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
             return false;
         }
         let dealt = amount - m.last_hurt;
-        actually_hurt(e.id, m, source, dealt);
+        if !m.kind.ext().is_some_and(|k| k.override_actually_hurt(e, m, level, &source, dealt)) {
+            actually_hurt(e.id, m, source, dealt);
+        }
         if let Some(k) = m.kind.ext() {
             k.actually_hurt(e, m, level, &source, dealt);
         }
@@ -2584,7 +2586,9 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     } else {
         m.last_hurt = amount;
         m.damage_cooldown = 20;
-        actually_hurt(e.id, m, source, amount);
+        if !m.kind.ext().is_some_and(|k| k.override_actually_hurt(e, m, level, &source, amount)) {
+            actually_hurt(e.id, m, source, amount);
+        }
         if let Some(k) = m.kind.ext() {
             k.actually_hurt(e, m, level, &source, amount);
         }

@@ -1297,6 +1297,12 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         }
     }
 
+    fn item_particles(&mut self, item: i32, pos: Vec3, count: i32, spread: Vec3, speed: f32) {
+        if let Some(p) = item_packet(item, pos, count, spread, speed) {
+            self.level.push_packet(p);
+        }
+    }
+
     fn mob_griefing(&self) -> bool {
         self.level.env().mobs.griefing
     }
@@ -1880,6 +1886,27 @@ fn trail_packet(pos: Vec3, target: Vec3, color: i32, duration: i32) -> Option<Ne
     });
     // `overrideLimiter`: players within 512 blocks.
     Some(([pos.x, pos.y, pos.z], 512.0, pkt))
+}
+
+/// [`EntityLevel::item_particles`]'s packet: the option is an item stack template (item id, count 1, no component changes).
+fn item_packet(item: i32, pos: Vec3, count: i32, spread: Vec3, speed: f32) -> Option<NearPacket> {
+    use bytes::BufMut as _;
+    use kiln_proto::codec::WriteExt as _;
+    let kind = kiln_data::builtin_id("minecraft:particle_type", "minecraft:item")?;
+    let mut raw = bytes::BytesMut::new();
+    raw.put_varint(item);
+    raw.put_slice(&[1, 0, 0]);
+    let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+        particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Raw(&raw) },
+        override_limiter: false,
+        always_show: false,
+        pos: [pos.x, pos.y, pos.z],
+        offset: [spread.x as f32, spread.y as f32, spread.z as f32],
+        max_speed: [speed; 3],
+        count,
+        randomization: world_fx::ParticleRandomization::Default,
+    });
+    Some(([pos.x, pos.y, pos.z], 32.0, pkt))
 }
 
 /// [`EntityLevel::crumble_particles`]'s packet.

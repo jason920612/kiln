@@ -808,6 +808,11 @@ pub trait EntityLevel {
         let _ = (pos, state, count, spread);
     }
 
+    /// `sendParticles(ItemParticleOption(minecraft:item, item), pos, count, dx, dy, dz, speed)`: `item` is the item's network id.
+    fn item_particles(&mut self, item: i32, pos: Vec3, count: i32, spread: Vec3, speed: f32) {
+        let _ = (item, pos, count, spread, speed);
+    }
+
     /// `getRawBrightness(pos, skyDarken)`: the larger of the sky light less `sky_darken` and
     /// the block light.
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {

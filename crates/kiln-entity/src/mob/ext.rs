@@ -372,6 +372,11 @@ pub trait Kind: Sync + Send {
     fn actually_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) {
         let _ = (e, m, level, source, amount);
     }
+    /// An `actuallyHurt` that does not call the shared one (a wolf's armor takes the blow): whether it dealt with `amount`.
+    fn override_actually_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> bool {
+        let _ = (e, m, level, source, amount);
+        false
+    }
     /// After the shared `hurtServer` (reinforcements, anger, ...), with its result.
     fn after_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32, hurt: bool) {
         let _ = (e, m, level, source, amount, hurt);
