@@ -221,7 +221,8 @@ fn spawn_egg_offspring(e: &mut Entity, level: &mut dyn EntityLevel, who: &Intera
     if stack.is_empty() || super::item_name(stack).strip_suffix("_spawn_egg") != Some(e.type_name) {
         return None;
     }
-    let mut m = super::data_mut(e).map(|_| super::take(e))?;
+    super::data(e)?;
+    let mut m = super::take(e);
     if !super::is_alive(e, &m) {
         super::put(e, m);
         return None;
