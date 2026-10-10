@@ -1,7 +1,7 @@
 // Kiln plugin API 1.1 (design §11, `docs/plugin-api.md`). Frozen: see the semver policy in
 // `docs/plugin-api.md` and the digest test (`kiln-plugin-host/tests/wit_freeze.rs`).
-// 1.1 only adds (a new interface `world-read`, a new `observed` case, a new record): a plugin
-// built against 1.0 links and runs unchanged.
+// 1.1 only adds (the interfaces `world-read` and `move-hooks`, a new record, and the world items
+// for them): a plugin built against 1.0 links and runs unchanged (`tests/api_compat.rs`).
 //
 // Threading contract: a plugin has exactly one `global` instance (serial phases: command
 // registration, configuration, join/leave, plugin commands, global tasks) and, when it
@@ -206,14 +206,14 @@ interface types {
     /// A player's block position changed (at most once per tick per player).
     record move-event { player: player, level: level, before: block-pos, after: block-pos }
 
-    /// What happened in the region since the last phase boundary (sent in batches).
+    /// What happened in the region since the last phase boundary (sent in batches). Never
+    /// grows within a major version: a variant's cases are part of every exported function's
+    /// type, which the host checks against the guest's own (1.1 sends moves with `move-hooks`).
     variant observed {
         block-broken(observed-block),
         block-placed(observed-block),
         player-died(death-event),
         player-spawned(spawn-event),
-        /// 1.1; sent with the observe kind `player-moved`.
-        player-moved(move-event),
     }
 
     variant global-value { int(s64), bytes(list<u8>) }
@@ -569,6 +569,17 @@ interface region-hooks {
     on-custom: func(ev: custom-event) -> decision;
 }
 
+/// 1.1: exports of region instances that watch players walk (observe kind `player-moved`).
+/// Optional like `region-hooks`: a plugin built against 1.0 does not export it and is never
+/// sent a move.
+interface move-hooks {
+    use types.{move-event};
+
+    /// The players of this region whose block position changed since the last batch (at
+    /// most one event per player per tick).
+    on-moved: func(events: list<move-event>);
+}
+
 world global-plugin {
     import state;
     import event;
@@ -605,6 +616,7 @@ world region-plugin {
     import jobs;
     import log;
     export region-hooks;
+    export move-hooks;
 }
 
 /// What the Rust SDK builds: both worlds in one component.
