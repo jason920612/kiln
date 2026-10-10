@@ -314,6 +314,18 @@ impl Sim {
         None
     }
 
+    /// The block changes [`Sim::with_level_held`] kept while data was loaded go out now. A structure block's or jigsaw block's own data has
+    /// sent the block with its data already (`load_block_entity`).
+    fn send_held_changes(&mut self, dim: crate::DimId, pos: [i32; 3], mut held: Vec<[i32; 3]>) {
+        let own = self.dims[dim].regions.block_entity_data(pos[0], pos[1], pos[2]).is_some_and(|(kind, _)| matches!(kiln_world::block_entity::type_name(kind), "minecraft:structure_block" | "minecraft:jigsaw"));
+        if own {
+            held.retain(|p| *p != pos);
+        }
+        if !held.is_empty() {
+            self.with_level_in(dim, pos, |level| level.out.changed.extend(held));
+        }
+    }
+
     /// Replaces the contents of the block entity at `pos` with `fields` (position and id kept)
     /// and sends Block Entity Data to players with the chunk if vanilla would. Returns whether
     /// the contents changed.
@@ -1345,9 +1357,7 @@ impl Host for Sim {
         // (With data to load the changes wait for it: the clients get the block entity once, with its data.)
         let (state_changed, held) = self.with_level_held(dim, pos, nbt.is_some(), |level| kiln_blocks::set_block(level, at, state, flags.0)).unwrap_or((false, Vec::new()));
         let loaded = self.load_nbt(dim, pos, nbt);
-        if !held.is_empty() {
-            self.with_level_in(dim, pos, |level| level.out.changed.extend(held));
-        }
+        self.send_held_changes(dim, pos, held);
         loaded || state_changed
     }
 
@@ -1364,9 +1374,7 @@ impl Host for Sim {
         let input = kiln_blocks::commands::BlockInput { state: block.state, defined };
         let (state_changed, held) = self.with_level_held(dim, pos, block.nbt.is_some(), |level| input.place(level, at, flags.0)).unwrap_or((false, Vec::new()));
         let loaded = self.load_nbt(dim, pos, block.nbt.as_ref());
-        if !held.is_empty() {
-            self.with_level_in(dim, pos, |level| level.out.changed.extend(held));
-        }
+        self.send_held_changes(dim, pos, held);
         loaded || state_changed
     }
 
