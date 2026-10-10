@@ -919,7 +919,7 @@ public class InteractVectors {
                 .cmd("summon minecraft:marker 3.2 102.0 2.2 {UUID:[I;1,0,0,5],data:{a:1b}}")
                 .cmd("summon minecraft:armor_stand 3.5 100.0 0.5 {UUID:[I;1,0,0,1],NoGravity:1b,ShowArms:1b}")
                 .cmd(rider ? "summon minecraft:minecart 4.5 100.0 1.5 {UUID:[I;1,0,0,2],NoGravity:1b,Passengers:[{id:\"minecraft:armor_stand\",UUID:[I;1,0,0,3],NoGravity:1b}]}" : "summon minecraft:minecart 4.5 100.0 1.5 {UUID:[I;1,0,0,2],NoGravity:1b}")
-                .cmd("summon minecraft:item 4.5 101.0 0.5 {UUID:[I;1,0,0,4],Item:{id:\"minecraft:stone\",count:3},Age:100s,PickupDelay:5s}")
+                .cmd("summon minecraft:item 4.5 101.0 0.5 {UUID:[I;1,0,0,4],Item:{id:\"minecraft:stone\",count:3},Age:100s,PickupDelay:5s,NoGravity:1b}")
                 .cmd("summon minecraft:item_frame 5 101 1 {UUID:[I;1,0,0,9],Facing:2b,Item:{id:\"minecraft:stick\",count:1}}")
                 .cmd("summon minecraft:painting 5 102 0 {UUID:[I;1,0,0,10],Facing:2b,variant:\"minecraft:kebab\"}")
                 .cmd("summon minecraft:armor_stand 5.9 100.0 0.5 {UUID:[I;1,0,0,6],NoGravity:1b}")

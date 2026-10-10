@@ -420,6 +420,10 @@ fn no_spawner_delay(t: Tag) -> Tag {
             if fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:chicken")) {
                 fields.retain(|(k, _)| k != "EggLayTime");
             }
+            // (An item entity's age and health: Kiln's level ticks between the steps.)
+            if fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:item")) {
+                fields.retain(|(k, _)| k != "Age" && k != "Health");
+            }
             for (k, v) in fields.iter_mut() {
                 if k == "Passengers"
                     && let Tag::List(riders) = v
