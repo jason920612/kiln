@@ -190,6 +190,7 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:target_hit",
     "minecraft:player_sheared_equipment",
     "minecraft:fall_after_explosion",
+    "minecraft:thrown_item_picked_up_by_player",
 ];
 
 fn err<T>(m: impl Into<String>) -> PResult<T> {

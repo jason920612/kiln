@@ -3563,6 +3563,16 @@ fn send_sound(
 /// is the region's, sorted by connection.
 pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
     arrow_pickups(entities, players);
+    // `ItemEntity.getOwner`: who threw the items on the ground (a mob, for the trigger).
+    let throwers: Vec<u128> = entities.list.iter().filter_map(|e| match e.phys.as_deref().map(|p| &p.kind) {
+        Some(EntityKind::Item(i)) if !e.removed && i.pickup_delay <= 0 => i.thrower,
+        _ => None,
+    }).collect();
+    let owners: Vec<(u128, kiln_entity::level::Seen)> = if throwers.is_empty() {
+        Vec::new()
+    } else {
+        entities.list.iter().filter(|o| !o.removed && throwers.contains(&o.uuid)).filter_map(|o| o.phys.as_deref().map(|p| (o.uuid, kiln_entity::level::Seen::of(p)))).collect()
+    };
     for e in &mut entities.list {
         if e.removed {
             continue;
@@ -3588,6 +3598,14 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
         }
         // `ItemEntity.playerTouch`.
         players[i].award_stat(crate::player_stats::Stat::item(crate::player_stats::PICKED_UP, picked), taken);
+        // `ServerPlayer.onItemPickup`: the thrower is told to the `thrown_item_picked_up_by_player` trigger.
+        if let Some((_, owner)) = item.thrower.and_then(|t| owners.iter().find(|(u, _)| *u == t)) {
+            let subject = crate::advancements::triggers::seen_subject(owner, crate::DIMENSIONS[players[i].dim].0);
+            let left = item.stack.clone();
+            players[i].fire_conds("minecraft:thrown_item_picked_up_by_player", None, |c, ok, loot| {
+                c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, &left)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
+            });
+        }
         let pkt = entity::take_item_entity(e.id, players[i].entity_id, taken);
         players[i].send(pkt.clone());
         for v in &e.seen_by {
