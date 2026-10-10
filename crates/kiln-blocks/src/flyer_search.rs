@@ -80,21 +80,23 @@ fn run(layout: &[usize], ticks: i32) -> Option<(i32, i32)> {
 fn flyer_search() {
     let max_len: usize = std::env::var("KILN_FLYER_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
     let mut found = 0;
+    // (a line along the flight: observers that look east or west only)
+    const LINE_KINDS: usize = 8;
     for len in 2..=max_len {
-        let total = KINDS.pow(len as u32);
+        let total = LINE_KINDS.pow(len as u32);
         for n in 0..total {
             let mut layout = vec![0usize; len];
             let mut m = n;
             for c in layout.iter_mut() {
-                *c = m % KINDS;
-                m /= KINDS;
+                *c = m % LINE_KINDS;
+                m /= LINE_KINDS;
             }
             // a machine has pistons and a way to start them again
             let has = |ks: &[usize]| layout.iter().any(|c| ks.contains(c));
             if !has(&[2, 3, 4, 5]) || !has(&[6, 7]) || layout[0] == 0 || layout[len - 1] == 0 {
                 continue;
             }
-            if let Some((a, b)) = run(&layout, 120)
+            if let Some((a, b)) = run2([&layout, &[]], 120)
                 && b - a >= 8
             {
                 found += 1;
