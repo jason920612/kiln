@@ -738,11 +738,11 @@ public class InteractVectors {
         // wp52: fluids in its cell and under it (the water is placed, it does not flow in a level that does not tick).
         for (String fluid : new String[] {"minecraft:water", "minecraft:lava", "minecraft:water[level=3]", "minecraft:bubble_column[drag=false]"}) {
             c = cushionCase("tick_in_" + fluid.replaceAll("[^a-z0-9]", "_")); c.tickCushions = true;
-            c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+            c.cmd("fill 1 99 -1 3 101 1 minecraft:stone hollow").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
             c.step(op("op", "command", "command", "setblock 2 100 0 " + fluid)).step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "tick_cushions", "ticks", 100));
             out.add(c);
             c = cushionCase("tick_support_" + fluid.replaceAll("[^a-z0-9]", "_")); c.tickCushions = true;
-            c.cmd("setblock 2 99 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
+            c.cmd("fill 1 99 -1 3 101 1 minecraft:stone hollow").cmd("setblock 2 98 0 minecraft:stone").late("summon minecraft:cushion 2.5 100 0.5 {color:\"blue\"}");
             c.step(op("op", "command", "command", "setblock 2 99 0 " + fluid)).step(op("op", "tick_cushions", "ticks", 100)).step(op("op", "tick_cushions", "ticks", 100));
             out.add(c);
         }

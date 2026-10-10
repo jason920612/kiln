@@ -235,6 +235,12 @@ impl EntityExt for Cushion {
         self.since_check += 1;
         if before >= 100 {
             self.since_check = 0;
+            // `tickAtCheckInterval`: lava in its block burns it (the fluid's `entityInside`, then `lavaHurt`).
+            let at = e.block_position();
+            let lava = crate::fluid::fluid_at(&*level, at);
+            if matches!(lava.kind, crate::physics::FluidKind::Lava | crate::physics::FluidKind::FlowingLava) && at.y as f64 + f64::from(crate::fluid::height(&*level, at, &lava)) > e.y() {
+                self.hurt(e, level, DamageKind::Lava, 4.0, None);
+            }
             self.destroy_if_in_fire(e, level);
             if !e.is_removed() && !survives(&*level, e) {
                 e.discard();
