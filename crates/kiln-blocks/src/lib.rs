@@ -32,6 +32,8 @@ pub mod fire;
 mod block_parity;
 #[cfg(test)]
 mod place_parity;
+#[cfg(test)]
+mod flyer_search;
 
 pub use behaviour::piston::{MovingPiston, MovingPistons, tick_moving_pistons};
 pub use fluid::FluidType;
