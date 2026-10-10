@@ -128,6 +128,7 @@ fn place_parity() {
                 let got: Changes = match item {
                     None => Changes::new(),
                     Some(item) => {
+                        level.set_random_seed(1000 + int(&v["id"]) as i64);
                         placement::place(&mut level, item, &ctx);
                         level.effects.clear();
                         let after = window(&level, p);

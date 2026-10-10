@@ -296,8 +296,10 @@ public class PlaceVectors {
             String name = BuiltInRegistries.ITEM.getKey(item).toString();
             if (c.only != null && !c.only.equals(name)) continue;
             ItemStack stack = new ItemStack(item);
+            // (the level random is seeded for every use: kelp, vines and mangrove propagules draw an age)
             // Items that fail may still print a stack trace of an unrelated reason: say it.
             try {
+                level.getRandom().setSeed(1000L + id);
                 player.setItemInHand(InteractionHand.MAIN_HAND, stack);
                 stack.useOn(new UseOnContext(player, InteractionHand.MAIN_HAND, new BlockHitResult(loc, c.face, O, false)));
             } catch (Throwable t) {
