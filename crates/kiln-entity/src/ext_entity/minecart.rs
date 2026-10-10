@@ -763,6 +763,7 @@ impl EntityExt for Minecart {
             o.put("DisplayOffset", Tag::Int(self.display_offset));
         }
         o.put("FlippedRotation", Tag::Byte(self.flipped as i8));
+        o.put("HasTicked", Tag::Byte(e.first_tick as i8));
         if let Some(c) = &self.contents {
             c.save(o);
         }

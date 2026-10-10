@@ -233,6 +233,8 @@ pub fn load(tag: &Tag, id: i32, seed: i64) -> Result<Entity, LoadError> {
         "minecraft:interaction" => crate::ext_entity::interaction::after_load(&mut e),
         n if crate::ext_entity::display::is_display(n) => crate::ext_entity::display::prepare(&mut e),
         "minecraft:marker" => e.no_physics = true,
+        // `AbstractMinecart.readAdditionalSaveData`: `HasTicked` is the entity's `firstTick` (a minecart made from data has ticked unless it says not).
+        n if crate::ext_entity::minecart::is_minecart(n) => e.first_tick = r.bool_or("HasTicked", false),
         _ => {}
     }
     // (`Passengers` is `EntityType.loadEntityRecursive`'s: see [`load_stack`].)
