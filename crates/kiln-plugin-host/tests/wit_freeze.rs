@@ -16,8 +16,11 @@
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
-/// `kiln:api@1.0.0`, `wit/kiln-api.wit`.
-const KILN_API_DIGEST: &str = "7b3032b84e8a93cd0ddff0b9662b262f0d5c3328f08806565f3adeafa72667df";
+/// `kiln:api@1.1.0`, `wit/kiln-api.wit`. (1.0.0 was `7b3032b84e8a93cd0ddff0b9662b262f0d5c3328f08806565f3adeafa72667df`; 1.1 only adds:
+/// the `world-read` interface, the `move-event` record and the `observed` case `player-moved`.)
+const KILN_API_DIGEST: &str = "260ea48cc9d0088e048144021edf597ce2b5540a61294a09b41e5a6a76254a01";
+/// The package version that digest belongs to: the two change together.
+const KILN_API_VERSION: &str = "1.1.0";
 /// `wit/async-tasks.wit` (unstable until WASI 0.3 is).
 const ASYNC_TASKS_DIGEST: &str = "950be11fa751bdac4510b7fb2c16ed6d9c642fd8c1d0ea93e8ee5fcb84249c0f";
 
@@ -68,4 +71,5 @@ fn the_package_version_matches_the_manifest_major() {
     let version = line.trim_end_matches(';').rsplit('@').next().unwrap();
     let major: u32 = version.split('.').next().unwrap().parse().unwrap();
     assert_eq!(major, kiln_plugin_host::manifest::API_MAJOR, "package {line}");
+    assert_eq!(version, KILN_API_VERSION, "the digest and the package version change together ({line})");
 }
