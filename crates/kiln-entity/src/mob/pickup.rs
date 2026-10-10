@@ -214,7 +214,10 @@ pub fn equip_item_if_possible(e: &mut Entity, m: &mut MobData, level: &mut dyn E
 pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if std::env::var_os("KILN_PICKUP_DEBUG").is_some() {
         let area = e.bounding_box().inflate(1.0, 0.0, 1.0);
-        eprintln!("PDBG {:?} alive={} dead={} griefing={} items={:?} bb={:?}", m.kind, super::is_alive(e, m), m.dead, level.mob_griefing(), level.entities_in(&area, EntityFilter::Item, e.id), area);
+        let big = e.bounding_box().inflate(6.0, 3.0, 6.0);
+        let near = level.entities_in(&big, EntityFilter::Item, e.id);
+        let bbs: Vec<_> = near.iter().filter_map(|&i| level.entity(i).map(|x| (i, x.bounding_box(), matches!(&x.kind, EntityKind::Item(d) if d.pickup_delay > 0)))).collect();
+        eprintln!("PDBG {:?} items={:?} near={:?}", m.kind, level.entities_in(&area, EntityFilter::Item, e.id), bbs);
     }
     if !m.can_pick_up_loot || !super::is_alive(e, m) || m.dead || !level.mob_griefing() {
         return;
