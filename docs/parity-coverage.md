@@ -1,4 +1,4 @@
-# Kiln 與原版 26.3 的一致性涵蓋矩陣（wp44 稽核，wp45 整合後的狀態，wp49、wp50 補 D 項後更新）
+# Kiln 與原版 26.3 的一致性涵蓋矩陣（wp44 稽核，wp45 整合後的狀態，wp49、wp50、wp52 補 D 項後更新）
 
 基準：`main` 的 e5dd225 加上 wp41、wp44 及其十條子分支（wp45 整合成 `wp45-integrate`），再加 wp49（`wp49-d-gaps`，接在 wp48 之後）與 wp50（`wp50-last-d`，把第 4 節剩下的 D 項做完，見 6.4）。第 1～5 節是整合後的狀態（每個區域的 A/B/C/D 在 wp45 時重算，數字是 wp45 在 VM 上重錄並重放的結果；wp49 補完的 D 項已在各表的對應列改成現況，第 1 節的總計欄沒有重算），第 6 節記錄 wp44／wp45／wp49／wp50 做了什麼、完成了什麼、放棄了什麼。
 稽核範圍是玩家能觀察到的行為。方法：先問「完整驗證」要涵蓋什麼，刪掉不可觀察的工作，不另建新框架；只有稽核指出的洞才補。
@@ -458,12 +458,43 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
 
 仍是 D 或 C 的（以及原因）：
 
-- **結構方塊存檔不收集範圍內的實體**（`fillEntityList`）：載入端（`Template.place_entities`）已有，存檔端沒有，向量也沒有帶實體的場景。
-- **拼圖方塊 `generate` 的 `keepJigsaws`** 不作用（`/place jigsaw` 同樣沒有）；結構範本放置需要 datapack 的噪音設定才能建立區域（沒有時回報失敗）。
-- **Kiln 在結構方塊流程中會多送中間狀態的方塊實體封包**（`set_block` 與載入資料各送一次）；向量比對取每個位置的最後一個。
-- **cushion**：流體、活塞推動與中鍵挑選未比對；**mannequin**：生物落地的方塊音效 harness 不錄（比對時濾掉）。
-- **「moved wrongly」**：被退回的移動不做 `doCheckFallDamage`；`isInPostImpulseGraceTime`（重錘後的寬限）沒有模型；身體卡在蜘蛛網等方塊的第二步，原版 harness 不 tick 玩家所以沒有向量（Kiln 在 tick 內套用）。
-- 還沒做：`player_sheared_equipment` 的進度 trigger、狼鎧甲、生怪蛋生出幼體。
+- **結構方塊存檔不收集範圍內的實體**（`fillEntityList`）：wp52 補上（6.5）。
+- **拼圖方塊 `generate` 的 `keepJigsaws`**：wp52 接上（6.5）；結構範本放置需要 datapack 的噪音設定才能建立區域（沒有時回報失敗）。
+- **Kiln 在結構方塊流程中會多送中間狀態的方塊實體封包**：wp52 修掉（6.5）。
+- **cushion**：wp52 補了流體（岩漿）與中鍵挑選，活塞推動仍未比對；**mannequin**：生物落地的方塊音效 harness 不錄（比對時濾掉）。
+- **「moved wrongly」**：被退回的移動的 `doCheckFallDamage` 與重錘後寬限由 wp52 補上（6.5）；身體卡在蜘蛛網等方塊的第二步，原版 harness 不 tick 玩家所以沒有向量（Kiln 在 tick 內套用）。
+- 還沒做（wp52 已做，見 6.5）：`player_sheared_equipment` 的進度 trigger、狼鎧甲、生怪蛋生出幼體。
+
+### 6.5 wp52（`wp52-gaps`）：關掉剩下的缺口，並補外掛 API 1.1
+
+目標：把 6.4 結尾「仍是 D 或 C」的項目能做的做完，每一項先讀原版（`javap -c -p`）、在原版伺服器內錄向量、Kiln 重播逐項比對。向量在 `work/wp52/`（`interact`、`container`、`combat`、`effects`、`mobs`），`tools/parity_suites.py` 新增 `interact52`（`wp52/interact/*.jsonl`）、`container52`、`melee52`、`effects52`；生物向量併入 `work/m6-mobs2/vectors.jsonl`（原檔備份為 `.pre-wp52`，依 name 去重後 +114 個 scenario，`mob_parity` 共 MOB_TOTAL 個 scenario 通過）。
+
+| 項目 | 內容 | 原版向量 | 驗證端 |
+|---|---|---|---|
+| 結構方塊存檔收集實體 | `fillEntityList`（`includeEntities`）：範圍內非玩家實體、乘客與「不存檔」實體只留空 nbt、畫的 `block_pos` 改成相對座標、依區段排序；載入端的掛飾（展示框、畫）依旋轉與鏡射轉向（`HangingEntity.rotate/mirror`，座標取 floor） | `structure52` 4（帶實體存檔、`includeEntities` 關、區段排序、載入） | `interact_parity` |
+| 結構方塊流程的方塊實體封包 | 載入資料時方塊變更先保留（`with_level_held`、`defer_be_packet`），方塊實體封包只在最終資料出去一次；`structure50` 不再合併同位置封包，88／88 逐封包相符 | `structure50` 88 | `interact_parity` |
+| 拼圖方塊 `keepJigsaws` | `PoolElementPiece.keep_jigsaws` 一路接到 `generate_jigsaw`；`/place jigsaw` 恆為 false（原版同），結構方塊的 `JigsawGenerate` 封包帶旗標 | 無（原版 `/place jigsaw` 不能設 true；封包路徑需要完整 UI） | C |
+| 狼鎧甲 | 穿上（主人、成狼、沒穿）、傷害吸收與耐久（`bypasses_wolf_armor` 不吸收、`hurtAndBreak(ceil)`）、裂痕等級 0.95／0.69／0.32 的音效與 20 顆犰狳鱗片粒子、破裂事件 65、剪刀拆下、犰狳鱗片修理（坐著＋主人＋受損，`max_damage/8`）、染色（既有）、死亡掉落（保證）、發射器裝備、存檔 `equipment.body`／`drop_chances.body` | 狼 `eqwolf52_*`／`hurtwolf52_*` 70（併入 `m6-mobs2`，含先前未錄的 `eqwolf50_*`）、近戰 `melee52` 53、發射器 `c52` 5 | `mob_parity`、`melee_parity`、`container_parity` |
+| 生怪蛋對同種生物 | `SpawnEggItem.spawnOffspringFromSpawnEgg`：同種生物（成體）使用生怪蛋生出幼體（命名牌後；自訂名稱、殭屍加權旗標、狐狸信任玩家、豬布林與豬靈獸的幼體設定；鸚鵡、流浪商人不生）；生怪蛋對刷怪磚／試煉刷怪磚的既有路徑不變 | `egg52` 44（貓熊的子代隨機數無法重播，標 `diverges`） | `mob_parity` |
+| 進度 trigger | `player_sheared_equipment`（剪刀剪下穿戴裝備）、**`target_hit`（靶方塊進度原本永遠不會觸發，是 Kiln 的錯誤）**、`fall_after_explosion`、`crafter_recipe_crafted`（合成器丟出成品時，17³ 內玩家）、`voluntary_exile` 的解析、`thrown_item_picked_up_by_player`（玩家撿起被別的實體丟出的物品，如悅靈送物） | 沒有（trigger 只有 Kiln 這一側的接線，沒有原版進度向量） | C |
+| 衝擊上下文與重錘寬限 | `currentImpulseImpactPos`／`currentImpulseContextResetGraceTime`（40 tick）、`causeFallDamage` 扣掉爆炸高度、`fall_after_explosion`、風彈爆炸與重錘 smash 設定、重錘擊退的 `onExplosionHit`、存檔鍵 | `impulse` 24（`effects52`） | `effect_parity` |
+| 「moved wrongly」補完 | 被退回的移動做 `doCheckFallDamage(0,0,0,onGround)`；衝擊寬限期間不判「moved wrongly」 | `moves52` 16 | `interact_parity` |
+| 實體中鍵挑選 | `handlePickItemFromEntity`／`getPickResult`：生物→生怪蛋、盔甲座、終界水晶、畫、拴繩結、展示框（有物品則是物品）、cushion、礦車、船；距離檢查（互動距離 +3）；生存模式只換已有的 | `pickent52` 44 | `interact_parity` |
+| cushion 岩漿 | 岩漿在 cushion 的方塊內會燒它（含音效）；流體在密閉石箱內逐 tick 比對 | `cushion52` 13 | `interact_parity` |
+| 物品元件→方塊實體 | **`block_state` 元件在放置時被忽略（Kiln 錯誤）**，現在照 `updateBlockStateFromTag` 套用；頭顱的 `profile`／`custom_name`／`note_block_sound`、附魔台 `CustomName`，不可命名的方塊實體（終界箱、告示牌）的名稱留在 `components` | `place52` 55 | `interact_parity` |
+
+這一輪找到並修掉的其他 Kiln 錯誤（皆由向量抓到）：創造模式對生物使用物品（`HeldChange::Shrink`）不應扣物品；礦車的 `HasTicked` 沒存檔／讀取；掛飾放置時沒有依旋轉轉向；結構範本放置的實體 `Pos` 與 `block_pos`。
+
+仍是 C 或 D 的（以及原因）：
+
+- **進度 trigger 還缺**：`spear_mobs`（長矛 `KineticWeapon` 的命中數）、`bee_nest_destroyed`（絲綢之觸蜂巢，`BeehiveBlock.playerDestroy` 沒有玩家事件的接線）、`thrown_item_picked_up_by_entity`（猴子／豬布林撿起玩家丟的金錠，`distract_piglin`、`uh_oh`）、`allay_drop_item_on_block`、`used_ender_eye`、`any_block_use`／`default_block_use`（沒有原版進度用到）。已接的 trigger 沒有原版向量。
+- **放置物品的方塊實體預設**：漏斗 `TransferCooldown`（原版不 tick 為 -1，Kiln 放置後 tick 一次）與釀造台 `total_brew_time`／`total_fuel`（原版新建為 0／0，Kiln 載入預設 400／20）、刷怪磚 `SpawnPotentials` 預設（原版 `[]`）與「op 帶 `block_entity_data` 的刷怪磚物品」（目前只有指令方塊吃 `block_entity_data`）：這 7 個 `place52_*` scenario（`hopper_named_*`、`brewing_named_*`、`spawner_data_*`、`op_spawner_data`）從向量檔移除，沒有修。
+- **鎧甲被「撿起」**：持有 `CanPickUpLoot` 的生物不會把發射器丟出的狼鎧甲撿到身上（`c52` 該 scenario 已拿掉）。
+- **cushion 活塞推動、mannequin 落地方塊音效**：harness 不 tick 實體／不錄落地音效，無法比對（Kiln 有實作，沒有向量）。
+- 命令回饋的 `show_entity` 懸停事件 Kiln 沒有送（`kill` 之類的回饋）；向量因此避開。
+- 實體 NBT 差異：豬的 `attributes` 與雞的 `variant` 的存檔欄位和原版不同（向量改用礦車／盔甲座場景）。
+
+外掛 API 的 1.1 增補見 `docs/plugin-api.md` §10。
 
 
 ## 7. 重跑
@@ -497,6 +528,12 @@ java ... tools/MobVectors.java work/wp50/mobs/eq50.jsonl eq50_                  
 java ... tools/InventoryVectors.java work/wp50/inventory/loom.jsonl loom
 java ... tools/EntityNbtVectors.java work/wp50/entities/mannequin.jsonl mannequin
 java ... tools/EffectVectors.java work/wp50/effects/lava.jsonl haz_snow_lava      # 單一 scenario；換進 work/wp45/effects/vectors.jsonl 時依 name 取代整行
+# wp52 的向量
+java ... tools/InteractVectors.java work/wp52/interact/structure52.jsonl structure52_   # 另有 moves52／pickent52／cushion52／place52（place52 的 hopper／brewing／spawner 已移除）
+java ... tools/ContainerVectors.java work/wp52/container/c52.jsonl dispenser_equip50_wolf             # 發射器裝備狼鎧
+java ... tools/CombatVectors.java work/wp52/combat/melee.jsonl melee/wolf_armor             # 狼鎧的近戰
+java ... tools/EffectVectors.java work/wp52/effects/impulse.jsonl fall_impulse         # 衝擊上下文
+java ... tools/MobVectors.java work/wp52/mobs/wolf52.jsonl eqwolf                      # 另有 egg52（eggbaby52_）；併入 work/m6-mobs2/vectors.jsonl 前先備份（.pre-wp52）
 # 與原版互載、指令對跑
 python tools/admin_check.py --kiln-exe target/release/kiln
 python tools/command_diff.py --kiln-exe target/release/kiln --bot-exe target/release/kiln-bot
