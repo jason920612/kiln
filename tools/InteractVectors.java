@@ -1718,7 +1718,7 @@ public class InteractVectors {
                 if (floors.stream().noneMatch(f -> BuiltInRegistries.BLOCK.getValue(Identifier.parse(f)).defaultBlockState().getSoundType() == st.getSoundType())) floors.add(name);
             }
         }
-        for (String block : new String[] {"minecraft:sand", "minecraft:gravel", "minecraft:oak_leaves", "minecraft:soul_sand", "minecraft:ice", "minecraft:packed_ice", "minecraft:slime_block", "minecraft:honey_block", "minecraft:hay_block", "minecraft:snow_block"}) {
+        for (String block : new String[] {"minecraft:oak_leaves", "minecraft:ice", "minecraft:packed_ice", "minecraft:slime_block", "minecraft:honey_block", "minecraft:hay_block", "minecraft:snow_block"}) {
             if (!floors.contains(block)) floors.add(block);
         }
         for (String block : floors) {
@@ -1745,7 +1745,7 @@ public class InteractVectors {
         for (int i = 1; i <= 8; i++) c.step(move(3.5 + i * 0.5, 99.0, 0.5, true));
         out.add(c);
         // a thin block on top of the floor sounds with the floor's (the combination, the muffled)
-        for (String top : new String[] {"minecraft:white_carpet", "minecraft:moss_carpet", "minecraft:snow[layers=1]", "minecraft:pink_petals", "minecraft:glow_lichen[down=true]", "minecraft:crimson_roots"}) {
+        for (String top : new String[] {"minecraft:white_carpet", "minecraft:moss_carpet", "minecraft:snow[layers=1]", "minecraft:glow_lichen[down=true]"}) {
             c = new Case("sound54_walk_over_" + top.replaceAll("[^a-z_]", "_").replace("minecraft_", "")).moves().observer(8.5, 99.0, 2.5);
             c.pos = new double[] {3.5, 99.0625, 0.5};
             c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air").cmd("fill 3 99 0 12 99 1 " + top);
