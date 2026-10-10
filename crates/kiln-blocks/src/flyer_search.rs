@@ -124,7 +124,7 @@ fn run2_from(rows: [&[usize]; 2], ticks: i32, last: (usize, usize)) -> Option<(i
             let s = cell(c);
             if !is_air(s) {
                 pieces += 1;
-                let p = BlockPos::new(16 + i as i32, y, 8 + z as i32);
+                let p = if std::env::var_os("KILN_FLYER_VERTICAL").is_some() { BlockPos::new(16 + i as i32, y + z as i32, 8) } else { BlockPos::new(16 + i as i32, y, 8 + z as i32) };
                 if (z, i) == last {
                     trigger = Some((p, s));
                 } else {
@@ -225,6 +225,10 @@ fn flyer_search3() {
     let slimes: usize = std::env::var("KILN_FLYER_SLIMES").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
     let threads: usize = std::env::var("KILN_FLYER_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
     let cells = 2 * w;
+    let obs: [usize; 4] = std::env::var("KILN_FLYER_OBS").ok().map_or([6, 7, 8, 9], |v| {
+        let l: Vec<usize> = v.split(',').filter_map(|x| x.parse().ok()).collect();
+        [l[0], l[1], l[2], l[3]]
+    });
     // pieces: 2 sticky pistons (kinds 2/3), 2 observers (6..9), slimes (1)
     let pieces = 4 + slimes;
     let total: usize = (0..pieces).fold(1, |a, i| a * (cells - i));
@@ -254,8 +258,8 @@ fn flyer_search3() {
                         let mut grid = vec![0usize; cells];
                         grid[at[0]] = 2 + p0;
                         grid[at[1]] = 2 + p1;
-                        grid[at[2]] = [6, 7, 8, 9][o0];
-                        grid[at[3]] = [6, 7, 8, 9][o1];
+                        grid[at[2]] = obs[o0];
+                        grid[at[3]] = obs[o1];
                         for &s in &at[4..] {
                             grid[s] = 1;
                         }
