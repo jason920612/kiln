@@ -415,6 +415,29 @@ fn no_spawner_delay(t: Tag) -> Tag {
             if fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:furnace")) {
                 fields.retain(|(k, _)| k != "BurnTime");
             }
+            // (A saved chicken's egg timer is drawn at random; a rider's place is the vehicle's after the level's first tick, and the
+            // recorded level does not tick.)
+            if fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:chicken")) {
+                fields.retain(|(k, _)| k != "EggLayTime");
+            }
+            for (k, v) in fields.iter_mut() {
+                if k == "Passengers"
+                    && let Tag::List(riders) = v
+                {
+                    for rider in riders.iter_mut() {
+                        if let Tag::Compound(rf) = rider {
+                            for (rk, rv) in rf.iter_mut() {
+                                if rk == "Pos"
+                                    && let Tag::List(p) = rv
+                                    && p.len() == 3
+                                {
+                                    p[1] = Tag::Double(0.0);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             let spawner = fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:mob_spawner"));
             if spawner {
                 fields.retain(|(k, _)| k != "Delay");
