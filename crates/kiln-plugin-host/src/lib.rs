@@ -40,7 +40,8 @@
 //!   the tick, the acting player and the call's position among that player's calls, never
 //!   from arrival order. Batched calls (observe) take their first player as the source, so
 //!   operations from them are only layout-independent when they commute (`add`).
-//! - A timeout is a strike; three strikes in 1,200 ticks demote the plugin to observe-only. A
+//! - A timeout is a strike; three strikes in 1,200 ticks demote the plugin to observe-only (strict mode: at the next B0, so that
+//!   the calls of one tick do not depend on which region's thread struck first). A
 //!   failed or demoted fail-closed subscription denies; fail-open carries on. Running out of
 //!   the per-tick budget of an instance or the acting player's event bucket (a token bucket
 //!   refilled per tick) applies the policy without a strike.
@@ -628,6 +629,20 @@ impl Shared {
         let now = self.tick();
         let mut s = self.health[plugin].strikes.lock().unwrap();
         s.push_back(now);
+        while s.front().is_some_and(|t| now - *t > STRIKE_WINDOW) {
+            s.pop_front();
+        }
+        // Strict mode demotes at the next B0 ([`Shared::demote_struck`]): regions work in parallel, and which of their calls of this
+        // tick saw the flag already would depend on the threads.
+        if !self.strict && s.len() >= STRIKES && !self.health[plugin].demoted.swap(true, Ordering::Relaxed) {
+            warn!("plugin {id}: {STRIKES} calls over budget within {STRIKE_WINDOW} ticks, demoted to observe-only");
+        }
+    }
+
+    /// B0 of strict mode: the plugin with [`STRIKES`] strikes in the window, counted over the whole of the tick that ended, is demoted.
+    fn demote_struck(&self, plugin: usize, id: &str) {
+        let now = self.tick();
+        let mut s = self.health[plugin].strikes.lock().unwrap();
         while s.front().is_some_and(|t| now - *t > STRIKE_WINDOW) {
             s.pop_front();
         }
@@ -2637,6 +2652,11 @@ impl PluginRuntime {
     pub fn begin_tick_in(&mut self, world: &dyn World) {
         self.shared.tick.fetch_add(1, Ordering::Relaxed);
         self.shared.seqs.lock().unwrap().clear();
+        if self.shared.strict {
+            for (i, def) in self.set.plugins.iter().enumerate() {
+                self.shared.demote_struck(i, &def.id);
+            }
+        }
         self.fold_calls();
         let tick = self.shared.tick();
         let staged = std::mem::take(&mut *self.staged.lock().unwrap());
