@@ -241,12 +241,13 @@ use crate::blocks::RegionLevel;
 use crate::container::BeKind;
 use crate::{ConnId, DimId, Sim};
 use kiln_blocks::{BlockPos, Level, state};
+use kiln_world::Blocks as _;
 use kiln_data::block_logic::{self as logic, BlockClass as C};
 use kiln_worldgen::structure::template::{BlockInfo, PlaceSettings, Template};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-fn data(l: &mut RegionLevel, bp: BlockPos) -> Option<&mut Data> {
+fn data<'a>(l: &'a mut RegionLevel<'_>, bp: BlockPos) -> Option<&'a mut Data> {
     l.blocks.containers.get_mut(bp).and_then(|c| c.structure.as_deref_mut())
 }
 
