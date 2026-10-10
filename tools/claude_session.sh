@@ -6,7 +6,7 @@
 # The transcript goes to .claude/sessions/<name>.jsonl; the last line with "type":"result" is the
 # final report. Resume a stopped session with: claude -p --resume <session_id> "continue".
 set -u
-name="$1"; model="$2"; effort="$3"; prompt="$4"
+name="$1"; model="$2"; effort="$3"; prompt="$(cd "$(dirname "$4")" && pwd)/$(basename "$4")"
 repo="$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)"
 wt="$repo/.claude/worktrees/$name"
 mkdir -p "$repo/.claude/sessions"
