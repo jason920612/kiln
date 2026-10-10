@@ -111,10 +111,20 @@ fn flyer_search() {
 fn run2(rows: [&[usize]; 2], ticks: i32) -> Option<(i32, i32)> {
     // Every piece in turn is the one placed last (the machine is started by placing a block).
     let spots: Vec<(usize, usize)> = (0..2).flat_map(|z| (0..rows[z].len()).map(move |i| (z, i))).filter(|&(z, i)| rows[z][i] != 0).collect();
-    spots.into_iter().find_map(|last| run2_from(rows, ticks, last))
+    if let Some(r) = spots.iter().find_map(|&last| run2_from(rows, ticks, last)) {
+        return Some(r);
+    }
+    // or the machine stands, and a block is put beside it and taken away again
+    let w = rows[0].len().max(rows[1].len());
+    (0..2usize).flat_map(|z| (0..w).map(move |i| (z, i))).filter(|&(z, i)| rows[z].get(i).is_none_or(|&c| c == 0)).find_map(|tapped| run2_with(rows, ticks, tapped, true))
 }
 
+/// `last` is the piece placed last, or (when `tap` is set) an empty cell where a block is put and taken away again after the machine stands.
 fn run2_from(rows: [&[usize]; 2], ticks: i32, last: (usize, usize)) -> Option<(i32, i32)> {
+    run2_with(rows, ticks, last, false)
+}
+
+fn run2_with(rows: [&[usize]; 2], ticks: i32, last: (usize, usize), tap: bool) -> Option<(i32, i32)> {
     let mut level = TestLevel::void();
     level.load_chunks((-1, -1), (4, 1));
     let y = 100;
@@ -127,7 +137,7 @@ fn run2_from(rows: [&[usize]; 2], ticks: i32, last: (usize, usize)) -> Option<(i
             if !is_air(s) {
                 pieces += 1;
                 let p = if std::env::var_os("KILN_FLYER_VERTICAL").is_some() { BlockPos::new(16 + i as i32, y + z as i32, 8) } else { BlockPos::new(16 + i as i32, y, 8 + z as i32) };
-                if (z, i) == last {
+                if (z, i) == last && !tap {
                     trigger = Some((p, s));
                 } else {
                     level.set_raw(p, s, flags::SKIP_ALL_SIDEEFFECTS);
@@ -135,6 +145,14 @@ fn run2_from(rows: [&[usize]; 2], ticks: i32, last: (usize, usize)) -> Option<(i
                 spots.push(p);
             }
         }
+    }
+    if tap {
+        let vertical = std::env::var_os("KILN_FLYER_VERTICAL").is_some();
+        let (z, i) = last;
+        let p = if vertical { BlockPos::new(16 + i as i32, y + z as i32, 8) } else { BlockPos::new(16 + i as i32, y, 8 + z as i32) };
+        crate::update::set_block_and_update(&mut level, p, d::STONE);
+        level.tick(0, &[(0, 0), (1, 0)]);
+        crate::update::set_block_and_update(&mut level, p, d::AIR);
     }
     // (the blocks of the machine were placed without updates; the last one is placed the way a player does)
     if let Some((p, s)) = trigger {
