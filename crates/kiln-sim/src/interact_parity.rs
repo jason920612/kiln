@@ -918,20 +918,8 @@ fn run_case(line: &Value) -> Vec<String> {
         if step["op"] == "command" && got_packets.iter().filter(|p| p.contains("\"t\":\"block_update\"")).count() >= 2 {
             got_packets.retain(|p| !p.contains("\"t\":\"block_update\""));
         }
-        // (A structure block's screen: the changes of one tick are sent once, and many of one section as a Section Blocks Update.)
+        // (A structure block's screen: many changes of one section go as a Section Blocks Update, which the vectors do not record.)
         if step["op"] == "set_structure" || (step["op"] == "command" && line["name"].as_str().is_some_and(|n| n.starts_with("structure50_"))) {
-            let mut last: std::collections::HashMap<String, usize> = Default::default();
-            for (i, p) in got_packets.iter().enumerate() {
-                if p.contains("\"t\":\"block_entity_data\"") {
-                    let pos = p.split("\"pos\":").nth(1).and_then(|r| r.split(']').next()).unwrap_or("").to_owned();
-                    last.insert(pos, i);
-                }
-            }
-            let mut i = 0;
-            got_packets.retain(|p| {
-                i += 1;
-                !p.contains("\"t\":\"block_entity_data\"") || last.values().any(|&l| l == i - 1)
-            });
             let mut updates: Vec<String> = got_packets.iter().filter(|p| p.contains("\"t\":\"block_update\"")).cloned().collect();
             updates.sort();
             updates.dedup();
