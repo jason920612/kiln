@@ -994,3 +994,43 @@ impl Sim {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{Client, join};
+    use crate::{OVERWORLD_ID, SimConfig};
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    /// What `world-read` costs an event: the copy of the 9x9x9 blocks around it (`provide_blocks`, 729 `get_block` calls and
+    /// a `Vec`), measured over the chunks of a running level. Prints the numbers (`--nocapture`); the bound only catches a
+    /// copy that went wrong by an order of magnitude.
+    #[test]
+    fn block_window_copy_cost() {
+        let mut sim = Sim::new(SimConfig::new(2, 2, None));
+        let (msg, stats) = join(1, "Cost", 2);
+        assert!(sim.step([msg]));
+        let mut client = Client::new(1, stats);
+        for _ in 0..10 {
+            let mut inbox = Vec::new();
+            client.tick(None, &mut inbox);
+            assert!(sim.step(inbox));
+        }
+        let centre = sim.players.get(&1).unwrap().pos.map(|c| c.floor() as i32);
+        let region = sim.dims[OVERWORLD_ID].regions.iter().next().expect("a region");
+        let cells = region.cells();
+        let window = |c: [i32; 3]| BlockWindow::new(c, |x, y, z| cells.get_block(x, y, z).map_or(BlockWindow::UNLOADED, block_id));
+        let loaded = (0..729).filter(|i| window(centre).get(centre[0] - 4 + i % 9, centre[1] - 4 + i / 81, centre[2] - 4 + i / 9 % 9).is_some()).count();
+        assert!(loaded > 100, "the window is over loaded chunks ({loaded} blocks)");
+        const N: u32 = 20_000;
+        let start = Instant::now();
+        for i in 0..N {
+            // (The centre moves a little, as events do.)
+            black_box(window(black_box([centre[0] + (i % 5) as i32, centre[1], centre[2] + (i % 3) as i32])));
+        }
+        let per_window = start.elapsed().as_nanos() as f64 / N as f64;
+        println!("world-read window: {per_window:.0} ns per event ({:.2} ns per block, {loaded} of 729 loaded)", per_window / 729.0);
+        assert!(per_window < 200_000.0, "{per_window} ns");
+    }
+}
