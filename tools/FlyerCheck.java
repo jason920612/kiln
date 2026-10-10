@@ -148,11 +148,10 @@ public class FlyerCheck {
             for (int n = 0; n < lines.size() && n < limit; n++) {
                 String line = lines.get(n);
                 int[][] rows = ints(line);
-                int lastZ = -1, lastI = -1;
                 int idx = line.indexOf("\"last\":[") + 8;
                 String[] lf = line.substring(idx, line.indexOf("]", idx)).split(",");
-                lastZ = Integer.parseInt(lf[0].trim());
-                lastI = Integer.parseInt(lf[1].trim());
+                final int lastZ = Integer.parseInt(lf[0].trim());
+                final int lastI = Integer.parseInt(lf[1].trim());
                 int kx40 = field(line, "x40"), kx120 = field(line, "x120");
                 int[] vanilla = new int[5];
                 int finalN = n;
