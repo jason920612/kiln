@@ -4465,6 +4465,12 @@ public class InteractVectors {
     static String run(Case c) throws Exception {
         // (A level that ticks whole: the ticks the setup schedules count from the case's clock, not the last case's.)
         if (c.fullTicks) ((net.minecraft.world.level.storage.ServerLevelData) server.overworld().getLevelData()).setGameTime(START_TIME);
+        // wp54: the entities of the setup take the ids the replay gives them (the player is 1): an item's physics depend on its id.
+        if (c.pistonWorld) {
+            Field counter = ServerLevel.class.getDeclaredField("ENTITY_COUNTER");
+            counter.setAccessible(true);
+            ((java.util.concurrent.atomic.AtomicInteger) counter.get(null)).set(1);
+        }
         for (String cmd : c.commands) command(cmd);
         if (!c.tickLevel) for (String cmd : c.late) command(cmd);
         // The replay's level makes one tick between these commands and the first step: a hive's bees age by it.

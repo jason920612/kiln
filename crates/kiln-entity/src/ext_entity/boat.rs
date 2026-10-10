@@ -205,8 +205,12 @@ impl Boat {
                     if crate::blocks::block_name(state) == "minecraft:lily_pad" {
                         continue;
                     }
-                    let (shape, _) = collision::collision_shape(state, pos, &collision::CollisionContext::EMPTY);
-                    let hit = shape.boxes().iter().any(|b| {
+                    // (A moving block has the shape of its block entity.)
+                    let shapes = match level.moving_piston(pos).filter(|_| crate::blocks::kind(state) == crate::blocks::Kind::MovingPiston) {
+                        Some(view) => view.collision_shapes(None),
+                        None => smallvec::smallvec![collision::collision_shape(state, pos, &collision::CollisionContext::EMPTY).0],
+                    };
+                    let hit = shapes.iter().flat_map(|s| s.boxes().iter()).any(|b| {
                         let b = b.offset(x as f64, y as f64, z as f64);
                         b.min_x < slab.max_x && b.max_x > slab.min_x && b.min_y < slab.max_y && b.max_y > slab.min_y && b.min_z < slab.max_z && b.max_z > slab.min_z
                     });
