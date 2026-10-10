@@ -78,6 +78,10 @@ pub(crate) enum BeKind {
     CommandBlock,
     /// Holds nothing; keeps the pattern layers it was made with (`BannerBlockEntity`).
     Banner,
+    /// A structure block (`StructureBlockEntity`): its name, area and mode.
+    StructureBlock,
+    /// A jigsaw block (`JigsawBlockEntity`).
+    Jigsaw,
 }
 
 impl BeKind {
@@ -110,6 +114,8 @@ impl BeKind {
             "brushable_block" => BeKind::Brushable,
             "command_block" => BeKind::CommandBlock,
             "banner" => BeKind::Banner,
+            "structure_block" => BeKind::StructureBlock,
+            "jigsaw" => BeKind::Jigsaw,
             _ => return None,
         })
     }
@@ -126,7 +132,7 @@ impl BeKind {
             BeKind::Campfire => 4,
             BeKind::ChiseledBookshelf => 6,
             BeKind::DecoratedPot | BeKind::Lectern | BeKind::Brushable => 1,
-            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner => 0,
+            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw => 0,
         }
     }
 
@@ -134,13 +140,13 @@ impl BeKind {
     pub fn randomizable(self) -> bool {
         !matches!(
             self,
-            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner
+            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw
         )
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner)
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw)
     }
 
     /// `getDefaultName` translation key.
@@ -171,12 +177,38 @@ impl BeKind {
             BeKind::Brushable => "block.minecraft.suspicious_sand",
             BeKind::CommandBlock => "block.minecraft.command_block",
             BeKind::Banner => "block.minecraft.banner",
+            BeKind::StructureBlock => "block.minecraft.structure_block",
+            BeKind::Jigsaw => "block.minecraft.jigsaw",
         }
     }
 }
 
 /// Saved fields a container block entity models; the rest of its NBT is kept as is.
-const MODELED: [&str; 49] = [
+const MODELED: &[&str] = &[
+    "name",
+    "author",
+    "metadata",
+    "posX",
+    "posY",
+    "posZ",
+    "sizeX",
+    "sizeY",
+    "sizeZ",
+    "rotation",
+    "mirror",
+    "mode",
+    "ignoreEntities",
+    "strict",
+    "showair",
+    "showboundingbox",
+    "integrity",
+    "seed",
+    "target",
+    "pool",
+    "final_state",
+    "joint",
+    "placement_priority",
+    "selection_priority",
     "Command",
     "SuccessCount",
     "TrackOutput",
@@ -322,6 +354,10 @@ pub(crate) struct ContainerBe {
     pub brushable: Option<Box<crate::brush::Brushable>>,
     /// A command block's command and flags.
     pub command: Option<Box<crate::command_block::Data>>,
+    /// A structure block's settings.
+    pub structure: Option<Box<crate::structure_block::Data>>,
+    /// A jigsaw block's fields.
+    pub jigsaw: Option<Box<crate::structure_block::Jigsaw>>,
     /// Changed since its NBT was last written into the chunk.
     pub dirty: bool,
     /// Saved fields not modeled here (`components`, ...).
@@ -413,6 +449,8 @@ impl ContainerBe {
             crafter: (kind == BeKind::Crafter).then(|| Box::new(crafter::Crafter::load(nbt))),
             brushable: (kind == BeKind::Brushable).then(Default::default),
             command: (kind == BeKind::CommandBlock).then(|| Box::new(crate::command_block::Data::load(nbt))),
+            structure: (kind == BeKind::StructureBlock).then(|| Box::new(crate::structure_block::Data::load(nbt))),
+            jigsaw: (kind == BeKind::Jigsaw).then(|| Box::new(crate::structure_block::Jigsaw::load(nbt))),
             dirty: false,
             extra,
         };
@@ -436,6 +474,16 @@ impl ContainerBe {
             BeKind::EnderChest | BeKind::Bell | BeKind::DaylightDetector | BeKind::Banner => {}
             BeKind::CommandBlock => {
                 if let Some(d) = &self.command {
+                    d.save(&mut out);
+                }
+            }
+            BeKind::StructureBlock => {
+                if let Some(d) = &self.structure {
+                    d.save(&mut out);
+                }
+            }
+            BeKind::Jigsaw => {
+                if let Some(d) = &self.jigsaw {
                     d.save(&mut out);
                 }
             }

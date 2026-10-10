@@ -423,7 +423,7 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         // `LecternBlock.getMenuProvider`: only with a book.
         BeKind::Lectern if state::get_bool(s, "has_book") => single(Menu::lectern),
         BeKind::Lectern => return None,
-        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner => return None,
+        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw => return None,
     })
 }
 
@@ -475,6 +475,11 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
     if logic::block_class(s) == C::CommandBlock {
         return crate::command_block::use_without_item(p, level, pos);
     }
+    // `StructureBlock.useWithoutItem` / `JigsawBlock.useWithoutItem`: a game master gets the block's screen (opened by the client: the
+    // server has nothing to send), everybody else clicks through.
+    if matches!(logic::block_class(s), C::StructureBlock | C::JigsawBlock) {
+        return p.can_use_gamemaster_blocks().then_some(true);
+    }
     // `LecternBlock.useWithoutItem`: a lectern with a book opens its menu; without one the click is consumed.
     if logic::block_class(s) == C::LecternBlock {
         if state::get_bool(s, "has_book")
@@ -486,7 +491,7 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
         return Some(true);
     }
     // (A jukebox has no menu: its own `useWithoutItem` takes the disc out.)
-    if matches!(level.blocks.containers.get(pos)?.kind, BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner) {
+    if matches!(level.blocks.containers.get(pos)?.kind, BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw) {
         return None;
     }
     if let Some(provider) = container_provider(level, pos, s) {
