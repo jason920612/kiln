@@ -274,7 +274,7 @@ public class PlaceVectors {
         clearWindow(O);
         clearWindow(p);
         for (Object[] e : c.env) setQuiet(O.offset((int) e[0], (int) e[1], (int) e[2]), parse((String) e[3]));
-        level.getLightEngine().runLightUpdates();
+        awaitLight();
         List<Object> light = new ArrayList<>();
         for (int x = -1; x <= 1; x++)
             for (int y = -1; y <= 1; y++)
@@ -314,6 +314,7 @@ public class PlaceVectors {
                         i++;
                     }
             if (!changes.isEmpty()) {
+                awaitLight();
                 // the default state of the item's block at P, nothing else: `1`
                 if (changes.size() == 1) {
                     @SuppressWarnings("unchecked")
@@ -345,6 +346,17 @@ public class PlaceVectors {
         line.put("light", light);
         line.put("r", results);
         return toJson(line);
+    }
+
+    static void awaitLight() {
+        var engine = level.getChunkSource().getLightEngine();
+        for (int i = 0; i < 2; i++) {
+            engine.tryScheduleUpdate();
+            var done = engine.waitForPendingTasks(0, 0);
+            long deadline = System.nanoTime() + 60_000_000_000L;
+            server.managedBlock(() -> done.isDone() || System.nanoTime() > deadline);
+            if (!done.isDone()) throw new IllegalStateException("light engine did not settle");
+        }
     }
 
     static void drain() throws Exception {
