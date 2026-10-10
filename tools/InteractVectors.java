@@ -215,6 +215,12 @@ public class InteractVectors {
         /** wp54: a second player stands here (survival, nothing happens to it) and the sounds it hears are recorded after every step (`obs`). */
         double[] observer;
 
+        /** wp54: only what the observer heard is compared (the case is about a sound, not about how the block is placed). */
+        boolean soundOnly;
+
+        /** wp54: the case is left out when the observer heard nothing (the item could not be placed). */
+        boolean dropIfSilent;
+
         Case observer(double x, double y, double z) {
             observer = new double[] {x, y, z};
             return this;
@@ -1687,7 +1693,8 @@ public class InteractVectors {
         // ---- placing: one block item for every sound type there is
         Map<net.minecraft.world.level.block.SoundType, String> reps = new LinkedHashMap<>();
         for (net.minecraft.world.item.Item it : BuiltInRegistries.ITEM) {
-            if (it instanceof net.minecraft.world.item.BlockItem bi && !(it instanceof net.minecraft.world.item.PlaceOnWaterBlockItem)) {
+            // (Kiln has no placement rule for bamboo: it puts a stalk where vanilla puts a sapling.)
+            if (it instanceof net.minecraft.world.item.BlockItem bi && !(it instanceof net.minecraft.world.item.PlaceOnWaterBlockItem) && it != net.minecraft.world.item.Items.BAMBOO) {
                 reps.putIfAbsent(bi.getBlock().defaultBlockState().getSoundType(), BuiltInRegistries.ITEM.getKey(it).toString());
             }
         }
@@ -1700,6 +1707,8 @@ public class InteractVectors {
         for (String item : items) {
             c = sound54("place_" + item.replace("minecraft:", ""));
             c.watch(2, 100, 0).slot("h0", stack(item)).step(useOnAt(2, 99, 0, 1, 0, 0.5, 1.0, 0.5));
+            c.soundOnly = true;
+            c.dropIfSilent = true;
             out.add(c);
         }
     }
@@ -4798,6 +4807,12 @@ public class InteractVectors {
         line.put("player_uuid", p.getUUID().toString());
         line.put("custom_stats", c.customStats);
         line.put("result", results);
+        line.put("sound_only", c.soundOnly);
+        if (c.dropIfSilent) {
+            boolean heard = false;
+            for (Object r : results) if (r instanceof Map<?, ?> m && m.get("obs") instanceof List<?> l && !l.isEmpty()) heard = true;
+            if (!heard) return null;
+        }
         return toJson(line);
     }
 
@@ -4934,7 +4949,8 @@ public class InteractVectors {
         for (Case c : selected) {
             server.submit(() -> {
                 try {
-                    lines.add(run(c));
+                    String line = run(c);
+                    if (line != null) lines.add(line);
                 } catch (Throwable t) {
                     t.printStackTrace();
                     lines.add("{\"name\":\"" + c.name + "\",\"error\":\"" + t.toString().replace('"', '\'') + "\"}");

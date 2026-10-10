@@ -960,8 +960,9 @@ fn run_case(line: &Value) -> Vec<String> {
             other => panic!("unknown op {other}"),
         }
         assert!(sim.step(inbox));
+        let sound_only = line["sound_only"].as_bool() == Some(true);
         let mut eq = |what: &str, got: String, expected: String| {
-            if got != expected {
+            if got != expected && (!sound_only || what == "heard") {
                 errors.push(format!("step {n} ({}) {what}: kiln {got}, vanilla {expected}", step["op"]));
             }
         };

@@ -1604,7 +1604,9 @@ fn use_on_block(
     // `BlockItem.place`: the block's place sound, for everyone but the placer's own client.
     {
         let sound = kiln_data::block_sounds::sound_type(placed_state);
-        level.effect(kiln_blocks::level::Effect::ActorSound { pos: placed_at, sound: sound.place_sound, volume: (sound.volume + 1.0) / 2.0, pitch: sound.pitch * 0.8 });
+        // (`SolidBucketItem.getPlaceSound`: the bucket's own.)
+        let name = if placed_from.item_name() == "minecraft:powder_snow_bucket" { "minecraft:item.bucket.empty_powder_snow" } else { sound.place_sound };
+        level.effect(kiln_blocks::level::Effect::ActorSound { pos: placed_at, sound: name, volume: (sound.volume + 1.0) / 2.0, pitch: sound.pitch * 0.8 });
     }
     let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     let at = [placed_at.x, placed_at.y, placed_at.z];

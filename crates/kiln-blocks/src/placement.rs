@@ -6,7 +6,7 @@
 //! toward the player, `waterlogged` in source water.
 
 use crate::behaviour::{connect, container, misc, support};
-use crate::level::{Level, flags};
+use crate::level::{Effect, Level, flags};
 use crate::pos::{Axis, BlockPos, Direction};
 use crate::redstone::{diode, has_neighbor_signal, wire};
 use crate::state::{self, BlockId};
@@ -417,6 +417,10 @@ pub fn placed_by<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
         set_block_and_update(level, pos.relative(facing), state::set(s, "part", "head"));
     } else if logic::is_instance(s, C::DiodeBlock) {
         diode::placed(level, s, pos);
+    } else if logic::block_class(s) == C::DriedGhastBlock {
+        // `DriedGhastBlock.setPlacedBy`.
+        let sound = if state::get_bool(s, "waterlogged") { "minecraft:block.dried_ghast.place_in_water" } else { "minecraft:block.dried_ghast.place" };
+        level.effect(Effect::Sound { pos, sound, volume: 1.0, pitch: 1.0 });
     } else if logic::block_class(s) == C::PistonBaseBlock {
         crate::behaviour::piston::check_if_extend(level, s, pos);
     } else if logic::block_class(s) == C::CrafterBlock && state::get_bool(s, "triggered") {
