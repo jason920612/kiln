@@ -128,6 +128,10 @@ impl Kind for Mannequin {
     }
 
     fn load(&self, e: &mut Entity, m: &mut MobData, r: &mut Input) {
+    // A `LivingEntity` reads none of a mob's fields (or the old name of the fall distance): they are dropped.
+    for key in ["CanPickUpLoot", "PersistenceRequired", "drop_chances", "home_pos", "home_radius", "LeftHanded", "NoAI", "Age", "ForcedAge", "AgeLocked", "InLove", "FallDistance", "HurtByTimestamp", "leash"] {
+        r.get(key);
+    }
         let s = st_mut(m);
         if let Some(p) = r.get("profile").and_then(Profile::from_nbt) {
             s.profile = Some(p);

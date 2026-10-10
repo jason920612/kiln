@@ -113,23 +113,16 @@ impl Profile {
             Some(p) => properties_of(p)?,
             None => Vec::new(),
         };
-        let texture = |key: &str| -> Option<Option<String>> {
-            match t.get(key) {
-                Some(v) => Some(Some(identifier(v.as_str()?)?)),
-                None => Some(None),
-            }
-        };
-        let model = match t.get("model") {
-            Some(m) => Some(match m.as_str()? {
-                "wide" => 0,
-                "slim" => 1,
-                _ => return None,
-            }),
-            None => None,
+        // (The skin patch is lenient: a texture or model that does not decode is left out.)
+        let texture = |key: &str| -> Option<String> { t.get(key).and_then(Tag::as_str).and_then(identifier) };
+        let model = match t.get("model").and_then(Tag::as_str) {
+            Some("wide") => Some(0),
+            Some("slim") => Some(1),
+            _ => None,
         };
         // `STORED_GAME_PROFILE` first: an id and a name.
         let stored = name.is_some() && id.is_some();
-        Some(Profile { name, id, properties, stored, texture: texture("texture")?, cape: texture("cape")?, elytra: texture("elytra")?, model })
+        Some(Profile { name, id, properties, stored, texture: texture("texture"), cape: texture("cape"), elytra: texture("elytra"), model })
     }
 
     /// `ResolvableProfile.CODEC` encoded.
