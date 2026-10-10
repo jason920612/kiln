@@ -1,4 +1,4 @@
-# Kiln 與原版 26.3 的一致性涵蓋矩陣（wp44 稽核，wp45 整合後的狀態，wp49、wp50、wp52、wp53 補 D 項後更新）
+# Kiln 與原版 26.3 的一致性涵蓋矩陣（wp44 稽核，wp45 整合後的狀態，wp49、wp50、wp52、wp53、wp54、wp55 補 D 項後更新）
 
 基準：`main` 的 e5dd225 加上 wp41、wp44 及其十條子分支（wp45 整合成 `wp45-integrate`），再加 wp49（`wp49-d-gaps`，接在 wp48 之後）與 wp50（`wp50-last-d`，把第 4 節剩下的 D 項做完，見 6.4）。第 1～5 節是整合後的狀態（每個區域的 A/B/C/D 在 wp45 時重算，數字是 wp45 在 VM 上重錄並重放的結果；wp49 補完的 D 項已在各表的對應列改成現況，第 1 節的總計欄沒有重算），第 6 節記錄 wp44／wp45／wp49／wp50 做了什麼、完成了什麼、放棄了什麼。
 稽核範圍是玩家能觀察到的行為。方法：先問「完整驗證」要涵蓋什麼，刪掉不可觀察的工作，不另建新框架；只有稽核指出的洞才補。
@@ -546,16 +546,32 @@ wp53 查出兩個「缺的是 Kiln 本身」的子系統，這一輪做掉。向
 **偶發失敗（已找到原因）**：整個 workspace 在沒有 datapack 時，`native_world` 約每 4 次失敗 1 次（`entity_data_follows_the_entity` 也失敗過 1 次）。原因是外掛主機 ordered 模式每次呼叫的牆鐘預算只有 500 µs，剛編譯好的外掛第一次被呼叫在忙碌的機器上會超時，超時時 fail-closed（拒絕且什麼都不記），測試要找的 claim 就不會寫進 cell。`native_world` 的 `PluginSettings` 改成 200 ms 的預算（其他外掛測試本來就是），之後連跑 5 次整個 `-p kiln-sim` 與兩輪整個 workspace（沒有／有 datapack 各 161 個目標）都全綠；`entity_data_follows_the_entity` 只失敗過一次、沒有再重現，沒有改。
 `mob_parity` 在 1375 個 scenario 中 790 個帶著原版 `sound_trace` 比對步伐與摔落音（另外 585 個是依賴隨機的情節——戰利品、生成時機——重錄後軌跡和舊檔不同，保留舊檔、不比聲音）。
 
-這一輪找到、**沒有修**的缺口：
+這一輪找到的缺口（wp55 的處理見 6.8）：
 
-- **放置規則**：Kiln 讓玩家放原版不給放的方塊（地面上的懸掛告示牌、沒有水的海草、孢子花、垂根、棚蕈、絆線鉤）；竹子的放置規則沒有；`fill` 不會讓失去支撐的方塊掉落。
-- **方塊實體預設資料**：`potent_sulfur` 的倒數、棚架 `align_items_to_bottom`、shulker 盒的 `Items`、刷怪磚的 `spawn_data`。
-- **物品被推進方塊裡時的隨機推出**（`Entity.moveTowardsClosestSpace` 的亂數）：Kiln 的方向與原版相同但亂數序列不一定相同。
-- **生物變種的音效**（豬、牛、雞、狼的變種有各自的 step／hurt 組）、騎乘者與幼體的少數組合；玩家游泳的水花音有亂數。
-- **長跳落地音**（山羊、青蛙的 `playSound(null, mob, …)` 是 entity sound 封包，harness 沒錄），重播時從比較中濾掉。
-- **shulker 盒**：盒子的蓋子動畫與推動只做到方塊的部分，盒子被推時蓋內實體的處理沒有逐 tick 向量。
-- **自走飛行機器帶乘客**：只驗證了單次推動，沒有完整的自走機器向量（需要搜尋能自走的紅石配置）。
+- **放置規則**：Kiln 讓玩家放原版不給放的方塊（地面上的懸掛告示牌、沒有水的海草、孢子花、垂根、棚蕈、絆線鉤）；竹子的放置規則沒有；`fill` 不會讓失去支撐的方塊掉落。**wp55 已做。**
+- **方塊實體預設資料**：`potent_sulfur` 的倒數、棚架 `align_items_to_bottom`、shulker 盒的 `Items`、刷怪磚的 `spawn_data`。**wp55 已做。**
+- **物品被推進方塊裡時的隨機推出**（`Entity.moveTowardsClosestSpace` 的亂數）：Kiln 的方向與原版相同但亂數序列不一定相同。**wp55：序列本來就對，原版掉落物的亂數沒種子；種子固定後逐位相同。**
+- **生物變種的音效**（豬、牛、雞、狼的變種有各自的 step／hurt 組）、騎乘者與幼體的少數組合；玩家游泳的水花音有亂數。**wp55：變種已做；玩家游泳的水花音仍有亂數沒比。**
+- **長跳落地音**（山羊、青蛙的 `playSound(null, mob, …)` 是 entity sound 封包，harness 沒錄）。**wp55 已做。**
+- **shulker 盒**：盒子的蓋子動畫與推動只做到方塊的部分，盒子被推時蓋內實體的處理沒有逐 tick 向量。**未做。**
+- **自走飛行機器帶乘客**：只驗證了單次推動，沒有完整的自走機器向量（需要搜尋能自走的紅石配置）。**wp55：見 6.8，搜尋的結果。**
 
+
+### 6.8 wp55（`wp55-gaps`）：放置規則、方塊實體預設資料、變種音效、實體音效封包、物品被推出方塊
+
+wp54 留下的六個缺口，這一輪的做法是**先問原版會怎麼做**：每一項都先寫一個原版錄製器，讓原版自己列出 Kiln 的差異，再逐項修到向量全綠。向量在 `work/wp55/`，
+`tools/parity_suites.py` 新增 `place55`、`support55`、`interact55`、`mob_esound55`；生物向量（變種音效 `voice55_*`、物品推出 `pushout55_*`）併入 `work/m6-mobs2/vectors.jsonl`（原檔備份為 `.pre-wp55`）。
+
+| 項目 | 內容 | 原版向量 | 驗證端 |
+|---|---|---|---|
+| 放置規則 | 新工具 `tools/PlaceVectors.java`：原版伺服器內由創造模式玩家對每一個方塊物品（1118 個，不含用射線放的睡蓮與蛙卵）呼叫 `ItemStack.useOn`，在 2208 個環境（30 種被點的方塊 × 6 個面 × 10 種周圍：腳下／頭上有石頭、四周是牆、水源、兩格水、流水、沙上的水…，外加每個面、每個視角的 144 個）與 6256 個「點自己這一種方塊」的環境（堆疊的蠟燭、海泡菜、雪、花瓣…）裡，記錄放置前後 7×7×7 的方塊與光照（隨機數每次重設）。Kiln 端 `kiln-blocks/src/place_parity.rs` 用 `placement::place` 重放。**第一次比對 168 個物品與原版不同**（2,514,912 次放置中 196,359 次），逐類補上：站立式／牆上告示牌、旗幟、懸掛告示牌（旋轉、`attached`、被什麼撐住）、頭顱（旋轉、`powered`）、牆上頭顱、竹子（`BambooStalkBlock` 的三種結果、只能放在 `#supports_bamboo`）、海草與海帶（要水且水滿）、海泡菜（`mayPlaceOn` 反了；疊加）、孢子花、垂根、棚蕈、絆線鉤、大／小垂葉（朝向、含水）、蠟燭、蛋糕、燈籠（上下）、鎖鏈、末地燭與避雷針（朝向）、營火、鐵砧、校準幽匿感測器（朝向）、砥石（走和拉桿一樣的 `FaceAttached` 迴圈）、紫水晶芽（要穩固的面）、發光地衣／幽匿脈／樹脂團（`MultifaceBlock`：貼哪個面、`removeFace`）、藤蔓、苔蘚地毯與垂苔（`MossyCarpetBlock.getUpdatedState`）、巨型蘑菇方塊、海龜蛋、雪層、葉片堆與花簇（`SegmentableBlock`）、水泥粉（碰水就成水泥）、土徑與農地（上面是實心方塊就放成泥土）、尖石（`SpeleothemBlock`：尖端方向、厚度）、腳手架（`ScaffoldingBlockItem.updatePlacementContext` 與「不檢查 canSurvive」）、孢子花等。放置時 `GrowingPlantHeadBlock`（海帶、各種藤）的隨機年齡用 `level.random.nextInt(25)`。新模組 `kiln-blocks/src/place_rules.rs` 逐類對 javap 讀到的 `getStateForPlacement`／`canSurvive`／`updateShape` | `place55` 共 19440 個環境、2,532,144 次放置，**2,516,611 次相同；不同的只剩 7 個遊戲管理員方塊**（指令方塊三種、拼圖、結構、測試方塊兩種——`GameMasterBlockItem` 只准有權限的玩家，`placement::place` 只知方塊，kiln-sim 在知道玩家的地方擋，`tools/place_expected.txt` 記載） | `place_parity`（`kiln-blocks`） |
+| `/fill`、`/setblock` 讓沒有支撐的方塊掉落 | 查證的結果：**不是 fill 的機制缺**（`commands.rs` 已是原版的 `updateNeighboursOnBlockSet`），缺的是上面那些方塊沒有 `canSurvive`／`updateShape`。`BlockTickVectors.java` 新增 `fill`／`setblock` 兩個 op 與 `support55` 家族（66 種靠東西才站得住的方塊，每種拿掉支撐的四種方式：fill、setblock、各自加 `destroy`，另有整層一次 fill）；補上之前 12／30 個 scenario 相同，補上之後 **30／30（590 個 op）**。順手：蠟燭拿掉支撐後原版**不會**掉（`CandleBlock.updateShape` 只管水），垂苔是下一個 tick 掉，最後一個面被拿掉的發光地衣整個消失；土徑多了 `PathBlock` 的 `updateShape`／`tick`（上面放了實心方塊就變泥土） | `support55` 30 個 scenario | `block_parity` |
+| 方塊實體預設資料 | `InteractVectors.java` 的 `place55_be_*`：每一個會有方塊實體的方塊物品（138 個）放在石頭上，記錄存檔 NBT 與更新封包。補上：`potent_sulfur` 的 `countdown: -1`、棚架 `Items: []` 與 `align_items_to_bottom: 0b`、比較器 `OutputSignal: 0`、信標 `Levels: 0`（更新封包）、測試方塊 `message／mode／powered`、測試實例方塊 `data`；**shulker 盒空的時候不存 `Items`**（`saveAllItems(alwaysPut=false)`，Kiln 之前存空列表）。刷怪磚的 `spawn_data` 在 wp53 已對，這一輪的向量也確認 | `place55_be` 138 個 | `interact_parity` |
+| 變種音效 | 資料包的 `pig_sound_variant`（classic／mini／big）、`cow_sound_variant`（classic／moody，**連步伐音**）、`chicken_sound_variant`（classic／picky）、狼七種、貓兩種。Kiln 之前只有狼的 hurt／ambient 用變種：現在 `mob::variant_voice` 管豬牛雞的 ambient／hurt／death／eat／step（幼豬幼雞有自己的一組、幼牛沒有所以跟著變種），狼與貓補上 death 與 hurt，幼狼幼貓不跟變種（`baby_wolf`、`baby_cat`）。**豬牛雞的 `variant`／`sound_variant` 之前沒有存檔也不讀**，現在存讀。順手找到：幼年動物被玩家打死原版**不掉經驗**（`LivingEntity.shouldDropExperience`），Kiln 掉了，並多抽一個亂數 | `voice55` 32 個（豬 3 種／牛 2／雞 2／狼 7／貓 2，各成體與幼體：玩家打兩下被擊退、走動，再殺死；每 tick 比對玩家聽到的 hurt／death／step 的名稱、音量、音高、位置） | `mob_parity` |
+| 長跳落地音（與其他 entity sound 封包） | `MobVectors.java` 現在也記錄 `ClientboundSoundEntityPacket`（`esound_trace`，以 mob 的序號為鍵）。原版對這些用 entity sound 封包：山羊／青蛙長跳的起跳與落地、山羊準備衝撞與衝撞、舌頭、青蛙吃、產卵、悅靈丟物品、微風蓄力、嗅探獸吃、銅傀儡被剪與被斧頭刮。Kiln 之前都當成位置音效送。新增 `Event::EntitySound`，kiln-sim 送 `sound_entity` 封包（範圍同 `SoundEvent.getRange`） | `esound55` 28 個（另 4 個因為亂數不能重現而不收：`give_allay`、`stacks_allay`、`tongue_frog_*`）；整份 `m6-mobs2` 的 788 個可重現的 scenario 也多了 `esound_trace`（Kiln 不能在原版沒送的地方送） | `mob_parity` |
+| 物品被推進方塊時的隨機推出 | `Entity.moveTowardsClosestSpace` 逐行對 javap：方向順序（北南西東上）、`nextFloat` 一次、`0.75` 縮放都**本來就對**。亂數序列不同的原因是原版掉落物的 `random` 是沒設種子的（`RandomSource.create()`）：實際遊戲裡本來就沒有可比的序列。把 harness 的物品亂數設成固定種子後，Kiln 逐 tick 的位置與速度**逐位相同** | `pushout55` 27 個（物品在石頭裡的 27 個位置，其中一部分周圍有牆） | `mob_parity`（`others_trace`） |
+
+@@FLYER@@
 
 ## 7. 重跑
 

@@ -273,8 +273,9 @@ fn flyer_search3() {
                     if at[0] > at[1] || at[2] > at[3] {
                         continue;
                     }
-                    for facing in 0..64usize {
-                        let (p0, p1, o0, o1) = (facing & 1, (facing >> 1) & 1, (facing >> 2) & 3, (facing >> 4) & 3);
+                    // (every piston is a sticky or a regular one, facing east or west)
+                    for facing in 0..256usize {
+                        let (p0, p1, o0, o1) = (facing & 3, (facing >> 2) & 3, (facing >> 4) & 3, (facing >> 6) & 3);
                         let mut grid = vec![0usize; cells];
                         grid[at[0]] = 2 + p0;
                         grid[at[1]] = 2 + p1;
@@ -288,7 +289,7 @@ fn flyer_search3() {
                             && (y - x).abs() >= 3
                         {
                             found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            println!("flies {} blocks: row0 {:?} row1 {:?} (0 air, 1 slime, 2/3 sticky east/west, 6/7/8/9 observer east/west/north/south)", y - x, a, b);
+                            println!("flies {} blocks: row0 {:?} row1 {:?} (0 air, 1 slime, 2/3 sticky east/west, 4/5 piston east/west, 6/7/8/9 observer east/west/north/south)", y - x, a, b);
                         }
                     }
                 }
