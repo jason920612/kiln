@@ -97,10 +97,10 @@ fn flyer_search() {
                 continue;
             }
             if let Some((a, b)) = run2([&layout, &[]], 120)
-                && b - a >= 8
+                && (b - a).abs() >= 3
             {
                 found += 1;
-                println!("flies {} blocks in 80 ticks: {:?} (0 air, 1 slime, 2/3 sticky east/west, 4/5 piston east/west, 6/7 observer east/west)", b - a, layout);
+                println!("flies {} blocks between tick 40 and 120: {:?} (0 air, 1 slime, 2/3 sticky east/west, 4/5 piston east/west, 6/7 observer east/west)", b - a, layout);
             }
         }
     }
@@ -207,7 +207,7 @@ fn flyer_search2() {
                         continue;
                     }
                     if let Some((x, y)) = run2([a, b], 120)
-                        && y - x >= 8
+                        && (y - x).abs() >= 3
                     {
                         found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         println!("flies {} blocks: row0 {:?} row1 {:?} (0 air, 1 slime, 2/3 sticky east/west, 4/5 piston east/west, 6/7/8/9/10/11 observer east/west/north/south/up/down)", y - x, a, b);
@@ -267,7 +267,7 @@ fn flyer_search3() {
                         }
                         let (a, b) = grid.split_at(w);
                         if let Some((x, y)) = run2([a, b], 100)
-                            && y - x >= 8
+                            && (y - x).abs() >= 3
                         {
                             found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             println!("flies {} blocks: row0 {:?} row1 {:?} (0 air, 1 slime, 2/3 sticky east/west, 6/7/8/9 observer east/west/north/south)", y - x, a, b);
