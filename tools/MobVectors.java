@@ -8800,7 +8800,7 @@ public class MobVectors {
                 for (boolean baby : new boolean[] {false, true}) {
                     long seed = 55000L + Math.abs((k[0] + k[v] + baby).hashCode() % 1000);
                     MobSpec m = new MobSpec("minecraft:" + k[0], 0.5, BY, 0.5, 30f, seed);
-                    m.nbt = "{PersistenceRequired:1b,NoAI:1b,sound_variant:\"minecraft:" + k[v] + "\"" + (baby ? ",Age:-24000" : "") + "}";
+                    m.nbt = "{PersistenceRequired:1b,NoAI:1b,DeathLootTable:\"minecraft:empty\",sound_variant:\"minecraft:" + k[v] + "\"" + (baby ? ",Age:-24000" : "") + "}";
                     Scenario s = new Scenario("voice55_" + k[0] + "_" + k[v] + (baby ? "_baby" : ""));
                     s.mobs.add(m);
                     s.player = new double[] {3.5, BY, 0.5};
