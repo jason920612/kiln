@@ -2520,6 +2520,13 @@ impl Sim {
     /// sends what changed to everyone in the level who has the chunk and carries out the
     /// effects. `None` if the position's cell has no region (its chunk is not loaded).
     pub(crate) fn with_level_in<R>(&mut self, dim: DimId, pos: [i32; 3], f: impl FnOnce(&mut blocks::RegionLevel) -> R) -> Option<R> {
+        self.with_level_held(dim, pos, false, f).map(|(r, _)| r)
+    }
+
+    /// [`Self::with_level_in`] that, when `hold` is set, does not send the block changes `f` made but returns them: the caller
+    /// has more to do to the blocks (data to load) and sends them once afterwards (a `ChunkHolder` sends what a block has when the
+    /// tick's changes go out, not in between).
+    pub(crate) fn with_level_held<R>(&mut self, dim: DimId, pos: [i32; 3], hold: bool, f: impl FnOnce(&mut blocks::RegionLevel) -> R) -> Option<(R, Vec<[i32; 3]>)> {
         let env = self.block_env(dim);
         let Sim { dims, players, .. } = self;
         let d = &mut dims[dim];
@@ -2533,9 +2540,10 @@ impl Sim {
                 blocks::RegionLevel { cells: &mut *cells, blocks: &mut part.1, env: &env, out: &mut out, bodies: &bodies, actor: None };
             f(&mut level)
         };
+        let held = if hold { std::mem::take(&mut out.changed) } else { Vec::new() };
         let mut everyone: Vec<&mut Player> = players.values_mut().filter(|p| p.dim == dim).collect();
         blocks::finish(cells, out, &mut everyone, &mut d.spawns, &env);
-        Some(result)
+        Some((result, held))
     }
 
     /// Hands every region of every level its cells, its players (sorted by connection) and

@@ -1342,8 +1342,13 @@ impl Host for Sim {
     fn set_block(&mut self, dimension: &str, pos: [i32; 3], state: u16, nbt: Option<&Tag>, flags: UpdateFlags) -> bool {
         let at = block_pos(pos);
         let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
-        let state_changed = self.with_level_in(dim, pos, |level| kiln_blocks::set_block(level, at, state, flags.0)).unwrap_or(false);
-        self.load_nbt(dim, pos, nbt) || state_changed
+        // (With data to load the changes wait for it: the clients get the block entity once, with its data.)
+        let (state_changed, held) = self.with_level_held(dim, pos, nbt.is_some(), |level| kiln_blocks::set_block(level, at, state, flags.0)).unwrap_or((false, Vec::new()));
+        let loaded = self.load_nbt(dim, pos, nbt);
+        if !held.is_empty() {
+            self.with_level_in(dim, pos, |level| level.out.changed.extend(held));
+        }
+        loaded || state_changed
     }
 
     /// `BlockInput.place`: the state shaped by its neighbours except for the properties the
@@ -1357,8 +1362,12 @@ impl Host for Sim {
             .map(|&p| (p.to_owned(), kiln_blocks::state::get(block.state, p).unwrap_or_default().to_owned()))
             .collect();
         let input = kiln_blocks::commands::BlockInput { state: block.state, defined };
-        let state_changed = self.with_level_in(dim, pos, |level| input.place(level, at, flags.0)).unwrap_or(false);
-        self.load_nbt(dim, pos, block.nbt.as_ref()) || state_changed
+        let (state_changed, held) = self.with_level_held(dim, pos, block.nbt.is_some(), |level| input.place(level, at, flags.0)).unwrap_or((false, Vec::new()));
+        let loaded = self.load_nbt(dim, pos, block.nbt.as_ref());
+        if !held.is_empty() {
+            self.with_level_in(dim, pos, |level| level.out.changed.extend(held));
+        }
+        loaded || state_changed
     }
 
     fn update_neighbours(&mut self, dimension: &str, pos: [i32; 3], old: u16) {
