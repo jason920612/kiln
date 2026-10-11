@@ -322,7 +322,7 @@ fn observer_pulse_runs_a_piston() {
 }
 
 /// What a layout does for 120 ticks: how many pieces survive, where its west edge is at tick 40 and 120, and whether it still changes at the end.
-fn outcome(rows: [&[usize]; 2], last: (usize, usize), tap: bool) -> (usize, usize, i32, i32, bool) {
+fn outcome(rows: [&[usize]; 2], last: (usize, usize), tap: bool) -> (usize, usize, i32, i32, bool, usize) {
     let mut level = TestLevel::void();
     level.load_chunks((-1, -1), (4, 1));
     let y = 100;
@@ -367,8 +367,21 @@ fn outcome(rows: [&[usize]; 2], last: (usize, usize), tap: bool) -> (usize, usiz
         (min, count, h)
     };
     let (mut a, mut h_before) = (0, 0);
+    // where the slime blocks are, every tick from the 40th: how many different arrangements there are
+    let mut slime_sets = std::collections::BTreeSet::new();
     for t in 1..=120 {
         level.tick(0, &[(0, 0), (1, 0)]);
+        if t >= 40 {
+            let mut at = Vec::new();
+            for x in 0..80 {
+                for z in 6..12 {
+                    if state::is(level.block(BlockPos::new(x, 100, z)), d::SLIME_BLOCK) {
+                        at.push((x, z));
+                    }
+                }
+            }
+            slime_sets.insert(at);
+        }
         if t == 40 {
             a = measure(&level).0;
         }
@@ -377,7 +390,7 @@ fn outcome(rows: [&[usize]; 2], last: (usize, usize), tap: bool) -> (usize, usiz
         }
     }
     let (min, count, h) = measure(&level);
-    (pieces, count, a, min, h != h_before)
+    (pieces, count, a, min, h != h_before, slime_sets.len())
 }
 
 /// Layouts of the `flyer_search3` family that stay together and keep changing (for the vanilla check of `tools/FlyerCheck.java`).
@@ -426,11 +439,11 @@ fn flyer_dump() {
                         let spots: Vec<(usize, usize)> = (0..2).flat_map(|z| (0..w).map(move |i| (z, i))).filter(|&(z, i)| grid[z * w + i] != 0).collect();
                         for last in spots {
                             runs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            let (p, c, x40, x120, changing) = outcome([a, b], last, false);
+                            let (p, c, x40, x120, changing, slime_sets) = outcome([a, b], last, false);
                             // intact, and still doing something at the end
                             if (c == p && changing) || all {
                                 kept.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                writeln!(out.lock().unwrap(), "{{\"rows\":[{:?},{:?}],\"last\":[{},{}],\"x40\":{x40},\"x120\":{x120},\"intact\":{}}}", a, b, last.0, last.1, (c == p) as i32).unwrap();
+                                writeln!(out.lock().unwrap(), "{{\"rows\":[{:?},{:?}],\"last\":[{},{}],\"x40\":{x40},\"x120\":{x120},\"intact\":{},\"slime_sets\":{slime_sets}}}", a, b, last.0, last.1, (c == p) as i32).unwrap();
                             }
                         }
                     }
