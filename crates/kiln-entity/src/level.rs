@@ -285,6 +285,9 @@ pub struct BeehiveView {
 pub enum Event {
     /// A sound at a position (`minecraft:` sound event id, source category name).
     Sound { pos: Vec3, sound: &'static str, source: &'static str, volume: f32, pitch: f32 },
+    /// `Level.playSound(null, entity, sound, source, volume, pitch)`: a sound that follows an entity (an entity sound packet;
+    /// `pos` is where the entity is, for who hears it).
+    EntitySound { entity: i32, pos: Vec3, sound: &'static str, source: &'static str, volume: f32, pitch: f32 },
     /// `Level.levelEvent` (block break particles 2001, fizz 1501, ...).
     LevelEvent { event: i32, pos: BlockPos, data: i32 },
     /// `Level.blockEvent(pos, block, a, b)` for the block at `pos` (a spawner's delay reset).

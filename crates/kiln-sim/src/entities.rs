@@ -3111,6 +3111,7 @@ fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
                 Event::DeathLoot { entity, .. } | Event::GiftLoot { entity, .. } | Event::ShearLoot { entity, .. } => (0, *entity as u32 as u64),
                 Event::EntityEvent { entity, .. } | Event::MobHurt { entity, .. } => (1, *entity as u32 as u64),
                 Event::Sound { pos, .. } => (2, pos_key(*pos)),
+                Event::EntitySound { entity, .. } => (6, *entity as u32 as u64),
                 Event::Explosion { pos, .. } => (3, pos_key(*pos)),
                 Event::Hurt { target, .. } => (4, *target as u32 as u64),
                 _ => (5, 0),
@@ -3187,6 +3188,9 @@ fn carry_out(
     match event {
         Event::Sound { pos, sound, source, volume, pitch } => {
             send_sound(players, env, n, arr(pos), sound, source_of(source), volume, pitch);
+        }
+        Event::EntitySound { entity, pos, sound, source, volume, pitch } => {
+            send_entity_sound(players, env, n, entity, arr(pos), sound, source_of(source), volume, pitch);
         }
         Event::ExplosionHit { player, source } => {
             let cause = source.and_then(|id| list.binary_search_by_key(&id, |e| e.id).ok()).and_then(|i| list[i].phys.as_deref()).map(kiln_entity::level::Seen::of);
@@ -3570,6 +3574,32 @@ fn send_sound(
         seed ^= seed >> 31;
     }
     let pkt = world_fx::sound(&world_fx::Sound::Registered(id), source, at, volume, pitch, seed as i64);
+    let range = 16.0 * volume.max(1.0) as f64;
+    for p in players.iter_mut().filter(|p| dist2(p.pos, at) < range * range) {
+        p.send(pkt.clone());
+    }
+}
+
+/// `Level.playSound(null, entity, ...)`: every player within the sound's range of the entity gets an entity sound packet.
+#[allow(clippy::too_many_arguments)]
+fn send_entity_sound(
+    players: &mut [&mut Player],
+    env: &blocks::BlockEnv,
+    n: usize,
+    entity: i32,
+    at: [f64; 3],
+    sound: &str,
+    source: world_fx::SoundSource,
+    volume: f32,
+    pitch: f32,
+) {
+    let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound) else { return };
+    let mut seed = (env.game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ env.seed as u64;
+    for v in [at[0].to_bits(), at[1].to_bits(), at[2].to_bits(), entity as u32 as u64, n as u64] {
+        seed = (seed ^ v).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        seed ^= seed >> 31;
+    }
+    let pkt = world_fx::sound_entity(&world_fx::Sound::Registered(id), source, entity, volume, pitch, seed as i64);
     let range = 16.0 * volume.max(1.0) as f64;
     for p in players.iter_mut().filter(|p| dist2(p.pos, at) < range * range) {
         p.send(pkt.clone());

@@ -569,6 +569,8 @@ impl ContainerBe {
                             out.push(("LootTableSeed".into(), Tag::Long(self.loot_seed)));
                         }
                     }
+                    // (`ContainerHelper.saveAllItems(.., alwaysPut)`: a shulker box with nothing in it saves no list.)
+                    None if self.kind == BeKind::ShulkerBox && self.items.iter().all(ItemStack::is_empty) && self.undecoded.is_empty() => {}
                     None => out.push(("Items".into(), self.item_list().save())),
                 }
                 if self.kind == BeKind::Hopper {
@@ -897,8 +899,8 @@ impl Containers {
                 continue;
             }
             let mut be = BlockEntity::new(c.type_id);
-            if let (Tag::Compound(out), Tag::Compound(fields)) = (&mut be.nbt, c.chunk_tag()) {
-                out.extend(fields);
+            if let Tag::Compound(fields) = c.chunk_tag() {
+                be.merge_fields(fields);
             }
             chunk.set_block_entity(x, p.y, z, be);
         }

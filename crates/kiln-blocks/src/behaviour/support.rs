@@ -59,9 +59,7 @@ fn may_place_on<L: Level + ?Sized>(level: &L, plant: u16, below: u16, below_pos:
                 let above = logic::fluid(level.block(below_pos.above()));
                 (f.kind == FluidKind::Water && f.source || tag("minecraft:supports_lily_pad")) && above.is_empty()
             }
-            C::SeaPickleBlock => {
-                block_props::collision(below).iter().all(|b| b[4] < 1.0) || sturdy(below, Direction::Up, Support::Full)
-            }
+            C::SeaPickleBlock => crate::place_rules::sea_pickle_ground(below),
             C::SmallDripleafBlock => {
                 let water_above = {
                     let f = logic::fluid(level.block(below_pos.above()));
@@ -84,6 +82,9 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
     use BlockClass as C;
     let below = || level.block(pos.below());
     if let Some(survives) = super::farming::can_survive(level, s, pos) {
+        return survives;
+    }
+    if let Some(survives) = crate::place_rules::can_survive(level, s, pos) {
         return survives;
     }
     match logic::block_class(s) {
@@ -158,6 +159,9 @@ pub fn wire_can_survive_on(below: u16) -> bool {
 /// when the block has no such rule for this neighbour.
 pub fn pop_off<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Direction, neighbor: u16) -> Option<u16> {
     use BlockClass as C;
+    if let Some(new) = crate::place_rules::update_shape(level, s, pos, dir, neighbor) {
+        return Some(new);
+    }
     let breaks = |cond: bool| cond && !can_survive(level, s, pos);
     let class = logic::block_class(s);
     let broken = match class {

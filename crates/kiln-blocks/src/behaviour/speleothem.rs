@@ -73,7 +73,7 @@ fn is_stalactite_start_pos<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) 
 }
 
 /// `isValidSpeleothemPlacement` of `this` block at `pos` for a tip pointing `dir`.
-fn valid_placement<L: Level + ?Sized>(level: &L, this: u16, pos: BlockPos, dir: Direction) -> bool {
+pub(crate) fn valid_placement<L: Level + ?Sized>(level: &L, this: u16, pos: BlockPos, dir: Direction) -> bool {
     let b = level.block(pos.relative(dir.opposite()));
     logic::face_sturdy(b, dir as u8, Support::Full) || (with_direction(b, dir) && state::same_block(b, this))
 }

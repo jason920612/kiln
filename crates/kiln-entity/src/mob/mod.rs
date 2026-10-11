@@ -1721,7 +1721,7 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             m.ambient_sound_time = -m.kind.ambient_sound_interval();
             let sound = match m.kind.ext().and_then(|k| k.ambient_sound_mut(e, m, level)) {
                 Some(s) => s,
-                None => m.kind.ambient_sound(),
+                None => variant_voice(m, "ambient").or_else(|| m.kind.ambient_sound()),
             };
             if let Some(s) = sound {
                 make_sound(e, m, level, s);
@@ -2634,13 +2634,13 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     }
     if m.is_dead_or_dying() {
         if full {
-            let sound = land_variant(e, m, baby_variant(m, m.kind.ext().and_then(|k| k.death_sound_for(m)).unwrap_or_else(|| m.kind.death_sound())));
+            let sound = land_variant(e, m, baby_variant(m, m.kind.ext().and_then(|k| k.death_sound_for(m)).or_else(|| variant_voice(m, "death")).unwrap_or_else(|| m.kind.death_sound())));
             make_sound(e, m, level, sound);
         }
         die(e, m, level, source);
     } else if full {
         m.ambient_sound_time = -m.kind.ambient_sound_interval();
-        let sound = land_variant(e, m, baby_variant(m, m.kind.ext().and_then(|k| k.hurt_sound_from(m, &source)).unwrap_or_else(|| m.kind.hurt_sound())));
+        let sound = land_variant(e, m, baby_variant(m, m.kind.ext().and_then(|k| k.hurt_sound_from(m, &source)).or_else(|| variant_voice(m, "hurt")).unwrap_or_else(|| m.kind.hurt_sound())));
         make_sound(e, m, level, sound);
     }
     m.last_damage_source = Some(source);
@@ -2679,12 +2679,32 @@ fn land_variant(e: &Entity, m: &MobData, sound: &'static str) -> &'static str {
     kiln_item::registry::SOUND_EVENT.id(&name).and_then(|id| kiln_item::registry::SOUND_EVENT.name(id)).unwrap_or(sound)
 }
 
+/// The voice of a pig, cow or chicken of its sound variant (`PigSoundVariant`, `CowSoundVariant` and `ChickenSoundVariant`, the
+/// sound sets of the datapack): `what` is `ambient`, `hurt`, `death`, `eat` or `step`. `None` where the type's own sound is the
+/// voice: the classic variant, the sounds the variants share (the step of a pig or a chicken) and what a baby makes (a baby
+/// pig or chicken has its own set whatever the variant; a baby cow has none, so it sounds as the variant does).
+pub fn variant_voice(m: &MobData, what: &str) -> Option<&'static str> {
+    let (ty, own): (&str, &[&str]) = match m.kind {
+        MobKind::Pig if !m.baby() => ("pig", &["ambient", "death", "eat", "hurt"]),
+        MobKind::Cow => ("cow", &["ambient", "death", "hurt", "step"]),
+        MobKind::Chicken if !m.baby() => ("chicken", &["ambient", "death", "hurt"]),
+        _ => return None,
+    };
+    let variant = kinds::wolf::synced_name(&format!("minecraft:{ty}_sound_variant"), m.sound_variant)?.strip_prefix("minecraft:")?;
+    if variant == "classic" || !own.contains(&what) {
+        return None;
+    }
+    Some(sound_event(&format!("minecraft:entity.{ty}_{variant}.{what}")))
+}
+
 /// The voice of a baby (`entity.baby_pig.hurt` for `entity.pig.hurt`), where the game has one.
 fn baby_variant(m: &MobData, sound: &'static str) -> &'static str {
     if !m.baby() {
         return sound;
     }
     let Some((ty, event)) = sound.strip_prefix("minecraft:entity.").and_then(|r| r.split_once('.')) else { return sound };
+    // (A baby wolf or cat has its set whatever the sound variant of the adult's.)
+    let ty = ["wolf", "cat"].into_iter().find(|b| ty.strip_prefix(b).is_some_and(|r| r.starts_with('_'))).unwrap_or(ty);
     let name = format!("minecraft:entity.baby_{ty}.{event}");
     kiln_item::registry::SOUND_EVENT.id(&name).and_then(|id| kiln_item::registry::SOUND_EVENT.name(id)).unwrap_or(sound)
 }
@@ -2866,8 +2886,8 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
         // `dropEquipment`.
         k.drop_equipment(e, m, level);
     }
-    // `dropExperience`.
-    if killed_by_player && level.mob_drops() && !consumed {
+    // `dropExperience` (`LivingEntity.shouldDropExperience`: not a baby, unless a `Monster`).
+    if killed_by_player && level.mob_drops() && !consumed && (!m.baby() || extends_monster(m.kind)) {
         let xp = experience_reward(e, m);
         award_experience(level, e.position(), xp);
     }

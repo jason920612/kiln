@@ -183,7 +183,7 @@ pub fn animal_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLe
 /// `Animal.playEatingSound` (pigs grunt their eating sound; the others are silent).
 fn play_eating_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
     if m.kind == MobKind::Pig {
-        let sound = super::sound_event(if m.baby() { "minecraft:entity.baby_pig.eat" } else { "minecraft:entity.pig.eat" });
+        let sound = super::variant_voice(m, "eat").unwrap_or_else(|| super::sound_event(if m.baby() { "minecraft:entity.baby_pig.eat" } else { "minecraft:entity.pig.eat" }));
         super::make_sound(e, m, level, sound);
     }
     // `Nautilus.playEatingSound`.
@@ -192,7 +192,7 @@ fn play_eating_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
     }
     // `Frog.playEatingSound`: a loud gulp, by the level.
     if m.kind == MobKind::Frog {
-        level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.frog.eat", source: "neutral", volume: 2.0, pitch: 1.0 });
+        level.emit(Event::EntitySound { entity: e.id, pos: e.position(), sound: "minecraft:entity.frog.eat", source: "neutral", volume: 2.0, pitch: 1.0 });
     }
 }
 

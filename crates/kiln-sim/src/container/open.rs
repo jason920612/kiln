@@ -1009,8 +1009,8 @@ pub(crate) fn sync_chunk_copy(level: &mut RegionLevel, pos: BlockPos) {
         && chunk.block_entity(x, pos.y, z).is_some_and(|be| be.kind == type_id)
     {
         let mut be = kiln_world::block_entity::BlockEntity::new(type_id);
-        if let (Tag::Compound(out), Tag::Compound(fields)) = (&mut be.nbt, saved) {
-            out.extend(fields);
+        if let Tag::Compound(fields) = saved {
+            be.merge_fields(fields);
         }
         chunk.set_block_entity(x, pos.y, z, be);
     }

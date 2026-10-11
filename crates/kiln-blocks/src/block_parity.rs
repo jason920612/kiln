@@ -204,6 +204,32 @@ fn replay(v: &serde_json::Value) -> Result<usize, String> {
                 let s = state::parse_state(op[4].as_str().unwrap()).expect("state");
                 crate::update::set_block(&mut level, BlockPos::new(x0 + at(op, 1), at(op, 2), z0 + at(op, 3)), s, flags::ALL);
             }
+            // wp55: `/fill` and `/setblock` over the area (the command's own update semantics).
+            "fill" => {
+                use crate::commands::{BlockInput, FillMode};
+                let input = BlockInput::parse(op[7].as_str().unwrap()).expect("block");
+                let mode = match op[8].as_str().unwrap() {
+                    "replace" => FillMode::Replace,
+                    "destroy" => FillMode::Destroy,
+                    "keep" => FillMode::Keep,
+                    "hollow" => FillMode::Hollow,
+                    "outline" => FillMode::Outline,
+                    other => panic!("fill mode {other}"),
+                };
+                let (a, b) = (BlockPos::new(x0 + at(op, 1), at(op, 2), z0 + at(op, 3)), BlockPos::new(x0 + at(op, 4), at(op, 5), z0 + at(op, 6)));
+                let _ = crate::commands::fill(&mut level, a, b, &input, mode, false);
+            }
+            "setblock" => {
+                use crate::commands::{BlockInput, SetMode};
+                let input = BlockInput::parse(op[4].as_str().unwrap()).expect("block");
+                let mode = match op[5].as_str().unwrap() {
+                    "replace" => SetMode::Replace,
+                    "destroy" => SetMode::Destroy,
+                    "keep" => SetMode::Keep,
+                    other => panic!("setblock mode {other}"),
+                };
+                let _ = crate::commands::setblock(&mut level, BlockPos::new(x0 + at(op, 1), at(op, 2), z0 + at(op, 3)), &input, mode, false);
+            }
             "seed" => {
                 level.set_random_seed(op[1].as_i64().unwrap());
                 drops_seen = false;

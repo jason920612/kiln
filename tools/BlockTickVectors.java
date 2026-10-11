@@ -128,6 +128,18 @@ public class BlockTickVectors {
             return this;
         }
 
+        /** wp55: `/fill` over the box (area-relative x, absolute y, z) with the block and the mode (`replace`, `destroy`, `keep`, `hollow`, `outline`). */
+        Sc fill(int x1, int y1, int z1, int x2, int y2, int z2, String block, String mode) {
+            ops.add(new Object[] {"fill", x1, y1, z1, x2, y2, z2, block, mode});
+            return this;
+        }
+
+        /** wp55: `/setblock` (area-relative x, absolute y, z) with the mode (`replace`, `destroy`, `keep`). */
+        Sc setblock(int x, int y, int z, String block, String mode) {
+            ops.add(new Object[] {"setblock", x, y, z, block, mode});
+            return this;
+        }
+
         /** Reseeds the level random (after a block dropped: Kiln rolls drops with its own random). */
         Sc reseed(long s) {
             ops.add(new Object[] {"seed", s});
@@ -156,6 +168,7 @@ public class BlockTickVectors {
         scenariosSpread(out);
         scenariosEnd(out);
         scenariosBubbles(out);
+        scenariosSupport55(out);
     }
 
     // ================================================================ checks of the harness itself
@@ -166,6 +179,127 @@ public class BlockTickVectors {
         out.add(new Sc("harness_water", 3).cmd(
                 "fill ~0 ~ ~0 ~8 ~ ~8 minecraft:air",
                 "setblock ~4 ~ ~4 minecraft:water").tick(30).set(4, 100, 4, "minecraft:air").tick(30));
+    }
+
+    // ================================================================ family: support (wp55)
+    // Blocks that need something to stand, hang or lean on, and the support taken away by `/fill` and
+    // `/setblock` (replace and destroy): which blocks go, which stay, and what drops. Each structure:
+    // name | blocks "dx,dy,dz,state" (dy from the first layer above the floor) | supports "dx,dy,dz" that are removed.
+    static final String[][] SUPPORT55 = {
+        {"torch", "0,0,0,minecraft:stone;0,1,0,minecraft:torch", "0,0,0"},
+        {"redstone_torch", "0,0,0,minecraft:stone;0,1,0,minecraft:redstone_torch[lit=true]", "0,0,0"},
+        {"wall_torch", "0,0,0,minecraft:stone;1,0,0,minecraft:wall_torch[facing=east]", "0,0,0"},
+        {"sign", "0,0,0,minecraft:stone;0,1,0,minecraft:oak_sign[rotation=4]", "0,0,0"},
+        {"wall_sign", "0,0,0,minecraft:stone;1,0,0,minecraft:oak_wall_sign[facing=east]", "0,0,0"},
+        {"banner", "0,0,0,minecraft:stone;0,1,0,minecraft:white_banner[rotation=2]", "0,0,0"},
+        {"wall_banner", "0,0,0,minecraft:stone;1,0,0,minecraft:white_wall_banner[facing=east]", "0,0,0"},
+        {"lantern", "0,0,0,minecraft:stone;0,1,0,minecraft:lantern[hanging=false]", "0,0,0"},
+        {"lantern_hanging", "0,1,0,minecraft:stone;0,0,0,minecraft:lantern[hanging=true]", "0,1,0"},
+        {"candle", "0,0,0,minecraft:stone;0,1,0,minecraft:candle[candles=2]", "0,0,0"},
+        {"cake", "0,0,0,minecraft:stone;0,1,0,minecraft:cake[bites=1]", "0,0,0"},
+        {"rail", "0,0,0,minecraft:stone;0,1,0,minecraft:rail", "0,0,0"},
+        {"powered_rail", "0,0,0,minecraft:stone;0,1,0,minecraft:powered_rail", "0,0,0"},
+        {"repeater", "0,0,0,minecraft:stone;0,1,0,minecraft:repeater", "0,0,0"},
+        {"comparator", "0,0,0,minecraft:stone;0,1,0,minecraft:comparator", "0,0,0"},
+        {"wire", "0,0,0,minecraft:stone;0,1,0,minecraft:redstone_wire", "0,0,0"},
+        {"carpet", "0,0,0,minecraft:stone;0,1,0,minecraft:white_carpet", "0,0,0"},
+        {"plate", "0,0,0,minecraft:stone;0,1,0,minecraft:stone_pressure_plate", "0,0,0"},
+        {"weighted_plate", "0,0,0,minecraft:stone;0,1,0,minecraft:light_weighted_pressure_plate", "0,0,0"},
+        {"poppy", "0,0,0,minecraft:grass_block;0,1,0,minecraft:poppy", "0,0,0"},
+        {"sapling", "0,0,0,minecraft:dirt;0,1,0,minecraft:oak_sapling", "0,0,0"},
+        {"wheat", "0,0,0,minecraft:farmland[moisture=7];0,1,0,minecraft:wheat[age=3]", "0,0,0"},
+        {"cactus", "0,0,0,minecraft:sand;0,1,0,minecraft:cactus", "0,0,0"},
+        {"door", "0,0,0,minecraft:stone;0,1,0,minecraft:oak_door[half=lower];0,2,0,minecraft:oak_door[half=upper]", "0,0,0"},
+        {"bamboo", "0,0,0,minecraft:grass_block;0,1,0,minecraft:bamboo", "0,0,0"},
+        {"bamboo_sapling", "0,0,0,minecraft:grass_block;0,1,0,minecraft:bamboo_sapling", "0,0,0"},
+        {"lever_wall", "0,0,0,minecraft:stone;1,0,0,minecraft:lever[face=wall,facing=east]", "0,0,0"},
+        {"lever_floor", "0,0,0,minecraft:stone;0,1,0,minecraft:lever[face=floor,facing=north]", "0,0,0"},
+        {"lever_ceiling", "0,1,0,minecraft:stone;0,0,0,minecraft:lever[face=ceiling,facing=north]", "0,1,0"},
+        {"button", "0,0,0,minecraft:stone;1,0,0,minecraft:stone_button[face=wall,facing=east]", "0,0,0"},
+        {"ladder", "0,0,0,minecraft:stone;1,0,0,minecraft:ladder[facing=east]", "0,0,0"},
+        {"vine", "0,0,0,minecraft:stone;1,0,0,minecraft:vine[west=true]", "0,0,0"},
+        {"glow_lichen", "0,0,0,minecraft:stone;1,0,0,minecraft:glow_lichen[west=true]", "0,0,0"},
+        {"sculk_vein", "0,0,0,minecraft:stone;1,0,0,minecraft:sculk_vein[west=true]", "0,0,0"},
+        {"resin_clump", "0,0,0,minecraft:stone;1,0,0,minecraft:resin_clump[west=true]", "0,0,0"},
+        {"hook", "0,0,0,minecraft:stone;1,0,0,minecraft:tripwire_hook[facing=east]", "0,0,0"},
+        {"amethyst_bud", "0,0,0,minecraft:stone;1,0,0,minecraft:small_amethyst_bud[facing=east]", "0,0,0"},
+        {"amethyst_cluster_up", "0,0,0,minecraft:stone;0,1,0,minecraft:amethyst_cluster[facing=up]", "0,0,0"},
+        {"shelf_mushroom", "0,0,0,minecraft:stone;1,0,0,minecraft:shelf_mushroom[facing=east]", "0,0,0"},
+        {"hanging_roots", "0,1,0,minecraft:stone;0,0,0,minecraft:hanging_roots", "0,1,0"},
+        {"spore_blossom", "0,1,0,minecraft:stone;0,0,0,minecraft:spore_blossom", "0,1,0"},
+        {"dripstone_down", "0,1,0,minecraft:stone;0,0,0,minecraft:pointed_dripstone[vertical_direction=down,thickness=tip]", "0,1,0"},
+        {"dripstone_up", "0,0,0,minecraft:stone;0,1,0,minecraft:pointed_dripstone[vertical_direction=up,thickness=tip]", "0,0,0"},
+        {"pale_hanging_moss", "0,1,0,minecraft:stone;0,0,0,minecraft:pale_hanging_moss[tip=true]", "0,1,0"},
+        {"hanging_sign", "0,1,0,minecraft:stone;0,0,0,minecraft:oak_hanging_sign[attached=true,rotation=0]", "0,1,0"},
+        {"wall_hanging_sign", "0,0,0,minecraft:stone;1,0,0,minecraft:oak_wall_hanging_sign[facing=east];1,0,1,minecraft:stone", "0,0,0"},
+        {"snow", "0,0,0,minecraft:stone;0,1,0,minecraft:snow[layers=3]", "0,0,0"},
+        {"big_dripleaf", "0,0,0,minecraft:dirt;0,1,0,minecraft:big_dripleaf", "0,0,0"},
+        {"small_dripleaf", "0,0,0,minecraft:clay;0,1,0,minecraft:small_dripleaf[half=lower];0,2,0,minecraft:small_dripleaf[half=upper]", "0,0,0"},
+        {"nether_wart", "0,0,0,minecraft:soul_sand;0,1,0,minecraft:nether_wart", "0,0,0"},
+        {"propagule", "0,0,0,minecraft:dirt;0,1,0,minecraft:mangrove_propagule", "0,0,0"},
+        {"propagule_hanging", "0,1,0,minecraft:mangrove_leaves;0,0,0,minecraft:mangrove_propagule[hanging=true]", "0,1,0"},
+        {"sunflower", "0,0,0,minecraft:grass_block;0,1,0,minecraft:sunflower[half=lower];0,2,0,minecraft:sunflower[half=upper]", "0,0,0"},
+        {"chorus_plant", "0,0,0,minecraft:end_stone;0,1,0,minecraft:chorus_plant[down=true]", "0,0,0"},
+        {"moss_carpet", "0,0,0,minecraft:stone;0,1,0,minecraft:moss_carpet", "0,0,0"},
+        {"pale_moss_carpet", "0,0,0,minecraft:stone;0,1,0,minecraft:pale_moss_carpet", "0,0,0"},
+        {"scaffolding", "0,0,0,minecraft:stone;0,1,0,minecraft:scaffolding[distance=0]", "0,0,0"},
+        {"leaf_litter", "0,0,0,minecraft:stone;0,1,0,minecraft:leaf_litter", "0,0,0"},
+        {"torchflower", "0,0,0,minecraft:farmland[moisture=7];0,1,0,minecraft:torchflower_crop[age=1]", "0,0,0"},
+        {"pitcher", "0,0,0,minecraft:farmland[moisture=7];0,1,0,minecraft:pitcher_crop[half=lower,age=1]", "0,0,0"},
+        {"twisting_vines", "0,0,0,minecraft:stone;0,1,0,minecraft:twisting_vines_plant;0,2,0,minecraft:twisting_vines[age=3]", "0,0,0"},
+        {"weeping_vines", "0,3,0,minecraft:stone;0,2,0,minecraft:weeping_vines_plant;0,1,0,minecraft:weeping_vines[age=3]", "0,3,0"},
+        {"cave_vines", "0,3,0,minecraft:stone;0,2,0,minecraft:cave_vines_plant;0,1,0,minecraft:cave_vines[age=3]", "0,3,0"},
+        {"skull_wall", "0,0,0,minecraft:stone;1,0,0,minecraft:skeleton_wall_skull[facing=east]", "0,0,0"},
+        {"bell_floor", "0,0,0,minecraft:stone;0,1,0,minecraft:bell[attachment=floor]", "0,0,0"},
+    };
+
+    static void support55(List<Sc> out, String name, long seed, int from, int to, String mode) {
+        Sc sc = new Sc(name, seed);
+        List<int[]> removed = new ArrayList<>();
+        int n = 0;
+        for (int i = from; i < to && i < SUPPORT55.length; i++, n++) {
+            int cx = 2 + 4 * (n % 4), cz = 2 + 4 * (n / 4);
+            for (String b : SUPPORT55[i][1].split(";")) {
+                String[] f = b.split(",", 4);
+                put(sc, cx + Integer.parseInt(f[0]), Y0 + Integer.parseInt(f[1]), cz + Integer.parseInt(f[2]), f[3]);
+            }
+            for (String r : SUPPORT55[i][2].split(";")) {
+                String[] f = r.split(",");
+                removed.add(new int[] {cx + Integer.parseInt(f[0]), Y0 + Integer.parseInt(f[1]), cz + Integer.parseInt(f[2])});
+            }
+        }
+        // the supports one at a time, by `/fill` (a box of one) or by `/setblock`
+        for (int[] r : removed) {
+            if (mode.startsWith("fill")) sc.fill(r[0], r[1], r[2], r[0], r[1], r[2], "minecraft:air", mode.equals("fill_destroy") ? "destroy" : "replace");
+            else sc.setblock(r[0], r[1], r[2], "minecraft:air", mode.equals("setblock_destroy") ? "destroy" : "replace");
+            sc.tick(1);
+        }
+        sc.tick(10).reseed(seed + 1);
+        out.add(sc);
+    }
+
+    static void scenariosSupport55(List<Sc> out) {
+        for (String mode : new String[] {"fill", "setblock", "fill_destroy", "setblock_destroy"}) {
+            for (int from = 0, k = 0; from < SUPPORT55.length; from += 16, k++) {
+                support55(out, "support55_" + mode + "_" + k, 5500 + k, from, from + 16, mode);
+            }
+        }
+        // the whole layer of supports emptied by one `/fill` (replace and destroy)
+        for (String mode : new String[] {"replace", "destroy"}) {
+            for (int from = 0, k = 0; from < SUPPORT55.length; from += 16, k++) {
+                Sc sc = new Sc("support55_box_" + mode + "_" + k, 5600 + k);
+                int n = 0;
+                for (int i = from; i < from + 16 && i < SUPPORT55.length; i++, n++) {
+                    int cx = 2 + 4 * (n % 4), cz = 2 + 4 * (n / 4);
+                    for (String b : SUPPORT55[i][1].split(";")) {
+                        String[] f = b.split(",", 4);
+                        put(sc, cx + Integer.parseInt(f[0]), Y0 + Integer.parseInt(f[1]), cz + Integer.parseInt(f[2]), f[3]);
+                    }
+                }
+                sc.fill(0, Y0, 0, 15, Y0, 15, "minecraft:air", mode).tick(10).reseed(5601 + k);
+                out.add(sc);
+            }
+        }
     }
 
     // ================================================================ family: bubble columns (wp49)
@@ -2148,6 +2282,8 @@ public class BlockTickVectors {
                     var parsed = BlockStateParser.parseForBlock(level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.BLOCK), (String) op[4], false);
                     level.setBlock(p, parsed.blockState(), 3);
                 }
+                case "fill" -> command(String.format("fill %d %d %d %d %d %d %s %s", x0 + (Integer) op[1], op[2], z0 + (Integer) op[3], x0 + (Integer) op[4], op[5], z0 + (Integer) op[6], op[7], op[8]));
+                case "setblock" -> command(String.format("setblock %d %d %d %s %s", x0 + (Integer) op[1], op[2], z0 + (Integer) op[3], op[4], op[5]));
                 case "seed" -> level.getRandom().setSeed((Long) op[1]);
                 case "bonemeal" -> {
                     BlockPos p = new BlockPos(x0 + (Integer) op[1], (Integer) op[2], z0 + (Integer) op[3]);

@@ -546,6 +546,117 @@ public class InteractVectors {
         }
     }
 
+    // ---------------------------------------------------------------- wp55: a machine that runs by itself, with a rider
+
+    /**
+     * Two observers that look at each other (a clock) power a sticky piston at (4, 100, 0): it pushes and pulls a slime block (and a stone block
+     * beside it) over and over by itself, whatever stands on them (a player, mobs, an item, a boat) is flung and carried; the machine is started by
+     * placing the last observer. `extra` blocks are placed first; `rider` is where the passenger starts.
+     */
+    static Case machine55(String name, String extra, double[] player, String... summons) {
+        return machine55(name, "slime_block", extra, player, summons);
+    }
+
+    static Case machine55(String name, String block, String extra, double[] player, String... summons) {
+        Case c = p54("machine55_" + name);
+        c.pos = player;
+        c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:" + block);
+        if (!extra.isEmpty()) for (String x : extra.split(";")) c.cmd(x);
+
+        for (String s : summons) c.cmd(s);
+        // (what stands there settles first, as in `piston54`'s honey cases)
+        for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
+        // the clock starts when the second observer is put in front of the first
+        c.step(op("op", "command", "command", "setblock 3 100 0 minecraft:observer[facing=west,powered=false]"));
+        c.step(op("op", "command", "command", "setblock 2 100 0 minecraft:observer[facing=east,powered=false]"));
+        for (int i = 0; i < 90; i++) c.step(op("op", "idle"));
+        return c;
+    }
+
+    static void machines55(List<Case> out) {
+        // (a honey block is 15/16 high: what stands on it stands there)
+        out.add(machine55("honey_player", "honey_block", "", new double[] {5.5, 100.9375, 0.5}));
+        out.add(machine55("honey_pig", "honey_block", "", new double[] {1.5, 100.0, 3.5}, summon54("pig", 5.5, 100.9375, 0.5)));
+        // a redstone block that comes and goes three times under a player on honey and on slime
+        for (String blk : new String[] {"honey_block", "slime_block"}) {
+            Case c = p54("machine55_pulse_" + blk);
+            c.pos = new double[] {5.5, 101.0, 0.5};
+            if (blk.startsWith("honey")) c.pos = new double[] {5.5, 100.9375, 0.5};
+            c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:" + blk);
+            for (int k = 0; k < 3; k++) cycle54(c, "4 100 -1", 6, 6);
+            out.add(c);
+        }
+        for (Case c : out.subList(Math.max(0, out.size() - 4), out.size())) c.noPitch = true;
+    }
+
+    // The kinds of `tools/FlyerCheck.java`: 0 air, 1 slime, 2/3 sticky piston east/west, 4/5 piston east/west, 6..9 observer east/west/north/south, 10/11 up/down.
+    static final String[] MACHINE_KINDS = {
+            "minecraft:air", "minecraft:slime_block", "minecraft:sticky_piston[facing=east,extended=false]", "minecraft:sticky_piston[facing=west,extended=false]",
+            "minecraft:piston[facing=east,extended=false]", "minecraft:piston[facing=west,extended=false]",
+            "minecraft:observer[facing=east,powered=false]", "minecraft:observer[facing=west,powered=false]",
+            "minecraft:observer[facing=north,powered=false]", "minecraft:observer[facing=south,powered=false]",
+            "minecraft:observer[facing=up,powered=false]", "minecraft:observer[facing=down,powered=false]"};
+
+    /**
+     * A machine of the search of `kiln-blocks`' `flyer_search` (observers that clock pistons: none of them flies, see docs/parity-coverage.md 6.8): `rows`
+     * run along z from 0, columns along x from 2; the piece `last` is put in last, by the player (that starts it). `ride` is the cell a rider stands on.
+     */
+    static Case layout55(String name, int[][] rows, int[] last, int[] ride, boolean player, String... summons) {
+        Case c = p54("machine55_" + name);
+        int rx = 2 + ride[1];
+        c.pos = player ? new double[] {rx + 0.5, 101.0, ride[0] + 0.5} : new double[] {1.5, 100.0, 4.5};
+        for (int z = 0; z < rows.length; z++)
+            for (int i = 0; i < rows[z].length; i++)
+                if (rows[z][i] != 0 && !(z == last[0] && i == last[1])) c.cmd("setblock " + (2 + i) + " 100 " + z + " " + MACHINE_KINDS[rows[z][i]] + " strict");
+        for (String s : summons) c.cmd(s.replace("@X", Double.toString(rx + 0.5)).replace("@Z", Double.toString(ride[0] + 0.5)));
+        for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
+        // the last piece is put in by the player (`BlockItem.place`, flags 11, as the search did), looking the other way from where the piece faces
+        String kind = MACHINE_KINDS[rows[last[0]][last[1]]];
+        String item = kind.substring(0, kind.contains("[") ? kind.indexOf('[') : kind.length());
+        String facing = kind.contains("facing=") ? kind.substring(kind.indexOf("facing=") + 7, kind.indexOf(',', kind.indexOf("facing="))) : "east";
+        c.yaw = switch (facing) {
+            case "east" -> 90f;
+            case "west" -> 270f;
+            case "north" -> 0f;
+            default -> 180f;
+        };
+        c.pitch = 0f;
+        c.slot("h0", stack(item));
+        c.step(useOnAt(2 + last[1], 99, last[0], 1, 0, 0.5, 1.0, 0.5));
+        for (int i = 0; i < 100; i++) c.step(op("op", "idle"));
+        return c;
+    }
+
+    static void layouts55(List<Case> out) {
+        // The one machine of the search that keeps clocking in vanilla in this world (observers and pistons that start each other), with a player and mobs on its slime blocks.
+        int[][] rows = {{1, 6, 6, 3}, {2, 1, 0, 0}};
+        int[] last = {0, 2}, ride = {1, 1};
+        out.add(layout55("clock_player", rows, last, ride, true));
+        out.add(layout55("clock_mobs", rows, last, ride, false, "summon minecraft:pig 3.5 101.0 1.5 {NoAI:1b,Silent:1b}", "summon minecraft:cow 2.5 101.0 0.5 {NoAI:1b,Silent:1b}"));
+        for (Case c : out.subList(Math.max(0, out.size() - 2), out.size())) c.noPitch = true;
+    }
+
+    // ---------------------------------------------------------------- wp55: the block entity every block item gets when it is placed
+
+    static void placeBlockEntities55(List<Case> out) {
+        for (net.minecraft.world.item.Item it : BuiltInRegistries.ITEM) {
+            if (!(it instanceof net.minecraft.world.item.BlockItem bi) || !bi.getBlock().defaultBlockState().hasBlockEntity()) continue;
+            String item = BuiltInRegistries.ITEM.getKey(it).toString();
+            // (a vault picks its display item with the level random: `vaults49` has them)
+            if (item.equals("minecraft:vault")) continue;
+            Case c = blockCase("place55_be_" + item.replace("minecraft:", ""), "minecraft:air");
+            // (the second half of a bed, the block above)
+            c.watch(2, 100, 1).watch(2, 101, 0);
+            c.gameMode = "creative";
+            c.op = true;
+            c.slot("h0", stack(item));
+            // (the level ticks the block entity once, as Kiln's replay does; a spawner's tick is Kiln's own business)
+            if (!item.equals("minecraft:spawner")) c.ticking();
+            c.step(useOn(2, 99, 0, 1, 0));
+            out.add(c);
+        }
+    }
+
     // ---------------------------------------------------------------- wp53: advancement triggers
 
     static String nestBees(int n) {
@@ -5027,6 +5138,9 @@ public class InteractVectors {
             pistons54(all);
             sounds54(all);
             mannequins54(all);
+            placeBlockEntities55(all);
+            machines55(all);
+            layouts55(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {

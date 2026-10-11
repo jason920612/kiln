@@ -17,6 +17,7 @@ pub mod interact;
 mod java_map;
 pub mod level;
 pub mod placement;
+mod place_rules;
 pub mod pos;
 pub mod redstone;
 pub mod state;
@@ -29,6 +30,10 @@ pub mod weather;
 pub mod fire;
 #[cfg(test)]
 mod block_parity;
+#[cfg(test)]
+mod place_parity;
+#[cfg(test)]
+mod flyer_search;
 
 pub use behaviour::piston::{MovingPiston, MovingPistons, tick_moving_pistons};
 pub use fluid::FluidType;

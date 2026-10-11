@@ -692,6 +692,6 @@ fn throw_at(cx: &mut Cx, target: Vec3) {
     if cx.time % 7 == 0 && cx.rng().next_double() < 0.9 {
         let pitch = THROW_SOUND_PITCHES[cx.rng().next_int_bounded(THROW_SOUND_PITCHES.len() as i32) as usize];
         let pos = cx.e.position();
-        cx.level.emit(Event::Sound { pos, sound: "minecraft:entity.allay.item_thrown", source: "neutral", volume: 1.0, pitch });
+        cx.level.emit(Event::EntitySound { entity: cx.e.id, pos, sound: "minecraft:entity.allay.item_thrown", source: "neutral", volume: 1.0, pitch });
     }
 }

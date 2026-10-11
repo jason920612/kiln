@@ -105,6 +105,12 @@ fn play(cx: &mut Cx, sound: &'static str, volume: f32, pitch: f32) {
     cx.level.emit(Event::Sound { pos, sound, source: "neutral", volume, pitch });
 }
 
+/// `Level.playSound(null, goat, sound, NEUTRAL, volume, pitch)`: the sound follows the goat (an entity sound packet).
+fn play_entity(cx: &mut Cx, sound: &'static str, volume: f32, pitch: f32) {
+    let pos = cx.e.position();
+    cx.level.emit(Event::EntitySound { entity: cx.e.id, pos, sound, source: "neutral", volume, pitch });
+}
+
 // ---------------------------------------------------------------------- targeting
 
 /// `GoatAi.RAM_TARGET_CONDITIONS`: `TargetingConditions.forCombat()` that leaves goats (and, with
@@ -242,7 +248,7 @@ impl Behavior for PrepareRam {
             let sound = voice(cx.m, "prepare_ram");
             // `getVoicePitch`.
             let pitch = (cx.e.random.next_float() - cx.e.random.next_float()) * 0.2 + if cx.m.baby() { 1.5 } else { 1.0 };
-            play(cx, sound, 1.0, pitch);
+            play_entity(cx, sound, 1.0, pitch);
             self.candidate = None;
         }
     }
@@ -326,10 +332,10 @@ impl Behavior for RamTargetBehavior {
             super::raider::knockback_other(cx.level, t.id, ((1.0f32 * strength) as f64) * force, self.direction.x, self.direction.z);
             self.finish(cx);
             let sound = voice(cx.m, "ram_impact");
-            play(cx, sound, 1.0, 1.0);
+            play_entity(cx, sound, 1.0, 1.0);
         } else if self.rammed_horn_breaking_block(cx) {
             let sound = voice(cx.m, "ram_impact");
-            play(cx, sound, 1.0, 1.0);
+            play_entity(cx, sound, 1.0, 1.0);
             if drop_horn(cx.e, cx.m, cx.level) {
                 play(cx, mob::sound_event("minecraft:entity.goat.horn_break"), 1.0, 1.0);
             }
@@ -567,7 +573,7 @@ impl LongJumpToRandomPos {
                     cx.e.delta = jump.scale(e / d);
                     cx.b.mem.set(Mem::LongJumpMidJump, brain::Val::Bool(true));
                     let sound = voice(cx.m, "long_jump");
-                    play(cx, sound, 1.0, 1.0);
+                    play_entity(cx, sound, 1.0, 1.0);
                 }
             }
             None => {
@@ -702,7 +708,7 @@ impl Behavior for LongJumpMidJump {
     fn stop(&mut self, cx: &mut Cx) {
         if cx.e.on_ground {
             cx.e.delta = cx.e.delta.multiply(0.10000000149011612, 1.0, 0.10000000149011612);
-            play(cx, mob::sound_event("minecraft:entity.goat.step"), 2.0, 1.0);
+            play_entity(cx, mob::sound_event("minecraft:entity.goat.step"), 2.0, 1.0);
         }
         st_mut(cx.m).discard_friction = false;
         st_mut(cx.m).long_jumping = false;
@@ -886,7 +892,7 @@ impl Kind for Goat {
             };
             r * (1.2 - 0.8) + 0.8
         };
-        level.emit(Event::Sound { pos: e.position(), sound: voice(m, "eat"), source: "neutral", volume: 1.0, pitch });
+        level.emit(Event::EntitySound { entity: e.id, pos: e.position(), sound: voice(m, "eat"), source: "neutral", volume: 1.0, pitch });
         Some(out)
     }
 

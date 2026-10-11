@@ -179,6 +179,13 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     if let Some(new) = farming::update_shape(level, s, pos, dir, neighbor_state) {
         return new;
     }
+    // `HangingMossBlock.updateShape`: without its anchor it goes on the next tick; the tip follows the moss below.
+    if class == C::HangingMossBlock {
+        if !support::can_survive(level, s, pos) {
+            crate::level::schedule_block_tick(level, pos, BlockId::of(s), 1, crate::ticks::TickPriority::Normal);
+        }
+        return state::set_bool(s, "tip", !state::same_block(level.block(pos.below()), s));
+    }
     if let Some(new) = support::pop_off(level, s, pos, dir, neighbor_state) {
         return new;
     }
@@ -188,6 +195,22 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
 /// `isSpeleothemWithDirection`: in `#speleothems` with this tip direction.
 fn speleothem_toward(s: u16, dir: Direction) -> bool {
     crate::tags::is(s, "minecraft:speleothems") && state::get_dir(s, "vertical_direction") == Some(dir)
+}
+
+/// `SpeleothemBlock.calculateSpeleothemThickness` of the block `s` (a spike of that kind) at `pos` pointing `tip`.
+pub(crate) fn speleothem_thickness<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, tip: Direction, merge: bool) -> &'static str {
+    let ahead = level.block(pos.relative(tip));
+    if speleothem_toward(ahead, tip.opposite()) && state::same_block(ahead, s) {
+        if merge || state::get(ahead, "thickness") == Some("tip_merge") { "tip_merge" } else { "tip" }
+    } else if !speleothem_toward(ahead, tip) {
+        "tip"
+    } else if matches!(state::get(ahead, "thickness"), Some("tip" | "tip_merge")) {
+        "frustum"
+    } else if !speleothem_toward(level.block(pos.relative(tip.opposite())), tip) {
+        "base"
+    } else {
+        "middle"
+    }
 }
 
 /// `SpeleothemBlock.updateShape` (pointed dripstone, sulfur spikes): thickness follows the
@@ -211,19 +234,7 @@ fn speleothem_update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: 
             return s;
         }
     }
-    let merge = state::get(s, "thickness") == Some("tip_merge");
-    let ahead = level.block(pos.relative(tip));
-    let thickness = if speleothem_toward(ahead, tip.opposite()) && state::same_block(ahead, s) {
-        if merge || state::get(ahead, "thickness") == Some("tip_merge") { "tip_merge" } else { "tip" }
-    } else if !speleothem_toward(ahead, tip) {
-        "tip"
-    } else if matches!(state::get(ahead, "thickness"), Some("tip" | "tip_merge")) {
-        "frustum"
-    } else if !speleothem_toward(level.block(pos.relative(tip.opposite())), tip) {
-        "base"
-    } else {
-        "middle"
-    };
+    let thickness = speleothem_thickness(level, s, pos, tip, state::get(s, "thickness") == Some("tip_merge"));
     state::set(s, "thickness", thickness)
 }
 
@@ -331,10 +342,16 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::CoralPlantBlock | C::CoralFanBlock | C::CoralWallFanBlock | C::CoralBlock => wet::coral_tick(level, s, pos),
         _ if growth::is_growing_plant(s) => growth::plant_tick(level, s, pos),
         C::CreakingHeartBlock => misc::creaking_heart_tick(level, s, pos),
-        C::FarmlandBlock | C::SugarCaneBlock | C::CactusBlock | C::BambooStalkBlock => {
+        C::FarmlandBlock | C::PathBlock | C::SugarCaneBlock | C::CactusBlock | C::BambooStalkBlock => {
             farming::tick(level, s, pos);
         }
         C::DriedGhastBlock => misc2::dried_ghast_tick(level, s, pos),
+        // `HangingMossBlock.tick`: it breaks (and drops) when nothing holds it.
+        C::HangingMossBlock => {
+            if !support::can_survive(level, s, pos) {
+                crate::destroy_block(level, pos, true, crate::level::flags::LIMIT);
+            }
+        }
         // `BrushableBlock.tick`: the brushing fades (the block entity's), then the block falls if it can.
         C::BrushableBlock => {
             level.block_entity_tick(pos, s);

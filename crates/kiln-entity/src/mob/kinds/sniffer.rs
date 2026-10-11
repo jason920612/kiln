@@ -224,7 +224,7 @@ impl Kind for Sniffer {
                     None => &mut m.brain_random,
                 };
                 let pitch = r.next_float() * (1.2f32 - 0.8f32) + 0.8f32;
-                level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.sniffer.eat", source: "neutral", volume: 1.0, pitch });
+                level.emit(Event::EntitySound { entity: e.id, pos: e.position(), sound: "minecraft:entity.sniffer.eat", source: "neutral", volume: 1.0, pitch });
             }
         }
         Some(out)

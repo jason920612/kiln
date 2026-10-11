@@ -79,7 +79,7 @@ impl Behavior for LongJumpMidJump {
         if cx.e.on_ground {
             cx.e.delta = cx.e.delta.multiply(0.10000000149011612, 1.0, 0.10000000149011612);
             let pos = cx.e.position();
-            cx.level.emit(Event::Sound { pos, sound: self.cfg.landing_sound, source: "neutral", volume: 2.0, pitch: 1.0 });
+            cx.level.emit(Event::EntitySound { entity: cx.e.id, pos, sound: self.cfg.landing_sound, source: "neutral", volume: 2.0, pitch: 1.0 });
         }
         cx.m.discard_friction = false;
         (self.cfg.set_pose)(cx.m, false);
@@ -266,7 +266,7 @@ impl Behavior for LongJumpToRandomPos {
                 cx.e.delta = jump.scale((len + boost) / len);
                 cx.b.mem.set(Mem::LongJumpMidJump, Val::Bool(true));
                 let pos = cx.e.position();
-                cx.level.emit(Event::Sound { pos, sound: self.cfg.jump_sound, source: "neutral", volume: 1.0, pitch: 1.0 });
+                cx.level.emit(Event::EntitySound { entity: cx.e.id, pos, sound: self.cfg.jump_sound, source: "neutral", volume: 1.0, pitch: 1.0 });
             }
         } else {
             self.find_jump_tries -= 1;
@@ -508,7 +508,7 @@ pub fn try_lay_spawn_on_fluid_near_land(spawn: u16, supports: fn(u16) -> bool) -
                     let (id, pos) = (cx.e.id, above.center());
                     cx.level.emit(Event::GameEvent { event: "minecraft:block_place", pos, entity: Some(id) });
                     let at = cx.e.position();
-                    cx.level.emit(Event::Sound { pos: at, sound: "minecraft:entity.frog.lay_spawn", source: "block", volume: 1.0, pitch: 1.0 });
+                    cx.level.emit(Event::EntitySound { entity: cx.e.id, pos: at, sound: "minecraft:entity.frog.lay_spawn", source: "block", volume: 1.0, pitch: 1.0 });
                     cx.b.mem.erase(Mem::IsPregnant);
                     return true;
                 }

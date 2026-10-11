@@ -31,7 +31,7 @@ fn random_horizontal<R: RandomSource + ?Sized>(random: &mut R) -> Direction {
 }
 
 /// `Block.isFaceFull(state.getCollisionShape(..), dir)`: some collision box fills the whole face.
-fn collision_face_full(s: u16, dir: Direction) -> bool {
+pub(crate) fn collision_face_full(s: u16, dir: Direction) -> bool {
     let axis = dir.axis() as usize;
     let at_max = dir.is_positive();
     block_props::collision(s).iter().any(|b| {
@@ -42,7 +42,7 @@ fn collision_face_full(s: u16, dir: Direction) -> bool {
 
 /// `MultifaceBlock.canAttachTo(level, dir, pos, state)` (what `VineBlock.isAcceptableNeighbour`
 /// reads): the neighbour at `pos` (toward `dir`) offers a full face back.
-fn acceptable_neighbour<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direction) -> bool {
+pub(crate) fn acceptable_neighbour<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direction) -> bool {
     let n = level.block(pos);
     sturdy(n, dir.opposite(), Support::Full) || collision_face_full(n, dir.opposite())
 }
@@ -185,7 +185,7 @@ fn vine_faces(s: u16) -> bool {
 }
 
 /// `VineBlock.canSupportAtFace`.
-fn vine_can_support_at_face<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direction) -> bool {
+pub(crate) fn vine_can_support_at_face<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direction) -> bool {
     if dir == Direction::Down {
         return false;
     }

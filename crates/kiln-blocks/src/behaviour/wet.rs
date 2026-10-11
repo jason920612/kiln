@@ -123,7 +123,7 @@ pub fn coral_update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: D
 // ---------------------------------------------------------------- scaffolding
 
 /// `ScaffoldingBlock.getDistance`.
-fn scaffolding_distance<L: Level + ?Sized>(level: &L, pos: BlockPos) -> i32 {
+pub(crate) fn scaffolding_distance<L: Level + ?Sized>(level: &L, pos: BlockPos) -> i32 {
     let below = level.block(pos.below());
     let mut distance = 7;
     if state::is(below, d::SCAFFOLDING) {
@@ -145,7 +145,7 @@ fn scaffolding_distance<L: Level + ?Sized>(level: &L, pos: BlockPos) -> i32 {
 }
 
 /// `ScaffoldingBlock.isBottom`.
-fn scaffolding_is_bottom<L: Level + ?Sized>(level: &L, pos: BlockPos, distance: i32) -> bool {
+pub(crate) fn scaffolding_is_bottom<L: Level + ?Sized>(level: &L, pos: BlockPos, distance: i32) -> bool {
     distance > 0 && !state::is(level.block(pos.below()), d::SCAFFOLDING)
 }
 
