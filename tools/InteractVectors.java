@@ -627,7 +627,19 @@ public class InteractVectors {
                 if (rows[z][i] != 0 && !(z == last[0] && i == last[1])) c.cmd("setblock " + (2 + i) + " 100 " + z + " " + MACHINE_KINDS[rows[z][i]] + " strict");
         for (String s : summons) c.cmd(s.replace("@X", Double.toString(rx + 0.5)).replace("@Z", Double.toString(ride[0] + 0.5)));
         for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
-        c.step(op("op", "command", "command", "setblock " + (2 + last[1]) + " 100 " + last[0] + " " + MACHINE_KINDS[rows[last[0]][last[1]]]));
+        // the last piece is put in by the player (`BlockItem.place`, flags 11, as the search did), looking the other way from where the piece faces
+        String kind = MACHINE_KINDS[rows[last[0]][last[1]]];
+        String item = kind.substring(0, kind.contains("[") ? kind.indexOf('[') : kind.length());
+        String facing = kind.contains("facing=") ? kind.substring(kind.indexOf("facing=") + 7, kind.indexOf(',', kind.indexOf("facing="))) : "east";
+        c.yaw = switch (facing) {
+            case "east" -> 90f;
+            case "west" -> 270f;
+            case "north" -> 0f;
+            default -> 180f;
+        };
+        c.pitch = 0f;
+        c.slot("h0", stack(item));
+        c.step(useOnAt(2 + last[1], 99, last[0], 1, 0, 0.5, 1.0, 0.5));
         for (int i = 0; i < 100; i++) c.step(op("op", "idle"));
         return c;
     }
@@ -636,14 +648,17 @@ public class InteractVectors {
         // [rows], last, then the cell with the slime block the rider is on
         Object[][] machines = {
                 {new int[][] {{6, 7, 2, 1}, {1, 2, 0, 0}}, new int[] {0, 0}, new int[] {0, 3}},
-                {new int[][] {{6, 7, 2, 1}, {1, 2, 0, 0}}, new int[] {0, 0}, new int[] {1, 0}},
-                {new int[][] {{1, 3, 0, 0}, {1, 3, 6, 7}}, new int[] {1, 3}, new int[] {0, 0}},
-                {new int[][] {{1, 3, 0, 0}, {1, 3, 6, 7}}, new int[] {1, 3}, new int[] {1, 0}},
-                {new int[][] {{0, 0, 1, 3}, {3, 8, 7, 1}}, new int[] {1, 1}, new int[] {0, 2}},
-                {new int[][] {{9, 7, 1, 0}, {2, 1, 3, 0}}, new int[] {0, 0}, new int[] {1, 1}},
-                {new int[][] {{0, 1, 6, 7}, {2, 2, 1, 0}}, new int[] {0, 3}, new int[] {0, 1}},
-                {new int[][] {{7, 7, 1, 0}, {0, 1, 3, 2}}, new int[] {0, 0}, new int[] {1, 1}},
-                {new int[][] {{0, 3, 7, 1}, {0, 8, 1, 3}}, new int[] {0, 1}, new int[] {0, 3}},
+                {new int[][] {{6, 2, 1, 0}, {0, 1, 6, 3}}, new int[] {1, 3}, new int[] {0, 2}},
+                {new int[][] {{1, 6, 7, 3}, {2, 0, 1, 0}}, new int[] {0, 1}, new int[] {0, 0}},
+                {new int[][] {{1, 6, 7, 3}, {2, 0, 1, 0}}, new int[] {0, 1}, new int[] {1, 2}},
+                {new int[][] {{0, 6, 7, 1}, {0, 2, 1, 3}}, new int[] {0, 1}, new int[] {1, 2}},
+                {new int[][] {{0, 2, 1, 3}, {0, 1, 6, 7}}, new int[] {1, 3}, new int[] {0, 2}},
+                {new int[][] {{1, 3, 6, 7}, {3, 0, 1, 0}}, new int[] {0, 3}, new int[] {0, 0}},
+                {new int[][] {{1, 6, 6, 3}, {2, 1, 0, 0}}, new int[] {0, 2}, new int[] {1, 1}},
+                {new int[][] {{0, 2, 1, 0}, {1, 3, 6, 7}}, new int[] {1, 3}, new int[] {1, 0}},
+                {new int[][] {{2, 1, 0, 0}, {1, 6, 2, 7}}, new int[] {1, 2}, new int[] {0, 1}},
+                {new int[][] {{6, 7, 2, 1}, {0, 2, 0, 1}}, new int[] {0, 0}, new int[] {0, 3}},
+                {new int[][] {{6, 7, 2, 1}, {0, 2, 0, 1}}, new int[] {0, 0}, new int[] {1, 3}},
         };
         int n = 0;
         for (Object[] m : machines) {
@@ -663,7 +678,7 @@ public class InteractVectors {
         for (String type : new String[] {"cow", "villager", "slime", "chicken"}) {
             out.add(layout55("flyer1_" + type, rows, new int[] {0, 0}, new int[] {0, 3}, false, "summon minecraft:" + type + " @X 101.0 @Z {NoAI:1b,Silent:1b}"));
         }
-        for (Case c : out.subList(Math.max(0, out.size() - 22), out.size())) c.noPitch = true;
+        for (Case c : out.subList(Math.max(0, out.size() - 40), out.size())) c.noPitch = true;
     }
 
     // ---------------------------------------------------------------- wp55: the block entity every block item gets when it is placed
