@@ -203,7 +203,8 @@ impl Player {
         let mut level = PhantomLevel::new(cells, game_time, min_y, fast_lava);
         level.pistons = Some(pistons);
         let mut e = self.phantom_in(&level);
-        // `Entity.baseTick`'s fluid update (currents push the body).
+        // `Entity.baseTick`'s fluid update (currents push the body, and a body that was not in the water splashes into it).
+        e.was_touching_water = self.touching_water_before;
         e.update_fluid_interaction(&mut level);
         let t = TravelInput {
             gravity: self.attribute(crate::combat::GRAVITY),
