@@ -622,6 +622,8 @@ public class InteractVectors {
         Case c = p54("machine55_" + name);
         int rx = 2 + ride[1];
         c.pos = player ? new double[] {rx + 0.5, 101.0, ride[0] + 0.5} : new double[] {1.5, 100.0, 4.5};
+        // (the machine hangs in the air as it did in the search: a floor under a slime block is dragged along with it)
+        c.cmd("fill 0 99 -2 12 99 2 minecraft:air");
         for (int z = 0; z < rows.length; z++)
             for (int i = 0; i < rows[z].length; i++)
                 if (rows[z][i] != 0 && !(z == last[0] && i == last[1])) c.cmd("setblock " + (2 + i) + " 100 " + z + " " + MACHINE_KINDS[rows[z][i]] + " strict");
