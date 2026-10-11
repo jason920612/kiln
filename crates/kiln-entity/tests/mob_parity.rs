@@ -863,6 +863,16 @@ fn replay(s: &Value) -> Result<usize, String> {
                 .map(|x| vec3(&x["pos"]))
                 .collect();
             let got: Vec<Vec3> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item").map(|e| e.position()).collect();
+            if std::env::var_os("KILN_ITEMS_ALL").is_some() {
+                for i in 0..level.len() {
+                    if let Some(e) = level.entity_at(i)
+                        && e.type_name == "minecraft:item"
+                    {
+                        let n = if let EntityKind::Item(d) = &e.kind { d.stack.count() } else { 0 };
+                        eprintln!("  tick {tick} item #{i} id {} at {:?} count {n} tc {} removed {}", e.id, e.position(), e.tick_count, e.is_removed());
+                    }
+                }
+            }
             if std::env::var_os("KILN_SPAWN_DEBUG").is_some() && !got.is_empty() {
                 eprintln!("kiln items tick {tick}: {got:?}");
             }
