@@ -138,6 +138,14 @@ impl BlockEntity {
         Self { kind, nbt: Tag::Compound(fields) }
     }
 
+    /// Puts `fields` into the saved form: a field of the same name replaces the one that is there (the defaults of a new block entity).
+    pub fn merge_fields(&mut self, fields: Vec<(String, Tag)>) {
+        if let Tag::Compound(out) = &mut self.nbt {
+            out.retain(|(k, _)| !fields.iter().any(|(f, _)| f == k));
+            out.extend(fields);
+        }
+    }
+
     /// From a chunk's `block_entities` entry; `None` if its `id` is not a known type.
     pub fn from_saved(nbt: Tag) -> Option<Self> {
         let kind = type_id(nbt.get("id")?.as_str()?)?;

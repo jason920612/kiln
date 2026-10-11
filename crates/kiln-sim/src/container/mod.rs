@@ -899,8 +899,8 @@ impl Containers {
                 continue;
             }
             let mut be = BlockEntity::new(c.type_id);
-            if let (Tag::Compound(out), Tag::Compound(fields)) = (&mut be.nbt, c.chunk_tag()) {
-                out.extend(fields);
+            if let Tag::Compound(fields) = c.chunk_tag() {
+                be.merge_fields(fields);
             }
             chunk.set_block_entity(x, p.y, z, be);
         }
