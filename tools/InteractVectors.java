@@ -651,7 +651,12 @@ public class InteractVectors {
             int[][] rows = (int[][]) m[0];
             int[] last = (int[]) m[1], ride = (int[]) m[2];
             out.add(layout55("flyer" + n + "_player", rows, last, ride, true));
-            out.add(layout55("flyer" + n + "_pig", rows, last, ride, false, "summon minecraft:pig @X 101.0 @Z {NoAI:1b,Silent:1b}"));
+            // a pig on every slime block (the one that moves is not the one one would guess)
+            List<String> pigs = new ArrayList<>();
+            for (int z = 0; z < rows.length; z++)
+                for (int i = 0; i < rows[z].length; i++)
+                    if (rows[z][i] == 1) pigs.add("summon minecraft:" + (pigs.size() % 2 == 0 ? "pig" : "cow") + " " + (2 + i + 0.5) + " 101.0 " + (z + 0.5) + " {NoAI:1b,Silent:1b}");
+            out.add(layout55("flyer" + n + "_mobs", rows, last, ride, false, pigs.toArray(new String[0])));
         }
         // a heavier rider list on the first machine: a cow, a villager, a slime (a mob that bounces), a minecart
         int[][] rows = {{6, 7, 2, 1}, {1, 2, 0, 0}};
