@@ -842,7 +842,7 @@ fn replay(s: &Value) -> Result<usize, String> {
                 .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some("minecraft:item") && x.get("rseed").is_some_and(|v| !v.is_null()))
                 .collect();
             if !recorded.is_empty() {
-                let mut items: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item").map(|e| e.id).collect();
+                let mut items: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item" && !e.is_removed()).map(|e| e.id).collect();
                 let at = |id: i32| level.entity(id).unwrap().position();
                 items.sort_by_key(|&id| recorded.iter().position(|r| vec3(&r["pos"]).distance_to_sqr(at(id)) < 1.0e-12).unwrap_or(usize::MAX));
                 for (id, rec) in items.iter().zip(recorded) {
@@ -862,7 +862,7 @@ fn replay(s: &Value) -> Result<usize, String> {
                 .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some("minecraft:item") && x["pos"].is_array())
                 .map(|x| vec3(&x["pos"]))
                 .collect();
-            let got: Vec<Vec3> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item").map(|e| e.position()).collect();
+            let got: Vec<Vec3> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item" && !e.is_removed()).map(|e| e.position()).collect();
             if std::env::var_os("KILN_ITEMS_ALL").is_some() {
                 for i in 0..level.len() {
                     if let Some(e) = level.entity_at(i)
