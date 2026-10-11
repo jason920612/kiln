@@ -132,10 +132,11 @@ impl Player {
     }
 
     /// The body's own random (`Entity.random`: the water's splashes and strokes draw their pitch from it) set to `seed`,
-    /// as the interaction vectors pin the player's.
+    /// as the interaction vectors pin the player's (and the body at rest: the case's water was not there before).
     pub(crate) fn seed_body_random(&mut self, seed: i64) {
         let mut e = self.phantom.take().unwrap_or_else(|| self.new_body());
         e.random = LegacyRandom::new(seed);
+        self.server_delta = [0.0; 3];
         self.phantom = Some(e);
     }
 

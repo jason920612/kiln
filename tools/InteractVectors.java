@@ -4600,7 +4600,11 @@ public class InteractVectors {
             }
             // wp52: what the player has fallen so far, and the grace time after an impulse.
             // wp56: the player's own random (the water splashes and swim sounds draw their pitch from it) is pinned to a seed.
-            case "seed_player" -> field(net.minecraft.world.entity.Entity.class, "random").set(p, net.minecraft.util.RandomSource.create(((Number) s.get("seed")).longValue()));
+            case "seed_player" -> {
+                field(net.minecraft.world.entity.Entity.class, "random").set(p, net.minecraft.util.RandomSource.create(((Number) s.get("seed")).longValue()));
+                // (and its body starts from rest: the replay's was ticked before the case's water was there)
+                p.setDeltaMovement(Vec3.ZERO);
+            }
             case "set_fall" -> p.fallDistance = ((Number) s.get("distance")).doubleValue();
             case "set_grace" -> p.applyPostImpulseGraceTime(((Number) s.get("ticks")).intValue());
             case "accept_teleport" -> {
@@ -4938,9 +4942,9 @@ public class InteractVectors {
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
             if (c.ticksPlayer) {
-                System.out.println("SWIMDBG " + c.name + " before doTick pos " + p.position() + " delta " + p.getDeltaMovement() + " water " + p.isInWater() + " ground " + p.onGround());
+                if (System.getenv("SWIM_DEBUG") != null) System.out.println("SWIMDBG " + c.name + " before doTick pos " + p.position() + " delta " + p.getDeltaMovement() + " water " + p.isInWater() + " ground " + p.onGround());
                 p.doTick();
-                System.out.println("SWIMDBG " + c.name + " after doTick pos " + p.position() + " delta " + p.getDeltaMovement() + " water " + p.isInWater() + " ground " + p.onGround());
+                if (System.getenv("SWIM_DEBUG") != null) System.out.println("SWIMDBG " + c.name + " after doTick pos " + p.position() + " delta " + p.getDeltaMovement() + " water " + p.isInWater() + " ground " + p.onGround());
             }
             if (c.tickCushions && !"tick_cushions".equals(s.get("op"))) {
                 if (c.noPitch) addAttackTicks(p, 1);
