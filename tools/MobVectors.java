@@ -7335,6 +7335,7 @@ public class MobVectors {
         // Eating: a small slime and a small magma cube.
         for (String food : new String[] {"slime", "magma_cube"}) {
             Scenario s = new Scenario("tongue_frog_" + food);
+            s.noMobDrops = true; // (the slime it eats drops its loot: the replay drops none)
             floor(s, 16, "minecraft:grass_block");
             MobSpec f = new MobSpec("minecraft:frog", 0.5, BY, 0.5, 250f, 28300L);
             f.nbt = NO_JUMP;

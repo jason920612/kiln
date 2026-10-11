@@ -864,7 +864,12 @@ fn replay(s: &Value) -> Result<usize, String> {
                 .collect();
             let got: Vec<Vec3> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item").map(|e| e.position()).collect();
             if s.get("equip_trace").is_some() {
-                let bits = |v: &[Vec3]| v.iter().map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]).collect::<Vec<_>>();
+                // (Which one the harness finds first is the order of its entity sections, not of their making: sorted.)
+                let bits = |v: &[Vec3]| {
+                    let mut b = v.iter().map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]).collect::<Vec<_>>();
+                    b.sort();
+                    b
+                };
                 if bits(&got) != bits(&recorded) {
                     return Err(format!("tick {tick}: items appeared at {got:?} (kiln) vs {recorded:?} (vanilla)"));
                 }
