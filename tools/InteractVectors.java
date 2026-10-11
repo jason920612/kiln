@@ -605,6 +605,62 @@ public class InteractVectors {
         for (Case c : out.subList(Math.max(0, out.size() - 19), out.size())) c.noPitch = true;
     }
 
+    // The kinds of `tools/FlyerCheck.java`: 0 air, 1 slime, 2/3 sticky piston east/west, 4/5 piston east/west, 6..9 observer east/west/north/south, 10/11 up/down.
+    static final String[] MACHINE_KINDS = {
+            "minecraft:air", "minecraft:slime_block", "minecraft:sticky_piston[facing=east,extended=false]", "minecraft:sticky_piston[facing=west,extended=false]",
+            "minecraft:piston[facing=east,extended=false]", "minecraft:piston[facing=west,extended=false]",
+            "minecraft:observer[facing=east,powered=false]", "minecraft:observer[facing=west,powered=false]",
+            "minecraft:observer[facing=north,powered=false]", "minecraft:observer[facing=south,powered=false]",
+            "minecraft:observer[facing=up,powered=false]", "minecraft:observer[facing=down,powered=false]"};
+
+    /**
+     * A machine found by the search of `kiln-blocks`' `flyer_search` (the vanilla server agreed with Kiln on all 1,935,360 layouts of the family; the ones
+     * here keep a slime block moving by themselves): `rows` run along z from 0, columns along x from 2; the piece `last` is put in last (that starts it).
+     * `ride` is the cell whose slime block carries a rider (a player, or the mobs).
+     */
+    static Case layout55(String name, int[][] rows, int[] last, int[] ride, boolean player, String... summons) {
+        Case c = p54("machine55_" + name);
+        int rx = 2 + ride[1];
+        c.pos = player ? new double[] {rx + 0.5, 101.0, ride[0] + 0.5} : new double[] {1.5, 100.0, 4.5};
+        for (int z = 0; z < rows.length; z++)
+            for (int i = 0; i < rows[z].length; i++)
+                if (rows[z][i] != 0 && !(z == last[0] && i == last[1])) c.cmd("setblock " + (2 + i) + " 100 " + z + " " + MACHINE_KINDS[rows[z][i]] + " strict");
+        for (String s : summons) c.cmd(s.replace("@X", Double.toString(rx + 0.5)).replace("@Z", Double.toString(ride[0] + 0.5)));
+        for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
+        c.step(op("op", "command", "command", "setblock " + (2 + last[1]) + " 100 " + last[0] + " " + MACHINE_KINDS[rows[last[0]][last[1]]]));
+        for (int i = 0; i < 100; i++) c.step(op("op", "idle"));
+        return c;
+    }
+
+    static void layouts55(List<Case> out) {
+        // [rows], last, then the cell with the slime block the rider is on
+        Object[][] machines = {
+                {new int[][] {{6, 7, 2, 1}, {1, 2, 0, 0}}, new int[] {0, 0}, new int[] {0, 3}},
+                {new int[][] {{6, 7, 2, 1}, {1, 2, 0, 0}}, new int[] {0, 0}, new int[] {1, 0}},
+                {new int[][] {{1, 3, 0, 0}, {1, 3, 6, 7}}, new int[] {1, 3}, new int[] {0, 0}},
+                {new int[][] {{1, 3, 0, 0}, {1, 3, 6, 7}}, new int[] {1, 3}, new int[] {1, 0}},
+                {new int[][] {{0, 0, 1, 3}, {3, 8, 7, 1}}, new int[] {1, 1}, new int[] {0, 2}},
+                {new int[][] {{9, 7, 1, 0}, {2, 1, 3, 0}}, new int[] {0, 0}, new int[] {1, 1}},
+                {new int[][] {{0, 1, 6, 7}, {2, 2, 1, 0}}, new int[] {0, 3}, new int[] {0, 1}},
+                {new int[][] {{7, 7, 1, 0}, {0, 1, 3, 2}}, new int[] {0, 0}, new int[] {1, 1}},
+                {new int[][] {{0, 3, 7, 1}, {0, 8, 1, 3}}, new int[] {0, 1}, new int[] {0, 3}},
+        };
+        int n = 0;
+        for (Object[] m : machines) {
+            n++;
+            int[][] rows = (int[][]) m[0];
+            int[] last = (int[]) m[1], ride = (int[]) m[2];
+            out.add(layout55("flyer" + n + "_player", rows, last, ride, true));
+            out.add(layout55("flyer" + n + "_pig", rows, last, ride, false, "summon minecraft:pig @X 101.0 @Z {NoAI:1b,Silent:1b}"));
+        }
+        // a heavier rider list on the first machine: a cow, a villager, a slime (a mob that bounces), a minecart
+        int[][] rows = {{6, 7, 2, 1}, {1, 2, 0, 0}};
+        for (String type : new String[] {"cow", "villager", "slime", "chicken"}) {
+            out.add(layout55("flyer1_" + type, rows, new int[] {0, 0}, new int[] {0, 3}, false, "summon minecraft:" + type + " @X 101.0 @Z {NoAI:1b,Silent:1b}"));
+        }
+        for (Case c : out.subList(Math.max(0, out.size() - 22), out.size())) c.noPitch = true;
+    }
+
     // ---------------------------------------------------------------- wp55: the block entity every block item gets when it is placed
 
     static void placeBlockEntities55(List<Case> out) {
@@ -5109,6 +5165,7 @@ public class InteractVectors {
             mannequins54(all);
             placeBlockEntities55(all);
             machines55(all);
+            layouts55(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {
