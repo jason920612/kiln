@@ -832,6 +832,27 @@ fn replay(s: &Value) -> Result<usize, String> {
                 }
             }
         }
+        // wp56: an item's yaw and (where its spawner leaves it to the constructor) motion come from its own unseeded
+        // random: where both sides spawned one, Kiln takes the recording's, and its random as the harness pinned it.
+        {
+            let recorded: Vec<&Value> = s["spawned"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some("minecraft:item") && x.get("rseed").is_some_and(|v| !v.is_null()))
+                .collect();
+            if !recorded.is_empty() {
+                let mut items: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item").map(|e| e.id).collect();
+                let at = |id: i32| level.entity(id).unwrap().position();
+                items.sort_by_key(|&id| recorded.iter().position(|r| vec3(&r["pos"]).distance_to_sqr(at(id)) < 1.0e-12).unwrap_or(usize::MAX));
+                for (id, rec) in items.iter().zip(recorded) {
+                    let e = level.entity_mut(*id).unwrap();
+                    e.delta = vec3(&rec["motion"]);
+                    e.y_rot = f(&rec["yaw"]) as f32;
+                    e.random = kiln_javamath::random::LegacyRandom::new(rec["rseed"].as_i64().unwrap_or(0));
+                }
+            }
+        }
         // wp50: the items a click dropped (shorn equipment) appear where vanilla's did.
         {
             let recorded: Vec<Vec3> = s["spawned"]

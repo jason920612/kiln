@@ -992,6 +992,7 @@ public class MobVectors {
         final Scenario s;
         int tick;
         int arrowTick = -1, arrows;
+        int itemTick = -1, items;
         Adopt(List<Entity> tracked, List<Mob> pinned, StringBuilder spawned, Scenario s) {
             this.tracked = tracked; this.pinned = pinned; this.spawned = spawned; this.s = s;
         }
@@ -1006,6 +1007,13 @@ public class MobVectors {
                 if (arrowTick != tick) { arrowTick = tick; arrows = 0; }
                 arrow = String.format(Locale.ROOT, ",\"base_damage\":%s,\"crit\":%b", d((Double) get(aa, "baseDamage")), aa.isCritArrow());
                 aa.getRandom().setSeed(5555L * (tick + 1) + arrows++);
+            }
+            // wp56: an item's constructor draws its yaw (and, unless its spawner sets one, its motion) from its own unseeded random:
+            // recorded for the replay, which takes them, and the random pinned for what the item draws later (`moveTowardsClosestSpace`).
+            if (e instanceof net.minecraft.world.entity.item.ItemEntity) {
+                if (itemTick != tick) { itemTick = tick; items = 0; }
+                arrow = String.format(Locale.ROOT, ",\"rseed\":%d", 6666L * (tick + 1) + items);
+                e.getRandom().setSeed(6666L * (tick + 1) + items++);
             }
             spawned.append(String.format(Locale.ROOT, "{\"tick\":%d,\"type\":\"%s\",\"pos\":[%s,%s,%s],\"motion\":[%s,%s,%s],\"mob\":%b,\"yaw\":%s%s}", tick,
                     BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()), d(e.getX()), d(e.getY()), d(e.getZ()),
