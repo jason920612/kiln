@@ -614,16 +614,13 @@ public class InteractVectors {
             "minecraft:observer[facing=up,powered=false]", "minecraft:observer[facing=down,powered=false]"};
 
     /**
-     * A machine found by the search of `kiln-blocks`' `flyer_search` (the vanilla server agreed with Kiln on all 1,935,360 layouts of the family; the ones
-     * here keep a slime block moving by themselves): `rows` run along z from 0, columns along x from 2; the piece `last` is put in last (that starts it).
-     * `ride` is the cell whose slime block carries a rider (a player, or the mobs).
+     * A machine of the search of `kiln-blocks`' `flyer_search` (observers that clock pistons: none of them flies, see docs/parity-coverage.md 6.8): `rows`
+     * run along z from 0, columns along x from 2; the piece `last` is put in last, by the player (that starts it). `ride` is the cell a rider stands on.
      */
     static Case layout55(String name, int[][] rows, int[] last, int[] ride, boolean player, String... summons) {
         Case c = p54("machine55_" + name);
         int rx = 2 + ride[1];
         c.pos = player ? new double[] {rx + 0.5, 101.0, ride[0] + 0.5} : new double[] {1.5, 100.0, 4.5};
-        // (the machine hangs in the air as it did in the search: a floor under a slime block is dragged along with it)
-        c.cmd("fill 0 99 -2 12 99 2 minecraft:air");
         for (int z = 0; z < rows.length; z++)
             for (int i = 0; i < rows[z].length; i++)
                 if (rows[z][i] != 0 && !(z == last[0] && i == last[1])) c.cmd("setblock " + (2 + i) + " 100 " + z + " " + MACHINE_KINDS[rows[z][i]] + " strict");
@@ -667,18 +664,18 @@ public class InteractVectors {
             n++;
             int[][] rows = (int[][]) m[0];
             int[] last = (int[]) m[1], ride = (int[]) m[2];
-            out.add(layout55("flyer" + n + "_player", rows, last, ride, true));
+            out.add(layout55("osc" + n + "_player", rows, last, ride, true));
             // a pig on every slime block (the one that moves is not the one one would guess)
             List<String> pigs = new ArrayList<>();
             for (int z = 0; z < rows.length; z++)
                 for (int i = 0; i < rows[z].length; i++)
                     if (rows[z][i] == 1) pigs.add("summon minecraft:" + (pigs.size() % 2 == 0 ? "pig" : "cow") + " " + (2 + i + 0.5) + " 101.0 " + (z + 0.5) + " {NoAI:1b,Silent:1b}");
-            out.add(layout55("flyer" + n + "_mobs", rows, last, ride, false, pigs.toArray(new String[0])));
+            out.add(layout55("osc" + n + "_mobs", rows, last, ride, false, pigs.toArray(new String[0])));
         }
         // a heavier rider list on the first machine: a cow, a villager, a slime (a mob that bounces), a minecart
         int[][] rows = {{6, 7, 2, 1}, {1, 2, 0, 0}};
         for (String type : new String[] {"cow", "villager", "slime", "chicken"}) {
-            out.add(layout55("flyer1_" + type, rows, new int[] {0, 0}, new int[] {0, 3}, false, "summon minecraft:" + type + " @X 101.0 @Z {NoAI:1b,Silent:1b}"));
+            out.add(layout55("osc1_" + type, rows, new int[] {0, 0}, new int[] {0, 3}, false, "summon minecraft:" + type + " @X 101.0 @Z {NoAI:1b,Silent:1b}"));
         }
         for (Case c : out.subList(Math.max(0, out.size() - 40), out.size())) c.noPitch = true;
     }
