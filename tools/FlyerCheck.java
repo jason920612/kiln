@@ -178,6 +178,15 @@ public class FlyerCheck {
                         int[] at40 = null, at110 = null;
                         for (int t = 1; t <= 120; t++) {
                             tick();
+                            if (System.getenv("FLYER_DEBUG") != null && (t <= 12 || t % 10 == 0) && finalN < 3) {
+                                StringBuilder sb = new StringBuilder("FLYDBG n" + finalN + " t" + t + ":");
+                                for (int zz = 6; zz < 12; zz++)
+                                    for (int xx = 14; xx < 24; xx++) {
+                                        BlockState bs = level.getBlockState(new BlockPos(xx, 100, zz));
+                                        if (!bs.isAir()) sb.append(" (").append(xx).append(',').append(zz).append(')').append(BuiltInRegistries.BLOCK.getKey(bs.getBlock()).getPath());
+                                    }
+                                System.out.println(sb);
+                            }
                             if (t == 40) at40 = measure();
                             if (t == 110) at110 = measure();
                         }
