@@ -224,6 +224,9 @@ public class InteractVectors {
         /** wp54: the case is left out when the observer heard nothing (the item could not be placed). */
         boolean dropIfSilent;
 
+        /** wp56: the player's own server tick (`ServerPlayer.doTick`: its fluid update, its body's travel) follows every step, as the connection runs it between the client's packets. */
+        boolean ticksPlayer;
+
         Case observer(double x, double y, double z) {
             observer = new double[] {x, y, z};
             return this;
@@ -1893,6 +1896,78 @@ public class InteractVectors {
             c.dropIfSilent = true;
             out.add(c);
         }
+    }
+
+    // ---------------------------------------------------------------- wp56: a swimming player's splashes and strokes
+
+    /**
+     * A pool (x 0..7, z -2..3, water y 95..98, closed all round: the replay's water would flow out of an open one) in a stone floor at y = 98,
+     * another player on the floor beside it listening. The player's random is pinned and the player's own tick (`doTick`) runs after every step.
+     */
+    static Case swim56(String name, double[] at) {
+        Case c = new Case("swim56_" + name).moves().observer(3.5, 99.0, 5.5);
+        c.pos = at;
+        c.ticksPlayer = true;
+        c.soundOnly = true;
+        c.cmd("fill -4 94 -6 14 98 8 minecraft:stone").cmd("fill -4 99 -6 14 140 8 minecraft:air").cmd("fill 0 95 -2 7 98 3 minecraft:water");
+        c.step(op("op", "seed_player", "seed", 56L));
+        return c;
+    }
+
+    static void swims56(List<Case> out) {
+        Case c;
+        // ---- falling in from a height: the splash gets louder with the speed (`doWaterSplashEffect`: the quiet one, the loud one)
+        for (double from : new double[] {101.0, 104.0, 112.0, 130.0}) {
+            c = swim56("dive_" + (int) from, new double[] {3.5, from, 0.5});
+            double y = from, vy = 0.0;
+            for (int i = 0; i < 40; i++) {
+                if (y < 99.0) {
+                    // in the water: sinks, slowed
+                    vy = vy * 0.8 - 0.02;
+                } else {
+                    vy = (vy - 0.08) * 0.98;
+                }
+                y += vy;
+                boolean floor = y <= 95.0;
+                if (floor) {
+                    y = 95.0;
+                    vy = 0.0;
+                }
+                c.step(move(3.5, y, 0.5, floor));
+            }
+            out.add(c);
+        }
+        // ---- swimming along under the surface, at several speeds (the stroke's volume goes with the speed)
+        for (double speed : new double[] {0.06, 0.12, 0.2}) {
+            c = swim56("stroke_" + (int) (speed * 100), new double[] {0.5, 96.5, 0.5});
+            double x = 0.5;
+            for (int i = 0; i < 24; i++) {
+                x += speed;
+                c.step(move(x, 96.5, 0.5, false));
+            }
+            out.add(c);
+        }
+        // ---- wading: on the floor of a shallow pool (feet in the water), walking
+        c = swim56("wade", new double[] {0.5, 95.0, 0.5});
+        c.cmd("fill 0 96 -2 7 98 3 minecraft:stone");
+        {
+            double x = 0.5;
+            for (int i = 0; i < 24; i++) {
+                x += 0.21585;
+                c.step(move(x, 95.0, 0.5, true));
+            }
+        }
+        out.add(c);
+        // ---- coming up for air and out of the pool
+        c = swim56("surface", new double[] {3.5, 96.0, 0.5});
+        {
+            double y = 96.0;
+            for (int i = 0; i < 20; i++) {
+                y += 0.12;
+                c.step(move(3.5, y, 0.5, false));
+            }
+        }
+        out.add(c);
     }
 
     /** wp49: campfires (food on the fire), flower pots, chiseled bookshelves. */
@@ -4524,6 +4599,8 @@ public class InteractVectors {
                 field(p.connection.getClass(), "firstGoodZ").set(p.connection, p.getZ());
             }
             // wp52: what the player has fallen so far, and the grace time after an impulse.
+            // wp56: the player's own random (the water splashes and swim sounds draw their pitch from it) is pinned to a seed.
+            case "seed_player" -> field(net.minecraft.world.entity.Entity.class, "random").set(p, net.minecraft.util.RandomSource.create(((Number) s.get("seed")).longValue()));
             case "set_fall" -> p.fallDistance = ((Number) s.get("distance")).doubleValue();
             case "set_grace" -> p.applyPostImpulseGraceTime(((Number) s.get("ticks")).intValue());
             case "accept_teleport" -> {
@@ -4860,6 +4937,7 @@ public class InteractVectors {
         if (c.watchMaps) resetMaps();
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
+            if (c.ticksPlayer) p.doTick();
             if (c.tickCushions && !"tick_cushions".equals(s.get("op"))) {
                 if (c.noPitch) addAttackTicks(p, 1);
                 for (var cu : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) cu.tick();
@@ -5137,6 +5215,7 @@ public class InteractVectors {
             commandBlocks49(all);
             pistons54(all);
             sounds54(all);
+            swims56(all);
             mannequins54(all);
             placeBlockEntities55(all);
             machines55(all);
