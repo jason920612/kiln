@@ -220,7 +220,7 @@ impl Player {
         }
         kiln_entity::player::travel(&mut level, &mut e, &t);
         if std::env::var_os("KILN_SWIM_DEBUG").is_some() {
-            eprintln!("SWIMDBG tick {game_time}: body pos {:?} delta {:?} client pos {:?} sounds {:?} was_touching {} before {}", [e.x(), e.y(), e.z()], e.delta, self.pos, level.sounds, e.was_touching_water, self.touching_water_before);
+            eprintln!("SWIMDBG tick {game_time}: body pos {:?} delta {:?} client pos {:?}", [e.x(), e.y(), e.z()], e.delta, self.pos);
         }
         self.phantom_out(e, true);
         self.queue_body_sounds(&mut level);
