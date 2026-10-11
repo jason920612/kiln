@@ -863,6 +863,9 @@ fn replay(s: &Value) -> Result<usize, String> {
                 .map(|x| vec3(&x["pos"]))
                 .collect();
             let got: Vec<Vec3> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item").map(|e| e.position()).collect();
+            if std::env::var_os("KILN_SPAWN_DEBUG").is_some() && !got.is_empty() {
+                eprintln!("kiln items tick {tick}: {got:?}");
+            }
             if s.get("equip_trace").is_some() {
                 // (Which one the harness finds first is the order of its entity sections, not of their making: sorted.)
                 let bits = |v: &[Vec3]| {
