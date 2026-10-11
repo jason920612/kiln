@@ -4937,7 +4937,11 @@ public class InteractVectors {
         if (c.watchMaps) resetMaps();
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
-            if (c.ticksPlayer) p.doTick();
+            if (c.ticksPlayer) {
+                System.out.println("SWIMDBG " + c.name + " before doTick pos " + p.position() + " delta " + p.getDeltaMovement() + " water " + p.isInWater() + " ground " + p.onGround());
+                p.doTick();
+                System.out.println("SWIMDBG " + c.name + " after doTick pos " + p.position() + " delta " + p.getDeltaMovement() + " water " + p.isInWater() + " ground " + p.onGround());
+            }
             if (c.tickCushions && !"tick_cushions".equals(s.get("op"))) {
                 if (c.noPitch) addAttackTicks(p, 1);
                 for (var cu : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) cu.tick();
