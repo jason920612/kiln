@@ -124,13 +124,24 @@ fn vec(p: [f64; 3]) -> Vec3 {
 }
 
 impl Player {
+    /// The server's body, as `phantom_in` finds it (made when the player has none yet).
+    fn new_body(&self) -> Box<Entity> {
+        let mut e = kiln_entity::player::new(self.entity_id, self.uuid.as_u128(), vec(self.pos), 1.8, 0.6);
+        e.first_tick = false;
+        Box::new(e)
+    }
+
+    /// The body's own random (`Entity.random`: the water's splashes and strokes draw their pitch from it) set to `seed`,
+    /// as the interaction vectors pin the player's.
+    pub(crate) fn seed_body_random(&mut self, seed: i64) {
+        let mut e = self.phantom.take().unwrap_or_else(|| self.new_body());
+        e.random = LegacyRandom::new(seed);
+        self.phantom = Some(e);
+    }
+
     /// The server's body of this player, set to what the player is now.
     fn phantom_in(&mut self, level: &dyn EntityLevel) -> Box<Entity> {
-        let mut e = self.phantom.take().unwrap_or_else(|| {
-            let mut e = kiln_entity::player::new(self.entity_id, self.uuid.as_u128(), vec(self.pos), 1.8, 0.6);
-            e.first_tick = false;
-            Box::new(e)
-        });
+        let mut e = self.phantom.take().unwrap_or_else(|| self.new_body());
         let (w, h, eye) = self.dimensions();
         e.width = w;
         e.height = h;
