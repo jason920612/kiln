@@ -188,6 +188,10 @@ impl Player {
             let fluids = self.fluids(&at);
             if fluids.in_water {
                 self.reset_fall_distance();
+                // (`updateFluidInteraction`: `!wasTouchingWater && !firstTick` splashes.)
+                if self.tick_count > 1 {
+                    self.splash_into_water();
+                }
             }
             self.was_touching_water = fluids.in_water;
             self.was_eye_in_water = fluids.eye_in_water;

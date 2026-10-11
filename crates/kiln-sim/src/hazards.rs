@@ -149,6 +149,10 @@ impl Player {
         if fluids.in_water {
             self.reset_fall_distance();
         }
+        // (`updateFluidInteraction`: the splash of a body that comes into the water, but not in its first tick.)
+        if fluids.in_water && !self.was_touching_water && self.tick_count > 1 {
+            self.splash_into_water();
+        }
         self.was_touching_water = fluids.in_water;
         self.was_eye_in_water = fluids.eye_in_water;
         {

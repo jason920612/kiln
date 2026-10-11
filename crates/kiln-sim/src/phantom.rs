@@ -140,6 +140,20 @@ impl Player {
         self.phantom = Some(e);
     }
 
+    /// `Entity.doWaterSplashEffect` of the player: the splash the other players hear, its pitch (and the particles' places) drawn from
+    /// the body's own random, its volume from the body's velocity.
+    pub(crate) fn splash_into_water(&mut self) {
+        let mut e = self.phantom.take().unwrap_or_else(|| self.new_body());
+        let (w, h, eye) = self.dimensions();
+        e.width = w;
+        e.height = h;
+        e.eye_height = eye;
+        e.delta = vec(self.server_delta);
+        let (sound, volume, pitch) = e.water_splash_draws();
+        self.phantom = Some(e);
+        self.queue_sound_at(self.pos, sound, volume, pitch);
+    }
+
     /// The server's body of this player, set to what the player is now.
     fn phantom_in(&mut self, level: &dyn EntityLevel) -> Box<Entity> {
         let mut e = self.phantom.take().unwrap_or_else(|| self.new_body());
