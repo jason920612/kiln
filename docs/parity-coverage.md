@@ -571,7 +571,13 @@ wp54 留下的六個缺口，這一輪的做法是**先問原版會怎麼做**�
 | 長跳落地音（與其他 entity sound 封包） | `MobVectors.java` 現在也記錄 `ClientboundSoundEntityPacket`（`esound_trace`，以 mob 的序號為鍵）。原版對這些用 entity sound 封包：山羊／青蛙長跳的起跳與落地、山羊準備衝撞與衝撞、舌頭、青蛙吃、產卵、悅靈丟物品、微風蓄力、嗅探獸吃、銅傀儡被剪與被斧頭刮。Kiln 之前都當成位置音效送。新增 `Event::EntitySound`，kiln-sim 送 `sound_entity` 封包（範圍同 `SoundEvent.getRange`） | `esound55` 28 個（另 4 個因為亂數不能重現而不收：`give_allay`、`stacks_allay`、`tongue_frog_*`）；整份 `m6-mobs2` 的 788 個可重現的 scenario 也多了 `esound_trace`（Kiln 不能在原版沒送的地方送） | `mob_parity` |
 | 物品被推進方塊時的隨機推出 | `Entity.moveTowardsClosestSpace` 逐行對 javap：方向順序（北南西東上）、`nextFloat` 一次、`0.75` 縮放都**本來就對**。亂數序列不同的原因是原版掉落物的 `random` 是沒設種子的（`RandomSource.create()`）：實際遊戲裡本來就沒有可比的序列。把 harness 的物品亂數設成固定種子後，Kiln 逐 tick 的位置與速度**逐位相同** | `pushout55` 27 個（物品在石頭裡的 27 個位置，其中一部分周圍有牆） | `mob_parity`（`others_trace`） |
 
-@@FLYER@@
+**自走飛行機器帶乘客（第 5 項）：搜尋的結果是「沒有找到」，Kiln 與原版在整個搜尋空間逐項一致。**
+wp54 的缺口是「需要搜尋能自走的紅石配置」，所以這一輪先做搜尋，不憑記憶抄設計：
+
+- 搜尋工具：`kiln-blocks/src/flyer_search.rs`（`#[ignore]` 的測試，`cargo test --release -p kiln-blocks --lib -- --ignored --exact flyer_search::flyer_search3 --nocapture`；環境變數 `KILN_FLYER_W`／`_ROWS`／`_VERTICAL`／`_OBS`／`_THREADS`）。一個配置是格子裡的空氣、黏液塊、黏性或普通活塞（朝東或西）、觀察者（東西南北或上下），**每個零件各當一次「最後放下去的」（帶方塊更新），再補一種「機器放好後在旁邊放一塊石頭又拿走」的啟動**（2 行 × 5 欄那一項沒有這一種），跑 120 tick，要求零件一個不少、tick 40 到 120 西緣移動至少 3 格。範圍（每一項都是窮舉；零件是 2 個黏性活塞、2 個觀察者、2 個黏液塊）：1 行 × 2～5 欄；2 行 × 4 欄，朝向與位置的所有組合，活塞也可以是普通活塞；2 行 × 5 欄；3 行 × 3 欄，水平與垂直（垂直時觀察者含上下）。**0 個會飛。**
+- 原版對跑：`tools/FlyerCheck.java` 在原版伺服器內跑同一批配置（`Level.setBlock` 不通知放零件，最後一個用 flags 3），比對 tick 40、tick 120 的西緣與零件是否完整。**2 行 × 4 欄的 1,935,360 個（排列 × 最後放的零件）Kiln 與原版全部相同，原版也沒有任何一個會飛。** 所以這個空間裡「Kiln 沒找到」不是 Kiln 的活塞／觀察者／黏液比原版弱：原版同樣沒有。
+- 沒有搜尋的：更大的空間（3 維、更多零件、混用紅石粉與中繼器）。公認的飛行機器（雙觀察者雙黏性活塞雙黏液）應該在更寬的空間裡；這個結論只是「在上面那個空間裡沒有」，不是「Kiln 的飛行機器會飛」。
+- 代替的向量：`machine55`（`InteractVectors.java`，6 個）——黏性活塞推拉蜜塊上的玩家與豬（蜜塊 15/16 高，站在實際高度），紅石塊來來回回三次推拉蜜塊或黏液塊上的玩家，以及搜尋找到的一個**會自己持續震盪**的觀察者＋活塞配置（玩家與豬、牛站在它的黏液塊上；最後一個零件由玩家放下去：`BlockItem.place`）。6 個全部通過。**過程中的一個教訓**：先放觀察者再放生物，機器在生物生成的那一 tick 就開始動，原版的第一 tick 與 Kiln 差半格（生物剛生成還不算站在地上）；放進來之前先讓生物站穩（`idle` 三步），之後逐位相同。
 
 ## 7. 重跑
 
@@ -619,6 +625,13 @@ java ... tools/InteractVectors.java work/wp54/interact/piston54.jsonl piston54  
 java ... tools/InteractVectors.java work/wp54/interact/sound54.jsonl sound54         # 方塊音效：摔、走、放置
 java ... tools/InteractVectors.java work/wp54/interact/mannequin54.jsonl mannequin54 # mannequin 落地（cwd 是輸出目錄的 server）
 java ... tools/MobVectors.java work/wp54/mobs/vectors_sounds.jsonl                   # 整套重錄，多一個 sound_trace；只把 trace 相同的 scenario 的 sound_trace 併回 m6-mobs2/vectors.jsonl（.pre-wp54）
+# wp55 的向量（原版內錄製；Kiln 端：parity_suites 的 place55／support55／interact55／mob_esound55，生物向量併入 m6-mobs2/vectors.jsonl，備份 .pre-wp55）
+java ... tools/PlaceVectors.java work/wp55/place/shared.jsonl shared      # 每個方塊物品放在 2208 個環境；另有 self（點自己這一種方塊，6256 個）；Kiln 端 KILN_PLACE_VECTORS=shared.jsonl:self.jsonl cargo test --release -p kiln-blocks --lib place_parity
+java ... tools/BlockTickVectors.java work/wp55/support/support55.jsonl 'support55_.*'   # 拿掉支撐（fill／setblock／destroy），KILN_BLOCK_VECTORS=... block_parity
+java ... tools/InteractVectors.java work/wp55/interact/place55.jsonl place55_be_      # 每個方塊物品放下後的方塊實體資料
+java ... tools/InteractVectors.java work/wp55/interact/machine55.jsonl machine55_    # 觀察者／活塞機器與乘客
+java ... tools/MobVectors.java work/wp55/mobs/vectors_full.jsonl                      # 整套重錄：多了 esound_trace（entity sound 封包）；voice55_*（變種音效）與 pushout55_*（物品推出）
+java ... tools/FlyerCheck.java <kiln-blocks flyer_dump 的輸出> <out.jsonl>            # 飛行機器搜尋：原版對跑
 # 外掛 1.0 guest：sh crates/kiln-plugin-host/tests/fixtures/compat10/build.sh（要 wasm32-wasip2 target）；cargo test -p kiln-plugin-host --test api_compat --test wit_freeze
 # 與原版互載、指令對跑
 python tools/admin_check.py --kiln-exe target/release/kiln
