@@ -566,8 +566,6 @@ struct Player {
     main_supporting_block: Option<kiln_entity::math::BlockPos>,
     on_ground_no_blocks: bool,
     was_touching_water: bool,
-    /// `wasTouchingWater` as the tick began (the fluid update of `baseTick` overwrites it; the body's splash asks the old one).
-    touching_water_before: bool,
     /// The server's own body of the player (see [`phantom`]): its velocity, its stuck
     /// multiplier (`makeStuckInBlock`) and the movements of the tick.
     phantom: Option<Box<kiln_entity::entity::Entity>>,
@@ -3645,7 +3643,6 @@ impl Sim {
             main_supporting_block: None,
             on_ground_no_blocks: false,
             was_touching_water: false,
-            touching_water_before: false,
             phantom: None,
             body_at: None,
             server_delta: [0.0; 3],

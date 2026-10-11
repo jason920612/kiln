@@ -149,7 +149,6 @@ impl Player {
         if fluids.in_water {
             self.reset_fall_distance();
         }
-        self.touching_water_before = self.was_touching_water;
         self.was_touching_water = fluids.in_water;
         self.was_eye_in_water = fluids.eye_in_water;
         {
