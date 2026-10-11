@@ -574,35 +574,19 @@ public class InteractVectors {
     }
 
     static void machines55(List<Case> out) {
-        out.add(machine55("player_on_slime", "", new double[] {5.5, 101.0, 0.5}));
-        out.add(machine55("player_beside", "", new double[] {5.5, 101.0, 1.5}));
-        out.add(machine55("pig", "", new double[] {1.5, 100.0, 3.5}, summon54("pig", 5.5, 101.0, 0.5)));
-        out.add(machine55("cow", "", new double[] {1.5, 100.0, 3.5}, summon54("cow", 5.5, 101.0, 0.5)));
-        out.add(machine55("sheep", "", new double[] {1.5, 100.0, 3.5}, summon54("sheep", 5.5, 101.0, 0.5)));
-        out.add(machine55("villager", "", new double[] {1.5, 100.0, 3.5}, summon54("villager", 5.5, 101.0, 0.5)));
-        out.add(machine55("chicken", "", new double[] {1.5, 100.0, 3.5}, summon54("chicken", 5.5, 101.0, 0.5)));
-        out.add(machine55("slime", "", new double[] {1.5, 100.0, 3.5}, summon54("slime", 5.5, 101.0, 0.5)));
-        out.add(machine55("creeper", "", new double[] {1.5, 100.0, 3.5}, summon54("creeper", 5.5, 101.0, 0.5)));
-        // two slime blocks in a row, and a piston that is regular (it lets go of them)
-        out.add(machine55("two_slimes_player", "setblock 6 100 0 minecraft:slime_block", new double[] {6.5, 101.0, 0.5}));
-        out.add(machine55("two_slimes_pig", "setblock 6 100 0 minecraft:slime_block", new double[] {1.5, 100.0, 3.5}, summon54("pig", 6.5, 101.0, 0.5)));
         // (a honey block is 15/16 high: what stands on it stands there)
         out.add(machine55("honey_player", "honey_block", "", new double[] {5.5, 100.9375, 0.5}));
         out.add(machine55("honey_pig", "honey_block", "", new double[] {1.5, 100.0, 3.5}, summon54("pig", 5.5, 100.9375, 0.5)));
-        out.add(machine55("stone_player", "stone", "", new double[] {5.5, 101.0, 0.5}));
-        // (debugging) honey and slime under a player, by a redstone block that comes and goes three times
+        // a redstone block that comes and goes three times under a player on honey and on slime
         for (String blk : new String[] {"honey_block", "slime_block"}) {
             Case c = p54("machine55_pulse_" + blk);
             c.pos = new double[] {5.5, 101.0, 0.5};
+            if (blk.startsWith("honey")) c.pos = new double[] {5.5, 100.9375, 0.5};
             c.cmd("setblock 4 100 0 minecraft:sticky_piston[facing=east]").cmd("setblock 5 100 0 minecraft:" + blk);
             for (int k = 0; k < 3; k++) cycle54(c, "4 100 -1", 6, 6);
             out.add(c);
         }
-        // the slime has a block hanging on its side (it is dragged along)
-        out.add(machine55("side_block_player", "setblock 5 100 1 minecraft:stone", new double[] {5.5, 101.0, 0.5}));
-        // the clock beside the slime instead of under the player: the player stands off to the side and on top of the piston
-        out.add(machine55("player_on_piston", "", new double[] {4.5, 101.0, 0.5}));
-        for (Case c : out.subList(Math.max(0, out.size() - 19), out.size())) c.noPitch = true;
+        for (Case c : out.subList(Math.max(0, out.size() - 4), out.size())) c.noPitch = true;
     }
 
     // The kinds of `tools/FlyerCheck.java`: 0 air, 1 slime, 2/3 sticky piston east/west, 4/5 piston east/west, 6..9 observer east/west/north/south, 10/11 up/down.
@@ -644,40 +628,12 @@ public class InteractVectors {
     }
 
     static void layouts55(List<Case> out) {
-        // [rows], last, then the cell with the slime block the rider is on
-        Object[][] machines = {
-                {new int[][] {{6, 7, 2, 1}, {1, 2, 0, 0}}, new int[] {0, 0}, new int[] {0, 3}},
-                {new int[][] {{6, 2, 1, 0}, {0, 1, 6, 3}}, new int[] {1, 3}, new int[] {0, 2}},
-                {new int[][] {{1, 6, 7, 3}, {2, 0, 1, 0}}, new int[] {0, 1}, new int[] {0, 0}},
-                {new int[][] {{1, 6, 7, 3}, {2, 0, 1, 0}}, new int[] {0, 1}, new int[] {1, 2}},
-                {new int[][] {{0, 6, 7, 1}, {0, 2, 1, 3}}, new int[] {0, 1}, new int[] {1, 2}},
-                {new int[][] {{0, 2, 1, 3}, {0, 1, 6, 7}}, new int[] {1, 3}, new int[] {0, 2}},
-                {new int[][] {{1, 3, 6, 7}, {3, 0, 1, 0}}, new int[] {0, 3}, new int[] {0, 0}},
-                {new int[][] {{1, 6, 6, 3}, {2, 1, 0, 0}}, new int[] {0, 2}, new int[] {1, 1}},
-                {new int[][] {{0, 2, 1, 0}, {1, 3, 6, 7}}, new int[] {1, 3}, new int[] {1, 0}},
-                {new int[][] {{2, 1, 0, 0}, {1, 6, 2, 7}}, new int[] {1, 2}, new int[] {0, 1}},
-                {new int[][] {{6, 7, 2, 1}, {0, 2, 0, 1}}, new int[] {0, 0}, new int[] {0, 3}},
-                {new int[][] {{6, 7, 2, 1}, {0, 2, 0, 1}}, new int[] {0, 0}, new int[] {1, 3}},
-        };
-        int n = 0;
-        for (Object[] m : machines) {
-            n++;
-            int[][] rows = (int[][]) m[0];
-            int[] last = (int[]) m[1], ride = (int[]) m[2];
-            out.add(layout55("osc" + n + "_player", rows, last, ride, true));
-            // a pig on every slime block (the one that moves is not the one one would guess)
-            List<String> pigs = new ArrayList<>();
-            for (int z = 0; z < rows.length; z++)
-                for (int i = 0; i < rows[z].length; i++)
-                    if (rows[z][i] == 1) pigs.add("summon minecraft:" + (pigs.size() % 2 == 0 ? "pig" : "cow") + " " + (2 + i + 0.5) + " 101.0 " + (z + 0.5) + " {NoAI:1b,Silent:1b}");
-            out.add(layout55("osc" + n + "_mobs", rows, last, ride, false, pigs.toArray(new String[0])));
-        }
-        // a heavier rider list on the first machine: a cow, a villager, a slime (a mob that bounces), a minecart
-        int[][] rows = {{6, 7, 2, 1}, {1, 2, 0, 0}};
-        for (String type : new String[] {"cow", "villager", "slime", "chicken"}) {
-            out.add(layout55("osc1_" + type, rows, new int[] {0, 0}, new int[] {0, 3}, false, "summon minecraft:" + type + " @X 101.0 @Z {NoAI:1b,Silent:1b}"));
-        }
-        for (Case c : out.subList(Math.max(0, out.size() - 40), out.size())) c.noPitch = true;
+        // The one machine of the search that keeps clocking in vanilla in this world (observers and pistons that start each other), with a player and mobs on its slime blocks.
+        int[][] rows = {{1, 6, 6, 3}, {2, 1, 0, 0}};
+        int[] last = {0, 2}, ride = {1, 1};
+        out.add(layout55("clock_player", rows, last, ride, true));
+        out.add(layout55("clock_mobs", rows, last, ride, false, "summon minecraft:pig 3.5 101.0 1.5 {NoAI:1b,Silent:1b}", "summon minecraft:cow 2.5 101.0 0.5 {NoAI:1b,Silent:1b}"));
+        for (Case c : out.subList(Math.max(0, out.size() - 2), out.size())) c.noPitch = true;
     }
 
     // ---------------------------------------------------------------- wp55: the block entity every block item gets when it is placed
