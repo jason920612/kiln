@@ -1900,6 +1900,92 @@ public class InteractVectors {
         }
     }
 
+    // ---------------------------------------------------------------- wp56: the lid of a shulker box pushes what is in its way
+
+    /** A stone floor at y = 99 (x -4..14, z -6..8), air above, a shulker box at (5, 100, 0) facing `facing`; the player at x = 1.5 unless the case moves it. */
+    static Case sh56(String name, String facing) {
+        Case c = new Case("shulker56_" + name).pistons();
+        c.pos = new double[] {1.5, 100.0, 0.5};
+        c.cmd("fill -4 99 -6 14 99 8 minecraft:stone").cmd("fill -4 100 -6 14 108 8 minecraft:air").cmd("setblock 5 100 0 minecraft:shulker_box[facing=" + facing + "]");
+        return c;
+    }
+
+    /** The player opens the box by a click on its `face` at the cursor, `open` ticks later closes the menu, `close` ticks later the case ends. */
+    static Case cycle56(Case c, int face, double cx, double cy, double cz, int open, int close) {
+        c.step(useOnAt(5, 100, 0, face, 0, cx, cy, cz));
+        for (int i = 0; i < open; i++) c.step(op("op", "idle"));
+        c.step(op("op", "menu_close"));
+        for (int i = 0; i < close; i++) c.step(op("op", "idle"));
+        return c;
+    }
+
+    static void shulkers56(List<Case> out) {
+        Case c;
+        // ---- a box facing up with something standing on its lid
+        for (String type : ENTS54) {
+            c = sh56("up_" + type, "up");
+            c.cmd(summon54(type, 5.5, 101.0, 0.5));
+            out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+            // (a thing at the edge of the lid, half over the box)
+            c = sh56("up_edge_" + type, "up");
+            c.cmd(summon54(type, 5.9, 101.0, 0.8));
+            out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+        }
+        // ---- the lid opens sideways: what stands in front of it is pushed that way
+        for (String facing : new String[] {"east", "north", "south", "west", "down"}) {
+            for (String type : new String[] {"pig", "item", "armor_stand"}) {
+                c = sh56(facing + "_" + type, facing);
+                // (what stands where the lid goes: a block's width in front of the box)
+                double[] at = switch (facing) {
+                    case "east" -> new double[] {6.3, 100.0, 0.5};
+                    case "west" -> new double[] {4.7, 100.0, 0.5};
+                    case "north" -> new double[] {5.5, 100.0, -0.7};
+                    case "south" -> new double[] {5.5, 100.0, 1.7};
+                    default -> new double[] {5.5, 99.2, 0.5};
+                };
+                if (facing.equals("down")) {
+                    // (the floor under it would stop the lid: open air under the box)
+                    c.cmd("fill 3 99 -2 7 99 2 minecraft:air").cmd("fill 3 98 -2 7 98 2 minecraft:stone");
+                    at = new double[] {5.5, 99.0, 0.5};
+                }
+                c.cmd(summon54(type, at[0], at[1], at[2]));
+                // the click: from the west side of the box (its west face), on a box that faces up or west the lid is not in the way of the click
+                out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+            }
+        }
+        // ---- several things at once on the lid
+        c = sh56("up_crowd", "up");
+        c.cmd(summon54("pig", 5.3, 101.0, 0.3)).cmd(summon54("item", 5.7, 101.0, 0.7)).cmd(summon54("armor_stand", 5.5, 101.0, 0.5)).cmd(summon54("cow", 5.2, 101.0, 0.8));
+        out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+        // ---- the player on the lid, and the player beside it
+        c = sh56("player_on_lid", "up");
+        c.pos = new double[] {5.5, 101.0, 0.5};
+        out.add(cycle56(c, 1, 0.5, 1.0, 0.5, 12, 12));
+        c = sh56("player_edge", "up");
+        c.pos = new double[] {5.9, 101.0, 0.8};
+        out.add(cycle56(c, 1, 0.5, 1.0, 0.5, 12, 12));
+        c = sh56("player_front_east", "east");
+        c.pos = new double[] {6.4, 100.0, 0.5};
+        out.add(cycle56(c, 5, 1.0, 0.5, 0.5, 12, 12));
+        // ---- a box that cannot open (a solid block over it, a boat on its lid) and one that is closed again while it opens
+        c = sh56("blocked_by_block", "up");
+        c.cmd("setblock 5 101 0 minecraft:stone").cmd(summon54("pig", 5.5, 102.0, 0.5));
+        out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 6, 6));
+        c = sh56("closed_early", "up");
+        c.cmd(summon54("pig", 5.5, 101.0, 0.5));
+        out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 4, 14));
+        // ---- a second player at the box keeps it open
+        c = sh56("opened_twice", "up");
+        c.cmd(summon54("pig", 5.5, 101.0, 0.5));
+        c.step(useOnAt(5, 100, 0, 4, 0, 0.0, 0.5, 0.5));
+        for (int i = 0; i < 6; i++) c.step(op("op", "idle"));
+        c.step(op("op", "menu_close"));
+        for (int i = 0; i < 6; i++) c.step(op("op", "idle"));
+        c.step(useOnAt(5, 100, 0, 4, 0, 0.0, 0.5, 0.5));
+        for (int i = 0; i < 12; i++) c.step(op("op", "idle"));
+        out.add(c);
+    }
+
     // ---------------------------------------------------------------- wp56: a swimming player's splashes and strokes
 
     /**
@@ -4458,6 +4544,9 @@ public class InteractVectors {
                 it.remove();
             } else if (level.getBlockEntity(t.getPos()) instanceof net.minecraft.world.level.block.piston.PistonMovingBlockEntity pm) {
                 net.minecraft.world.level.block.piston.PistonMovingBlockEntity.tick(level, t.getPos(), level.getBlockState(t.getPos()), pm);
+            } else if (level.getBlockEntity(t.getPos()) instanceof net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity sb) {
+                // wp56: the lids of shulker boxes move too
+                net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity.tick(level, t.getPos(), level.getBlockState(t.getPos()), sb);
             }
         }
         flag.setBoolean(level, false);
@@ -5226,6 +5315,7 @@ public class InteractVectors {
             pistons54(all);
             sounds54(all);
             swims56(all);
+            shulkers56(all);
             mannequins54(all);
             placeBlockEntities55(all);
             machines55(all);
