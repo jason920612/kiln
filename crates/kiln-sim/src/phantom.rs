@@ -214,7 +214,13 @@ impl Player {
             water_efficiency: self.attribute(crate::combat::WATER_MOVEMENT_EFFICIENCY) as f32,
             sprinting: self.sprinting,
         };
+        if std::env::var_os("KILN_SWIM_DEBUG").is_some() {
+            eprintln!("SWIMDBG tick {game_time}: before travel body pos {:?} delta {:?} in_water {} client pos {:?}", [e.x(), e.y(), e.z()], e.delta, e.is_in_water(), self.pos);
+        }
         kiln_entity::player::travel(&mut level, &mut e, &t);
+        if std::env::var_os("KILN_SWIM_DEBUG").is_some() {
+            eprintln!("SWIMDBG tick {game_time}: body pos {:?} delta {:?} client pos {:?}", [e.x(), e.y(), e.z()], e.delta, self.pos);
+        }
         self.phantom_out(e, true);
         self.queue_body_sounds(&mut level);
     }
