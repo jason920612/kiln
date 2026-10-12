@@ -2138,8 +2138,7 @@ fn should_target_next_node_in_direction(e: &Entity, m: &MobData, level: &dyn Ent
 /// `Level.clip` with `COLLIDER` shapes and `Fluid.ANY` hits something.
 fn clip_blocks_and_fluids(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> bool {
     crate::clip::traverse_blocks(from, to, |p| {
-        let s = level.block(p);
-        let (shape, _) = collision::collision_shape(s, p, &CollisionContext::EMPTY);
+        let (shape, _) = collision::collision_shape_at(level, p, &CollisionContext::EMPTY);
         if crate::clip::shape_clips(&shape, from, to, p) {
             return Some(());
         }

@@ -143,7 +143,11 @@ fn visual_shape(s: u16, p: BlockPos, ctx: &crate::collision::CollisionContext) -
 /// the way.
 fn clip_visual(level: &dyn EntityLevel, from: Vec3, to: Vec3, ctx: &crate::collision::CollisionContext) -> bool {
     crate::clip::traverse_blocks(from, to, |p| {
-        let shape = visual_shape(level.block(p), p, ctx);
+        let s = level.block(p);
+        let shape = match crate::collision::lid_shape_at(level, p, s) {
+            Some(lid) => std::borrow::Cow::Owned(lid),
+            None => visual_shape(s, p, ctx),
+        };
         crate::clip::shape_clips(&shape, from, to, p).then_some(())
     })
     .is_some()

@@ -3022,8 +3022,7 @@ pub fn has_line_of_sight_cached(e: &Entity, m: &mut MobData, level: &dyn EntityL
 /// `Level.clip` with `COLLIDER` shapes and no fluids: whether a block is in the way.
 pub fn clip_blocks(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> bool {
     crate::clip::traverse_blocks(from, to, |p| {
-        let s = level.block(p);
-        let (shape, _) = crate::collision::collision_shape(s, p, &crate::collision::CollisionContext::EMPTY);
+        let (shape, _) = crate::collision::collision_shape_at(level, p, &crate::collision::CollisionContext::EMPTY);
         crate::clip::shape_clips(&shape, from, to, p).then_some(())
     })
     .is_some()

@@ -697,8 +697,7 @@ impl TrialBe {
 fn in_line_of_sight(level: &dyn EntityLevel, a: Vec3, b: Vec3) -> bool {
     let target = BlockPos::containing(a.x, a.y, a.z);
     let hit = crate::clip::traverse_blocks(b, a, |p| {
-        let s = level.block(p);
-        let (shape, _) = crate::collision::collision_shape(s, p, &crate::collision::CollisionContext::EMPTY);
+        let (shape, _) = crate::collision::collision_shape_at(level, p, &crate::collision::CollisionContext::EMPTY);
         crate::clip::shape_clips(&shape, b, a, p).then_some(p)
     });
     hit.is_none_or(|p| p == target)
@@ -934,14 +933,13 @@ fn position_to_spawn_spawner(level: &mut dyn EntityLevel, pos: BlockPos, be: &Tr
     // `calculatePositionAbove`.
     let to = Vec3::new(from.x, from.y + (height + 2.0 + r.next_int_bounded(4) as f32) as f64, from.z);
     let hit = crate::clip::traverse_blocks(from, to, |p| {
-        let s = level.block(p);
-        let (shape, _) = crate::collision::collision_shape(s, p, &crate::collision::CollisionContext::EMPTY);
+        let (shape, _) = crate::collision::collision_shape_at(level, p, &crate::collision::CollisionContext::EMPTY);
         crate::clip::shape_clips(&shape, from, to, p).then_some(p)
     })
     .unwrap_or_else(|| BlockPos::containing(to.x, to.y, to.z));
     let below = center(hit) - Vec3::new(0.0, 1.0, 0.0);
     let check = BlockPos::containing(below.x, below.y, below.z);
-    let (shape, _) = crate::collision::collision_shape(level.block(check), check, &crate::collision::CollisionContext::EMPTY);
+    let (shape, _) = crate::collision::collision_shape_at(level, check, &crate::collision::CollisionContext::EMPTY);
     if !shape.is_empty() {
         return None;
     }

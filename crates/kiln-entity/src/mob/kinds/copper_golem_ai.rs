@@ -156,8 +156,7 @@ impl TransportItemsBetweenContainers {
             let (sx, sy, sz) = d.step();
             let to = center.add(0.5 * sx as f64, 0.5 * sy as f64, 0.5 * sz as f64);
             let hit = crate::clip::traverse_blocks(pos, to, |p| {
-                let s = cx.level.block(p);
-                let (shape, _) = crate::collision::collision_shape(s, p, &ctx);
+                let (shape, _) = crate::collision::collision_shape_at(cx.level, p, &ctx);
                 crate::clip::shape_clips(&shape, pos, to, p).then_some(p)
             });
             hit == Some(t.pos)

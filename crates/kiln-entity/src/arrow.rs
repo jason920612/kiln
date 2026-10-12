@@ -138,7 +138,7 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
         let to = start + v;
         let ctx = e.collision_context();
         let block = clip::traverse_blocks(start, to, |pos| {
-            let (shape, _) = collision::collision_shape(level.block(pos), pos, &ctx);
+            let (shape, _) = collision::collision_shape_at(level, pos, &ctx);
             clip::shape_clip(&shape, start, to, pos).map(|(location, face)| (pos, face, location))
         });
         step_move_and_hit(e, level, start, to, block);
@@ -255,7 +255,7 @@ fn entity_hit_point(e: &Entity, level: &dyn EntityLevel, t: &Entity, margin: f64
     let mut target = bb.center();
     let ctx = e.collision_context();
     if let Some((_, _, location)) = clip::traverse_blocks(entry, target, |pos| {
-        let (shape, _) = collision::collision_shape(level.block(pos), pos, &ctx);
+        let (shape, _) = collision::collision_shape_at(level, pos, &ctx);
         clip::shape_clip(&shape, entry, target, pos).map(|(location, face)| (pos, face, location))
     }) {
         target = location;

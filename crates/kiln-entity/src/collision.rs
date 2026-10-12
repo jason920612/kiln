@@ -69,6 +69,25 @@ pub fn collision_shape(state: u16, pos: BlockPos, ctx: &CollisionContext) -> (Co
     }
 }
 
+/// `ShulkerBoxBlock.getShape` of the box at `pos` while its lid is on the move (the box of the lid, which reaches out of the block); `None`: not
+/// such a box.
+pub fn lid_shape_at(level: &dyn EntityLevel, pos: BlockPos, state: u16) -> Option<Shape> {
+    if kind(state) != Kind::ShulkerBox {
+        return None;
+    }
+    crate::lid::lid_shape(crate::lid::facing_of(state), level.shulker_lid(pos)?)
+}
+
+/// [`collision_shape`] of the block at `pos` as the level reads it: a shulker box with its lid on the move has the lid's box (`ShulkerBoxBlock.getShape`
+/// reads the block entity, and `getCollisionShape` is that shape).
+pub fn collision_shape_at(level: &dyn EntityLevel, pos: BlockPos, ctx: &CollisionContext) -> (Cow<'static, Shape>, bool) {
+    let state = level.block(pos);
+    match lid_shape_at(level, pos, state) {
+        Some(shape) => (Cow::Owned(shape), false),
+        None => collision_shape(state, pos, ctx),
+    }
+}
+
 fn scaffolding_shape(state: u16, pos: BlockPos, ctx: &CollisionContext) -> &'static Shape {
     let empty = physics::empty_shape();
     if ctx.placement {

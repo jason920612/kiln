@@ -154,7 +154,7 @@ impl ShulkerBullet {
         let mut to = from + e.delta;
         let ctx = e.collision_context();
         let block = crate::clip::traverse_blocks(from, to, |pos| {
-            let (shape, _) = crate::collision::collision_shape(level.block(pos), pos, &ctx);
+            let (shape, _) = crate::collision::collision_shape_at(level, pos, &ctx);
             crate::clip::shape_clip(&shape, from, to, pos).map(|(location, _)| (pos, location))
         });
         if let Some((_, l)) = block {

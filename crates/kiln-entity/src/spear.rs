@@ -58,8 +58,7 @@ pub fn redirectable_projectile(type_name: &str) -> bool {
 /// of `from → to` is hit.
 pub fn clip_collider(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> Option<Vec3> {
     crate::clip::traverse_blocks(from, to, |p| {
-        let s = level.block(p);
-        let (shape, _) = crate::collision::collision_shape(s, p, &crate::collision::CollisionContext::EMPTY);
+        let (shape, _) = crate::collision::collision_shape_at(level, p, &crate::collision::CollisionContext::EMPTY);
         crate::clip::shape_clip(&shape, from, to, p).map(|(location, _)| location)
     })
 }
