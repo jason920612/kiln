@@ -2142,7 +2142,7 @@ fn clip_blocks_and_fluids(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> bool
         if crate::clip::shape_clips(&shape, from, to, p) {
             return Some(());
         }
-        let f = crate::physics::fluid_state(s);
+        let f = crate::physics::fluid_state(level.block(p));
         if f.is_empty() {
             return None;
         }
