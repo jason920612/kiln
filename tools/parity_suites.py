@@ -109,6 +109,15 @@ SUITES = {
     # wp56 suites: recorded into <work>/wp56 (a swimming player: splashes and strokes with the player's random pinned, swim56.jsonl). The four mob scenarios wp55 could not
     # replay (give_allay, stacks_allay, tongue_frog_*) are re-recorded into m6-mobs2/vectors.jsonl (backup .pre-wp56).
     "interact56": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp56/interact/*.jsonl"}),
+    # wp57 suites: recorded into <work>/wp57 (the lid of a shulker box for rays, line of sight and block support: tools/LidVectors.java -> lid/lid57.jsonl, compared by
+    # three tests, one in each crate that answers a part; a happy ghast over a shulker box: interact/ghast57.jsonl; the menu clicks of the anvil, grindstone, cartography
+    # table, brewing stand, beacon and lectern: inventory/stations57*.jsonl). The raiders that pick up ordinary items (pickup57_raider_*) are folded into
+    # m6-mobs2/vectors.jsonl (backup .pre-wp57).
+    "lid57_entity": (["-p", "kiln-entity", "--test", "lid_parity"], {"KILN_LID_VECTORS": vec("wp57/lid/lid57.jsonl")}),
+    "lid57_blocks": (["-p", "kiln-blocks", "--lib", "lid_parity"], {"KILN_LID_VECTORS": vec("wp57/lid/lid57.jsonl")}),
+    "lid57_sim": (["-p", "kiln-sim", "--lib", "lid_parity"], {"KILN_LID_VECTORS": vec("wp57/lid/lid57.jsonl")}),
+    "interact57": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp57/interact/*.jsonl"}),
+    "menus57": (["-p", "kiln-inventory", "--test", "click_parity"], {"KILN_PARITY": "1", "KILN_CLICK_VECTORS": ":".join(vec(f"wp57/inventory/{n}.jsonl") for n in ("stations57", "stations57b"))}),
     "plugin_compat": (["-p", "kiln-plugin-host", "--test", "api_compat", "--test", "wit_freeze"], {}),
 }
 
