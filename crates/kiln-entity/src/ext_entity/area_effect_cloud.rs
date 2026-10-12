@@ -39,6 +39,8 @@ pub struct AreaEffectCloud {
     /// The living entity that made it (`owner`), and its UUID for saving.
     pub owner: Option<i32>,
     pub owner_uuid: Option<u128>,
+    /// The owner's entity type, for naming it when it is not among the entities this level reaches.
+    pub owner_type: Option<&'static str>,
     /// A loaded cloud's saved `Age`, taken over on its first tick.
     pub loaded_age: Option<i32>,
 }
@@ -60,6 +62,7 @@ impl Default for AreaEffectCloud {
             radius_per_tick: 0.0,
             owner: None,
             owner_uuid: None,
+            owner_type: None,
             loaded_age: None,
         }
     }
@@ -171,6 +174,9 @@ impl AreaEffectCloud {
                 continue;
             }
             self.victims.push((id, now + self.reapplication_delay));
+            if let (Some(owner), Some(type_name)) = (self.owner, self.owner_type) {
+                level.hint_owner_type(owner, type_name);
+            }
             for fx in &effects {
                 if fx.kind().instantaneous() {
                     level.apply_instantaneous_effect(id, fx, Some((e.id, e.position())), self.owner, 0.5);

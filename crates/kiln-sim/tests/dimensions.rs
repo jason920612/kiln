@@ -178,10 +178,15 @@ fn end_portal_platform_credits_and_return() {
 
     // The exit portal before the credits were seen: credits, then a respawn keeping
     // everything, in the overworld.
+    *w.client.stats.log.lock().unwrap() = Some(Vec::new());
     w.run("execute in minecraft:the_end run setblock 103 49 0 minecraft:end_portal");
     w.run("execute in minecraft:the_end run tp Traveller 103.5 49 0.5");
     w.ticks(3);
     assert_eq!(w.level().0, END, "credits roll first");
+    // `WIN_GAME` with 1 makes the client show the credits (0 would make it respawn at once).
+    let packets = w.client.stats.log.lock().unwrap().take().unwrap();
+    let win = kiln_proto::packets::game_event(4, 1.0);
+    assert!(packets.iter().any(|p| *p == win), "the first exit sends WIN_GAME 1");
     assert!(w.sim.step([ToSim::Packet(1, PlayIn::ClientCommand(ClientCommand::PerformRespawn))]));
     w.ticks(2);
     assert_eq!(w.level().0, OVERWORLD);

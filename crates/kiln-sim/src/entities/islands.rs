@@ -698,6 +698,7 @@ fn run_island(job: &mut Job, sh: &Shared) {
         player_writes: 0,
         touched: None,
         current_info: None,
+        owner_hints: Vec::new(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();

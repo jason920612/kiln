@@ -112,8 +112,41 @@ pub fn use_without_item<L: Level>(level: &mut L, pos: BlockPos, actor: &Actor) -
         set_block_and_update(level, pos, s);
         crate::redstone::devices::play_note(level, s, pos);
         true
+    } else if logic::is_instance(s, C::DragonEggBlock) {
+        dragon_egg_teleport(level, pos);
+        true
     } else {
         false
+    }
+}
+
+/// `BlockBehaviour.attack`: a survival player starts breaking the block at `pos` (a creative
+/// player breaks it at once instead). A note block plays its note; a dragon egg jumps away.
+pub fn attack<L: Level>(level: &mut L, pos: BlockPos) {
+    let s = level.block(pos);
+    if logic::is_instance(s, C::NoteBlock) {
+        crate::redstone::devices::play_note(level, s, pos);
+    } else if logic::is_instance(s, C::DragonEggBlock) {
+        dragon_egg_teleport(level, pos);
+    }
+}
+
+/// `DragonEggBlock.teleport`: up to 1000 tries at a spot within 15 blocks sideways and 7
+/// vertically; the egg moves to the first free (air) one. The world border is not consulted
+/// (blocks know none), the client plays the portal particles itself.
+fn dragon_egg_teleport<L: Level>(level: &mut L, pos: BlockPos) {
+    let s = level.block(pos);
+    for _ in 0..1000 {
+        let r = level.random();
+        let dx = r.next_int_bounded(16) - r.next_int_bounded(16);
+        let dy = r.next_int_bounded(8) - r.next_int_bounded(8);
+        let dz = r.next_int_bounded(16) - r.next_int_bounded(16);
+        let target = BlockPos::new(pos.x + dx, pos.y + dy, pos.z + dz);
+        if kiln_data::blocks_types::is_air(level.block(target)) {
+            set_block(level, target, s, flags::CLIENTS);
+            remove_block(level, pos, false);
+            return;
+        }
     }
 }
 
@@ -260,6 +293,35 @@ mod tests {
     }
 
     const ACTOR: Actor = Actor { yaw: 0.0, may_build: true, creative: true };
+
+    #[test]
+    fn a_dragon_egg_jumps_when_clicked_or_punched() {
+        let egg = d::DRAGON_EGG;
+        for punch in [false, true] {
+            let mut level = level();
+            level.set_random_seed(7);
+            let pos = BlockPos::new(0, -50, 0);
+            set_block(&mut level, pos, egg, flags::CLIENTS);
+            if punch {
+                attack(&mut level, pos);
+            } else {
+                assert!(use_without_item(&mut level, pos, &ACTOR));
+            }
+            assert!(kiln_data::blocks_types::is_air(level.block(pos)), "the egg left its place");
+            let mut found = None;
+            for x in -16..=16 {
+                for y in -58..=-42 {
+                    for z in -16..=16 {
+                        if state::same_block(level.block(BlockPos::new(x, y, z)), egg) {
+                            found = Some((x, y, z));
+                        }
+                    }
+                }
+            }
+            let (x, y, z) = found.expect("the egg is somewhere near");
+            assert!(x.abs() <= 15 && z.abs() <= 15 && (y + 50).abs() <= 7, "{x} {y} {z}");
+        }
+    }
 
     #[test]
     fn doors_open_both_halves_and_levers_power() {

@@ -95,6 +95,7 @@ def main():
         "-XX:G1HeapRegionSize=32M",
         f"-XX:ErrorFile={game / 'hs_err_pid%p.log'}",
         "--enable-native-access=ALL-UNNAMED",
+        *([f"-javaagent:{os.environ['KILN_CLIENT_AGENT']}"] if os.environ.get("KILN_CLIENT_AGENT") else []),
         f"-Djava.library.path={natives / 'java'}",
         f"-Djna.tmpdir={natives / 'jna'}",
         f"-Dorg.lwjgl.system.SharedLibraryExtractPath={natives / 'lwjgl'}",

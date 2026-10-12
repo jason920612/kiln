@@ -703,6 +703,8 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     /// The type and position of the entity whose state is out of the list for this turn, for
     /// what it does to players meanwhile (thorns damage names it as the attacker).
     current_info: Option<(&'static str, [f64; 3])>,
+    /// Owner id -> entity type of the clouds that hurt someone this tick (see `hint_owner_type`).
+    owner_hints: Vec<(i32, &'static str)>,
 }
 
 /// The non-spectator players' positions by 32-block cube, for `Mob.checkDespawn`'s nearest
@@ -1800,6 +1802,12 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         kiln_entity::mob::effects::add_to_entity(self, id, effect, source)
     }
 
+    fn hint_owner_type(&mut self, owner: i32, type_name: &'static str) {
+        if !self.owner_hints.iter().any(|h| h.0 == owner) {
+            self.owner_hints.push((owner, type_name));
+        }
+    }
+
     fn apply_instantaneous_effect(&mut self, id: i32, effect: &kiln_entity::effect::Effect, source: Option<(i32, Vec3)>, owner: Option<i32>, scale: f64) {
         let owner_is_player = owner.is_some_and(|o| self.players.iter().any(|p| p.entity_id == o));
         if !self.players.iter().any(|p| p.entity_id == id) {
@@ -1812,8 +1820,13 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             if let Some(p) = self.players.iter().find(|p| p.entity_id == o) {
                 return Some(p.as_attacker());
             }
-            let e = self.list.binary_search_by_key(&o, |e| e.id).ok().and_then(|i| self.list[i].phys.as_deref())?;
-            Some(health::Attacker::mob(o, e.type_name, arr(e.position())))
+            if let Some(e) = self.list.binary_search_by_key(&o, |e| e.id).ok().and_then(|i| self.list[i].phys.as_deref()) {
+                return Some(health::Attacker::mob(o, e.type_name, arr(e.position())));
+            }
+            // Not in this region's list (a dragon's breath cloud far from the dragon): the type
+            // the cloud told us, at the cloud's place.
+            let at = source.map_or([0.0; 3], |(_, p)| arr(p));
+            self.owner_hints.iter().find(|h| h.0 == o).map(|h| health::Attacker::mob(o, h.1, at))
         });
         let env = self.level.env();
         let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) else { return };
@@ -2154,6 +2167,7 @@ pub(crate) fn tick(
         player_writes: 0,
         touched: None,
         current_info: None,
+        owner_hints: Vec::new(),
     };
     let dt = crate::diag::lap("e.index", dt);
     // Creakings that lost their heart in the block phase go before the entities tick.
@@ -2294,6 +2308,7 @@ fn process_pending_kills(sim: &mut SimLevel) {
         }
         let Some(mut phys) = sim.list[i].phys.take() else { continue };
         (sim.current, sim.seeds) = (phys.id, 0x6b69_6c6c);
+        sim.current_info = Some((phys.type_name, arr(phys.position())));
         sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
         sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time ^ 0x6b69_6c6c, phys.id);
         for (kind, amount, attacker) in std::mem::take(&mut phys.pending_hurts) {
@@ -2325,6 +2340,7 @@ fn tick_new_passenger(sim: &mut SimLevel, id: i32, vehicle: usize) {
         return;
     }
     (sim.current, sim.seeds) = (phys.id, 0);
+    sim.current_info = Some((phys.type_name, arr(phys.position())));
     sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
     sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, phys.id);
     phys.common_tick();
@@ -2353,6 +2369,7 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     e.age += 1;
     let Some(mut phys) = e.phys.take() else { return };
     (sim.current, sim.seeds) = (phys.id, 0);
+    sim.current_info = Some((phys.type_name, arr(phys.position())));
     sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
     sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, phys.id);
     // `Mob.checkDespawn` runs before the tick, against the nearest player (regions are
@@ -2589,6 +2606,7 @@ pub(crate) fn with_mob<R>(
         player_writes: 0,
         touched: None,
         current_info: None,
+        owner_hints: Vec::new(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2682,6 +2700,7 @@ pub(crate) fn stab_mob(
         player_writes: 0,
         touched: None,
         current_info: None,
+        owner_hints: Vec::new(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2849,6 +2868,7 @@ pub(crate) fn interact_mob(
         player_writes: 0,
         touched: None,
         current_info: None,
+        owner_hints: Vec::new(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -3034,6 +3054,7 @@ pub(crate) fn with_entity<R>(
         player_writes: 0,
         touched: None,
         current_info: None,
+        owner_hints: Vec::new(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -3088,6 +3109,7 @@ pub(crate) fn with_level<R>(
         player_writes: 0,
         touched: None,
         current_info: None,
+        owner_hints: Vec::new(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();

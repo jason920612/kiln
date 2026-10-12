@@ -604,7 +604,8 @@ impl Sim {
         let Some(p) = self.players.get_mut(&conn) else { return };
         if !p.won_game {
             p.won_game = true;
-            p.send(packets::game_event(WIN_GAME, 0.0));
+            // 1: the client rolls the credits first; 0: it asks for its respawn at once.
+            p.send(packets::game_event(WIN_GAME, if p.seen_credits { 0.0 } else { 1.0 }));
             p.seen_credits = true;
             info!("{} left the End", p.name);
         }
