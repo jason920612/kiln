@@ -853,3 +853,71 @@ fn flyer_time() {
     }
     println!("scan: {:?} each", t.elapsed() / 20);
 }
+
+/// The engine `flyer_search_3d` found (two sticky pistons, two observers, two slime blocks in 2 x 2 x 2) with honey blocks (and more slime
+/// blocks) added around it: which of those still fly, for a rider to stand on the honey.
+#[test]
+#[ignore]
+fn flyer_riders() {
+    let engine: Vec<(Cell, u16)> = vec![
+        ((0, 0, 1), piston_state(true, 0)),
+        ((1, 0, 0), piston_state(true, 1)),
+        ((0, 1, 0), observer_state(2)),
+        ((1, 1, 1), observer_state(3)),
+        ((0, 0, 0), d::SLIME_BLOCK),
+        ((1, 0, 1), d::SLIME_BLOCK),
+    ];
+    let threads: usize = std::env::var("KILN_FLYER_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
+    let (honeys, slimes): (usize, usize) = (std::env::var("KILN_FLYER_HONEY").ok().and_then(|v| v.parse().ok()).unwrap_or(2), std::env::var("KILN_FLYER_SLIMES").ok().and_then(|v| v.parse().ok()).unwrap_or(2));
+    let cells: Vec<Cell> = (-1..3).flat_map(|x| (0..3).flat_map(move |y| (-1..3).map(move |z| (x, y, z)))).filter(|c| !engine.iter().any(|e| e.0 == *c) && *c != (2, 1, 1)).collect();
+    let n = cells.len();
+    let found = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|sc| {
+        for t in 0..threads {
+            let (found, cells, engine) = (&found, &cells, &engine);
+            sc.spawn(move || {
+                let mut k = t;
+                let total = (0..honeys + slimes).fold(1usize, |a, i| a * (n - i));
+                while k < total {
+                    let mut m = k;
+                    k += threads;
+                    let mut free: Vec<usize> = (0..n).collect();
+                    let mut at = Vec::new();
+                    for i in 0..honeys + slimes {
+                        let j = m % (n - i);
+                        m /= n - i;
+                        at.push(free.remove(j));
+                    }
+                    if (honeys == 2 && at[0] > at[1]) || (slimes >= 2 && at[honeys] > at[honeys + 1]) {
+                        continue;
+                    }
+                    let mut pieces = engine.clone();
+                    for (i, &a) in at.iter().enumerate() {
+                        pieces.push((cells[a], if i < honeys { d::HONEY_BLOCK } else { d::SLIME_BLOCK }));
+                    }
+                    if let Some(v) = run3(&pieces, (2, 1, 1), true, 100)
+                        && v == [0, 0, -6]
+                    {
+                        found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        // the honey blocks with nothing above them
+                        let open: Vec<Cell> = at[..honeys].iter().map(|&a| cells[a]).filter(|c| !pieces.iter().any(|p| p.0 == (c.0, c.1 + 1, c.2))).collect();
+                        let json: Vec<String> = pieces
+                            .iter()
+                            .map(|&(c, s)| {
+                                let b = kiln_data::blocks_types::block_of(s);
+                                let extra = match b.property(s, "facing") {
+                                    Some(f) if b.name.ends_with("observer") => format!("[facing={f},powered=false]"),
+                                    Some(f) => format!("[facing={f},extended=false]"),
+                                    None => String::new(),
+                                };
+                                format!("[{},{},{},\"{}{}\"]", c.0, c.1, c.2, b.name, extra)
+                            })
+                            .collect();
+                        println!("JSON {{\"pieces\":[{}],\"start\":[2,1,1],\"tap\":true,\"move\":[0,0,-6],\"open_honey\":{open:?}}}", json.join(","));
+                    }
+                }
+            });
+        }
+    });
+    println!("{} variants fly", found.load(std::sync::atomic::Ordering::Relaxed));
+}
