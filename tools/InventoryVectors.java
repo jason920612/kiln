@@ -84,6 +84,10 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.flag.FeatureFlagSet;
 import net.minecraft.world.flag.FeatureFlags;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.AnvilMenu;
+import net.minecraft.world.inventory.BrewingStandMenu;
+import net.minecraft.world.inventory.CartographyTableMenu;
+import net.minecraft.world.inventory.GrindstoneMenu;
 import net.minecraft.world.inventory.BlastFurnaceMenu;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ContainerInput;
@@ -420,6 +424,44 @@ public class InventoryVectors {
         "resin_brick", "stone", "diamond_leggings[max_stack_size=4]", "netherite_upgrade_smithing_template[max_stack_size=1]",
     };
 
+    // wp57: the anvil, the grindstone, the cartography table and the brewing stand (`ONLY_KINDS=anvil,grindstone,cartography,brewing`).
+    static final String[] ANVIL_POOL = {
+        "diamond_sword", "diamond_sword[damage=300]", "diamond_sword[enchantments={sharpness:3}]", "diamond_sword[enchantments={sharpness:5,unbreaking:3}]",
+        "iron_pickaxe[damage=100,enchantments={efficiency:2}]", "iron_pickaxe[enchantments={efficiency:4,mending:1}]",
+        "enchanted_book[stored_enchantments={sharpness:3}]", "enchanted_book[stored_enchantments={sharpness:3,unbreaking:2}]",
+        "enchanted_book[stored_enchantments={protection:4}]", "enchanted_book[stored_enchantments={mending:1}]", "enchanted_book[stored_enchantments={thorns:3}]",
+        "enchanted_book[stored_enchantments={luck_of_the_sea:3}]", "book", "iron_ingot", "diamond", "oak_planks", "leather", "phantom_membrane", "string",
+        "elytra[damage=200]", "bow[damage=200]", "bow[enchantments={power:5,infinity:1}]", "crossbow[enchantments={multishot:1}]",
+        "iron_chestplate[enchantments={protection:2}]", "iron_chestplate[damage=50]", "diamond_helmet[enchantments={protection:4}]",
+        "stone[repair_cost=10]", "iron_sword[repair_cost=7,enchantments={fire_aspect:1}]", "netherite_ingot", "shield[damage=100]", "turtle_helmet",
+        "turtle_scute", "name_tag", "stone", "diamond_sword[custom_name=\"Excalibur\"]", "trident[enchantments={loyalty:3}]",
+        "fishing_rod[enchantments={luck_of_the_sea:3}]", "golden_apple", "wooden_sword[repair_cost=63]", "diamond_sword", "iron_chestplate", "iron_pickaxe",
+    };
+
+    static final String[] GRIND_POOL = {
+        "diamond_sword", "diamond_sword[damage=300]", "diamond_sword[enchantments={sharpness:3,unbreaking:2}]", "diamond_sword[enchantments={sharpness:3,vanishing_curse:1}]",
+        "iron_pickaxe[enchantments={efficiency:4,binding_curse:1}]", "iron_helmet[enchantments={binding_curse:1}]", "enchanted_book[stored_enchantments={sharpness:3}]",
+        "enchanted_book[stored_enchantments={mending:1,unbreaking:3}]", "enchanted_book[stored_enchantments={vanishing_curse:1}]", "book", "stone",
+        "iron_chestplate[damage=40,enchantments={protection:3}]", "iron_chestplate[damage=100]", "iron_chestplate[damage=60]", "diamond_pickaxe[damage=20]",
+        "diamond_pickaxe[damage=700,enchantments={fortune:3}]", "bow[enchantments={power:5}]", "bow[damage=100]", "bow[damage=150,enchantments={infinity:1}]",
+        "stick", "shield[damage=10]", "shield", "elytra[enchantments={unbreaking:3}]", "diamond_axe[enchantments={sharpness:5,efficiency:5}]", "diamond_axe[damage=1000]",
+        "leather_boots[enchantments={binding_curse:1,protection:1}]", "potion", "bundle", "wooden_sword[damage=10]", "iron_sword[damage=10,enchantments={sharpness:1}]",
+        "iron_sword[damage=10]", "diamond_sword", "iron_helmet", "iron_chestplate",
+    };
+
+    static final String[] CARTO_POOL = {
+        "map", "filled_map", "filled_map[map_id=1]", "filled_map[map_id=5]", "paper", "glass_pane", "compass", "stone", "book", "map[max_stack_size=1]",
+        "paper[max_stack_size=2]", "filled_map[map_id=1,custom_name=\"x\"]", "glass_pane[max_stack_size=1]", "black_stained_glass_pane", "map", "paper", "glass_pane", "filled_map[map_id=2]",
+    };
+
+    static final String[] BREW_POOL = {
+        "potion", "potion[potion_contents={potion:\"minecraft:water\"}]", "potion[potion_contents={potion:\"minecraft:awkward\"}]", "splash_potion", "lingering_potion",
+        "glass_bottle", "nether_wart", "blaze_powder", "redstone", "glowstone_dust", "gunpowder", "dragon_breath", "spider_eye", "fermented_spider_eye", "sugar",
+        "ghast_tear", "rabbit_foot", "magma_cream", "golden_carrot", "glistering_melon_slice", "turtle_helmet", "pufferfish", "phantom_membrane", "slime_ball",
+        "breeze_rod", "stone", "bucket", "blaze_rod", "potion[potion_contents={potion:\"minecraft:strong_healing\"}]", "potion[potion_contents={potion:\"minecraft:long_swiftness\"}]",
+        "honey_bottle", "experience_bottle", "stone[max_stack_size=7]", "potion[max_stack_size=3]", "glass_bottle", "glass_bottle", "potion", "nether_wart", "blaze_powder",
+    };
+
     static ItemStack randomStack(Random rng, String[] pool) {
         String text = pool[rng.nextInt(pool.length)];
         ItemStack s = parse(text, 1);
@@ -443,6 +485,13 @@ public class InventoryVectors {
     /// wp50: only the looms (`LOOM_ONLY=1`).
     static final String[] LOOM_KINDS = {"loom"};
 
+    /// wp57: `ONLY_KINDS` (comma separated) selects the kinds, else `LOOM_ONLY`, else all.
+    static String[] onlyKinds() {
+        String only = System.getenv("ONLY_KINDS");
+        if (only != null) return only.split(",");
+        return System.getenv("LOOM_ONLY") != null ? LOOM_KINDS : KINDS;
+    }
+
     static final String[] LOOM_POOL = {
         "white_banner", "red_banner", "blue_banner", "black_banner", "yellow_banner", "white_banner", "white_banner",
         "red_banner[banner_patterns=[{pattern:\"minecraft:stripe_downright\",color:\"blue\"}]]",
@@ -465,6 +514,7 @@ public class InventoryVectors {
             case "generic_3x3" -> 9;
             case "hopper" -> 5;
             case "furnace", "blast_furnace", "smoker" -> 3;
+            case "brewing" -> 5;
             default -> 0;
         };
     }
@@ -517,6 +567,10 @@ public class InventoryVectors {
             case "stonecutter" -> new StonecutterMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
             case "smithing" -> new SmithingMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
             case "loom" -> new LoomMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
+            case "anvil" -> new AnvilMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
+            case "grindstone" -> new GrindstoneMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
+            case "cartography" -> new CartographyTableMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
+            case "brewing" -> new BrewingStandMenu(id, s.inv, s.block, s.data);
             default -> throw new IllegalArgumentException(s.kind);
         };
     }
@@ -539,12 +593,14 @@ public class InventoryVectors {
         int crashes = 0;
         try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(out, StandardCharsets.UTF_8))) {
             for (int n = 0; n < sequences; n++) {
-                String kind = (System.getenv("LOOM_ONLY") != null ? LOOM_KINDS : KINDS)[rng.nextInt((System.getenv("LOOM_ONLY") != null ? LOOM_KINDS : KINDS).length)];
+                String[] kinds = onlyKinds();
+                String kind = kinds[rng.nextInt(kinds.length)];
                 boolean creative = rng.nextInt(5) == 0;
                 int id = kind.equals("inventory") ? 0 : 1 + rng.nextInt(100);
                 Session s = session(kind, id, creative);
                 String[] pool = kind.equals("crafting") || (kind.equals("inventory") && rng.nextBoolean()) ? CRAFT_POOL
-                        : kind.equals("stonecutter") ? STONE_POOL : kind.equals("smithing") ? SMITH_POOL : kind.equals("loom") ? LOOM_POOL : CLICK_POOL;
+                        : kind.equals("stonecutter") ? STONE_POOL : kind.equals("smithing") ? SMITH_POOL : kind.equals("loom") ? LOOM_POOL
+                        : kind.equals("anvil") ? ANVIL_POOL : kind.equals("grindstone") ? GRIND_POOL : kind.equals("cartography") ? CARTO_POOL : kind.equals("brewing") ? BREW_POOL : CLICK_POOL;
                 double fill = rng.nextDouble();
                 for (int i = 0; i < 43; i++) {
                     if (rng.nextDouble() < fill * 0.8) s.inv.setItem(i, randomStack(rng, pool));
@@ -575,7 +631,7 @@ public class InventoryVectors {
                         grid = g;
                     }
                 }
-                boolean station = kind.equals("stonecutter") || kind.equals("smithing") || kind.equals("loom");
+                boolean station = kind.equals("stonecutter") || kind.equals("smithing") || kind.equals("loom") || kind.equals("anvil") || kind.equals("grindstone") || kind.equals("cartography");
                 if (station && rng.nextInt(4) < 3) grid = stationInput(kind, rng);
                 for (int i = 0; i < grid.size(); i++) {
                     if (!grid.get(i).isEmpty()) s.menu.getSlot((station ? 0 : 1) + i).set(grid.get(i).copy());
@@ -634,6 +690,8 @@ public class InventoryVectors {
         if (s.kind.equals("stonecutter") && rng.nextInt(3) == 0) slot = rng.nextInt(2);
         if (s.kind.equals("smithing") && rng.nextInt(3) == 0) slot = rng.nextInt(4);
         if (s.kind.equals("loom") && rng.nextInt(3) == 0) slot = rng.nextInt(4);
+        if ((s.kind.equals("anvil") || s.kind.equals("grindstone") || s.kind.equals("cartography")) && rng.nextInt(3) == 0) slot = rng.nextInt(3);
+        if (s.kind.equals("brewing") && rng.nextInt(3) == 0) slot = rng.nextInt(5);
         if (rng.nextInt(200) == 0) slot = size + rng.nextInt(3);
         if (rng.nextInt(300) == 0) slot = -1 - rng.nextInt(3);
         int r = rng.nextInt(100);
@@ -887,6 +945,12 @@ public class InventoryVectors {
             g.add(rng.nextInt(8) == 0 ? ItemStack.EMPTY : parse(LOOM_POOL[13 + rng.nextInt(8)], 1));
             g.add(rng.nextInt(3) == 0 ? ItemStack.EMPTY : parse(LOOM_POOL[21 + rng.nextInt(10)], 1));
             if (rng.nextInt(12) == 0) g.set(rng.nextInt(3), randomStack(rng, LOOM_POOL));
+        } else if (kind.equals("anvil") || kind.equals("grindstone") || kind.equals("cartography")) {
+            String[] pool = kind.equals("anvil") ? ANVIL_POOL : kind.equals("grindstone") ? GRIND_POOL : CARTO_POOL;
+            g.add(randomStack(rng, pool));
+            g.add(rng.nextInt(6) == 0 ? ItemStack.EMPTY : randomStack(rng, pool));
+            // a second of the same (a grindstone merges two of one kind; an anvil combines them)
+            if (rng.nextInt(4) == 0 && !g.get(0).isEmpty()) g.set(1, g.get(0).copy());
         } else if (kind.equals("stonecutter")) {
             var list = sortedRecipes(net.minecraft.world.item.crafting.StonecutterRecipe.class);
             var r = (net.minecraft.world.item.crafting.StonecutterRecipe) list.get(rng.nextInt(list.size())).value();
