@@ -62,6 +62,7 @@ pub(crate) fn push(entities: &mut Entities, level: &mut RegionLevel, players: &m
         player_writes: 0,
         touched: None,
         current_info: None,
+        owner_hints: Vec::new(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
