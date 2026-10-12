@@ -383,7 +383,7 @@ pub(crate) struct EntityBox {
     /// A cushion (placing one does not overlap another).
     pub cushion: bool,
     /// What a dispenser asks of a living thing (a player, an armor stand, a mob).
-    /// `Entity.canBeCollidedWith(null)`: a boat, a living shulker (what `Level.noCollision` counts besides blocks).
+    /// `Entity.canBeCollidedWith(null)`: a boat, a living shulker, a grown happy ghast that stays still (what `Level.noCollision` counts besides blocks).
     pub collides: bool,
     pub wear: Option<Wear>,
 }
@@ -477,7 +477,7 @@ fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Ent
         } else {
             None
         };
-        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of), cushion: e.phys.as_deref().is_some_and(kiln_entity::ext_entity::cushion::is_cushion), collides: e.phys.as_deref().is_some_and(|p| p.type_name.ends_with("boat") || p.type_name.ends_with("raft") || (p.type_name == "minecraft:shulker" && living)), wear }
+        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of), cushion: e.phys.as_deref().is_some_and(kiln_entity::ext_entity::cushion::is_cushion), collides: e.phys.as_deref().is_some_and(|p| p.type_name.ends_with("boat") || p.type_name.ends_with("raft") || (p.type_name == "minecraft:shulker" && living) || (p.type_name == "minecraft:happy_ghast" && living && kiln_entity::mob::data(p).is_some_and(kiln_entity::mob::kinds::happy_ghast::can_be_collided_with))), wear }
     }));
     out
 }
