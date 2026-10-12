@@ -660,7 +660,8 @@ fn run3(pieces: &[(Cell, u16)], start: Cell, tap: bool, ticks: i32) -> Option<[i
             level.set_raw(at(c), s, flags::SKIP_ALL_SIDEEFFECTS);
         }
     }
-    let chunks = [(0, 0), (1, 0), (2, 0), (-1, 0), (0, -1), (1, -1), (2, -1), (-1, -1), (0, 1), (1, 1), (2, 1), (-1, 1)];
+    // (no random ticks: the chunk order is empty; every loaded chunk runs the block ticks, events and moving pistons)
+    let chunks: [(i32, i32); 0] = [];
     if tap {
         crate::update::set_block_and_update(&mut level, at(start), d::STONE);
         level.tick(0, &chunks);
