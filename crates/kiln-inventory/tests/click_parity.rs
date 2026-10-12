@@ -195,6 +195,9 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
     }
     inv.selected = seq["selected"].as_u64().unwrap() as usize;
     let mut block = SimpleContainer::from_items(stacks(&seq["block"]));
+    if kind == "lectern" {
+        block.max_stack = 1;
+    }
     block.data = seq["data"].as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect();
     let has_block = !matches!(kind, "inventory" | "crafting" | "stonecutter" | "smithing" | "loom" | "anvil" | "grindstone" | "cartography" | "beacon");
     let mut menu = menu_for(kind, id);

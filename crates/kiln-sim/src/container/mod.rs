@@ -790,9 +790,9 @@ impl kiln_inventory::Container for ContainerBe {
         removed
     }
 
-    /// `JukeboxBlockEntity.getMaxStackSize`: one disc.
+    /// `JukeboxBlockEntity.getMaxStackSize`: one disc (a lectern: one book, `LecternBlockEntity.bookAccess`).
     fn max_stack_size(&self) -> i32 {
-        if matches!(self.kind, BeKind::Jukebox | BeKind::ChiseledBookshelf) { 1 } else { 99 }
+        if matches!(self.kind, BeKind::Jukebox | BeKind::ChiseledBookshelf | BeKind::Lectern) { 1 } else { 99 }
     }
 
     fn set_changed(&mut self) {
