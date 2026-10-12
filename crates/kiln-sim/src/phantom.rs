@@ -321,6 +321,9 @@ impl Player {
         let mut level = PhantomLevel::new(cells, game_time, min_y, fast_lava);
         let (to, on_ground) = (self.pos, self.on_ground);
         // The body stands where its last tick left it, `from` being where the player was put back to.
+        if std::env::var_os("KILN_NO_BODY_AT").is_some() {
+            self.body_at = None;
+        }
         self.pos = self.body_at.take().filter(|(put_back, _)| *put_back == from).map_or(from, |(_, body)| body);
         self.on_ground = was_on_ground;
         let mut e = self.phantom_in(&level);
