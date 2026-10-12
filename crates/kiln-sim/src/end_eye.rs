@@ -53,7 +53,7 @@ fn located_structures() -> Vec<String> {
 /// `EnderEyeItem.use`.
 pub(crate) fn use_item(p: &mut Player, level: &mut RegionLevel, off_hand: bool, spawns: &mut Vec<Spawn>) {
     // Aimed at a frame, the item passes (the click on the block places the eye).
-    if let Some(hit) = crate::use_item::pov_hit(p, &|pos| level.block(pos), crate::use_item::FluidMode::None)
+    if let Some(hit) = crate::use_item::pov_hit(p, &|pos| level.block(pos), &|pos| level.shulker_lid(pos).map(|l| l.shown()), crate::use_item::FluidMode::None)
         && end_portal::is_frame(level.block(hit.pos))
     {
         return;

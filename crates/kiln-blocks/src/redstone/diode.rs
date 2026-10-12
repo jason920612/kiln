@@ -3,7 +3,7 @@
 //! block entity, kept by the level ([`Level::comparator_output`]).
 
 use super::{analog, control_input, signal};
-use crate::behaviour::support::can_support_rigid;
+use crate::behaviour::support::{can_support_rigid_at, can_support_rigid_in};
 use crate::level::{Level, flags, schedule_block_tick};
 use crate::pos::{BlockPos, Direction};
 use crate::state::{self, BlockId};
@@ -119,7 +119,7 @@ fn should_prioritize<L: Level + ?Sized>(level: &L, pos: BlockPos, s: u16) -> boo
 
 /// `RepeaterBlock` / `ComparatorBlock` `updateShape`.
 pub fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Direction, neighbor: u16) -> u16 {
-    if dir == Direction::Down && !can_support_rigid(neighbor) {
+    if dir == Direction::Down && !can_support_rigid_in(level, pos.below(), neighbor) {
         return d::AIR;
     }
     if logic::block_class(s) == BlockClass::RepeaterBlock && dir.axis() != facing(s).axis() {
@@ -199,7 +199,7 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     if !state::same_block(level.block(pos), s) {
         return;
     }
-    if can_support_rigid(level.block(pos.below())) {
+    if can_support_rigid_at(level, pos.below()) {
         check_tick_on_neighbor(level, pos, s);
         return;
     }

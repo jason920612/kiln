@@ -363,7 +363,7 @@ fn differs_horizontally(a: BlockPos, b: BlockPos) -> bool {
 /// `TryFindLand.canStandOn`: an empty collision shape over a block with a sturdy top.
 fn can_stand_on(cx: &Cx, pos: BlockPos, state: u16, ctx: &crate::collision::CollisionContext) -> bool {
     let (shape, _) = crate::collision::collision_shape(state, pos, ctx);
-    shape.is_empty() && crate::physics::is_face_sturdy(cx.level.block(pos.below()), crate::math::Direction::Up)
+    shape.is_empty() && crate::collision::is_face_sturdy_at(cx.level, pos.below(), crate::math::Direction::Up)
 }
 
 /// `TryFindLand.create(range, speed)`: a mob in the water looks for dry land within `range`

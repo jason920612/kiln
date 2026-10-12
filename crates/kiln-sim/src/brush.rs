@@ -48,7 +48,8 @@ fn completion(count: i32) -> i32 {
 /// `BrushItem.useOn`: with a block in view the brush starts being used; the click is consumed either way.
 pub(crate) fn use_on(p: &mut Player, level: &RegionLevel, off_hand: bool) -> bool {
     let block = |pos: BlockPos| level.block(pos);
-    if p.using.is_none() && pov_hit(p, &block, FluidMode::None).is_some() {
+    let lid = |pos: BlockPos| level.shulker_lid(pos).map(|l| l.shown());
+    if p.using.is_none() && pov_hit(p, &block, &lid, FluidMode::None).is_some() {
         let stack = p.in_hand(off_hand).clone();
         p.start_using(off_hand, &stack, USE_DURATION);
     }
@@ -61,7 +62,8 @@ pub(crate) fn use_tick(p: &mut Player, level: &mut RegionLevel, used: i32, spawn
     let Some(off_hand) = p.using.map(|u| u.off_hand) else { return };
     let hit = {
         let block = |pos: BlockPos| level.block(pos);
-        pov_hit(p, &block, FluidMode::None)
+        let lid = |pos: BlockPos| level.shulker_lid(pos).map(|l| l.shown());
+        pov_hit(p, &block, &lid, FluidMode::None)
     };
     let Some(hit) = hit else {
         p.stop_using();

@@ -177,7 +177,7 @@ fn touches_water(level: &dyn EntityLevel, pos: BlockPos) -> bool {
     for d in Direction::ALL {
         let s = level.block(pos.relative(d));
         let water = physics::fluid_state(s).kind.is_water();
-        if (d != Direction::Down || water) && water && !physics::is_face_sturdy(s, d.opposite()) {
+        if (d != Direction::Down || water) && water && !crate::collision::is_face_sturdy_at(level, pos.relative(d), d.opposite()) {
             return true;
         }
     }

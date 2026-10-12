@@ -1,7 +1,7 @@
 //! Rails (`BaseRailBlock`, `RailState`, `RailBlock`, `PoweredRailBlock` for powered and
 //! activator rails, `DetectorRailBlock`).
 
-use super::support::can_support_rigid;
+use super::support::can_support_rigid_at;
 use crate::level::{EntityKind, Level, schedule_block_tick};
 use crate::pos::{BlockPos, Direction};
 use crate::redstone::has_neighbor_signal;
@@ -290,7 +290,7 @@ fn update_dir<L: Level>(level: &mut L, pos: BlockPos, s: u16, always: bool) -> u
 
 /// `BaseRailBlock.shouldBeRemoved`.
 fn should_be_removed<L: Level + ?Sized>(level: &L, pos: BlockPos, shape: Shape) -> bool {
-    let rigid = |p: BlockPos| can_support_rigid(level.block(p));
+    let rigid = |p: BlockPos| can_support_rigid_at(level, p);
     if !rigid(pos.below()) {
         return true;
     }
@@ -443,7 +443,7 @@ fn same_rail_with_power<L: Level + ?Sized>(level: &L, pos: BlockPos, rail: u16, 
 
 /// `DetectorRailBlock.checkPressed`: minecarts on the rail power it.
 fn detector_check<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
-    if !can_support_rigid(level.block(pos.below())) || !state::same_block(level.block(pos), s) {
+    if !can_support_rigid_at(level, pos.below()) || !state::same_block(level.block(pos), s) {
         return;
     }
     let powered = state::get_bool(s, "powered");

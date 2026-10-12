@@ -1,7 +1,7 @@
 //! `canSurvive` and the blocks that pop off when their support goes: vegetation, torches,
 //! carpets, ladders, levers and buttons, diodes, redstone wire, doors and tall plants.
 
-use super::sturdy;
+use super::{sturdy, sturdy_at, sturdy_in};
 use crate::level::Level;
 use crate::pos::{BlockPos, Direction};
 use crate::state;
@@ -22,6 +22,25 @@ pub fn can_support_center(s: u16, dir: Direction) -> bool {
 /// `Block.canSupportRigidBlock` (the block below).
 pub fn can_support_rigid(below: u16) -> bool {
     sturdy(below, Direction::Up, Support::Rigid)
+}
+
+/// `Block.canSupportCenter` of the block at `pos`.
+pub fn can_support_center_at<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direction) -> bool {
+    let s = level.block(pos);
+    if dir == Direction::Down && tags::is(s, "minecraft:unstable_bottom_center") {
+        return false;
+    }
+    sturdy_at(level, pos, dir, Support::Center)
+}
+
+/// `Block.canSupportRigidBlock` of the block at `pos` (the block below).
+pub fn can_support_rigid_at<L: Level + ?Sized>(level: &L, pos: BlockPos) -> bool {
+    sturdy_at(level, pos, Direction::Up, Support::Rigid)
+}
+
+/// [`can_support_rigid_at`] for the state `s` the block at `pos` has (or is about to have).
+pub fn can_support_rigid_in<L: Level + ?Sized>(level: &L, pos: BlockPos, s: u16) -> bool {
+    sturdy_in(level, pos, s, Direction::Up, Support::Rigid)
 }
 
 /// `FaceAttachedHorizontalDirectionalBlock.getConnectedDirection`: the way the block points
@@ -49,10 +68,10 @@ fn may_place_on<L: Level + ?Sized>(level: &L, plant: u16, below: u16, below_pos:
             C::NetherSproutsBlock => tag("minecraft:supports_nether_sprouts"),
             C::MangrovePropaguleBlock => tag("minecraft:supports_mangrove_propagule"),
             C::SeagrassBlock | C::TallSeagrassBlock => {
-                sturdy(below, Direction::Up, Support::Full) && !tag("minecraft:cannot_support_seagrass")
+                sturdy_at(level, below_pos, Direction::Up, Support::Full) && !tag("minecraft:cannot_support_seagrass")
             }
             C::CactusFlowerBlock => {
-                tag("minecraft:support_override_cactus_flower") || sturdy(below, Direction::Up, Support::Center)
+                tag("minecraft:support_override_cactus_flower") || sturdy_at(level, below_pos, Direction::Up, Support::Center)
             }
             C::LilyPadBlock => {
                 let f = logic::fluid(below);
@@ -90,30 +109,30 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
     match logic::block_class(s) {
         C::WallTorchBlock | C::RedstoneWallTorchBlock => {
             let facing = state::get_dir(s, "facing").unwrap_or(Direction::North);
-            sturdy(level.block(pos.relative(facing.opposite())), facing, Support::Full)
+            sturdy_at(level, pos.relative(facing.opposite()), facing, Support::Full)
         }
-        C::TorchBlock | C::RedstoneTorchBlock => can_support_center(below(), Direction::Up),
+        C::TorchBlock | C::RedstoneTorchBlock => can_support_center_at(level, pos.below(), Direction::Up),
         C::LadderBlock => {
             let facing = state::get_dir(s, "facing").unwrap_or(Direction::North);
-            sturdy(level.block(pos.relative(facing.opposite())), facing, Support::Full)
+            sturdy_at(level, pos.relative(facing.opposite()), facing, Support::Full)
         }
         C::CarpetBlock | C::WoolCarpetBlock => !is_air(below()),
-        C::RedstoneWireBlock => wire_can_survive_on(below()),
+        C::RedstoneWireBlock => wire_can_survive_on(level, pos.below()),
         C::RepeaterBlock | C::ComparatorBlock | C::RailBlock | C::PoweredRailBlock | C::DetectorRailBlock => {
-            can_support_rigid(below())
+            can_support_rigid_at(level, pos.below())
         }
         C::LeverBlock | C::ButtonBlock => {
             let dir = attached_direction(s).opposite();
-            sturdy(level.block(pos.relative(dir)), dir.opposite(), Support::Full)
+            sturdy_at(level, pos.relative(dir), dir.opposite(), Support::Full)
         }
         C::DoorBlock | C::WeatheringCopperDoorBlock => {
             if state::get(s, "half") == Some("lower") {
-                sturdy(below(), Direction::Up, Support::Full)
+                sturdy_at(level, pos.below(), Direction::Up, Support::Full)
             } else {
                 state::same_block(below(), s)
             }
         }
-        C::LeafLitterBlock => sturdy(below(), Direction::Up, Support::Full),
+        C::LeafLitterBlock => sturdy_at(level, pos.below(), Direction::Up, Support::Full),
         C::BubbleColumnBlock => super::bubble::can_survive(level, pos),
         C::BellBlock => super::bell::can_survive(level, s, pos),
         C::SnowLayerBlock => crate::weather::snow_can_survive(level, pos),
@@ -125,8 +144,7 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
         C::FrogspawnBlock => super::misc::frogspawn_can_survive(level, pos),
         C::PistonHeadBlock => super::piston::head_can_survive(level, s, pos),
         C::PressurePlateBlock | C::WeightedPressurePlateBlock => {
-            let b = below();
-            can_support_rigid(b) || can_support_center(b, Direction::Up)
+            can_support_rigid_at(level, pos.below()) || can_support_center_at(level, pos.below(), Direction::Up)
         }
         C::MushroomBlock => {
             let b = below();
@@ -151,8 +169,13 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
 }
 
 /// `RedstoneWireBlock.canSurviveOn`.
-pub fn wire_can_survive_on(below: u16) -> bool {
-    sturdy(below, Direction::Up, Support::Full) || state::is(below, d::HOPPER)
+pub fn wire_can_survive_on<L: Level + ?Sized>(level: &L, below: BlockPos) -> bool {
+    wire_can_survive_in(level, below, level.block(below))
+}
+
+/// [`wire_can_survive_on`] for the state `s` the block at `below` has (or is about to have).
+pub fn wire_can_survive_in<L: Level + ?Sized>(level: &L, below: BlockPos, s: u16) -> bool {
+    sturdy_in(level, below, s, Direction::Up, Support::Full) || state::is(s, d::HOPPER)
 }
 
 /// The pop-off rules of `updateShape`: the new state (air when the block breaks), or `None`
@@ -173,8 +196,8 @@ pub fn pop_off<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Directi
         }
         C::CarpetBlock | C::WoolCarpetBlock | C::FrogspawnBlock | C::SnowLayerBlock => breaks(true),
         C::LeverBlock | C::ButtonBlock => breaks(attached_direction(s).opposite() == dir),
-        C::RepeaterBlock => dir == Direction::Down && !can_support_rigid(neighbor),
-        C::RedstoneWireBlock => dir == Direction::Down && !wire_can_survive_on(neighbor),
+        C::RepeaterBlock => dir == Direction::Down && !can_support_rigid_in(level, pos.below(), neighbor),
+        C::RedstoneWireBlock => dir == Direction::Down && !wire_can_survive_in(level, pos.below(), neighbor),
         _ if logic::is_instance(s, C::DoorBlock) => return door_update(level, s, pos, dir, neighbor),
         _ if logic::is_instance(s, C::AbstractBedBlock) => {
             // `AbstractBedBlock.updateShape`: the two halves keep each other.

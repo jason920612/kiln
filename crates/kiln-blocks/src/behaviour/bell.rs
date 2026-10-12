@@ -2,8 +2,8 @@
 //! A click on the body, an arrow, a blast or a redstone pulse rings it; the block entity (the
 //! simulation's) shakes, tells the villagers around and, with raiders near, resonates.
 
-use super::support::can_support_center;
-use super::sturdy;
+use super::support::can_support_center_at;
+use super::{sturdy, sturdy_at};
 use crate::block_events::block_event;
 use crate::level::{Effect, Level, flags};
 use crate::pos::{BlockPos, Direction};
@@ -26,30 +26,30 @@ fn connected_direction(s: u16) -> Direction {
 pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool {
     let dir = connected_direction(s).opposite();
     if dir == Direction::Up {
-        can_support_center(level.block(pos.above()), Direction::Down)
+        can_support_center_at(level, pos.above(), Direction::Down)
     } else {
         // `FaceAttachedHorizontalDirectionalBlock.canAttach`.
-        sturdy(level.block(pos.relative(dir)), dir.opposite(), Support::Full)
+        sturdy_at(level, pos.relative(dir), dir.opposite(), Support::Full)
     }
 }
 
 /// `BellBlock.getStateForPlacement`: `None` where it cannot be put.
 pub fn placement<L: Level + ?Sized>(level: &L, default: u16, pos: BlockPos, face: Direction, horizontal: Direction) -> Option<u16> {
-    let sturdy_at = |p: BlockPos, toward: Direction| sturdy(level.block(p), toward, Support::Full);
+    let face_at = |p: BlockPos, toward: Direction| sturdy_at(level, p, toward, Support::Full);
     if face.axis() == crate::pos::Axis::Y {
         let s = state::set_dir(state::set(default, "attachment", if face == Direction::Down { "ceiling" } else { "floor" }), "facing", horizontal);
         return can_survive(level, s, pos).then_some(s);
     }
     let double = if face.axis() == crate::pos::Axis::X {
-        sturdy_at(pos.relative(Direction::West), Direction::East) && sturdy_at(pos.relative(Direction::East), Direction::West)
+        face_at(pos.relative(Direction::West), Direction::East) && face_at(pos.relative(Direction::East), Direction::West)
     } else {
-        sturdy_at(pos.relative(Direction::North), Direction::South) && sturdy_at(pos.relative(Direction::South), Direction::North)
+        face_at(pos.relative(Direction::North), Direction::South) && face_at(pos.relative(Direction::South), Direction::North)
     };
     let s = state::set(state::set_dir(default, "facing", face.opposite()), "attachment", if double { "double_wall" } else { "single_wall" });
     if can_survive(level, s, pos) {
         return Some(s);
     }
-    let floor = sturdy_at(pos.below(), Direction::Up);
+    let floor = face_at(pos.below(), Direction::Up);
     let s = state::set(s, "attachment", if floor { "floor" } else { "ceiling" });
     can_survive(level, s, pos).then_some(s)
 }

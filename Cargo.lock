@@ -1146,6 +1146,7 @@ dependencies = [
  "kiln-data",
  "kiln-item",
  "kiln-javamath",
+ "kiln-loot",
  "kiln-proto",
  "serde_json",
  "thiserror",

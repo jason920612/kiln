@@ -64,6 +64,12 @@ pub(crate) fn on_still_timeout(m: &MobData) -> bool {
     st(m).still_timeout > 0
 }
 
+/// `HappyGhast.canBeCollidedWith(null)` on the server (what `Level.noCollision` counts): a grown one that is on its still timeout. (Alive is
+/// the caller's.)
+pub fn can_be_collided_with(m: &MobData) -> bool {
+    !m.baby() && on_still_timeout(m)
+}
+
 /// `Mob.isWearingBodyArmor`.
 fn wearing_harness(m: &MobData) -> bool {
     !st(m).body.is_empty()

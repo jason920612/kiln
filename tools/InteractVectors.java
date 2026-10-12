@@ -1955,7 +1955,11 @@ public class InteractVectors {
 
     /** A stone floor at y = 99 (x -4..14, z -6..8), air above, a shulker box at (5, 100, 0) facing `facing`; the player at x = 1.5 unless the case moves it. */
     static Case sh56(String name, String facing) {
-        Case c = new Case("shulker56_" + name).pistons();
+        return shBox("shulker56_" + name, facing);
+    }
+
+    static Case shBox(String fullName, String facing) {
+        Case c = new Case(fullName).pistons();
         // (the sound of the lid draws its pitch from the level's random)
         c.noPitch = true;
         c.pos = new double[] {1.5, 100.0, 0.5};
@@ -2047,6 +2051,32 @@ public class InteractVectors {
         c.step(useOnAt(5, 100, 0, 4, 0, 0.0, 0.5, 0.5));
         for (int i = 0; i < 12; i++) c.step(op("op", "idle"));
         out.add(c);
+    }
+
+    // ---------------------------------------------------------------- wp57: a happy ghast that stays still keeps a shulker box shut
+
+    /**
+     * `HappyGhast.canBeCollidedWith(null)` is `isOnStillTimeout()` for a grown ghast on the server, and `ShulkerBoxBlock.canOpen` asks `Level.noCollision` over the strip the lid
+     * goes through: a happy ghast over the box with a player standing above it (`scanPlayerAboveGhast`) keeps the box shut. The ghast is at the box (its 4 x 4 x 4 body takes in the
+     * strip of the lid), the player over its back (or beside it), the box opened after the ghast has ticked.
+     */
+    static Case ghast57(String name, String nbt, double[] player) {
+        Case c = shBox("ghast57_" + name, "up");
+        c.pos = player;
+        c.cmd("summon minecraft:happy_ghast 5.5 100.0 0.5 " + nbt);
+        for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
+        return cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12);
+    }
+
+    static void ghasts57(List<Case> out) {
+        // the player over the ghast's back: it stays still, the box does not open
+        out.add(ghast57("player_above", "{NoAI:1b,Silent:1b}", new double[] {5.5, 104.5, 0.5}));
+        // nobody over it: it moves as it likes (not at all, with no AI), and is not in the way
+        out.add(ghast57("nobody", "{NoAI:1b,Silent:1b}", new double[] {1.5, 100.0, 0.5}));
+        // a baby is never in the way
+        out.add(ghast57("baby", "{NoAI:1b,Silent:1b,Age:-24000}", new double[] {5.5, 104.5, 0.5}));
+        // the player beside it (out of the box over its back)
+        out.add(ghast57("player_beside", "{NoAI:1b,Silent:1b}", new double[] {8.5, 104.5, 0.5}));
     }
 
     // ---------------------------------------------------------------- wp56: a swimming player's splashes and strokes
@@ -5377,6 +5407,7 @@ public class InteractVectors {
             swims56(all);
             shulkers56(all);
             flyers56(all);
+            ghasts57(all);
             mannequins54(all);
             placeBlockEntities55(all);
             machines55(all);

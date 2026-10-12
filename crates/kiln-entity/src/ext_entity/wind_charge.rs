@@ -112,7 +112,7 @@ impl WindCharge {
         let mut to = from + delta;
         let ctx = e.collision_context();
         let block = clip::traverse_blocks(from, to, |pos| {
-            let (shape, _) = collision::collision_shape(level.block(pos), pos, &ctx);
+            let (shape, _) = collision::collision_shape_at(level, pos, &ctx);
             clip::shape_clip(&shape, from, to, pos).map(|(location, face)| Hit::Block { pos, face, location })
         });
         if let Some(Hit::Block { location, .. }) = block {

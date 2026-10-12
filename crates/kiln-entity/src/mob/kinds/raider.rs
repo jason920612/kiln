@@ -506,39 +506,40 @@ impl CustomGoal for ObtainRaidLeaderBannerGoal {
         let Some(b) = self.banner else { return };
         let Some(item) = level.entity(b) else { return };
         if item.position().distance_to_sqr(e.position()) < 1.414 * 1.414 {
-            pick_up_banner(e, m, level, b);
+            pick_up_item(e, m, level, b);
         }
     }
 }
 
-/// `Raider.pickUpItem` of an ominous banner in an active raid without a leader: the raider
-/// wears it and leads its wave.
-pub fn pick_up_banner(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, item: i32) {
-    let Some(raid) = current_raid(m, level).filter(|r| r.active).cloned() else { return };
-    let wave = raider(m).map_or(0, |r| r.wave);
-    if raid.leader(wave).is_some() {
-        return;
-    }
-    let Some(stack) = level.entity(item).and_then(|i| match &i.kind {
-        EntityKind::Item(d) => Some(d.stack.clone()),
+/// `Raider.pickUpItem` (with `Pillager.pickUpItem` over it): an ominous banner in an active raid without a leader is worn
+/// and its wearer leads the wave; any other item goes to `Mob.pickUpItem`, except that a pillager takes nothing but
+/// banners (its `wantsItem` asks for a white banner, which `BannerItem` has already sent the other way).
+pub fn pick_up_item(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, item: i32) {
+    let Some((stack, thrower)) = level.entity(item).and_then(|i| match &i.kind {
+        EntityKind::Item(d) => Some((d.stack.clone(), d.thrower)),
         _ => None,
     }) else {
         return;
     };
-    if !is_ominous_banner(&stack) {
-        return;
+    let wave = raider(m).map_or(0, |r| r.wave);
+    let raid = current_raid(m, level).filter(|r| r.active).cloned();
+    if let Some(raid) = raid.filter(|r| r.leader(wave).is_none() && is_ominous_banner(&stack)) {
+        let current = m.equipment[HEAD].clone();
+        if !current.is_empty() && ((e.random.next_float() - 0.1f32).max(0.0) as f64) < m.drop_chances[HEAD] as f64 {
+            mob::spawn_at_location(e, level, current);
+        }
+        mob::on_item_pickup(e, m, level, thrower, &stack);
+        m.equipment[HEAD] = stack.clone();
+        mob::sync_equipment_modifiers(m);
+        mob::take_item(e, level, item, stack.count());
+        if let Some(i) = level.entity_mut(item) {
+            i.discard();
+        }
+        set_patrol_leader(m, true);
+        level.emit(Event::Raid(RaidEvent::Leader { raid: raid.id, wave, entity: e.id }));
+    } else if m.kind != MobKind::Pillager || stack.item_name().ends_with("_banner") {
+        mob::pickup::mob_pick_up_item(e, m, level, item);
     }
-    let current = m.equipment[HEAD].clone();
-    if !current.is_empty() && (e.random.next_float() - 0.1).max(0.0) < m.drop_chances[HEAD] {
-        mob::spawn_at_location(e, level, current);
-    }
-    m.equipment[HEAD] = stack;
-    m.drop_chances[HEAD] = 2.0;
-    if let Some(i) = level.entity_mut(item) {
-        i.discard();
-    }
-    set_patrol_leader(m, true);
-    level.emit(Event::Raid(RaidEvent::Leader { raid: raid.id, wave, entity: e.id }));
 }
 
 /// `PathfindToRaidGoal`: a raider away from the village walks toward the raid's center and

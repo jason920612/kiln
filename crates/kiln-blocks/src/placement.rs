@@ -353,7 +353,7 @@ fn wall_hanging_sign_can_place<L: Level + ?Sized>(level: &L, s: u16, pos: BlockP
         if logic::block_class(other) == BlockClass::WallHangingSignBlock {
             state::get_dir(other, "facing").is_some_and(|f| f.axis() == facing.axis())
         } else {
-            crate::behaviour::sturdy(other, toward, kiln_data::block_logic::Support::Full)
+            crate::behaviour::sturdy_at(level, pos.relative(side), toward, kiln_data::block_logic::Support::Full)
         }
     };
     attach(facing.clockwise()) || attach(facing.counter_clockwise())

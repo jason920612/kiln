@@ -94,6 +94,8 @@ pub struct MemoryLevel {
     pub lights: FastMap<BlockPos, (i32, i32)>,
     /// `spawner_blocks_work`.
     pub spawner_blocks_work: bool,
+    /// The shown progress of the lids of the shulker boxes that are not shut.
+    pub lids: FastMap<BlockPos, f32>,
 }
 
 /// Vanilla iterates entity sections by x, then by the packed (z, y) section key.
@@ -140,6 +142,7 @@ impl MemoryLevel {
             spawners: FastMap::default(),
             lights: FastMap::default(),
             spawner_blocks_work: true,
+            lids: FastMap::default(),
         }
     }
 
@@ -288,6 +291,10 @@ impl MemoryLevel {
 }
 
 impl EntityLevel for MemoryLevel {
+    fn shulker_lid(&self, pos: BlockPos) -> Option<f32> {
+        self.lids.get(&pos).copied()
+    }
+
     /// A wandering trader sells one thing (emeralds for a stick): the tests have no trade data.
     fn trade_offers(&mut self, set: &str, _merchant: &crate::level::TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
         use kiln_item::trading::{ItemCost, MerchantOffer};

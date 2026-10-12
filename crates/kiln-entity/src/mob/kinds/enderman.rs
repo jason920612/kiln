@@ -761,8 +761,7 @@ impl CustomGoal for TakeBlock {
         // `level.clip(OUTLINE)`: the first block hit, or the end block on a miss.
         // Approximation: collision shapes stand in for outline shapes.
         let hit = crate::clip::traverse_blocks(from, to, |p| {
-            let s = level.block(p);
-            let (shape, _) = crate::collision::collision_shape(s, p, &crate::collision::CollisionContext::EMPTY);
+            let (shape, _) = crate::collision::collision_shape_at(level, p, &crate::collision::CollisionContext::EMPTY);
             crate::clip::shape_clips(&shape, from, to, p).then_some(p)
         })
         .unwrap_or_else(|| BlockPos::containing(to.x, to.y, to.z));

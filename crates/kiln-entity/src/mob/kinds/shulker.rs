@@ -374,7 +374,7 @@ fn can_stay_at(e: &Entity, m: &MobData, level: &dyn EntityLevel, pos: BlockPos, 
     }
     let opp = face.opposite();
     let n = pos.relative(face);
-    if !level.is_loaded(n) || !crate::physics::is_face_sturdy(level.block(n), opp) {
+    if !level.is_loaded(n) || !crate::collision::is_face_sturdy_at(level, n, opp) {
         return false;
     }
     let b = progress_aabb(scale(m), opp, 1.0, Vec3::new(pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5)).deflate_all(1.0e-6);

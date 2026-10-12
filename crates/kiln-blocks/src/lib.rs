@@ -31,6 +31,8 @@ pub mod fire;
 #[cfg(test)]
 mod block_parity;
 #[cfg(test)]
+mod lid_parity;
+#[cfg(test)]
 mod place_parity;
 #[cfg(test)]
 mod flyer_search;

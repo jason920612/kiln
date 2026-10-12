@@ -176,7 +176,7 @@
 | 告示牌編輯、染色、上蠟、書與筆 | A | 194＋21 | `interact_parity.rs`（`sign_*`、`book_*`）；未放行文字過濾（聊天過濾器）與書的 `resolveBookComponents` | 橫幅與頭顱放置資料仍 D |
 | 合成配方：有形、無形、轉換、特殊、冶煉、高爐、煙燻、營火烹飪、釀造、切石、鍛造 | A | 827／375／33＋全部特殊配方；冶煉類 116 配方；釀造 279 | `crafting_parity.rs`、`single_parity.rs` | 有 4 個配方沒被向量打到 |
 | 配方書顯示與放置 | C | 0 | `recipe_book.rs`、`menus.rs` | 無封包位元組比對 |
-| 物品欄點擊（PICKUP、QUICK_MOVE、PICKUP_ALL、QUICK_CRAFT、SWAP、THROW、CLONE、創造槽、按鈕、關閉、無效封包） | A | 約 74 萬步／31,000 序列 | `click_parity.rs` | 向量只涵蓋 13 種選單，缺鐵砧、砂輪、附魔台、織布機、製圖台、釀造台、信標、商人、講台、合成器 |
+| 物品欄點擊（PICKUP、QUICK_MOVE、PICKUP_ALL、QUICK_CRAFT、SWAP、THROW、CLONE、創造槽、按鈕、關閉、無效封包） | A | 約 74 萬步／31,000 序列 | `click_parity.rs` | 向量涵蓋 20 種選單（原 13 種；wp50 加織布機、wp57 加鐵砧、砂輪、製圖台、釀造台、信標、講台），缺附魔台、商人、合成器 |
 | 選單同步（state id、過期預測、竄改預測） | A | 31,000 序列 | `sync_parity.rs` | – |
 | 中鍵挑選方塊（Pick Block） | A | 79 個 scenario＋35,723 個方塊狀態的挑選表 | `interact_parity.rs`、`pick_table_parity` | 創造模式帶方塊實體資料（Ctrl＋中鍵）、橫幅與裝飾陶罐的圖樣為 D；Bundle 選取、`ContainerSlotStateChanged` 仍被丟棄 |
 | 戰利品：方塊、方塊互動、實體、箱子、釣魚、贈禮、考古、豬布林、剪毛、裝備 | A | 36,336 case／1,445 張表（原版共 1,447） | `vanilla_parity.rs` | `blocks/beacon`、`entities/pillager` 無向量 |
@@ -338,7 +338,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 7 | 玩家打生物、橫掃、重錘 | A（690／690） | `CombatVectors` 目標改成生物 | 完成（wp44-combat） |
 | 8 | 世界初始動物、蜜蜂與海豚等 6 種缺失生物、畫與展示框與盔甲座 | A（wp49 之後） | `MobVectors` 照樣板各加 4–8 個 scenario；存檔用 `entity_persist_check` | 完成（wp49，見 6.3）；mannequin、cushion、ominous_item_spawner 在 wp50 補上（見 6.4） |
 | 9 | 難度、遊戲規則、seed 與 `/op` 持久化；遊戲規則接線 | B（27 項互載；59 條規則 54 條有人讀） | 原版先存、Kiln 載入，反過來再一次 | 完成（wp44-admin） |
-| 10 | 選單點擊向量補鐵砧、砂輪、附魔台、織布機、製圖台、釀造台、信標、商人 | C（織布機已升 A） | `InventoryVectors.java` 選單種類清單擴充 | 織布機在 wp50 完成（1,500 序列）；其餘未做 |
+| 10 | 選單點擊向量補鐵砧、砂輪、附魔台、織布機、製圖台、釀造台、信標、商人 | C（織布機已升 A） | `InventoryVectors.java` 選單種類清單擴充 | 織布機在 wp50 完成（1,500 序列）；wp57 補鐵砧、砂輪、製圖台、釀造台、信標、講台（9,000 序列、217,772 步，見 6.10）；附魔台與商人未做 |
 | 11 | 發射器全部行為、營火烹飪、蜂巢、鐘、講台、合成器、裝飾陶罐 | A（wp49 之後） | `ContainerVectors` 場景 | 完成（wp49，見 6.3）；發射器的刷子對犰狳、剪斷拴繩、豬鞍等在 wp50 補上 |
 | 12 | 地圖與製圖台、探索地圖 | A（wp49 之後） | 需先實作 `MapItemSavedData` | 完成（wp49：`maps_`／`carto_`／`mframe_` 與 `explore` 向量） |
 | 13 | 「moved wrongly」、村莊圍攻、貓生成、選擇器 `level=` | 村莊圍攻與貓生成 C（已實作，無原版向量）／「moved wrongly」A | 現有 `server_move` 物理接線，另錄 `moves50` | 圍攻與貓生成在 wp49 寫完；「moved wrongly」在 wp50 完成（27 個 scenario） |
@@ -522,7 +522,7 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
   （`adventure/spear_many_mobs`）需要玩家蓄力刺中 5 隻會動的生物，InteractVectors 不 tick 生物；`thrown_item_picked_up_by_entity`（`nether/distract_piglin`、`husbandry/uh_oh`）與 `allay_drop_item_on_block`
   需要 tick 生物並記錄玩家的進度，這是 MobVectors 的範圍，而 `mob_parity` 在 kiln-entity 裡沒有進度系統可比對（只能比事件發出的 tick，不比條件）。這 5 個 trigger 的條件判斷有單元測試，
   生物端的事件只有「發出」沒有與原版比對 tick。
-- **村民與襲擊者的非旗幟撿拾**：村民（`Villager.pickUpItem`／`wantsToPickUp`，只撿食物與種子進背包）與襲擊者（`Raider.pickUpItem`、掠奪者的 `wantsItem`）在 Kiln 沒有撿起一般物品的路徑，通用撿拾也跳過它們。 **wp56：村民已做（背包、`pickup56_villager_*` 11 個），襲擊者的非旗幟撿拾仍未做，見 6.9。**
+- **村民與襲擊者的非旗幟撿拾**：村民（`Villager.pickUpItem`／`wantsToPickUp`，只撿食物與種子進背包）與襲擊者（`Raider.pickUpItem`、掠奪者的 `wantsItem`）在 Kiln 沒有撿起一般物品的路徑，通用撿拾也跳過它們。 **wp56：村民已做（背包、`pickup56_villager_*` 11 個），襲擊者的非旗幟撿拾仍未做，見 6.9。wp57：襲擊者已做（`pickup57_raider_*` 21 個），見 6.10。**
 - **撿拾不送 `take_item_entity` 封包**：生物撿起物品時原版送 `ClientboundTakeItemEntityPacket`（客戶端看到物品飛向生物），Kiln 的生物撿拾（包含豬布林）只讓物品消失。 **wp56：已補（通用撿拾、村民、悅靈、狐狸、貓熊、海豚、豬布林、硫磺方塊）。**
 - **cushion 活塞推動、mannequin 落地方塊音效**：**不是 harness 的問題**，缺的是 Kiln 本身（活塞不推實體、沒有方塊 `SoundType` 表）。**wp54 已做，見 6.7。**
 - 命令回饋的 `show_entity` 懸停事件、實體 NBT 的兩處存檔欄位差異（見 6.5）。
@@ -618,11 +618,36 @@ wp55 留下的小缺口，這一輪的做法照舊：**先錄原版，再讓 Kil
 
 **這一輪沒有做的：**
 
-- **襲擊者撿一般物品**（`Raider.pickUpItem` 除了旗幟走 `super`、掠奪者的 `wantsItem` 與 5 格背包）：旗幟撿拾是 Kiln 的 goal，非旗幟的撿拾仍被通用撿拾跳過。沒有向量。
-- **蓋子形狀只用在實體碰撞**：射線與方塊支撐（`getShape` 的其他用途）仍用靜態的整格形狀，開到一半的蓋子（伸出方塊外 0.5 格）不擋射線。
-- **快樂恐魔的 `canBeCollidedWith`**（決定盒子能不能開）只照船與活的 shulker 算；快樂恐魔取決於客戶端／騎乘狀態，沒做。
+- **襲擊者撿一般物品**（`Raider.pickUpItem` 除了旗幟走 `super`、掠奪者的 `wantsItem` 與 5 格背包）：旗幟撿拾是 Kiln 的 goal，非旗幟的撿拾仍被通用撿拾跳過。沒有向量。 **wp57：已做，見 6.10。**
+- **蓋子形狀只用在實體碰撞**：射線與方塊支撐（`getShape` 的其他用途）仍用靜態的整格形狀，開到一半的蓋子（伸出方塊外 0.5 格）不擋射線。 **wp57：已做（射線、視線、方塊支撐），見 6.10。**
+- **快樂恐魔的 `canBeCollidedWith`**（決定盒子能不能開）只照船與活的 shulker 算；快樂恐魔取決於客戶端／騎乘狀態，沒做。 **wp57：已做（伺服器端，`isOnStillTimeout`），見 6.10。**
 - 重播一個出生就在空中的物體（掉落的礦車、盔甲座）比原版多 tick 一次（`summon` 與第一個 tick 在同一個 sim tick 裡），所以這類向量只收站在東西上的；兩個重疊的生物出生時也一樣（互推多一次）。這是重播的對齊問題，不是 Kiln 與原版的差異。
-- 搜尋的範圍：3×3×2 與 4×2×2 只取 1/16 的索引空間（窮舉要數小時）；紅石粉與中繼器只搜了 2×2×2（0 個，要第三排才飛得起來）；更大的盒子、更多零件沒有搜（最小的機器已經找到，更大的多半是它的重複）。
+- 搜尋的範圍：3×3×2 與 4×2×2 只取 1/16 的索引空間（窮舉要數小時）；紅石粉與中繼器只搜了 2×2×2（0 個，要第三排才飛得起來）；更大的盒子、更多零件沒有搜（最小的機器已經找到，更大的多半是它的重複）。 **wp57：3×3×2、4×2×2（兩個黏液塊）、三個黏液塊的 2×2×2 與 3×2×2 已窮舉，其餘取樣，見 6.10。**
+
+### 6.10 wp57（`wp57-corners`）：襲擊者撿物品、shulker 盒蓋的射線／視線／方塊支撐、更大的飛行機器搜尋、快樂恐魔、六種選單的點擊
+
+wp56 留下的最後幾個角落，做法照舊：**先錄原版，再讓 Kiln 對**。向量在 `work/wp57/`（`lid/lid57.jsonl`、`interact/ghast57.jsonl`、`inventory/stations57.jsonl`、`inventory/stations57b.jsonl`、`flyer/`）；
+`tools/parity_suites.py` 新增 `lid57_entity`／`lid57_blocks`／`lid57_sim`、`interact57`、`menus57`；生物向量（`pickup57_raider_*`）併入 `work/m6-mobs2/vectors.jsonl`（原檔備份為 `.pre-wp57`，1,445 行）。
+
+| 項目 | 內容 | 原版向量 | 驗證端 |
+|---|---|---|---|
+| 襲擊者撿一般物品 | `Raider.pickUpItem` 逐行對 javap 後整個移植（`kinds/raider.rs::pick_up_item`）：進行中的襲擊、這一波還沒有隊長、物品與不祥旗幟相同（`ItemStack.matches`：數量也算）→ 戴上頭、舊的頭飾依 `nextFloat() - 0.1` 與掉落機率掉出來、`onItemPickup`、`take`（物品飛向撿的人的封包）、物品消失、`setLeader`、`setPatrolLeader`；否則是 `PatrollingMonster.pickUpItem`＝`Mob.pickUpItem`（`equipItemIfPossible`）。掠奪者（`Pillager.pickUpItem`）：旗幟走襲擊者的，其他物品問 `wantsItem`，而 `wantsItem` 只認白色旗幟（上一步已被 `BannerItem` 分走）——**掠奪者除了旗幟什麼都不撿**。Kiln 之前把六種襲擊者都排在通用撿拾之外（`has_own_pickup`），只有「追旗幟」的 goal 會撿；現在六種都走通用撿拾的迴圈（`CanPickUpLoot` 時，腳下 1×0×1 內的物品）。順手改的三處：(1) 旗幟的撿拾少了 `onItemPickup` 與 `take` 封包；(2) 舊碼把頭的掉落機率設成 2.0，原版**沒有**（`setItemSlot` 不動掉落機率）；(3) 追旗幟的 goal 與腳下撿拾共用同一個函式（原版的 goal 也是呼叫 `Raider.pickUpItem`） | `pickup57_raider_*` 21（衛道士、掠奪者、喚魔者、幻術師、女巫、劫掠獸：頭盔、整疊胸甲、劍換斧與斧換劍、一疊木棍、較差的頭盔、白旗、沒有 `CanPickUpLoot`；掠奪者撿頭盔、劍、箭都不撿，撿旗幟；旗幟換旗幟；喚魔者撿金頭盔與不死圖騰；幻術師的劍與靴；女巫的頭盔與藥水；劫掠獸的頭盔與劍） | `mob_parity` 21／21（`m6-mobs2` 共 1437／1437，568,011 個生物狀態） |
+| shulker 盒蓋：射線、視線與方塊支撐 | 原版的 `ShulkerBoxBlock.getShape` 讀方塊實體：**輪廓、碰撞、視覺形狀都是蓋子的盒子**（伸出方塊外最多 0.5 格）；`getBlockSupportShape` 在 `!isClosed()` 時只剩底牆（`SHAPES_OPEN_SUPPORT[facing.opposite]`，1 像素厚）。wp56 只做了實體碰撞。這一輪：(1) `kiln-entity/src/collision.rs` 的 `collision_shape_at`／`lid_shape_at`／`is_face_sturdy_at`，換進所有用射線的地方：箭、三叉戟、火球、龍火球、煙火、釣竿鉤、羊駝口水、風彈、潛影彈、投射物的通用路徑、生物的視線（`clip_blocks`、尋路的 `Level.clip`、微風、`creaking` 的視覺射線、終界使者、銅傀儡、試煉刷怪磚、矛）、掉落方塊與流體的支撐判斷；(2) 玩家的視線射線（`use_item::clip`，桶、船、刷子、末影之眼）與 kiln-sim 的矛；(3) `kiln-blocks` 的 `Level::shulker_lid`、`sturdy_at`／`sturdy_in`、`can_support_center_at`、`can_support_rigid_at`、`wire_can_survive_in`：火把、蠟燭、燈籠、告示牌、鐵軌、中繼器與比較器、紅石粉、壓力板、門、落葉堆、鐘、拉桿、按鈕、梯子、牆上火把、火、鷹架、混凝土粉都改成問「這個位置的方塊」而不是「這個狀態」。**支撐看的是動畫狀態不是進度**：`OPENING` 進度 0 的第一個 tick 就只剩底牆 | 新工具 `tools/LidVectors.java`：6 個朝向 × 12 個蓋子狀態（`CLOSED`、`OPENING` 0／0.1…0.9、`OPENED`、`CLOSING` 0.9…0.1）= 72 個狀態；每個記錄形狀、碰撞、支撐形狀、18 個 `isFaceSturdy`（6 方向 × FULL／CENTER／RIGID）、286 條射線各用 `COLLIDER` 與 `OUTLINE` 的 `Level.clip`（命中的方塊、面、位置逐位元）共 41,184 個結果；射線包括穿過蓋子伸出的那半格（高度 1.05～1.55）與 160 條斜線 | `lid57_entity`（形狀、碰撞、實體端的支撐、`COLLIDER` 射線）、`lid57_blocks`（FULL／CENTER／RIGID 18 位）、`lid57_sim`（`OUTLINE` 射線）各 72／72 個狀態、0 個差異；**沒有找到 Kiln 的錯**（wp56 的蓋子形狀本來就對，缺的是用它的地方），蓋子關著與打開的射線有 33／286 條不同，所以這些向量確實會抓到沒接線 |
+| 快樂恐魔擋住盒子 | `HappyGhast.canBeCollidedWith(null)`（`Level.noCollision` 問的，伺服器端）＝長大的、活的、`isOnStillTimeout()`（有玩家站在它背上時 `stillTimeout` 設成 10）。`ShulkerBoxBlock.canOpen` 的碰撞檢查多算這一種（`happy_ghast::can_be_collided_with`） | `ghast57` 4：玩家站在背上（盒子打不開，恐魔沒被推）、沒人（盒子打開，恐魔被推高 1.1 格）、幼體、玩家在旁邊（原版與 Kiln 都沒打開） | `interact_parity` 4／4 |
+| 更大的飛行機器搜尋 | 搜尋（`flyer_search_3d`／`flyer_search_extra`，從測試執行檔的副本跑；`tools/Flyer3D.java` 在原版逐個對跑）。**範圍：做完的**（每一項的零件：2 個黏性活塞、2 個觀察者、黏液塊；觀察者背後要碰到活塞或活塞上一格）：3×3×2、兩個黏液塊，16 份全做（wp56 的第 0 份＋這一輪的第 1～15 份）＝24,638,796 個配置，**8 個會飛**；4×2×2、兩個黏液塊，16 份全做＝9,964,944 個，**6 個會飛**；2×2×2、三個黏液塊，全做＝445,824 個，0 個；3×2×2、三個黏液塊，全做＝22,946,112 個，**192 個會飛**。**只做一部分的（取樣，不是窮舉）**：4×2×2、三個黏液塊，16 份中的第 0 份＝22,405,680 個，82 個會飛；3×3×2、三個黏液塊，64 份中的第 0 份（4 執行緒）＝9,218,664 個，2 個會飛；3×2×2 加一個紅石粉或中繼器（觀察者方向不設限），200 份中的第 0 份（4 執行緒）＝15,668,640 個（全空間約 32 億），0 個。**沒做的**：3×3×2 與 4×2×2 的三個黏液塊其餘部分、3×2×2 加紅石粉／中繼器的其餘 199 份（第 1、2 份跑到一半被停掉，不算）、更大的盒子、普通活塞與蜜蜂塊在新盒子裡的組合、紅石粉／中繼器放在 2×2×2 以外的任何形狀（2×2×2 是 wp56 做完的，0 個）。大搜尋在 VM 上被喊停，原因是耗時與價值不成比例：找到的全是已知引擎的平移與鏡像（3×3×2 的 8 個＝x、y 各 2 個位置×南北 2 向；4×2×2 的 6 個＝x 3 個位置×2 向），三個黏液塊的 192／82／2 個是「已知引擎＋第三個黏液塊放在不礙事的地方」與少數觀察者朝向不同的變體。**每個會飛的都送進原版**：8＋4（第 1～15 份；第 0 份的 2 個 wp56 已對過）＋192＋82＋2 個，方向與距離全部相同（60 tick 6 格，向北或向南）；另有不會飛的取樣 5,757（3×3×2）＋2,945（4×2×2）＋11,472（3×2×2 三個黏液塊）個，原版也都不會飛，**0 個差異**。結論不變：Kiln 的活塞、觀察者、黏液塊與原版在搜尋過的空間內逐項一致，沒有找到新設計
+ | `flyer57/` 不收（向量用 wp56 的 `flyer56`，這一輪沒有新機器）；原版對跑的結果在 `work/wp57/flyer/`（`*.out.jsonl`） | `flyer_search`（`#[ignore]`）、`Flyer3D.java`；沒有新的 Kiln 測試 |
+| 六種選單的點擊（鐵砧、砂輪、製圖台、釀造台、信標、講台） | `InventoryVectors.java` 加 `ONLY_KINDS`（逗號分隔的選單種類），原版的 `AnvilMenu`、`GrindstoneMenu`、`CartographyTableMenu`、`BrewingStandMenu`、`BeaconMenu`、`LecternMenu` 各自的物品池（附魔工具與書、有損耗的、有詛咒的、地圖與紙、藥水與材料、信標付款物、書）、鐵砧的玩家等級 0～39；**Kiln 端逐個全過，只抓到一個真錯**：`LecternBlockEntity.getMaxStackSize()` 是 1，Kiln 的講台容器是 99（把一疊東西換進講台的格子時整疊進去；`kiln-sim` 的容器與 `SimpleContainer.max_stack` 現在是 1）。`click_parity` 之前用 `NoWorld`，附魔的問題一律答「不能附魔」，鐵砧的結果與花費全部不同；現在用資料包的附魔定義回答（`DataWorld`，與 `kiln-sim` 的 `SimWorld` 同一套問法）。**harness 的坑**：選單的世界是個空殼（沒有實體管理員、沒有維度類型），砂輪取出時的經驗球、鐵砧取出時的 `getBlockState`、釀造台取出時的進度觸發都會 NPE，所以那三種選單用一個把 NPE 當「世界沒反應」的 `ContainerLevelAccess`（`FAKE_ACCESS`）與一個什麼都不給的 `FakeAdvancements`；信標的付款格與講台的書格是 1，harness 的容器要照真的方塊實體設，講台的資料只有 1 個值 | `menus57`：鐵砧／砂輪／製圖台／釀造台 6,000 序列＋信標／講台 3,000 序列，共 9,000 序列、217,772 步（`click_parity` 其餘 31,000 序列、743,196 步、織布機 1,500 序列不變，現在也走 `DataWorld`，仍全過） | `click_parity`（`KILN_PARITY=1`）9,000／9,000 序列、0 失敗 |
+
+驗證（VM，release，`--no-fail-fast`）：workspace 測試在沒有與有 `KILN_DATAPACK` 時各 162 個測試目標全綠（各 1,213 個測試，+3：三個 `lid_parity`）；`tools/parity_suites.py` 全部 102 次執行 exit 0：`mob_parity` **1437**／1437
+（wp56 是 1416，+21 `pickup57_raider_*`；568,011 個生物狀態逐項相同）、`lid57_entity`／`lid57_blocks`／`lid57_sim` 72／72、`interact57-ghast57` 4／4、`menus57` 9,000 序列／217,772 步、`click_parity` 31,000 序列／743,196 步、
+`loom_clicks` 1,500 序列、`interact56`、`interact54-*`、`interact55-*`、`place55`（19440 個環境、2,532,144 次放置、2,516,611 次相同，其餘 7 個是遊戲管理員方塊）、`support55`、`block_parity`、`determinism` 6／6、`plugin_compat` 皆過。
+
+**這一輪沒有做的：**
+
+- **進行中的襲擊裡撿不祥旗幟**（`Raider.pickUpItem` 的第一個分支）：重播的 harness 沒有襲擊，所以只有沒有襲擊時的分支（落到 `Mob.pickUpItem`）有原版向量；第一個分支是照 javap 逐行移植，襲擊本身的測試（`raids.rs`）沒變、全過。
+- **蓋子形狀還沒接的地方**：藤蔓與多面方塊的 `canAttachTo`（原版另外與碰撞形狀的面做 OR，那一半要整套 `VoxelShape.getFaceShape` 的移植）、石筍、懸掛告示牌的依附、海泡菜、移動中的活塞方塊的射線形狀；柵欄、玻璃片、牆不用（shulker 盒本來就是 `isExceptionForConnection`）。
+- **附魔台、商人、合成器的選單點擊**：附魔台的選項要世界給的書架數與玩家的附魔亂數，商人要 `Merchant`，合成器的格子在方塊實體裡；講台的翻頁與取書按鈕是方塊實體的事（`interact_parity` 的 `lectern`，wp49）。
+- 快樂恐魔的客戶端那條（`isClientSide && entity instanceof Player` 的站上去）：伺服器不問。
 
 ## 7. 重跑
 
@@ -683,6 +708,14 @@ java ... tools/MobVectors.java work/wp56/mobs/p.jsonl "give_allay|stacks_allay|t
 java ... tools/Flyer3D.java <flyer_search_3d 的 JSON 行> <out.jsonl>                  # 立體搜尋找到的機器在原版對跑；FLYER_FLOOR=1 在機器下面鋪地板（原版不會飛）
 # 搜尋（kiln-blocks）：cargo test --release -p kiln-blocks --lib -- --ignored --exact flyer_search::flyer_search_3d --nocapture
 #   環境變數 KILN_FLYER_X／_Y／_Z（盒子）、_SLIMES／_HONEY、_ANY_PISTON、_PARTS／_PART（取 1/N）、_SAMPLE（印出不會飛的取樣給 Flyer3D）；flyer_search_extra 加紅石粉與中繼器
+# wp57 的向量（Kiln 端：parity_suites 的 lid57_*／interact57／menus57；生物向量併入 work/m6-mobs2/vectors.jsonl，備份 .pre-wp57）
+java ... tools/MobVectors.java work/wp57/mobs/pickup57.jsonl "pickup57_"                  # 襲擊者撿物品（併入前先備份）
+java ... tools/LidVectors.java work/wp57/lid/lid57.jsonl                                  # shulker 盒蓋：形狀、支撐、射線（cwd 是 scratch 伺服器目錄）
+java ... tools/InteractVectors.java work/wp57/interact/ghast57.jsonl ghast57              # 快樂恐魔擋住盒子
+ONLY_KINDS=anvil,grindstone,cartography,brewing java ... tools/InventoryVectors.java clicks work/wp57/inventory/stations57.jsonl 6000 57
+ONLY_KINDS=beacon,lectern java ... tools/InventoryVectors.java clicks work/wp57/inventory/stations57b.jsonl 3000 58
+# 大搜尋要從測試執行檔的副本跑（換分支不會動到它）；每個 PART 是一個行程，執行緒數要固定（PART 的剩餘類由 執行緒數×PARTS 決定）：
+#   KILN_FLYER_THREADS=8 KILN_FLYER_X=3 KILN_FLYER_Y=3 KILN_FLYER_Z=2 KILN_FLYER_PART=<0..15> KILN_FLYER_PARTS=16 ./kiln_blocks-<hash> --ignored --exact flyer_search::flyer_search_3d --nocapture
 # 外掛 1.0 guest：sh crates/kiln-plugin-host/tests/fixtures/compat10/build.sh（要 wasm32-wasip2 target）；cargo test -p kiln-plugin-host --test api_compat --test wit_freeze
 # 與原版互載、指令對跑
 python tools/admin_check.py --kiln-exe target/release/kiln

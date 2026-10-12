@@ -60,7 +60,7 @@ pub(crate) fn use_bucket(p: &mut Player, level: &mut RegionLevel, off_hand: bool
     let fluid = if content == Content::Empty { FluidMode::SourceOnly } else { FluidMode::None };
     let hit = {
         let lv = &*level;
-        pov_hit(p, &|pos| lv.block(pos), fluid)
+        pov_hit(p, &|pos| lv.block(pos), &|pos| lv.shulker_lid(pos).map(|l| l.shown()), fluid)
     };
     let Some(hit) = hit else { return };
     let (pos, dir) = (hit.pos, hit.face);

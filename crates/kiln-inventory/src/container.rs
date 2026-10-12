@@ -71,15 +71,17 @@ pub struct SimpleContainer {
     pub changes: u64,
     /// `ContainerData` values (4 for furnaces, 2 for brewing stands...).
     pub data: Vec<i32>,
+    /// `getMaxStackSize()` (99; a lectern holds one book).
+    pub max_stack: i32,
 }
 
 impl SimpleContainer {
     pub fn new(size: usize) -> Self {
-        SimpleContainer { items: vec![ItemStack::empty(); size], changes: 0, data: Vec::new() }
+        SimpleContainer { items: vec![ItemStack::empty(); size], changes: 0, data: Vec::new(), max_stack: 99 }
     }
 
     pub fn from_items(items: Vec<ItemStack>) -> Self {
-        SimpleContainer { items, changes: 0, data: Vec::new() }
+        SimpleContainer { items, changes: 0, data: Vec::new(), max_stack: 99 }
     }
 }
 
@@ -117,6 +119,10 @@ impl Container for SimpleContainer {
 
     fn set_changed(&mut self) {
         self.changes += 1;
+    }
+
+    fn max_stack_size(&self) -> i32 {
+        self.max_stack
     }
 
     fn data(&self, index: usize) -> i32 {

@@ -1,7 +1,8 @@
 //! `Mob.aiStep`'s pick up of items (`canPickUpLoot`, reach 1 x 0 x 1), `Mob.wantsToPickUp`, `pickUpItem`
 //! and `equipItemIfPossible` for the types that have no `pickUpItem` of their own: zombies, skeletons, wolves and whatever
-//! else a command, a dispenser or a spawner sets `CanPickUpLoot` on. The types with their own (piglins, foxes, pandas,
-//! dolphins, allays, villagers, raiders, sulfur cubes) keep theirs in `kinds`.
+//! else a command, a dispenser or a spawner sets `CanPickUpLoot` on, and the raiders, whose `Raider.pickUpItem` (the
+//! ominous banner of an active raid) falls through to `Mob.pickUpItem`. The types with their own (piglins, foxes,
+//! pandas, dolphins, allays, villagers, sulfur cubes) keep theirs in `kinds`.
 
 use super::dispense::{self, Facts};
 use super::{MAINHAND, MobData, MobKind, kinds};
@@ -19,7 +20,7 @@ pub fn has_own_pickup(kind: MobKind) -> bool {
     use MobKind::*;
     matches!(
         kind,
-        Fox | Panda | Dolphin | Allay | Piglin | PiglinBrute | SulfurCube | Pillager | Vindicator | Evoker | Ravager | Witch | Illusioner
+        Fox | Panda | Dolphin | Allay | Piglin | PiglinBrute | SulfurCube
     )
 }
 
@@ -229,19 +230,30 @@ pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             kinds::villager::pick_up_item(e, m, level, id);
             continue;
         }
-        // `Mob.pickUpItem`.
-        let (whole, thrower) = (d.stack.clone(), d.thrower);
-        let taken = equip_item_if_possible(e, m, level, whole.clone());
-        if taken.is_empty() {
+        // `Raider.pickUpItem` (the ominous banner of a raid), over `Mob.pickUpItem`.
+        if kinds::raider::is_raider(m.kind) {
+            kinds::raider::pick_up_item(e, m, level, id);
             continue;
         }
-        super::on_item_pickup(e, m, level, thrower, &whole);
-        super::take_item(e, level, id, taken.count());
-        let Some(item) = level.entity_mut(id) else { continue };
-        let EntityKind::Item(d) = &mut item.kind else { continue };
-        d.stack.shrink(taken.count());
-        if d.stack.is_empty() {
-            item.discard();
-        }
+        mob_pick_up_item(e, m, level, id);
+    }
+}
+
+/// `Mob.pickUpItem`: put on what can be, and take that much from the item entity.
+pub fn mob_pick_up_item(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, id: i32) {
+    let Some(item) = level.entity(id) else { return };
+    let EntityKind::Item(d) = &item.kind else { return };
+    let (whole, thrower) = (d.stack.clone(), d.thrower);
+    let taken = equip_item_if_possible(e, m, level, whole.clone());
+    if taken.is_empty() {
+        return;
+    }
+    super::on_item_pickup(e, m, level, thrower, &whole);
+    super::take_item(e, level, id, taken.count());
+    let Some(item) = level.entity_mut(id) else { return };
+    let EntityKind::Item(d) = &mut item.kind else { return };
+    d.stack.shrink(taken.count());
+    if d.stack.is_empty() {
+        item.discard();
     }
 }

@@ -63,7 +63,7 @@ fn item_parity() {
                 assert_eq!(ours_to, to, "view vector");
                 let fluid = if v["source_only"].as_bool().unwrap() { FluidMode::SourceOnly } else { FluidMode::None };
                 let block = |p: kiln_blocks::BlockPos| blocks.get(&(p.x, p.y, p.z)).copied().unwrap_or(kiln_data::blocks::default_state::AIR);
-                let hit = clip(from, to, &block, fluid);
+                let hit = clip(from, to, &block, &|_| None, fluid);
                 let ours = hit.map(|h| (vec![h.pos.x as i64, h.pos.y as i64, h.pos.z as i64, h.face as i64], h.location));
                 let theirs = v["hit"].as_array().map(|a| {
                     let l = vec_of(&v["location"]);

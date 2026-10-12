@@ -137,7 +137,7 @@ fn point_behind(e: &mut Entity, level: &dyn EntityLevel, t: &Living) -> Vec3 {
 /// `Level.clip(ClipContext(from, to, COLLIDER, NONE))`: where a block is hit, if one is.
 fn clip_hit(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> Option<Vec3> {
     crate::clip::traverse_blocks(from, to, |p| {
-        let (shape, _) = crate::collision::collision_shape(level.block(p), p, &crate::collision::CollisionContext::EMPTY);
+        let (shape, _) = crate::collision::collision_shape_at(level, p, &crate::collision::CollisionContext::EMPTY);
         crate::clip::shape_clip(&shape, from, to, p).map(|(loc, _)| loc)
     })
 }

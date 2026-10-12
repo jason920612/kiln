@@ -259,7 +259,7 @@ impl EntityExt for Trident {
             let to = start + v;
             let ctx = e.collision_context();
             let block = clip::traverse_blocks(start, to, |pos| {
-                let (shape, _) = collision::collision_shape(level.block(pos), pos, &ctx);
+                let (shape, _) = collision::collision_shape_at(level, pos, &ctx);
                 clip::shape_clip(&shape, start, to, pos).map(|(location, face)| (pos, face, location))
             });
             self.step_move_and_hit(e, level, start, to, block);

@@ -183,6 +183,11 @@ pub trait Level {
     /// Per-level behaviour state: the update queue, block events, torch burnout history.
     fn data(&mut self) -> &mut LevelData;
 
+    /// The lid of the shulker box at `pos` while it is not at rest (its block entity's animation); `None`: a closed box.
+    fn shulker_lid(&self, _pos: BlockPos) -> Option<crate::behaviour::shulker::Lid> {
+        None
+    }
+
     fn rules(&self) -> &Rules;
 
     /// `LevelReader.getRawBrightness`: max of block light and sky light minus `sky_darken`.
