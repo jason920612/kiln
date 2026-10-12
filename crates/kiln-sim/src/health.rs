@@ -1170,6 +1170,28 @@ mod tests {
     }
 
     #[test]
+    fn mob_death_message_carries_its_arguments() {
+        let source = Source {
+            cause: Cause::Entity(DamageKind::MobAttack),
+            attacker: Some(Attacker::mob(5, "minecraft:spider", [0.0; 3])),
+            direct: None,
+            weapon: None,
+            position: None,
+        };
+        let message = source.death_message("KilnTest", None);
+        let Tag::Compound(fields) = &message else { panic!("{message:?}") };
+        let with = fields.iter().find(|(k, _)| k == "with").map(|(_, v)| v);
+        let Some(Tag::List(args)) = with else { panic!("no arguments: {message:?}") };
+        assert_eq!(args.len(), 2, "{message:?}");
+        if let Some(dir) = std::env::var_os("KILN_DUMP_DIR") {
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut out = bytes::BytesMut::new();
+            message.write_network(&mut out);
+            std::fs::write(std::path::Path::new(&dir).join("death_message.bin"), &out).unwrap();
+        }
+    }
+
+    #[test]
     fn damage_type_tags() {
         let id = |n: &str| kiln_data::synced_id("minecraft:damage_type", n).unwrap();
         assert!(damage_type_tag(id("minecraft:fall"), "minecraft:bypasses_armor"));
