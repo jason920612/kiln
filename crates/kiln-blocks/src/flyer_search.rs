@@ -913,7 +913,7 @@ fn flyer_riders() {
                                 format!("[{},{},{},\"{}{}\"]", c.0, c.1, c.2, b.name, extra)
                             })
                             .collect();
-                        println!("JSON {{\"pieces\":[{}],\"start\":[2,1,1],\"tap\":true,\"move\":[0,0,-6],\"open_honey\":{open:?}}}", json.join(","));
+                        println!("JSON {{\"pieces\":[{}],\"start\":[2,1,1],\"tap\":true,\"move\":[0,0,-6],\"open_honey\":[{}]}}", json.join(","), open.iter().map(|c| format!("[{},{},{}]", c.0, c.1, c.2)).collect::<Vec<_>>().join(","));
                     }
                 }
             });
