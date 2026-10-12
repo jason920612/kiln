@@ -719,7 +719,6 @@ fn run3(pieces: &[(Cell, u16)], start: Cell, tap: bool, ticks: i32) -> Option<[i
     }
     None
 }
-}
 
 #[test]
 #[ignore]
