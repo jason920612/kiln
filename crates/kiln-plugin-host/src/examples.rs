@@ -95,8 +95,10 @@ pub fn load(id: &str, extra_config: &str) -> Result<(Manifest, Vec<u8>)> {
 /// A plugin directory named `name` (under the examples' build directory) with the examples
 /// `ids` (all when empty), `extra` config appended per id.
 pub fn custom_dir(name: &str, ids: &[&str], extra: &[(&str, &str)]) -> Result<PathBuf> {
+    // (one directory per call: tests of one binary run in parallel, and a shared name had one of them clear it under the other)
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let built = build()?;
-    let out = built.with_file_name(name);
+    let out = built.with_file_name(format!("{name}-{}-{}", std::process::id(), CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     let _ = std::fs::remove_dir_all(&out);
     for entry in std::fs::read_dir(&built)? {
         let entry = entry?;
