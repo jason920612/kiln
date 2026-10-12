@@ -247,6 +247,39 @@ public class ClientCtl {
                         return "ERR " + e;
                     }
                 });
+            case "offers": // the trades of the open merchant screen
+                return onMain(() -> {
+                    JsonArray arr = new JsonArray();
+                    if (mc.gui.screen() instanceof AbstractContainerScreen<?> c && c.getMenu() instanceof net.minecraft.world.inventory.MerchantMenu m) {
+                        int i = 0;
+                        for (var of : m.getOffers()) {
+                            JsonObject e = new JsonObject();
+                            e.addProperty("i", i++);
+                            e.addProperty("a", id(of.getCostA()) + " x" + of.getCostA().getCount());
+                            e.addProperty("b", of.getCostB().isEmpty() ? "" : id(of.getCostB()) + " x" + of.getCostB().getCount());
+                            e.addProperty("r", id(of.getResult()) + " x" + of.getResult().getCount());
+                            e.addProperty("uses", of.getUses());
+                            e.addProperty("max", of.getMaxUses());
+                            e.addProperty("xp", of.getXp());
+                            e.addProperty("oos", of.isOutOfStock());
+                            arr.add(e);
+                        }
+                    }
+                    return arr.toString();
+                });
+            case "selecttrade": // selecttrade I: pick trade I as the trade button does (moves the cost items in)
+                return onMain(() -> {
+                    if (mc.gui.screen() instanceof AbstractContainerScreen<?> c && c.getMenu() instanceof net.minecraft.world.inventory.MerchantMenu m) {
+                        int i = Integer.parseInt(a[1]);
+                        m.setSelectionHint(i);
+                        m.tryMoveItems(i);
+                        mc.getConnection().send(new net.minecraft.network.protocol.game.ServerboundSelectTradePacket(i));
+                        return "ok";
+                    }
+                    return "ERR no merchant screen";
+                });
+            case "item": // item SLOT: full component string of an inventory slot
+                return onMain(() -> mc.player.getInventory().getItem(Integer.parseInt(a[1])).toString());
             case "block": // block X Y Z
                 return onMain(() -> mc.level.getBlockState(new BlockPos(Integer.parseInt(a[1]), Integer.parseInt(a[2]), Integer.parseInt(a[3]))).toString());
             case "find": { // find SUBSTRING RADIUS [MAX]: block positions near the player whose id contains SUBSTRING
@@ -367,6 +400,17 @@ public class ClientCtl {
         o.addProperty("gameTime", mc.level.getGameTime());
         o.addProperty("clock", mc.level.getOverworldClockTime());
         o.addProperty("selected", p.getInventory().getSelectedSlot());
+        JsonArray fx = new JsonArray();
+        for (var ef : p.getActiveEffects()) {
+            JsonObject e = new JsonObject();
+            e.addProperty("id", ef.getEffect().getRegisteredName());
+            e.addProperty("amp", ef.getAmplifier());
+            e.addProperty("ticks", ef.getDuration());
+            fx.add(e);
+        }
+        o.add("effects", fx);
+        o.addProperty("xp", p.totalExperience);
+        o.addProperty("armor", p.getArmorValue());
         JsonArray inv = new JsonArray();
         for (int i = 0; i < 41; i++) {
             ItemStack s = p.getInventory().getItem(i);
@@ -399,17 +443,37 @@ public class ClientCtl {
         }
         JsonArray ents = new JsonArray();
         double r2 = (double) entityRange * entityRange;
-        for (Entity en : mc.level.entitiesForRendering()) {
-            if (en == p || en.distanceToSqr(p) > r2 || ents.size() >= 60) {
-                continue;
+        int items = 0;
+        for (int pass = 0; pass < 2; pass++) { // living things and other entities first, then dropped items
+            for (Entity en : mc.level.entitiesForRendering()) {
+                boolean isItem = en instanceof net.minecraft.world.entity.item.ItemEntity;
+                if (en == p || en.distanceToSqr(p) > r2 || isItem != (pass == 1) || ents.size() >= 140 || (isItem && items++ >= 60)) {
+                    continue;
+                }
+                JsonObject e = new JsonObject();
+                e.addProperty("t", BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath());
+                e.addProperty("id", en.getId());
+                e.addProperty("x", en.getX());
+                e.addProperty("y", en.getY());
+                e.addProperty("z", en.getZ());
+                if (en instanceof net.minecraft.world.entity.item.ItemEntity ie) {
+                    e.addProperty("item", id(ie.getItem()));
+                    e.addProperty("n", ie.getItem().getCount());
+                } else if (en instanceof net.minecraft.world.entity.LivingEntity le) {
+                    e.addProperty("hp", le.getHealth());
+                    if (le.isBaby()) {
+                        e.addProperty("baby", true);
+                    }
+                    if (en instanceof net.minecraft.world.entity.npc.villager.Villager v) {
+                        e.addProperty("prof", BuiltInRegistries.VILLAGER_PROFESSION.getKey(v.getVillagerData().profession().value()).getPath());
+                        e.addProperty("lvl", v.getVillagerData().level());
+                    }
+                }
+                if (en.hasCustomName()) {
+                    e.addProperty("name", en.getCustomName().getString());
+                }
+                ents.add(e);
             }
-            JsonObject e = new JsonObject();
-            e.addProperty("t", BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath());
-            e.addProperty("id", en.getId());
-            e.addProperty("x", en.getX());
-            e.addProperty("y", en.getY());
-            e.addProperty("z", en.getZ());
-            ents.add(e);
         }
         o.add("entities", ents);
         if (mc.gui.screen() instanceof AbstractContainerScreen<?> c) {

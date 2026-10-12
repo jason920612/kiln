@@ -351,6 +351,9 @@ pub(crate) struct DeathContext {
     /// Whoever dealt the damage (`damage_source_properties`' `source_entity`): its type and the
     /// components entity predicates match (a frog's variant).
     pub attacker: Option<AttackerView>,
+    /// The dying mob's own components `entity_properties` of `this` match (a chicken's variant
+    /// decides the colour of its egg).
+    pub components: Vec<kiln_item::Component>,
 }
 
 /// The killer as a `source_entity` predicate sees it.
@@ -419,6 +422,7 @@ impl kiln_loot::LootContext for DeathContext {
                 let (raid, captain) = self.raider.unwrap_or((false, false));
                 self.raider.is_some() && has_raid.is_none_or(|h| h == raid) && is_captain.is_none_or(|c| c == captain)
             }
+            P::Components(cs) => cs.iter().all(|c| self.components.contains(c)),
             P::Flags(f) if f.is_baby.is_some() => f.is_baby == Some(self.baby) && {
                 let mut f2 = f.clone();
                 f2.is_baby = None;

@@ -2889,6 +2889,7 @@ pub(crate) fn interact_mob(
             weapon: Some(stack.clone()),
             raider: None,
             attacker: None,
+            components: kiln_entity::mob::data(&phys).map(kiln_entity::mob::variant_components).unwrap_or_default(),
         };
         let seed = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_6561);
         let mut k = 0u64;
@@ -3337,6 +3338,7 @@ fn carry_out(
                     Some((r.raid.is_some(), r.patrol_leader && m.drop_chances[kiln_entity::mob::HEAD] >= 2.0))
                 }),
                 attacker: attacker_view,
+                components: kiln_entity::mob::data(phys).map(kiln_entity::mob::variant_components).unwrap_or_default(),
             };
             let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174);
             for (k, stack) in crate::mobs::roll(&loot, &table, &ctx, seed).into_iter().enumerate() {
@@ -3382,8 +3384,8 @@ fn carry_out(
                 }
             }
         }
-        Event::GiftLoot { entity: id, table, pos } => loot_drop(env, spawns, id, table, pos, n, 0.0),
-        Event::ShearLoot { entity: id, table, pos } => loot_drop(env, spawns, id, &table, pos, n, 1.0),
+        Event::GiftLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, table, pos, n, 0.0),
+        Event::ShearLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, &table, pos, n, 1.0),
         // `ThrownEnderpearl.onHit`: its player goes to where the pearl was at the start of the
         // tick, takes 5 `ender_pearl` damage and hears the teleport.
         Event::ProjectileHit { projectile, projectile_type: "minecraft:ender_pearl", owner: Some(owner), .. } => {
@@ -3507,10 +3509,11 @@ fn carry_out(
 }
 
 /// A gift or shearing loot table dropped at `pos` (`y_off` above it).
-fn loot_drop(env: &blocks::BlockEnv, spawns: &mut Vec<Spawn>, id: i32, table: &str, pos: Vec3, n: usize, y_off: f64) {
+fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, id: i32, table: &str, pos: Vec3, n: usize, y_off: f64) {
     let Some(loot) = env.loot.clone() else { return };
+    let phys = list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| list[i].phys.as_deref());
     let ctx = crate::mobs::DeathContext {
-        type_name: "minecraft:chicken",
+        type_name: phys.map_or("minecraft:chicken", |e| e.type_name),
         origin: arr(pos),
         on_fire: false,
         baby: false,
@@ -3519,6 +3522,7 @@ fn loot_drop(env: &blocks::BlockEnv, spawns: &mut Vec<Spawn>, id: i32, table: &s
         weapon: None,
         raider: None,
         attacker: None,
+        components: phys.and_then(kiln_entity::mob::data).map(kiln_entity::mob::variant_components).unwrap_or_default(),
     };
     let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6966 ^ n as u64);
     for (k, stack) in crate::mobs::roll(&loot, table, &ctx, seed).into_iter().enumerate() {
