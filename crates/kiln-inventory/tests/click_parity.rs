@@ -92,7 +92,10 @@ fn out_eq(a: &Out, b: &Out) -> bool {
 fn show_out(o: &Out) -> String {
     match o {
         Out::SetSlot(c, s, i, x) => format!("set_slot({c},{s},{i},{})", show(x)),
-        Out::SetContent(c, s, _, x) => format!("set_content({c},{s},..,{})", show(x)),
+        Out::SetContent(c, s, items, x) => {
+            let shown: Vec<String> = items.iter().enumerate().filter(|(_, i)| !i.is_empty()).map(|(n, i)| format!("{n}:{}", show(i))).collect();
+            format!("set_content({c},{s},[{}],{})", shown.join(" "), show(x))
+        }
         Out::SetCursor(x) => format!("set_cursor({})", show(x)),
         Out::SetData(c, i, v) => format!("set_data({c},{i},{v})"),
         Out::SetPlayerInventory(i, x) => format!("set_player_inventory({i},{})", show(x)),
