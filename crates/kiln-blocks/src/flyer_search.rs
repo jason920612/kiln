@@ -755,13 +755,15 @@ fn flyer_search_3d() {
                     }
                     let pos = |i: usize| cells[at[i]];
                     for (o0, o1) in (0..36).map(|v| (v % 6, v / 6)) {
-                        // an observer's pulse goes to the block behind it: a piston must be there
+                        // an observer's pulse goes to the block behind it: a piston must be there (or the cell above one: quasi-connectivity)
                         let back = |o: usize, dir: usize| {
                             let c = pos(o);
                             (c.0 - DIRS[dir].1, c.1 - DIRS[dir].2, c.2 - DIRS[dir].3)
                         };
                         let (b0, b1) = (back(2, o0), back(3, o1));
-                        if ![pos(0), pos(1)].contains(&b0) || ![pos(0), pos(1)].contains(&b1) {
+                        // (a piston reads the signals around it and, "quasi-connected", around the cell above it)
+                        let reaches = |b: Cell| [pos(0), pos(1)].iter().any(|p| b == *p || b == (p.0, p.1 + 1, p.2));
+                        if !reaches(b0) || !reaches(b1) {
                             continue;
                         }
                         for pk in 0..(if sticky_only { 36 } else { 144 }) {
