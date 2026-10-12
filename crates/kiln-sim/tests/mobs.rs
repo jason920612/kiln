@@ -88,6 +88,25 @@ fn zombies_attack_survival_players_at_night() {
     assert!(w.health() < 20.0, "the zombie hit the player (health {})", w.health());
 }
 
+/// A mob's blow credits the mob in the death message (`death.attack.mob` with the victim and
+/// the attacker as arguments; without them the client shows `%1$s was slain by %2$s`).
+#[test]
+fn a_zombie_kill_names_the_zombie_in_the_death_message() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode survival Hunter");
+    w.console("damage Hunter 19 minecraft:generic");
+    w.ticks(2);
+    *w.clients[0].stats.log.lock().unwrap() = Some(Vec::new());
+    w.summon("minecraft:zombie", [2.0, 0.0, 0.0], "{PersistenceRequired:1b}");
+    w.ticks(200);
+    assert!(w.health() <= 0.0 || w.sim.health(1).is_none_or(|h| h.0 <= 0.0), "the zombie killed the player");
+    let packets = w.clients[0].stats.log.lock().unwrap().take().unwrap();
+    let has = |needle: &[u8]| packets.iter().any(|p| p.windows(needle.len()).any(|w| w == needle));
+    assert!(has(b"death.attack.mob"), "a death message");
+    assert!(has(b"entity.minecraft.zombie"), "naming the zombie");
+}
+
 #[test]
 fn creative_players_are_ignored() {
     let mut w = World::new();

@@ -2294,6 +2294,7 @@ fn process_pending_kills(sim: &mut SimLevel) {
         }
         let Some(mut phys) = sim.list[i].phys.take() else { continue };
         (sim.current, sim.seeds) = (phys.id, 0x6b69_6c6c);
+        sim.current_info = Some((phys.type_name, arr(phys.position())));
         sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
         sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time ^ 0x6b69_6c6c, phys.id);
         for (kind, amount, attacker) in std::mem::take(&mut phys.pending_hurts) {
@@ -2325,6 +2326,7 @@ fn tick_new_passenger(sim: &mut SimLevel, id: i32, vehicle: usize) {
         return;
     }
     (sim.current, sim.seeds) = (phys.id, 0);
+    sim.current_info = Some((phys.type_name, arr(phys.position())));
     sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
     sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, phys.id);
     phys.common_tick();
@@ -2353,6 +2355,7 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     e.age += 1;
     let Some(mut phys) = e.phys.take() else { return };
     (sim.current, sim.seeds) = (phys.id, 0);
+    sim.current_info = Some((phys.type_name, arr(phys.position())));
     sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
     sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, phys.id);
     // `Mob.checkDespawn` runs before the tick, against the nearest player (regions are
