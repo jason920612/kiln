@@ -10,20 +10,19 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent.parent
-WORK = ROOT / "work"
-SERVER = "test@192.168.1.169"
+# Runs on the VM next to the server (~/wp58) and the real client (Xvfb :99, ~/mc-client).
+HOME = Path.home()
+SHOTS = HOME / "wp58" / "shots"
 
 
 def server(cmd):
-    """Run a console command on the wp58 server (VM)."""
-    subprocess.run(["ssh", "-o", "BatchMode=yes", SERVER, f"echo '{cmd}' > ~/wp58/console"], check=True)
+    """Run a console command on the wp58 server (its console is the fifo ~/wp58/console)."""
+    with open(HOME / "wp58" / "console", "w") as f:
+        f.write(cmd + chr(10))
 
 
-def server_log(n=40, pattern="-v 'chunk totals\|mspt mean'"):
-    out = subprocess.run(["ssh", "-o", "BatchMode=yes", SERVER, f"grep {pattern} ~/wp58/server.log | tail -{n}"],
-                         capture_output=True, text=True).stdout
-    return out
+def server_log(n=40, pattern="-v 'chunk totals|mspt mean'"):
+    return subprocess.run(f"grep {pattern} ~/wp58/server.log | tail -{n}", shell=True, capture_output=True, text=True).stdout
 
 
 class C:
@@ -160,181 +159,9 @@ C.mine = _mine
 C.near = _near
 
 
-def shot(pid, name):
-    """PrintWindow screenshot of the game window to work/wp58/<name>.png."""
-    sys.path.insert(0, str(ROOT / "tools"))
-    import wp58_ctl
-    h = wp58_ctl.hwnd_of(pid)
-    out = WORK / "wp58" / f"{name}.png"
-    wp58_ctl.screenshot(h, str(out))
+def shot(name):
+    """Screenshot of the Xvfb display (the client's own virtual screen) to ~/wp58/shots/<name>.png."""
+    SHOTS.mkdir(parents=True, exist_ok=True)
+    out = SHOTS / f"{name}.png"
+    subprocess.run(["import", "-display", ":99", "-window", "root", str(out)], check=True)
     return out
-
-
-def _collect(self, rng=8, timeout=25):
-    """Walk over dropped items within rng blocks until none is left."""
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        st = self.state(rng)
-        items = [e for e in st["entities"] if e["t"] == "item"]
-        if not items:
-            return True
-        e = min(items, key=lambda e: (e["x"] - st["x"]) ** 2 + (e["z"] - st["z"]) ** 2)
-        self.walk_to(e["x"], e["z"], timeout=4, tol=0.4)
-        time.sleep(0.2)
-    return False
-
-
-C.collect = _collect
-
-
-def _screen(self):
-    return self.state(0).get("screen")
-
-
-def _open_inv(self):
-    if self.screen() != "InventoryScreen":
-        self.key("e")
-        time.sleep(0.4)
-    return self.state(0)
-
-
-def _close(self):
-    for _ in range(3):
-        if self.screen() is None:
-            return
-        self.key("esc")
-        time.sleep(0.3)
-
-
-def _pinv_slots(slots, menu="CraftingMenu"):
-    """Menu slot indices of the player's inventory part (27 main + 9 hotbar) of a menu slot list."""
-    n = len(slots)
-    off = 1 if menu == "InventoryMenu" else 0  # the inventory menu has the offhand slot at the end
-    return n - 36 - off, n - off
-
-
-def _craft(self, grid, times=1, width=3, result=0, first=1, table=False):
-    """grid: dict {cell_index(0-based, row-major in `width`): item id}. Put `times` of each
-    ingredient in its cell, shift-click the result, close the screen."""
-    st = self.state(0)
-    slots = st["slots"]
-    lo, hi = _pinv_slots(slots, st.get('menu'))
-    # prefer the hotbar/main inventory slot holding the item
-    for cell, item in grid.items():
-        for _ in range(times):
-            src = next(s for s in slots[lo:hi] if s["id"] == item and s["n"] > 0)
-            self.guiclick(src["i"], "left")
-            self.guiclick(first + cell, "right")
-            self.guiclick(src["i"], "left")
-            st = self.state(0)
-            slots = st["slots"]
-    time.sleep(0.3)
-    self.guiclick(result, "left", shift=True, wait=0.4)
-    self.close()
-
-
-C.screen = _screen
-C.open_inv = _open_inv
-C.close = _close
-C.craft = _craft
-
-
-SHAPES = {
-    # name: (width, rows)  rows are strings of letters, letters map via ingredients
-}
-
-
-def _select(self, item):
-    """Put `item` in the selected hotbar slot (swapping it in from the main inventory if needed)."""
-    st = self.state(0)
-    for e in st["inv"]:
-        if e["id"] == item and e["slot"] < 9:
-            self.hotbar(e["slot"] + 1)
-            time.sleep(0.15)
-            return True
-    for e in st["inv"]:
-        if e["id"] == item:
-            self.open_inv()
-            sel = st["selected"]
-            # menu slots: main inventory 9-35 are the same indices; hotbar slot k is menu slot 36+k
-            self.guiclick(e["slot"], "left")
-            self.guiclick(36 + sel, "left")
-            self.guiclick(e["slot"], "left")
-            self.close()
-            return True
-    return False
-
-
-def _aim(self, x, y, z, fx=0.5, fy=0.5, fz=0.5, wait=0.25):
-    self.lookat(x + fx, y + fy, z + fz)
-    time.sleep(wait)
-    return self.state(0).get("hit")
-
-
-def _use_on(self, x, y, z, face_offset=(0.5, 0.5, 0.5), button="right"):
-    h = self.aim(x, y, z, *face_offset)
-    self.mouse(button, "tap")
-    time.sleep(0.25)
-    return h
-
-
-def _place(self, item, x, y, z, face="up"):
-    """Place `item` against the face of block (x, y, z): aim at the face's centre."""
-    self.select(item)
-    off = {"up": (0.5, 0.95, 0.5), "north": (0.5, 0.5, 0.05), "south": (0.5, 0.5, 0.95),
-           "east": (0.95, 0.5, 0.5), "west": (0.05, 0.5, 0.5), "down": (0.5, 0.05, 0.5)}[face]
-    return self.use_on(x, y, z, off)
-
-
-C.select = _select
-C.aim = _aim
-C.use_on = _use_on
-C.place = _place
-
-
-P = "minecraft:oak_planks"
-S = "minecraft:stick"
-
-
-def grid(rows, key):
-    """rows: list of strings (3 chars each, ' ' empty); key: {char: item}. -> {cell: item}"""
-    out = {}
-    for r, row in enumerate(rows):
-        for q, ch in enumerate(row):
-            if ch != " ":
-                out[r * 3 + q] = key[ch]
-    return out
-
-
-def _craft_table(self, table, rows, key, times=1):
-    """Open the crafting table at `table` (x, y, z) if no table screen is open, craft a 3x3 recipe."""
-    if self.screen() != "CraftingScreen":
-        self.close()
-        self.use_on(*table)
-        time.sleep(0.6)
-    assert self.screen() == "CraftingScreen", self.screen()
-    self.craft(grid(rows, key), times=times, width=3, first=1)
-
-
-C.craft_table = _craft_table
-
-
-def _fight(self, eid, timeout=20, reach=3.0):
-    """Face entity `eid` and hit it (about every 0.6 s, a full cooldown without a weapon) until it is gone."""
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        st = self.state(10)
-        e = next((e for e in st["entities"] if e["id"] == eid), None)
-        if e is None:
-            return True
-        d = math.hypot(e["x"] - st["x"], e["z"] - st["z"])
-        if d > reach:
-            self.walk_to(e["x"], e["z"], timeout=1.5, tol=reach - 0.5)
-        self.lookat(e["x"], e["y"] + 0.6, e["z"])
-        time.sleep(0.08)
-        self.mouse("left", "tap")
-        time.sleep(0.55)
-    return False
-
-
-C.fight = _fight
