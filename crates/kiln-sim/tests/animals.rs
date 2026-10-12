@@ -133,7 +133,7 @@ fn a_chicken_lays_the_egg_of_its_variant() {
         ));
         w.ticks(12);
         let stacks = w.sim.item_stacks();
-        assert!(stacks.iter().any(|s| s.item().name() == egg), "a {variant} chicken lays {egg}: {stacks:?}");
+        assert!(stacks.iter().any(|s| kiln_item::registry::ITEM.name(s.item()) == Some(egg)), "a {variant} chicken lays {egg}: {:?}", stacks.iter().map(|s| kiln_item::registry::ITEM.name(s.item())).collect::<Vec<_>>());
         w.run("kill @e[type=minecraft:chicken]");
         w.ticks(2);
     }
