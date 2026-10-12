@@ -1,13 +1,14 @@
 """Run on the VM: install the Linux 26.3 client files under ~/mc-client from the version json
-(next to this script as 26.3.json) and the asset index (34.json): jar, libraries (Linux rules),
+(Mojang data, kept out of git: work/wp58/26.3.json, or the path in KILN_CLIENT_VERSION_JSON) and the asset index (34.json): jar, libraries (Linux rules),
 asset objects. Everything comes from Mojang's own download URLs, the same ones the launcher uses."""
 import hashlib, json, os, sys, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 here = Path(__file__).resolve().parent
+version_json = Path(os.environ.get("KILN_CLIENT_VERSION_JSON", here.parent.parent / "work" / "wp58" / "26.3.json"))
 root = Path.home() / "mc-client"
-v = json.loads((here / "26.3.json").read_text())
+v = json.loads(version_json.read_text())
 
 
 def fetch(url, dest, sha1=None):
@@ -40,7 +41,7 @@ jobs = []
 c = v["downloads"]["client"]
 jobs.append((c["url"], root / "versions/26.3/26.3.jar", c["sha1"]))
 (root / "versions/26.3").mkdir(parents=True, exist_ok=True)
-(root / "versions/26.3/26.3.json").write_text((here / "26.3.json").read_text())
+(root / "versions/26.3/26.3.json").write_text(version_json.read_text())
 cp = []
 for lib in v["libraries"]:
     if not allowed(lib.get("rules")):
