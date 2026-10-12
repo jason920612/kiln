@@ -1957,6 +1957,12 @@ public class InteractVectors {
                 out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
             }
         }
+        // ---- sunk into the lid's strip (a thing whose feet are in the box)
+        for (String type : new String[] {"pig", "armor_stand", "minecart", "villager", "slime"}) {
+            c = sh56("sunk_" + type, "up");
+            c.cmd(summon54(type, 5.5, 100.8, 0.5));
+            out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+        }
         // ---- several things at once on the lid
         c = sh56("up_crowd", "up");
         // (what overlaps on the lid is not pushable: two mobs that overlap push each other by the ticks before the first row, which the replay counts differently)
