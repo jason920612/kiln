@@ -8,7 +8,7 @@ mod common;
 
 use common::{same, show, stack, stacks, unhex};
 use kiln_inventory::click::{ContainerClick, handle_container_button_click, handle_container_click, handle_set_creative_slot};
-use kiln_inventory::{Effect, Env, FurnaceKind, Menu, NoWorld, PlayerFlags, PlayerInventory, SimpleContainer};
+use kiln_inventory::{Effect, Env, FurnaceKind, Menu, NoWorld, PlayerFlags, PlayerInventory, SimpleContainer, World};
 use kiln_item::ItemStack;
 use serde_json::Value as Json;
 
@@ -194,7 +194,15 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
     let has_block = !matches!(kind, "inventory" | "crafting" | "stonecutter" | "smithing" | "loom" | "anvil" | "grindstone" | "cartography");
     let mut menu = menu_for(kind, id);
     let flags = PlayerFlags { creative, infinite_materials: creative, xp_level: seq.get("xp_level").and_then(Json::as_i64).unwrap_or(0) as i32, ..Default::default() };
-    let mut world = NoWorld;
+    let mut no_world = NoWorld;
+    let mut data_world;
+    let world: &mut dyn World = match enchantments() {
+        Some(loot) => {
+            data_world = DataWorld { loot };
+            &mut data_world
+        }
+        None => &mut no_world,
+    };
     let mut out = Vec::new();
     macro_rules! env {
         () => {
@@ -203,7 +211,7 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
                 block: if has_block { Some(&mut block) } else { None },
                 player: flags,
                 rules,
-                world: &mut world,
+                world: &mut *world,
                 out: &mut out,
             }
         };
@@ -254,4 +262,50 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
         compare_state(&step["state"], &menu, &inv, &block, items).map_err(|e| format!("step {k} ({what}):\n  {e}"))?;
     }
     Ok(())
+}
+
+/// The enchantment definitions of the datapack (`KILN_DATAPACK`, else `<work>/generated`): the anvil asks them what an item takes and what a level costs.
+fn enchantments() -> Option<&'static kiln_loot::LootData> {
+    static LOOT: std::sync::OnceLock<Option<kiln_loot::LootData>> = std::sync::OnceLock::new();
+    LOOT.get_or_init(|| {
+        let dir = std::env::var_os("KILN_DATAPACK").map(std::path::PathBuf::from).unwrap_or_else(|| common::work().join("generated"));
+        kiln_loot::LootData::load(&dir).ok()
+    })
+    .as_ref()
+}
+
+/// What the server's menus ask of the world, for the stations that depend on enchantments (anvil, grindstone), as `kiln-sim` answers.
+struct DataWorld {
+    loot: &'static kiln_loot::LootData,
+}
+
+impl DataWorld {
+    fn enchantment(&self, id: i32) -> Option<&kiln_loot::enchant::Enchantment> {
+        self.loot.enchantment(id)
+    }
+}
+
+impl World for DataWorld {
+    fn enchantment_can_enchant(&self, enchantment: i32, stack: &ItemStack) -> bool {
+        self.enchantment(enchantment).is_some_and(|e| e.can_enchant(stack))
+    }
+
+    fn enchantments_compatible(&self, a: i32, b: i32) -> bool {
+        match (self.enchantment(a), self.enchantment(b)) {
+            (Some(x), Some(y)) => kiln_loot::enchant::compatible(x, y),
+            _ => a != b,
+        }
+    }
+
+    fn enchantment_max_level(&self, enchantment: i32) -> i32 {
+        self.enchantment(enchantment).map_or(1, |e| e.max_level)
+    }
+
+    fn enchantment_anvil_cost(&self, enchantment: i32) -> i32 {
+        self.enchantment(enchantment).map_or(1, |e| e.anvil_cost)
+    }
+
+    fn enchantment_min_cost(&self, enchantment: i32, level: i32) -> i32 {
+        self.enchantment(enchantment).map_or(0, |e| e.min_cost.calculate(level))
+    }
 }

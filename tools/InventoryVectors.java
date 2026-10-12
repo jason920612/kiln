@@ -253,6 +253,19 @@ public class InventoryVectors {
 
     static net.minecraft.server.PlayerAdvancements FAKE_ADVANCEMENTS;
 
+    // The level of the sessions is a shell (no entity manager, no dimension type): what a station does to the world (experience orbs from a grindstone, the anvil wearing)
+    // finds nothing to work with, which is nothing the menus compare.
+    static final ContainerLevelAccess FAKE_ACCESS = new ContainerLevelAccess() {
+        @Override
+        public <T> java.util.Optional<T> evaluate(java.util.function.BiFunction<net.minecraft.world.level.Level, BlockPos, T> action) {
+            try {
+                return java.util.Optional.ofNullable(action.apply(LEVEL, BlockPos.ZERO));
+            } catch (NullPointerException e) {
+                return java.util.Optional.empty();
+            }
+        }
+    };
+
     static class FakePlayer extends ServerPlayer {
         GameType mode;
         List<String> sink;
@@ -587,9 +600,9 @@ public class InventoryVectors {
             case "stonecutter" -> new StonecutterMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
             case "smithing" -> new SmithingMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
             case "loom" -> new LoomMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
-            case "anvil" -> new AnvilMenu(id, s.inv, ContainerLevelAccess.NULL);
-            case "grindstone" -> new GrindstoneMenu(id, s.inv, ContainerLevelAccess.NULL);
-            case "cartography" -> new CartographyTableMenu(id, s.inv, ContainerLevelAccess.NULL);
+            case "anvil" -> new AnvilMenu(id, s.inv, FAKE_ACCESS);
+            case "grindstone" -> new GrindstoneMenu(id, s.inv, FAKE_ACCESS);
+            case "cartography" -> new CartographyTableMenu(id, s.inv, FAKE_ACCESS);
             case "brewing" -> new BrewingStandMenu(id, s.inv, s.block, s.data);
             default -> throw new IllegalArgumentException(s.kind);
         };
