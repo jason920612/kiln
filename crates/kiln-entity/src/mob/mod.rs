@@ -1791,6 +1791,11 @@ pub fn on_item_pickup(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, thro
     level.emit(Event::Criterion { player: player.id, criterion: crate::level::Criterion::ThrownItemPickedUp { item: stack.clone(), entity } });
 }
 
+/// `LivingEntity.take(entity, amount)`: the picked up item entity flies to `e`.
+pub fn take_item(e: &Entity, level: &mut dyn EntityLevel, item: i32, amount: i32) {
+    level.emit(Event::TakeItem { item, collector: e.id, amount });
+}
+
 pub fn is_alive(e: &Entity, m: &MobData) -> bool {
     !e.is_removed() && m.health > 0.0
 }

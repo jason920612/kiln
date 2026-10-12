@@ -630,6 +630,7 @@ impl Kind for SulfurCube {
                     }
                 }
                 mob::on_item_pickup(e, m, level, thrower, &whole);
+                mob::take_item(e, level, id, one.count());
                 set_body(m, one);
                 sound(e, level, "minecraft:entity.sulfur_cube.absorb", 1.0, 1.0);
             }

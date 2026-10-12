@@ -678,6 +678,7 @@ impl RegionWork<'_> {
         }
         if self.entities.list.is_empty() && self.blocks.hearts.is_empty() && (self.players.is_empty() || (env.blocks.spawn_table.is_none() && self.blocks.spawners.is_empty())) {
             self.tick_pistons(env, ticking_now);
+            self.tick_lids(env, ticking_now);
             self.tick_block_entities(env, ticking_now);
             return;
         }
@@ -710,6 +711,7 @@ impl RegionWork<'_> {
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
         self.tick_pistons(env, ticking_now);
+        self.tick_lids(env, ticking_now);
         self.tick_block_entities(env, ticking_now);
     }
 
@@ -721,13 +723,41 @@ impl RegionWork<'_> {
         }
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
-        let pushes: Vec<crate::entities::piston::Push> = {
+        let pushes: Vec<crate::entities::piston::Pushed> = {
             let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
             blocks::tick_pistons(&mut level, ticking);
             let mut pushes = Vec::new();
             level.out.effects.retain(|(_, effect)| match effect {
                 kiln_blocks::Effect::PistonMove { pos, piston, progress } => {
-                    pushes.push(crate::entities::piston::Push { pos: *pos, piston: *piston, progress: *progress });
+                    pushes.push(crate::entities::piston::Pushed::Piston(crate::entities::piston::Push { pos: *pos, piston: *piston, progress: *progress }));
+                    false
+                }
+                _ => true,
+            });
+            pushes
+        };
+        if !pushes.is_empty() && (!self.entities.list.is_empty() || !self.players.is_empty()) {
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            crate::entities::piston::push(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &pushes);
+        }
+        blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+    }
+
+    /// `Level.tickBlockEntities` for the shulker boxes whose lid is opening: each lid that rises pushes what is in
+    /// its way (`ShulkerBoxBlockEntity.moveCollidedEntities`), after the moving pistons.
+    fn tick_lids(&mut self, env: &Env, ticking: &Ticking) {
+        if self.blocks.data.pistons.lids.is_empty() {
+            return;
+        }
+        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        let mut out = BlockOut::default();
+        let pushes: Vec<crate::entities::piston::Pushed> = {
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            blocks::tick_lids(&mut level, ticking);
+            let mut pushes = Vec::new();
+            level.out.effects.retain(|(_, effect)| match effect {
+                kiln_blocks::Effect::ShulkerLid { pos, facing, progress_old, progress } => {
+                    pushes.push(crate::entities::piston::Pushed::Lid(crate::entities::piston::LidPush { pos: *pos, facing: *facing, progress_old: *progress_old, progress: *progress }));
                     false
                 }
                 _ => true,
@@ -1667,6 +1697,7 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
         player_source: None,
         hanging: None,
         cushion: false,
+        collides: false,
         wear: None,
     };
     let origin = [at.x as f64, at.y as f64, at.z as f64];

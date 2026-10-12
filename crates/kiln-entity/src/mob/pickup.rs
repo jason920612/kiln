@@ -19,7 +19,7 @@ pub fn has_own_pickup(kind: MobKind) -> bool {
     use MobKind::*;
     matches!(
         kind,
-        Fox | Panda | Dolphin | Allay | Piglin | PiglinBrute | Villager | SulfurCube | Pillager | Vindicator | Evoker | Ravager | Witch | Illusioner
+        Fox | Panda | Dolphin | Allay | Piglin | PiglinBrute | SulfurCube | Pillager | Vindicator | Evoker | Ravager | Witch | Illusioner
     )
 }
 
@@ -53,6 +53,8 @@ fn can_hold_item(e: &Entity, m: &MobData, stack: &ItemStack) -> bool {
 fn wants_to_pick_up(e: &Entity, m: &MobData, stack: &ItemStack) -> bool {
     use MobKind::*;
     match m.kind {
+        // `Villager.wantsToPickUp`: what villagers pick up and what their trade wants, with room for it.
+        Villager => kinds::villager::wants_to_pick_up(m, stack),
         // `ZombifiedPiglin.wantsToPickUp`: whatever it can hold.
         ZombifiedPiglin => can_hold_item(e, m, stack),
         // `Drowned.wantsToPickUp` over `Zombie.wantsToPickUp`.
@@ -222,6 +224,11 @@ pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if item.is_removed() || d.stack.is_empty() || d.pickup_delay > 0 || !wants_to_pick_up(e, m, &d.stack) {
             continue;
         }
+        // `Villager.pickUpItem`: `InventoryCarrier.pickUpItem`, into the villager's own inventory.
+        if m.kind == MobKind::Villager {
+            kinds::villager::pick_up_item(e, m, level, id);
+            continue;
+        }
         // `Mob.pickUpItem`.
         let (whole, thrower) = (d.stack.clone(), d.thrower);
         let taken = equip_item_if_possible(e, m, level, whole.clone());
@@ -229,6 +236,7 @@ pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             continue;
         }
         super::on_item_pickup(e, m, level, thrower, &whole);
+        super::take_item(e, level, id, taken.count());
         let Some(item) = level.entity_mut(id) else { continue };
         let EntityKind::Item(d) = &mut item.kind else { continue };
         d.stack.shrink(taken.count());

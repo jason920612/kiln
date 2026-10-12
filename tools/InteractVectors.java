@@ -224,6 +224,9 @@ public class InteractVectors {
         /** wp54: the case is left out when the observer heard nothing (the item could not be placed). */
         boolean dropIfSilent;
 
+        /** wp56: the connection's tick of the player (`tickPlayer`: its `doTick`, then the snap back to where the client says it is) follows every step. */
+        boolean ticksPlayer;
+
         Case observer(double x, double y, double z) {
             observer = new double[] {x, y, z};
             return this;
@@ -1893,6 +1896,229 @@ public class InteractVectors {
             c.dropIfSilent = true;
             out.add(c);
         }
+    }
+
+    // ---------------------------------------------------------------- wp56: a flying machine with passengers
+
+    /**
+     * The flying machine `flyer_search_3d` of kiln-blocks found (and `tools/Flyer3D.java` confirmed in vanilla): two sticky pistons, two slime blocks and two observers in 2 x 2 x 2,
+     * which fly north 6 blocks in 60 ticks once a block is put beside the east observer and taken away. Cells are (x, y, z) from `(ox, 100, oz)`; `extra` are the blocks of
+     * `riders` (honey for the passengers to stand on): (x, y, z, block).
+     */
+    static Case flyer56(String name, int[][] extra, double[] pos, String... summons) {
+        Case c = new Case("flyer56_" + name).pistons();
+        c.noPitch = true;
+        c.pos = pos;
+        int ox = 6, oz = 5;
+        c.cmd("fill -4 99 -16 14 99 8 minecraft:stone").cmd("fill -4 100 -16 14 110 8 minecraft:air");
+        String[][] engine = {
+                {"0", "0", "1", "minecraft:sticky_piston[facing=north,extended=false]"}, {"1", "0", "0", "minecraft:sticky_piston[facing=south,extended=false]"},
+                {"0", "0", "0", "minecraft:slime_block"}, {"1", "0", "1", "minecraft:slime_block"}};
+        // (no updates while it is put together; the observers last, nothing beside them)
+        for (String[] e : engine) c.cmd("setblock " + (ox + Integer.parseInt(e[0])) + " " + (103 + Integer.parseInt(e[1])) + " " + (oz + Integer.parseInt(e[2])) + " " + e[3] + " strict");
+        for (int[] x : extra) c.cmd("setblock " + (ox + x[0]) + " " + (103 + x[1]) + " " + (oz + x[2]) + " " + (x[3] == 1 ? "minecraft:honey_block" : "minecraft:slime_block") + " strict");
+        c.cmd("setblock " + ox + " 104 " + oz + " minecraft:observer[facing=west,powered=false] strict");
+        c.cmd("setblock " + (ox + 1) + " 104 " + (oz + 1) + " minecraft:observer[facing=east,powered=false] strict");
+        for (String s : summons) c.cmd(s);
+        for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
+        // a stone put beside the east observer and taken away again
+        c.step(op("op", "command", "command", "setblock " + (ox + 2) + " 104 " + (oz + 1) + " minecraft:stone"));
+        c.step(op("op", "command", "command", "setblock " + (ox + 2) + " 104 " + (oz + 1) + " minecraft:air"));
+        for (int i = 0; i < 108; i++) c.step(op("op", "idle"));
+        return c;
+    }
+
+    static void flyers56(List<Case> out) {
+        int[][] none = {};
+        // the machine alone: where its blocks are, tick by tick (watched along its way)
+        Case c = flyer56("bare", none, new double[] {1.5, 100.0, 0.5});
+        for (int x = 5; x <= 9; x++)
+            for (int y = 103; y <= 105; y++)
+                for (int z = -8; z <= 7; z++) c.watch(x, y, z);
+        out.add(c);
+        // a honey block in front of the east observer's row (top layer), with a pig, a villager and a player on it; and two honey blocks
+        int[][][] variants = {{{1, 1, 0, 1}}, {{0, 1, -1, 1}}, {{0, 1, -1, 1}, {1, 1, -1, 1}}};
+        String[] names = {"honey_over_piston", "honey_front", "honey_front2"};
+        for (int v = 0; v < variants.length; v++) {
+            int[] h = variants[v][0];
+            double hx = 6 + h[0] + 0.5, hy = 103 + h[1] + 0.9375, hz = 5 + h[2] + 0.5;
+            out.add(flyer56(names[v] + "_pig", variants[v], new double[] {1.5, 100.0, 0.5}, summon54("pig", hx, hy, hz)));
+            out.add(flyer56(names[v] + "_villager", variants[v], new double[] {1.5, 100.0, 0.5}, summon54("villager", hx, hy, hz)));
+            out.add(flyer56(names[v] + "_player", variants[v], new double[] {hx, hy, hz}));
+        }
+        // a bare piston top (nothing holds a rider there) and a slime block in the machine's way (a rider on a slime block that the machine drags along)
+        out.add(flyer56("piston_top_pig", none, new double[] {1.5, 100.0, 0.5}, summon54("pig", 6.5, 104.0, 6.5)));
+        out.add(flyer56("slime_front_player", new int[][] {{0, 0, -1, 0}}, new double[] {6.5, 104.0, 4.5}));
+    }
+
+    // ---------------------------------------------------------------- wp56: the lid of a shulker box pushes what is in its way
+
+    /** A stone floor at y = 99 (x -4..14, z -6..8), air above, a shulker box at (5, 100, 0) facing `facing`; the player at x = 1.5 unless the case moves it. */
+    static Case sh56(String name, String facing) {
+        Case c = new Case("shulker56_" + name).pistons();
+        // (the sound of the lid draws its pitch from the level's random)
+        c.noPitch = true;
+        c.pos = new double[] {1.5, 100.0, 0.5};
+        c.cmd("fill -4 99 -6 14 99 8 minecraft:stone").cmd("fill -4 100 -6 14 108 8 minecraft:air").cmd("setblock 5 100 0 minecraft:shulker_box[facing=" + facing + "]");
+        return c;
+    }
+
+    /** The player opens the box by a click on its `face` at the cursor, `open` ticks later closes the menu, `close` ticks later the case ends. */
+    static Case cycle56(Case c, int face, double cx, double cy, double cz, int open, int close) {
+        c.step(useOnAt(5, 100, 0, face, 0, cx, cy, cz));
+        for (int i = 0; i < open; i++) c.step(op("op", "idle"));
+        c.step(op("op", "menu_close"));
+        for (int i = 0; i < close; i++) c.step(op("op", "idle"));
+        return c;
+    }
+
+    static void shulkers56(List<Case> out) {
+        Case c;
+        // ---- a box facing up with something standing on its lid
+        for (String type : ENTS54) {
+            // (an item that ends up in the lid moves out of it by its own random, which the replay does not share)
+            if (type.equals("item")) continue;
+            c = sh56("up_" + type, "up");
+            c.cmd(summon54(type, 5.5, 101.0, 0.5));
+            out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+            // (a thing at the edge of the lid, half over the box)
+            c = sh56("up_edge_" + type, "up");
+            c.cmd(summon54(type, 5.9, 101.0, 0.8));
+            out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+        }
+        // ---- the lid opens sideways: what stands in front of it is pushed that way
+        for (String facing : new String[] {"east", "north", "south", "west", "down"}) {
+            for (String type : new String[] {"pig", "item", "armor_stand"}) {
+                c = sh56(facing + "_" + type, facing);
+                // (what stands where the lid goes: a block's width in front of the box)
+                double[] at = switch (facing) {
+                    case "east" -> new double[] {6.3, 100.0, 0.5};
+                    case "west" -> new double[] {4.7, 100.0, 0.5};
+                    case "north" -> new double[] {5.5, 100.0, -0.7};
+                    case "south" -> new double[] {5.5, 100.0, 1.7};
+                    default -> new double[] {5.5, 99.2, 0.5};
+                };
+                if (facing.equals("down")) {
+                    // (the floor under it would stop the lid: open air under the box)
+                    c.cmd("fill 3 99 -2 7 99 2 minecraft:air").cmd("fill 3 98 -2 7 98 2 minecraft:stone");
+                    at = new double[] {5.5, 99.0, 0.5};
+                }
+                c.cmd(summon54(type, at[0], at[1], at[2]));
+                // the click: from the west side of the box (its west face), on a box that faces up or west the lid is not in the way of the click
+                out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+            }
+        }
+        // ---- sunk into the lid's strip (a thing whose feet are in the box)
+        // (not what falls: the replay ticks such a thing once more before the first row)
+        for (String type : new String[] {"pig", "villager", "slime", "cow"}) {
+            c = sh56("sunk_" + type, "up");
+            c.cmd(summon54(type, 5.5, 100.8, 0.5));
+            out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+        }
+        // ---- several things at once on the lid
+        c = sh56("up_crowd", "up");
+        // (what overlaps on the lid is not pushable: two mobs that overlap push each other by the ticks before the first row, which the replay counts differently)
+        c.cmd(summon54("villager", 5.75, 101.0, 0.75)).cmd(summon54("armor_stand", 5.3, 101.0, 0.3)).cmd(summon54("chicken", 5.9, 101.0, 0.1));
+        out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+        // ---- the player on the lid, and the player beside it
+        c = sh56("player_on_lid", "up");
+        c.pos = new double[] {5.5, 101.0, 0.5};
+        out.add(cycle56(c, 1, 0.5, 1.0, 0.5, 12, 12));
+        c = sh56("player_edge", "up");
+        c.pos = new double[] {5.9, 101.0, 0.8};
+        out.add(cycle56(c, 1, 0.5, 1.0, 0.5, 12, 12));
+        c = sh56("player_front_east", "east");
+        c.pos = new double[] {6.4, 100.0, 0.5};
+        out.add(cycle56(c, 5, 1.0, 0.5, 0.5, 12, 12));
+        // ---- a box that cannot open (a solid block over it, a boat on its lid) and one that is closed again while it opens
+        c = sh56("blocked_by_block", "up");
+        c.cmd("setblock 5 101 0 minecraft:stone").cmd(summon54("pig", 5.5, 102.0, 0.5));
+        out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 6, 6));
+        c = sh56("closed_early", "up");
+        c.cmd(summon54("pig", 5.5, 101.0, 0.5));
+        out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 4, 14));
+        // ---- a second player at the box keeps it open
+        c = sh56("opened_twice", "up");
+        c.cmd(summon54("pig", 5.5, 101.0, 0.5));
+        c.step(useOnAt(5, 100, 0, 4, 0, 0.0, 0.5, 0.5));
+        for (int i = 0; i < 6; i++) c.step(op("op", "idle"));
+        c.step(op("op", "menu_close"));
+        for (int i = 0; i < 6; i++) c.step(op("op", "idle"));
+        c.step(useOnAt(5, 100, 0, 4, 0, 0.0, 0.5, 0.5));
+        for (int i = 0; i < 12; i++) c.step(op("op", "idle"));
+        out.add(c);
+    }
+
+    // ---------------------------------------------------------------- wp56: a swimming player's splashes and strokes
+
+    /**
+     * A pool (x 0..7, z -2..3, water y 95..98, closed all round: the replay's water would flow out of an open one) in a stone floor at y = 98,
+     * another player on the floor beside it listening. The player's random is pinned and the player's own tick (`doTick`) runs after every step.
+     */
+    static Case swim56(String name, double[] at) {
+        Case c = new Case("swim56_" + name).moves().observer(3.5, 99.0, 5.5);
+        c.pos = at;
+        c.ticksPlayer = true;
+        c.soundOnly = true;
+        c.cmd("fill -4 94 -6 14 98 8 minecraft:stone").cmd("fill -4 99 -6 14 140 8 minecraft:air").cmd("fill 0 95 -2 7 98 3 minecraft:water");
+        c.step(op("op", "seed_player", "seed", 56L));
+        return c;
+    }
+
+    static void swims56(List<Case> out) {
+        Case c;
+        // ---- falling in from a height: the splash gets louder with the speed (`doWaterSplashEffect`: the quiet one, the loud one)
+        for (double from : new double[] {101.0, 104.0, 112.0, 130.0}) {
+            c = swim56("dive_" + (int) from, new double[] {3.5, from, 0.5});
+            double y = from, vy = 0.0;
+            for (int i = 0; i < 40; i++) {
+                if (y < 99.0) {
+                    // in the water: sinks, slowed
+                    vy = vy * 0.8 - 0.02;
+                } else {
+                    vy = (vy - 0.08) * 0.98;
+                }
+                y += vy;
+                boolean floor = y <= 95.0;
+                if (floor) {
+                    y = 95.0;
+                    vy = 0.0;
+                }
+                c.step(move(3.5, y, 0.5, floor));
+            }
+            out.add(c);
+        }
+        // ---- swimming along under the surface, at several speeds (the stroke's volume goes with the speed)
+        for (double speed : new double[] {0.06, 0.12, 0.2}) {
+            c = swim56("stroke_" + (int) (speed * 100), new double[] {0.5, 96.5, 0.5});
+            double x = 0.5;
+            for (int i = 0; i < 24; i++) {
+                x += speed;
+                c.step(move(x, 96.5, 0.5, false));
+            }
+            out.add(c);
+        }
+        // ---- wading: on the floor of a shallow pool (feet in the water), walking
+        c = swim56("wade", new double[] {0.5, 95.0, 0.5});
+        c.cmd("fill 0 96 -2 7 98 3 minecraft:stone");
+        {
+            double x = 0.5;
+            for (int i = 0; i < 24; i++) {
+                x += 0.21585;
+                c.step(move(x, 95.0, 0.5, true));
+            }
+        }
+        out.add(c);
+        // ---- coming up for air and out of the pool
+        c = swim56("surface", new double[] {3.5, 96.0, 0.5});
+        {
+            double y = 96.0;
+            for (int i = 0; i < 20; i++) {
+                y += 0.12;
+                c.step(move(3.5, y, 0.5, false));
+            }
+        }
+        out.add(c);
     }
 
     /** wp49: campfires (food on the fire), flower pots, chiseled bookshelves. */
@@ -4381,6 +4607,9 @@ public class InteractVectors {
                 it.remove();
             } else if (level.getBlockEntity(t.getPos()) instanceof net.minecraft.world.level.block.piston.PistonMovingBlockEntity pm) {
                 net.minecraft.world.level.block.piston.PistonMovingBlockEntity.tick(level, t.getPos(), level.getBlockState(t.getPos()), pm);
+            } else if (level.getBlockEntity(t.getPos()) instanceof net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity sb) {
+                // wp56: the lids of shulker boxes move too
+                net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity.tick(level, t.getPos(), level.getBlockState(t.getPos()), sb);
             }
         }
         flag.setBoolean(level, false);
@@ -4524,6 +4753,12 @@ public class InteractVectors {
                 field(p.connection.getClass(), "firstGoodZ").set(p.connection, p.getZ());
             }
             // wp52: what the player has fallen so far, and the grace time after an impulse.
+            // wp56: the player's own random (the water splashes and swim sounds draw their pitch from it) is pinned to a seed.
+            case "seed_player" -> {
+                field(net.minecraft.world.entity.Entity.class, "random").set(p, net.minecraft.util.RandomSource.create(((Number) s.get("seed")).longValue()));
+                // (and its body starts from rest: the replay's was ticked before the case's water was there)
+                p.setDeltaMovement(Vec3.ZERO);
+            }
             case "set_fall" -> p.fallDistance = ((Number) s.get("distance")).doubleValue();
             case "set_grace" -> p.applyPostImpulseGraceTime(((Number) s.get("ticks")).intValue());
             case "accept_teleport" -> {
@@ -4860,6 +5095,8 @@ public class InteractVectors {
         if (c.watchMaps) resetMaps();
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
+            // (`ServerGamePacketListenerImpl.tickPlayer`: `doTick`, then the connection puts the player back where the client said it is)
+            if (c.ticksPlayer) call(p.connection, "tickPlayer");
             if (c.tickCushions && !"tick_cushions".equals(s.get("op"))) {
                 if (c.noPitch) addAttackTicks(p, 1);
                 for (var cu : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) cu.tick();
@@ -5137,6 +5374,9 @@ public class InteractVectors {
             commandBlocks49(all);
             pistons54(all);
             sounds54(all);
+            swims56(all);
+            shulkers56(all);
+            flyers56(all);
             mannequins54(all);
             placeBlockEntities55(all);
             machines55(all);

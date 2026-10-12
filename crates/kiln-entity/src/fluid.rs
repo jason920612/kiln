@@ -265,12 +265,22 @@ impl Entity {
         if matches!(self.kind, crate::entity::EntityKind::ExperienceOrb(_)) {
             return;
         }
+        let (sound, volume, pitch) = self.water_splash_draws();
+        self.play_sound(level, sound, volume, pitch);
+        level.emit(crate::level::Event::GameEvent { event: "minecraft:splash", pos: self.position(), entity: Some(self.id) });
+    }
+
+    /// What `doWaterSplashEffect` draws from the entity's random (the sound's pitch, then the places of the particles) and the
+    /// sound it plays: its name, volume and pitch. A player's splashes have sounds of their own.
+    pub fn water_splash_draws(&mut self) -> (&'static str, f32, f32) {
         let d = self.delta;
         let volume = (1.0f32).min(((d.x * d.x * 0.20000000298023224 + d.y * d.y + d.z * d.z * 0.20000000298023224).sqrt() as f32) * 0.2);
-        let (splash, swim) = crate::mob::splash_sounds_of(self);
-        let sound = if volume < 0.25 { splash } else { swim };
+        let (splash, high_speed) = match self.kind {
+            crate::entity::EntityKind::Player(_) => ("minecraft:entity.player.splash", "minecraft:entity.player.splash.high_speed"),
+            _ => crate::mob::splash_sounds_of(self),
+        };
+        let sound = if volume < 0.25 { splash } else { high_speed };
         let pitch = 1.0 + (self.random_next_float() - self.random_next_float()) * 0.4;
-        self.play_sound(level, sound, volume, pitch);
         let n = 1.0 + self.width * 20.0;
         let mut i = 0;
         while (i as f32) < n {
@@ -285,7 +295,7 @@ impl Entity {
             self.random_next_double();
             i += 1;
         }
-        level.emit(crate::level::Event::GameEvent { event: "minecraft:splash", pos: self.position(), entity: Some(self.id) });
+        (sound, volume, pitch)
     }
 
     fn random_next_float(&mut self) -> f32 {

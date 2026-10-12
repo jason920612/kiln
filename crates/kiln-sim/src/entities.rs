@@ -1159,6 +1159,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.moving_piston(kb(pos))
     }
 
+    fn shulker_lid(&self, pos: BlockPos) -> Option<f32> {
+        self.level.shulker_lid(kb(pos))
+    }
+
     fn has_moving_pistons(&self) -> bool {
         self.level.has_moving_pistons()
     }
@@ -3191,6 +3195,17 @@ fn carry_out(
         }
         Event::EntitySound { entity, pos, sound, source, volume, pitch } => {
             send_entity_sound(players, env, n, entity, arr(pos), sound, source_of(source), volume, pitch);
+        }
+        Event::TakeItem { item, collector, amount } => {
+            // `LivingEntity.take`: whoever tracks the item entity sees it fly to the collector.
+            if let Ok(i) = list.binary_search_by_key(&item, |e| e.id) {
+                let pkt = entity::take_item_entity(item, collector, amount);
+                for v in &list[i].seen_by {
+                    if let Ok(j) = players.binary_search_by_key(v, |q| q.conn) {
+                        players[j].send(pkt.clone());
+                    }
+                }
+            }
         }
         Event::ExplosionHit { player, source } => {
             let cause = source.and_then(|id| list.binary_search_by_key(&id, |e| e.id).ok()).and_then(|i| list[i].phys.as_deref()).map(kiln_entity::level::Seen::of);

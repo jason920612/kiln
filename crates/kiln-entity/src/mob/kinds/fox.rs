@@ -226,6 +226,7 @@ fn pick_up_items(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let thrower = d.thrower;
         item.discard();
         crate::mob::on_item_pickup(e, m, level, thrower, &stack);
+        crate::mob::take_item(e, level, id, stack.count());
         let count = stack.count();
         if count > 1 {
             let rest = stack.split(count - 1);

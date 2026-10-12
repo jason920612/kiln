@@ -21,6 +21,7 @@ pub mod piston;
 pub mod portal;
 pub mod rail;
 pub mod sculk;
+pub mod shulker;
 pub mod speleothem;
 pub mod spread;
 pub mod support;
@@ -439,7 +440,8 @@ pub fn trigger_event<L: Level>(level: &mut L, s: u16, pos: BlockPos, a: i32, b: 
         BlockClass::DecoratedPotBlock => a == 1 && (0..2).contains(&b),
         // `BaseEntityBlock.triggerEvent`: the lids of chests, ender chests and shulker boxes
         // (their block entities answer event 1 with the openers count).
-        BlockClass::EnderChestBlock | BlockClass::ShulkerBoxBlock => a == 1,
+        BlockClass::ShulkerBoxBlock => shulker::trigger_event(level, pos, a, b),
+        BlockClass::EnderChestBlock => a == 1,
         _ if container::is_chest(s) => a == 1,
         _ => false,
     }

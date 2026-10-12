@@ -28,6 +28,7 @@ mod memory_poi;
 pub mod mob;
 pub mod persist;
 pub mod physics;
+pub mod lid;
 pub mod piston;
 pub mod player;
 pub mod prof;

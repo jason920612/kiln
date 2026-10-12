@@ -625,3 +625,389 @@ fn flyer_search5() {
     });
     println!("{} layouts fly", found.load(std::sync::atomic::Ordering::Relaxed));
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// wp56: the whole 3D space of small machines. `flyer_search3` only looked at planes with the pistons along the flight; this one takes
+// a box of `KILN_FLYER_X` x `_Y` x `_Z` cells and puts in it two pistons (sticky, or regular too with `KILN_FLYER_ANY_PISTON`; any of the
+// six facings), two observers (any facing) and `KILN_FLYER_SLIMES` slime blocks (and `KILN_FLYER_HONEY` honey blocks) anywhere, every
+// observer with a piston at its back (what its pulse can reach), and runs each layout started in every way a player can start one.
+
+/// (name, dx, dy, dz) of a facing.
+const DIRS: [(&str, i32, i32, i32); 6] = [("north", 0, 0, -1), ("south", 0, 0, 1), ("west", -1, 0, 0), ("east", 1, 0, 0), ("down", 0, -1, 0), ("up", 0, 1, 0)];
+
+fn piston_state(sticky: bool, dir: usize) -> u16 {
+    state::parse_state(&format!("minecraft:{}piston[facing={},extended=false]", if sticky { "sticky_" } else { "" }, DIRS[dir].0)).unwrap()
+}
+
+fn observer_state(dir: usize) -> u16 {
+    state::parse_state(&format!("minecraft:observer[facing={},powered=false]", DIRS[dir].0)).unwrap()
+}
+
+type Cell = (i32, i32, i32);
+
+/// Runs a machine given as (cell, state), started by `start`: the piece placed last, or (`tap`) a cell where a stone is put and taken away.
+/// Returns how far the machine's pieces (not piston heads) have moved on each axis between tick 40 and tick `ticks`, if they are all still there.
+fn run3(pieces: &[(Cell, u16)], start: Cell, tap: bool, ticks: i32) -> Option<[i32; 3]> {
+    let mut level = TestLevel::void();
+    level.load_chunks((-1, -1), (4, 1));
+    let origin = (24, 100, 8);
+    let at = |c: Cell| BlockPos::new(origin.0 + c.0, origin.1 + c.1, origin.2 + c.2);
+    let mut trigger = None;
+    for &(c, s) in pieces {
+        if c == start && !tap {
+            trigger = Some((at(c), s));
+        } else {
+            level.set_raw(at(c), s, flags::SKIP_ALL_SIDEEFFECTS);
+        }
+    }
+    // (no random ticks: the chunk order is empty; every loaded chunk runs the block ticks, events and moving pistons)
+    let chunks: [(i32, i32); 0] = [];
+    if tap {
+        crate::update::set_block_and_update(&mut level, at(start), d::STONE);
+        level.tick(0, &chunks);
+        crate::update::set_block_and_update(&mut level, at(start), d::AIR);
+    }
+    if let Some((p, s)) = trigger {
+        crate::update::set_block_and_update(&mut level, p, s);
+    }
+    // where the machine is: the sums of the coordinates of everything that is not air or a moving part, how many there are, a hash
+    // where the machine is within `r` blocks of where it began: the sums of the coordinates of everything that is not air or a moving
+    // part, how many there are, a hash (the window grows with the time: most layouts are dead by tick 10)
+    let measure = |level: &TestLevel, r: i32| {
+        let (mut sum, mut count, mut h) = ([0i64; 3], 0usize, 0u64);
+        for x in origin.0 - r..=origin.0 + r {
+            for z in origin.2 - r.min(16)..=origin.2 + r.min(16) {
+                for y in origin.1 - r.min(30)..=origin.1 + r.min(30) {
+                    let s = level.block(BlockPos::new(x, y, z));
+                    if !is_air(s) && !state::is(s, d::PISTON_HEAD) && !state::is(s, d::MOVING_PISTON) {
+                        sum[0] += x as i64;
+                        sum[1] += y as i64;
+                        sum[2] += z as i64;
+                        count += 1;
+                        h = h.wrapping_mul(1_000_003).wrapping_add(s as u64 + (x as u64) * 77 + (z as u64) * 13 + y as u64);
+                    }
+                }
+            }
+        }
+        (sum, count, h)
+    };
+    let (h0, mut h20, mut at40) = (measure(&level, 8).2, 0u64, [0i64; 3]);
+    for t in 1..=ticks {
+        level.tick(0, &chunks);
+        if t == 10 && measure(&level, 8).2 == h0 {
+            return None;
+        }
+        if t == 20 || t == 30 || t == 40 || t == ticks {
+            let (sum, count, h) = measure(&level, if t < 40 { 14 } else if t == 40 { 22 } else { 40 });
+            if count != pieces.len() {
+                return None;
+            }
+            if t == 20 {
+                h20 = h;
+            }
+            if t == 30 && h == h20 {
+                return None;
+            }
+            if t == 40 {
+                at40 = sum;
+            }
+            if t == ticks {
+                let n = count as i64;
+                return Some([0, 1, 2].map(|a| ((sum[a] - at40[a]) / n) as i32));
+            }
+        }
+    }
+    None
+}
+
+#[test]
+#[ignore]
+fn flyer_search_3d() {
+    let env = |k: &str, d: usize| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+    let (nx, ny, nz) = (env("KILN_FLYER_X", 3), env("KILN_FLYER_Y", 2), env("KILN_FLYER_Z", 2));
+    let (slimes, honeys, threads) = (env("KILN_FLYER_SLIMES", 2), env("KILN_FLYER_HONEY", 0), env("KILN_FLYER_THREADS", 8));
+    let sticky_only = std::env::var_os("KILN_FLYER_ANY_PISTON").is_none();
+    let sample = env("KILN_FLYER_SAMPLE", 0);
+    let (part, parts) = (env("KILN_FLYER_PART", 0), env("KILN_FLYER_PARTS", 1));
+    let cells: Vec<Cell> = (0..nx as i32).flat_map(|x| (0..ny as i32).flat_map(move |y| (0..nz as i32).map(move |z| (x, y, z)))).collect();
+    let n = cells.len();
+    let npieces = 4 + slimes + honeys;
+    let total: usize = (0..npieces).fold(1, |a, i| a * (n - i));
+    let found = std::sync::atomic::AtomicUsize::new(0);
+    let tried = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|sc| {
+        for t in 0..threads {
+            let (found, tried, cells) = (&found, &tried, &cells);
+            sc.spawn(move || {
+                let mut k = t + threads * part;
+                while k < total {
+                    let mut m = k;
+                    k += threads * parts;
+                    let mut free: Vec<usize> = (0..n).collect();
+                    let mut at = Vec::new();
+                    for i in 0..npieces {
+                        let j = m % (n - i);
+                        m /= n - i;
+                        at.push(free.remove(j));
+                    }
+                    // two pistons, two observers, the slimes, the honeys: equal pieces in the order of their cells
+                    if at[0] > at[1] || at[2] > at[3] || (slimes == 2 && at[4] > at[5]) || (honeys == 2 && at[npieces - 2] > at[npieces - 1]) {
+                        continue;
+                    }
+                    let pos = |i: usize| cells[at[i]];
+                    for (o0, o1) in (0..36).map(|v| (v % 6, v / 6)) {
+                        // an observer's pulse goes to the block behind it: a piston must be there (or the cell above one: quasi-connectivity)
+                        let back = |o: usize, dir: usize| {
+                            let c = pos(o);
+                            (c.0 - DIRS[dir].1, c.1 - DIRS[dir].2, c.2 - DIRS[dir].3)
+                        };
+                        let (b0, b1) = (back(2, o0), back(3, o1));
+                        // (a piston reads the signals around it and, "quasi-connected", around the cell above it)
+                        let reaches = |b: Cell| [pos(0), pos(1)].iter().any(|p| b == *p || b == (p.0, p.1 + 1, p.2));
+                        if !reaches(b0) || !reaches(b1) {
+                            continue;
+                        }
+                        for pk in 0..(if sticky_only { 36 } else { 144 }) {
+                            let (d0, d1) = (pk % 6, (pk / 6) % 6);
+                            let (s0, s1) = if sticky_only { (true, true) } else { ((pk / 36) & 1 == 0, (pk / 72) & 1 == 0) };
+                            let mut pieces: Vec<(Cell, u16)> = vec![
+                                (pos(0), piston_state(s0, d0)),
+                                (pos(1), piston_state(s1, d1)),
+                                (pos(2), observer_state(o0)),
+                                (pos(3), observer_state(o1)),
+                            ];
+                            for i in 0..slimes {
+                                pieces.push((pos(4 + i), d::SLIME_BLOCK));
+                            }
+                            for i in 0..honeys {
+                                pieces.push((pos(4 + slimes + i), d::HONEY_BLOCK));
+                            }
+                            tried.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            // a sample of the layouts, for the vanilla check of what does NOT fly: the first start's outcome (`null`: broke up or stood still)
+                            if sample > 0 && tried.load(std::sync::atomic::Ordering::Relaxed) % sample == 0 {
+                                let c = pieces[0].0;
+                                let v = run3(&pieces, c, false, 100);
+                                let json: Vec<String> = pieces
+                                    .iter()
+                                    .map(|&(c, s)| {
+                                        let b = kiln_data::blocks_types::block_of(s);
+                                        let extra = match b.property(s, "facing") {
+                                            Some(f) if b.name.ends_with("observer") => format!("[facing={f},powered=false]"),
+                                            Some(f) => format!("[facing={f},extended=false]"),
+                                            None => String::new(),
+                                        };
+                                        format!("[{},{},{},\"{}{}\"]", c.0, c.1, c.2, b.name, extra)
+                                    })
+                                    .collect();
+                                let mv = v.map_or("null".to_string(), |v| format!("[{},{},{}]", v[0], v[1], v[2]));
+                                println!("SAMPLE {{\"pieces\":[{}],\"start\":[{},{},{}],\"tap\":false,\"move\":{mv}}}", json.join(","), c.0, c.1, c.2);
+                            }
+                            // started by a piece placed last, or by a block put beside the machine and taken away
+                            let mut starts: Vec<(Cell, bool)> = pieces.iter().map(|&(c, _)| (c, false)).collect();
+                            starts.extend(cells.iter().filter(|c| !pieces.iter().any(|p| p.0 == **c)).map(|&c| (c, true)));
+                            for (c, tap) in starts {
+                                if let Some(v) = run3(&pieces, c, tap, 100)
+                                    && v.iter().any(|d| d.abs() >= 3)
+                                {
+                                    found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    let list: Vec<String> = pieces.iter().map(|&(c, s)| format!("{c:?}={}", kiln_data::blocks_types::block_of(s).name.trim_start_matches("minecraft:").to_owned() + &kiln_data::blocks_types::block_of(s).property(s, "facing").map(|f| format!("[{f}]")).unwrap_or_default())).collect();
+                                    println!("FLIES {v:?}: {} started by {} at {c:?}", list.join(" "), if tap { "a block put and taken away" } else { "the piece placed last" });
+                                    let json: Vec<String> = pieces.iter().map(|&(c, s)| {
+                                        let b = kiln_data::blocks_types::block_of(s);
+                                        let extra = match b.property(s, "facing") {
+                                            Some(f) if b.name.ends_with("observer") => format!("[facing={f},powered=false]"),
+                                            Some(f) => format!("[facing={f},extended=false]"),
+                                            None => String::new(),
+                                        };
+                                        format!("[{},{},{},\"{}{}\"]", c.0, c.1, c.2, b.name, extra)
+                                    }).collect();
+                                    println!("JSON {{\"pieces\":[{}],\"start\":[{},{},{}],\"tap\":{tap},\"move\":[{},{},{}]}}", json.join(","), c.0, c.1, c.2, v[0], v[1], v[2]);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    println!("{} layouts fly of {} tried", found.load(std::sync::atomic::Ordering::Relaxed), tried.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+#[test]
+#[ignore]
+fn flyer_time() {
+    use std::time::Instant;
+    let t = Instant::now();
+    for _ in 0..200 {
+        let mut level = TestLevel::void();
+        level.load_chunks((-1, -1), (4, 1));
+    }
+    println!("create + load: {:?} each", t.elapsed() / 200);
+    let pieces = [((0, 0, 0), piston_state(true, 3)), ((1, 0, 0), d::SLIME_BLOCK), ((2, 0, 0), observer_state(2))];
+    let t = Instant::now();
+    for _ in 0..200 {
+        let _ = run3(&pieces, (0, 0, 0), false, 100);
+    }
+    println!("run3: {:?} each", t.elapsed() / 200);
+    let mut level = TestLevel::void();
+    level.load_chunks((-1, -1), (4, 1));
+    let t = Instant::now();
+    for _ in 0..200 {
+        level.tick(0, &[]);
+    }
+    println!("tick: {:?} each", t.elapsed() / 200);
+    let t = Instant::now();
+    for _ in 0..20 {
+        let (mut c, mut s) = (0, 0u64);
+        for x in 0..64 {
+            for z in -8..24 {
+                for y in 70..130 {
+                    let b = level.block(BlockPos::new(x, y, z));
+                    if !is_air(b) { c += 1; }
+                    s += b as u64;
+                }
+            }
+        }
+        let _ = (c, s);
+    }
+    println!("scan: {:?} each", t.elapsed() / 20);
+}
+
+/// The engine `flyer_search_3d` found (two sticky pistons, two observers, two slime blocks in 2 x 2 x 2) with honey blocks (and more slime
+/// blocks) added around it: which of those still fly, for a rider to stand on the honey.
+#[test]
+#[ignore]
+fn flyer_riders() {
+    let engine: Vec<(Cell, u16)> = vec![
+        ((0, 0, 1), piston_state(true, 0)),
+        ((1, 0, 0), piston_state(true, 1)),
+        ((0, 1, 0), observer_state(2)),
+        ((1, 1, 1), observer_state(3)),
+        ((0, 0, 0), d::SLIME_BLOCK),
+        ((1, 0, 1), d::SLIME_BLOCK),
+    ];
+    let threads: usize = std::env::var("KILN_FLYER_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
+    let (honeys, slimes): (usize, usize) = (std::env::var("KILN_FLYER_HONEY").ok().and_then(|v| v.parse().ok()).unwrap_or(2), std::env::var("KILN_FLYER_SLIMES").ok().and_then(|v| v.parse().ok()).unwrap_or(2));
+    let cells: Vec<Cell> = (-1..3).flat_map(|x| (0..3).flat_map(move |y| (-1..3).map(move |z| (x, y, z)))).filter(|c| !engine.iter().any(|e| e.0 == *c) && *c != (2, 1, 1)).collect();
+    let n = cells.len();
+    let found = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|sc| {
+        for t in 0..threads {
+            let (found, cells, engine) = (&found, &cells, &engine);
+            sc.spawn(move || {
+                let mut k = t;
+                let total = (0..honeys + slimes).fold(1usize, |a, i| a * (n - i));
+                while k < total {
+                    let mut m = k;
+                    k += threads;
+                    let mut free: Vec<usize> = (0..n).collect();
+                    let mut at = Vec::new();
+                    for i in 0..honeys + slimes {
+                        let j = m % (n - i);
+                        m /= n - i;
+                        at.push(free.remove(j));
+                    }
+                    if (honeys == 2 && at[0] > at[1]) || (slimes >= 2 && at[honeys] > at[honeys + 1]) {
+                        continue;
+                    }
+                    let mut pieces = engine.clone();
+                    for (i, &a) in at.iter().enumerate() {
+                        pieces.push((cells[a], if i < honeys { d::HONEY_BLOCK } else { d::SLIME_BLOCK }));
+                    }
+                    if let Some(v) = run3(&pieces, (2, 1, 1), true, 100)
+                        && v == [0, 0, -6]
+                    {
+                        found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        // the honey blocks with nothing above them
+                        let open: Vec<Cell> = at[..honeys].iter().map(|&a| cells[a]).filter(|c| !pieces.iter().any(|p| p.0 == (c.0, c.1 + 1, c.2))).collect();
+                        let json: Vec<String> = pieces
+                            .iter()
+                            .map(|&(c, s)| {
+                                let b = kiln_data::blocks_types::block_of(s);
+                                let extra = match b.property(s, "facing") {
+                                    Some(f) if b.name.ends_with("observer") => format!("[facing={f},powered=false]"),
+                                    Some(f) => format!("[facing={f},extended=false]"),
+                                    None => String::new(),
+                                };
+                                format!("[{},{},{},\"{}{}\"]", c.0, c.1, c.2, b.name, extra)
+                            })
+                            .collect();
+                        println!("JSON {{\"pieces\":[{}],\"start\":[2,1,1],\"tap\":true,\"move\":[0,0,-6],\"open_honey\":[{}]}}", json.join(","), open.iter().map(|c| format!("[{},{},{}]", c.0, c.1, c.2)).collect::<Vec<_>>().join(","));
+                    }
+                }
+            });
+        }
+    });
+    println!("{} variants fly", found.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+/// The machines of `flyer_search_3d` with one more piece, redstone dust or a repeater (any facing, delay 1), and no restriction on where the
+/// observers' backs point: the whole box (`KILN_FLYER_X` x `_Y` x `_Z`, 2 x 2 x 2 by default) with two sticky pistons, two observers, two slime blocks and the extra.
+#[test]
+#[ignore]
+fn flyer_search_extra() {
+    let env = |k: &str, d: usize| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+    let (nx, ny, nz) = (env("KILN_FLYER_X", 2), env("KILN_FLYER_Y", 2), env("KILN_FLYER_Z", 2));
+    let threads = env("KILN_FLYER_THREADS", 8);
+    let (part, parts) = (env("KILN_FLYER_PART", 0), env("KILN_FLYER_PARTS", 1));
+    let cells: Vec<Cell> = (0..nx as i32).flat_map(|x| (0..ny as i32).flat_map(move |y| (0..nz as i32).map(move |z| (x, y, z)))).collect();
+    let n = cells.len();
+    let npieces = 7;
+    let extras: Vec<u16> = std::iter::once(state::parse_state("minecraft:redstone_wire").unwrap())
+        .chain(DIRS[..4].iter().map(|d| state::parse_state(&format!("minecraft:repeater[facing={},delay=1,locked=false,powered=false]", d.0)).unwrap()))
+        .collect();
+    let total: usize = (0..npieces).fold(1, |a, i| a * (n - i));
+    let (found, tried) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    std::thread::scope(|sc| {
+        for t in 0..threads {
+            let (found, tried, cells, extras) = (&found, &tried, &cells, &extras);
+            sc.spawn(move || {
+                let mut k = t + threads * part;
+                while k < total {
+                    let mut m = k;
+                    k += threads * parts;
+                    let mut free: Vec<usize> = (0..n).collect();
+                    let mut at = Vec::new();
+                    for i in 0..npieces {
+                        let j = m % (n - i);
+                        m /= n - i;
+                        at.push(free.remove(j));
+                    }
+                    if at[0] > at[1] || at[2] > at[3] || at[4] > at[5] {
+                        continue;
+                    }
+                    let pos = |i: usize| cells[at[i]];
+                    for o in 0..36 {
+                        for pk in 0..36 {
+                            for &extra in extras.iter() {
+                                let pieces: Vec<(Cell, u16)> = vec![
+                                    (pos(0), piston_state(true, pk % 6)),
+                                    (pos(1), piston_state(true, pk / 6)),
+                                    (pos(2), observer_state(o % 6)),
+                                    (pos(3), observer_state(o / 6)),
+                                    (pos(4), d::SLIME_BLOCK),
+                                    (pos(5), d::SLIME_BLOCK),
+                                    (pos(6), extra),
+                                ];
+                                tried.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                let mut starts: Vec<(Cell, bool)> = pieces.iter().map(|&(c, _)| (c, false)).collect();
+                                starts.extend(cells.iter().filter(|c| !pieces.iter().any(|p| p.0 == **c)).map(|&c| (c, true)));
+                                for (c, tap) in starts {
+                                    if let Some(v) = run3(&pieces, c, tap, 100)
+                                        && v.iter().any(|d| d.abs() >= 3)
+                                    {
+                                        found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        println!("FLIES {v:?} with {:?} started at {c:?} (tap {tap})", pieces.iter().map(|&(c, s)| (c, kiln_data::blocks_types::block_of(s).name)).collect::<Vec<_>>());
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    println!("{} layouts fly of {} tried", found.load(std::sync::atomic::Ordering::Relaxed), tried.load(std::sync::atomic::Ordering::Relaxed));
+}

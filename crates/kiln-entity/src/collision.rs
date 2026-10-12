@@ -170,6 +170,19 @@ pub fn for_each_block_collision(
                     }
                     continue;
                 }
+                // A shulker box with its lid on the move has the lid's box for its shape (`ShulkerBoxBlock.getShape`).
+                if kind(state) == Kind::ShulkerBox
+                    && let Some(shown) = level.shulker_lid(pos)
+                {
+                    let (px, py, pz) = (pos.x as f64, pos.y as f64, pos.z as f64);
+                    if let Some(shape) = crate::lid::lid_shape(crate::lid::facing_of(state), shown) {
+                        let hit = entity_shape.as_ref().is_some_and(|e| intersects_box(&shape, [px, py, pz], e));
+                        if hit && !visit(pos, Cow::Owned(shape), false) {
+                            return;
+                        }
+                    }
+                    continue;
+                }
                 let (shape, cube) = if ctx.stands_on_lava && stable_lava(level, state, pos, ctx) {
                     (Cow::Borrowed(lava_stable_shape()), false)
                 } else {

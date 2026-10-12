@@ -875,6 +875,33 @@ pub fn wants_to_pick_up(m: &MobData, stack: &ItemStack) -> bool {
     wanted && can_add_item(st, stack)
 }
 
+/// The villager's inventory (`SimpleContainer(8)`), if `m` is one.
+pub fn inventory_of(m: &MobData) -> &[ItemStack] {
+    state(m).map_or(&[], |s| &s.inventory)
+}
+
+/// `InventoryCarrier.pickUpItem` for the item entity `id` the villager wants (and has room for): into the inventory, the rest stays.
+pub fn pick_up_item(e: &Entity, m: &mut MobData, level: &mut dyn EntityLevel, id: i32) {
+    let Some(item) = level.entity(id) else { return };
+    let crate::entity::EntityKind::Item(d) = &item.kind else { return };
+    let (stack, thrower) = (d.stack.clone(), d.thrower);
+    let Some(st) = state_mut(m) else { return };
+    if !can_add_item(st, &stack) {
+        return;
+    }
+    mob::on_item_pickup(e, m, level, thrower, &stack);
+    let count = stack.count();
+    let Some(st) = state_mut(m) else { return };
+    let rest = add_item(st, stack);
+    mob::take_item(e, level, id, count - rest.count());
+    let Some(item) = level.entity_mut(id) else { return };
+    if rest.is_empty() {
+        item.discard();
+    } else if let crate::entity::EntityKind::Item(d) = &mut item.kind {
+        d.stack.set_count(rest.count());
+    }
+}
+
 /// `Villager.hasExcessFood` / `wantsMoreFood`.
 fn has_excess_food(m: &MobData) -> bool {
     state(m).is_some_and(|s| count_food_points(s) >= 24)

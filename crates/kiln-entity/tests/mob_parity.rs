@@ -426,6 +426,10 @@ fn item_sig(st: &kiln_item::ItemStack) -> i64 {
 /// `MobVectors.equipSig`: the six slots with their drop chances, then the filled body and saddle slots.
 fn equip_sig(m: &mob::MobData) -> i64 {
     let mut h = 0i64;
+    // (a villager's inventory: what it picked up)
+    for (i, s) in mob::kinds::villager::inventory_of(m).iter().enumerate() {
+        h = h.wrapping_add((i as i64 + 1).wrapping_mul(item_sig(s)).wrapping_mul(7919));
+    }
     for i in 0..6 {
         h = h.wrapping_add((i as i64 + 1).wrapping_mul(item_sig(&m.equipment[i]).wrapping_mul(131).wrapping_add(m.drop_chances[i].to_bits() as i32 as i64)));
     }
@@ -651,7 +655,10 @@ fn replay(s: &Value) -> Result<usize, String> {
         if let Some(item) = o.get("item").and_then(Value::as_str) {
             fields.push((
                 "Item".into(),
-                kiln_proto::nbt::Tag::Compound(vec![("id".into(), kiln_proto::nbt::Tag::String(item.to_owned())), ("count".into(), kiln_proto::nbt::Tag::Int(1))]),
+                kiln_proto::nbt::Tag::Compound(vec![
+                    ("id".into(), kiln_proto::nbt::Tag::String(item.split('*').next().unwrap().to_owned())),
+                    ("count".into(), kiln_proto::nbt::Tag::Int(item.split('*').nth(1).map_or(1, |n| n.parse().unwrap()))),
+                ]),
             ));
         }
         // (wp33: a projectile's motion and the seed of its random.)
@@ -832,6 +839,27 @@ fn replay(s: &Value) -> Result<usize, String> {
                 }
             }
         }
+        // wp56: an item's yaw and (where its spawner leaves it to the constructor) motion come from its own unseeded
+        // random: where both sides spawned one, Kiln takes the recording's, and its random as the harness pinned it.
+        {
+            let recorded: Vec<&Value> = s["spawned"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some("minecraft:item") && x.get("rseed").is_some_and(|v| !v.is_null()))
+                .collect();
+            if !recorded.is_empty() {
+                let mut items: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item" && !e.is_removed()).map(|e| e.id).collect();
+                let at = |id: i32| level.entity(id).unwrap().position();
+                items.sort_by_key(|&id| recorded.iter().position(|r| vec3(&r["pos"]).distance_to_sqr(at(id)) < 1.0e-12).unwrap_or(usize::MAX));
+                for (id, rec) in items.iter().zip(recorded) {
+                    let e = level.entity_mut(*id).unwrap();
+                    e.delta = vec3(&rec["motion"]);
+                    e.y_rot = f(&rec["yaw"]) as f32;
+                    e.random = kiln_javamath::random::LegacyRandom::new(rec["rseed"].as_i64().unwrap_or(0));
+                }
+            }
+        }
         // wp50: the items a click dropped (shorn equipment) appear where vanilla's did.
         {
             let recorded: Vec<Vec3> = s["spawned"]
@@ -841,9 +869,27 @@ fn replay(s: &Value) -> Result<usize, String> {
                 .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some("minecraft:item") && x["pos"].is_array())
                 .map(|x| vec3(&x["pos"]))
                 .collect();
-            let got: Vec<Vec3> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item").map(|e| e.position()).collect();
+            let got: Vec<Vec3> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:item" && !e.is_removed()).map(|e| e.position()).collect();
+            if std::env::var_os("KILN_ITEMS_ALL").is_some() {
+                for i in 0..level.len() {
+                    if let Some(e) = level.entity_at(i)
+                        && e.type_name == "minecraft:item"
+                    {
+                        let n = if let EntityKind::Item(d) = &e.kind { d.stack.count() } else { 0 };
+                        eprintln!("  tick {tick} item #{i} id {} at {:?} count {n} tc {} removed {}", e.id, e.position(), e.tick_count, e.is_removed());
+                    }
+                }
+            }
+            if std::env::var_os("KILN_SPAWN_DEBUG").is_some() && !got.is_empty() {
+                eprintln!("kiln items tick {tick}: {got:?}");
+            }
             if s.get("equip_trace").is_some() {
-                let bits = |v: &[Vec3]| v.iter().map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]).collect::<Vec<_>>();
+                // (Which one the harness finds first is the order of its entity sections, not of their making: sorted.)
+                let bits = |v: &[Vec3]| {
+                    let mut b = v.iter().map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]).collect::<Vec<_>>();
+                    b.sort();
+                    b
+                };
                 if bits(&got) != bits(&recorded) {
                     return Err(format!("tick {tick}: items appeared at {got:?} (kiln) vs {recorded:?} (vanilla)"));
                 }

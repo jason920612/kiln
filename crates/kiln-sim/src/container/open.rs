@@ -367,16 +367,24 @@ fn chest_blocked(level: &RegionLevel, pos: BlockPos) -> bool {
     logic::is_redstone_conductor(level.block(pos.above()))
 }
 
-/// `ShulkerBoxBlock.canOpen` for a closed box: nothing in the way of its lid (approximated by
-/// the block it faces having no collision).
-fn shulker_blocked(level: &RegionLevel, pos: BlockPos, s: u16, openers: i32) -> bool {
-    if openers > 0 {
+/// `ShulkerBoxBlock.canOpen` for a box whose lid is shut: `Level.noCollision` of the strip the lid goes up through
+/// (the blocks' shapes, and the entities that can be collided with: a boat, a shulker). A lid that has left its shut
+/// state is always open to opening.
+fn shulker_blocked(level: &RegionLevel, pos: BlockPos, s: u16) -> bool {
+    use kiln_entity::lid;
+    if level.blocks.data.pistons.lids.get(&pos).is_some_and(|l| l.status != kiln_blocks::LidStatus::Closed) {
         return false;
     }
-    let facing = state::get_dir(s, "facing").unwrap_or(kiln_blocks::Direction::Up);
-    !kiln_data::block_props::collision(level.block(pos.relative(facing))).is_empty()
+    let facing = lid::facing_of(s);
+    let area = lid::opening_space(kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z), facing);
+    let mut phantom = crate::phantom::PhantomLevel::new(&*level.cells, level.env.game_time, level.env.min_y, level.env.rules.fast_lava);
+    phantom.set_pistons(&level.blocks.data.pistons);
+    if !kiln_entity::collision::no_collision(&phantom, &kiln_entity::collision::CollisionContext::EMPTY, -1, &area) {
+        return true;
+    }
+    let (lo, hi) = ([area.min_x, area.min_y, area.min_z], [area.max_x, area.max_y, area.max_z]);
+    level.bodies.iter().any(|b| b.collides && b.intersects(lo, hi))
 }
-
 /// The container menu of a container block at `pos` (`getMenuProvider`), if it has one.
 fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Provider> {
     let c = level.blocks.containers.get(pos)?;
@@ -412,7 +420,7 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         }
         BeKind::Barrel => single(generic_3),
         BeKind::ShulkerBox => {
-            if shulker_blocked(level, pos, s, c.openers) {
+            if shulker_blocked(level, pos, s) {
                 return None;
             }
             single(Menu::shulker_box)

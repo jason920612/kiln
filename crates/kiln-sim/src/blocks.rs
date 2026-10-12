@@ -152,6 +152,7 @@ impl RegionBlocks {
         for p in gone {
             self.data.pistons.remove(p);
         }
+        self.data.pistons.lids.retain(|p, _| chunk_of(*p) != pos);
         self.containers.chunk_unloaded(pos);
         self.sculk.chunk_unloaded(pos);
         self.hearts.chunk_unloaded(pos);
@@ -206,6 +207,7 @@ impl RegionPart for RegionBlocks {
         for (p, m) in from.data.pistons.take_all() {
             into.data.pistons.insert(p, m);
         }
+        into.data.pistons.lids.append(&mut from.data.pistons.lids);
         for e in from.data.block_events.take_all() {
             into.data.block_events.push(e);
         }
@@ -245,6 +247,9 @@ impl RegionPart for RegionBlocks {
         let at = |p: BlockPos| owner(p.chunk());
         for (p, m) in self.data.pistons.take_all() {
             parts[at(p)].data.pistons.insert(p, m);
+        }
+        for (p, l) in std::mem::take(&mut self.data.pistons.lids) {
+            parts[at(p)].data.pistons.lids.insert(p, l);
         }
         for e in self.data.block_events.take_all() {
             parts[at(e.pos)].data.block_events.push(e);
@@ -378,6 +383,8 @@ pub(crate) struct EntityBox {
     /// A cushion (placing one does not overlap another).
     pub cushion: bool,
     /// What a dispenser asks of a living thing (a player, an armor stand, a mob).
+    /// `Entity.canBeCollidedWith(null)`: a boat, a living shulker (what `Level.noCollision` counts besides blocks).
+    pub collides: bool,
     pub wear: Option<Wear>,
 }
 
@@ -453,6 +460,7 @@ fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Ent
                 player_source: Some(player_source(p)),
                 hanging: None,
                 cushion: false,
+                collides: false,
                 wear: (!spots.is_empty() && near(min, max)).then(|| crate::container::equip::wear_of_player(p)),
             }
         })
@@ -469,7 +477,7 @@ fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Ent
         } else {
             None
         };
-        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of), cushion: e.phys.as_deref().is_some_and(kiln_entity::ext_entity::cushion::is_cushion), wear }
+        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of), cushion: e.phys.as_deref().is_some_and(kiln_entity::ext_entity::cushion::is_cushion), collides: e.phys.as_deref().is_some_and(|p| p.type_name.ends_with("boat") || p.type_name.ends_with("raft") || (p.type_name == "minecraft:shulker" && living)), wear }
     }));
     out
 }
@@ -1138,6 +1146,14 @@ pub(crate) fn tick_pistons(level: &mut RegionLevel, ticking: &Ticking) {
     kiln_blocks::tick_moving_pistons(level, |p| ticking.contains(chunk_of(p)));
 }
 
+/// `Level.tickBlockEntities` for the shulker boxes whose lid is on the move.
+pub(crate) fn tick_lids(level: &mut RegionLevel, ticking: &Ticking) {
+    if level.blocks.data.pistons.lids.is_empty() {
+        return;
+    }
+    kiln_blocks::tick_lids(level, |p| ticking.contains(chunk_of(p)));
+}
+
 /// `Entity.checkInsideBlocks` for pressure plates and tripwires: every body standing in a plate
 /// presses it, every body whose box meets a tripwire's shape presses that.
 pub(crate) fn press_plates(level: &mut RegionLevel) {
@@ -1413,7 +1429,7 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
             }
             // Entities carried by pistons are not simulated yet; game events went to their
             // listeners when they happened.
-            Effect::PistonMove { .. } | Effect::GameEvent { .. } | Effect::BlockGameEvent { .. } => {}
+            Effect::PistonMove { .. } | Effect::ShulkerLid { .. } | Effect::GameEvent { .. } | Effect::BlockGameEvent { .. } => {}
         }
     }
 }

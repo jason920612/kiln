@@ -33,6 +33,11 @@ pub(crate) struct PhantomLevel<'a> {
 }
 
 impl<'a> PhantomLevel<'a> {
+    /// The moving pistons and shulker lids the level's shapes read.
+    pub(crate) fn set_pistons(&mut self, pistons: &'a kiln_blocks::MovingPistons) {
+        self.pistons = Some(pistons);
+    }
+
     pub(crate) fn new(cells: &'a CellSet<Cell>, game_time: i64, min_y: i32, fast_lava: bool) -> Self {
         PhantomLevel { cells, rng: LegacyRandom::new(0), game_time, min_y, fast_lava, pistons: None, sounds: Vec::new() }
     }
@@ -71,8 +76,12 @@ impl EntityLevel for PhantomLevel<'_> {
         self.pistons?.get(kiln_blocks::BlockPos::new(pos.x, pos.y, pos.z)).map(crate::entities::piston::view_of)
     }
 
+    fn shulker_lid(&self, pos: BlockPos) -> Option<f32> {
+        self.pistons?.lids.get(&kiln_blocks::BlockPos::new(pos.x, pos.y, pos.z)).map(kiln_blocks::Lid::shown)
+    }
+
     fn has_moving_pistons(&self) -> bool {
-        self.pistons.is_some_and(|p| !p.is_empty())
+        self.pistons.is_some_and(|p| !p.is_empty() || !p.lids.is_empty())
     }
 
     fn entities_in(&self, _area: &Aabb, _filter: EntityFilter, _exclude: i32) -> Vec<i32> {
@@ -124,13 +133,39 @@ fn vec(p: [f64; 3]) -> Vec3 {
 }
 
 impl Player {
+    /// The server's body, as `phantom_in` finds it (made when the player has none yet).
+    fn new_body(&self) -> Box<Entity> {
+        let mut e = kiln_entity::player::new(self.entity_id, self.uuid.as_u128(), vec(self.pos), 1.8, 0.6);
+        e.first_tick = false;
+        Box::new(e)
+    }
+
+    /// The body's own random (`Entity.random`: the water's splashes and strokes draw their pitch from it) set to `seed`,
+    /// as the interaction vectors pin the player's (and the body at rest: the case's water was not there before).
+    pub(crate) fn seed_body_random(&mut self, seed: i64) {
+        let mut e = self.phantom.take().unwrap_or_else(|| self.new_body());
+        e.random = LegacyRandom::new(seed);
+        self.server_delta = [0.0; 3];
+        self.phantom = Some(e);
+    }
+
+    /// `Entity.doWaterSplashEffect` of the player: the splash the other players hear, its pitch (and the particles' places) drawn from
+    /// the body's own random, its volume from the body's velocity.
+    pub(crate) fn splash_into_water(&mut self) {
+        let mut e = self.phantom.take().unwrap_or_else(|| self.new_body());
+        let (w, h, eye) = self.dimensions();
+        e.width = w;
+        e.height = h;
+        e.eye_height = eye;
+        e.delta = vec(self.server_delta);
+        let (sound, volume, pitch) = e.water_splash_draws();
+        self.phantom = Some(e);
+        self.queue_sound_at(self.pos, sound, volume, pitch);
+    }
+
     /// The server's body of this player, set to what the player is now.
     fn phantom_in(&mut self, level: &dyn EntityLevel) -> Box<Entity> {
-        let mut e = self.phantom.take().unwrap_or_else(|| {
-            let mut e = kiln_entity::player::new(self.entity_id, self.uuid.as_u128(), vec(self.pos), 1.8, 0.6);
-            e.first_tick = false;
-            Box::new(e)
-        });
+        let mut e = self.phantom.take().unwrap_or_else(|| self.new_body());
         let (w, h, eye) = self.dimensions();
         e.width = w;
         e.height = h;
@@ -203,7 +238,13 @@ impl Player {
             water_efficiency: self.attribute(crate::combat::WATER_MOVEMENT_EFFICIENCY) as f32,
             sprinting: self.sprinting,
         };
+        if std::env::var_os("KILN_SWIM_DEBUG").is_some() {
+            eprintln!("SWIMDBG tick {game_time}: before travel body pos {:?} delta {:?} in_water {} client pos {:?}", [e.x(), e.y(), e.z()], e.delta, e.is_in_water(), self.pos);
+        }
         kiln_entity::player::travel(&mut level, &mut e, &t);
+        if std::env::var_os("KILN_SWIM_DEBUG").is_some() {
+            eprintln!("SWIMDBG tick {game_time}: body pos {:?} delta {:?} client pos {:?}", [e.x(), e.y(), e.z()], e.delta, self.pos);
+        }
         self.phantom_out(e, true);
         self.queue_body_sounds(&mut level);
     }

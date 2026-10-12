@@ -500,6 +500,7 @@ fn pick_up_item(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, me
         s
     };
     mob::on_item_pickup(e, m, level, thrower, &whole);
+    mob::take_item(e, level, id, taken.count());
     if is_loved(&taken) {
         mem.erase(Mem::TimeTryingToReachAdmireItem);
         hold_in_offhand(e, m, level, taken);
@@ -543,14 +544,15 @@ pub fn pick_up_loot(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
                 && let Some(item) = level.entity_mut(id)
                 && let EntityKind::Item(d) = &mut item.kind
             {
-                picked = Some((d.thrower, d.stack.clone()));
+                picked = Some((d.thrower, d.stack.clone(), equipped.count()));
                 d.stack.shrink(equipped.count());
                 if d.stack.is_empty() {
                     item.discard();
                 }
             }
-            if let Some((thrower, whole)) = picked {
+            if let Some((thrower, whole, amount)) = picked {
                 mob::on_item_pickup(e, m, level, thrower, &whole);
+                mob::take_item(e, level, id, amount);
             }
         } else {
             pick_up_item(e, m, level, &mut brain.st.mem, id);

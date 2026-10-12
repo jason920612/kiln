@@ -522,8 +522,8 @@ wp44 先做稽核（第 0～5 節的矩陣、`tools/parity_audit.py`、`tools/pa
   （`adventure/spear_many_mobs`）需要玩家蓄力刺中 5 隻會動的生物，InteractVectors 不 tick 生物；`thrown_item_picked_up_by_entity`（`nether/distract_piglin`、`husbandry/uh_oh`）與 `allay_drop_item_on_block`
   需要 tick 生物並記錄玩家的進度，這是 MobVectors 的範圍，而 `mob_parity` 在 kiln-entity 裡沒有進度系統可比對（只能比事件發出的 tick，不比條件）。這 5 個 trigger 的條件判斷有單元測試，
   生物端的事件只有「發出」沒有與原版比對 tick。
-- **村民與襲擊者的非旗幟撿拾**：村民（`Villager.pickUpItem`／`wantsToPickUp`，只撿食物與種子進背包）與襲擊者（`Raider.pickUpItem`、掠奪者的 `wantsItem`）在 Kiln 沒有撿起一般物品的路徑，通用撿拾也跳過它們。
-- **撿拾不送 `take_item_entity` 封包**：生物撿起物品時原版送 `ClientboundTakeItemEntityPacket`（客戶端看到物品飛向生物），Kiln 的生物撿拾（包含豬布林）只讓物品消失。
+- **村民與襲擊者的非旗幟撿拾**：村民（`Villager.pickUpItem`／`wantsToPickUp`，只撿食物與種子進背包）與襲擊者（`Raider.pickUpItem`、掠奪者的 `wantsItem`）在 Kiln 沒有撿起一般物品的路徑，通用撿拾也跳過它們。 **wp56：村民已做（背包、`pickup56_villager_*` 11 個），襲擊者的非旗幟撿拾仍未做，見 6.9。**
+- **撿拾不送 `take_item_entity` 封包**：生物撿起物品時原版送 `ClientboundTakeItemEntityPacket`（客戶端看到物品飛向生物），Kiln 的生物撿拾（包含豬布林）只讓物品消失。 **wp56：已補（通用撿拾、村民、悅靈、狐狸、貓熊、海豚、豬布林、硫磺方塊）。**
 - **cushion 活塞推動、mannequin 落地方塊音效**：**不是 harness 的問題**，缺的是 Kiln 本身（活塞不推實體、沒有方塊 `SoundType` 表）。**wp54 已做，見 6.7。**
 - 命令回饋的 `show_entity` 懸停事件、實體 NBT 的兩處存檔欄位差異（見 6.5）。
 
@@ -551,10 +551,10 @@ wp53 查出兩個「缺的是 Kiln 本身」的子系統，這一輪做掉。向
 - **放置規則**：Kiln 讓玩家放原版不給放的方塊（地面上的懸掛告示牌、沒有水的海草、孢子花、垂根、棚蕈、絆線鉤）；竹子的放置規則沒有；`fill` 不會讓失去支撐的方塊掉落。**wp55 已做。**
 - **方塊實體預設資料**：`potent_sulfur` 的倒數、棚架 `align_items_to_bottom`、shulker 盒的 `Items`、刷怪磚的 `spawn_data`。**wp55 已做。**
 - **物品被推進方塊裡時的隨機推出**（`Entity.moveTowardsClosestSpace` 的亂數）：Kiln 的方向與原版相同但亂數序列不一定相同。**wp55：序列本來就對，原版掉落物的亂數沒種子；種子固定後逐位相同。**
-- **生物變種的音效**（豬、牛、雞、狼的變種有各自的 step／hurt 組）、騎乘者與幼體的少數組合；玩家游泳的水花音有亂數。**wp55：變種已做；玩家游泳的水花音仍有亂數沒比。**
+- **生物變種的音效**（豬、牛、雞、狼的變種有各自的 step／hurt 組）、騎乘者與幼體的少數組合；玩家游泳的水花音有亂數。**wp55：變種已做；玩家游泳的水花音仍有亂數沒比。** **wp56：水花與划水音已做（`swim56`），見 6.9。**
 - **長跳落地音**（山羊、青蛙的 `playSound(null, mob, …)` 是 entity sound 封包，harness 沒錄）。**wp55 已做。**
-- **shulker 盒**：盒子的蓋子動畫與推動只做到方塊的部分，盒子被推時蓋內實體的處理沒有逐 tick 向量。**未做。**
-- **自走飛行機器帶乘客**：只驗證了單次推動，沒有完整的自走機器向量（需要搜尋能自走的紅石配置）。**wp55：見 6.8，搜尋的結果。**
+- **shulker 盒**：盒子的蓋子動畫與推動只做到方塊的部分，盒子被推時蓋內實體的處理沒有逐 tick 向量。**未做。** **wp56：已做（`shulker56` 46 個），見 6.9。**
+- **自走飛行機器帶乘客**：只驗證了單次推動，沒有完整的自走機器向量（需要搜尋能自走的紅石配置）。**wp55：見 6.8，搜尋的結果。** **wp56：找到了（立體的搜尋），向量帶乘客，見 6.9。**
 
 
 ### 6.8 wp55（`wp55-gaps`）：放置規則、方塊實體預設資料、變種音效、實體音效封包、物品被推出方塊
@@ -579,10 +579,10 @@ wp54 留下的六個缺口，這一輪的做法是**先問原版會怎麼做**�
 
 **這一輪沒有做的：**
 
-- **自走飛行機器帶乘客**：沒有找到會飛的配置（見下）。
-- **shulker 盒被推時蓋內實體的逐 tick 向量**。
-- **玩家游泳的水花音**的亂數沒有比。
-- 4 個要 entity sound 的 mob scenario（`give_allay`、`stacks_allay`、`tongue_frog_*`）因為重錄的結果與 wp54 以前的檔不同（物品出現的順序、舌頭抓到的目標取決於原版內不可重現的東西，Kiln 與重錄的檔在「同樣兩個位置、順序顛倒」之類的地方不一致），舊檔仍通過、新檔不通過，沒有收進 `esound55`，也沒有追。
+- **自走飛行機器帶乘客**：沒有找到會飛的配置（見下）。**wp56：找到了：wp55 的搜尋空間是平面的、活塞只朝東西，會飛的最小引擎是立體的，見 6.9。**
+- **shulker 盒被推時蓋內實體的逐 tick 向量**。 **wp56：已做，見 6.9。**
+- **玩家游泳的水花音**的亂數沒有比。 **wp56：已做，見 6.9。**
+- 4 個要 entity sound 的 mob scenario（`give_allay`、`stacks_allay`、`tongue_frog_*`）因為重錄的結果與 wp54 以前的檔不同（物品出現的順序、舌頭抓到的目標取決於原版內不可重現的東西，Kiln 與重錄的檔在「同樣兩個位置、順序顛倒」之類的地方不一致），舊檔仍通過、新檔不通過，沒有收進 `esound55`，也沒有追。 **wp56：原因是 harness（物品實體建構子的亂數、實體順序、戰利品），已修並收進 `m6-mobs2`，見 6.9。**
 - `place_parity` 只重放 `placement::place`（放置的方塊與它引起的鄰近變化）；放置音、進度 trigger、方塊實體資料由 `interact_parity`（`place54`／`place55_be`）另外比對。
 
 
@@ -593,6 +593,36 @@ wp54 的缺口是「需要搜尋能自走的紅石配置」，所以這一輪先
 - 原版對跑：`tools/FlyerCheck.java` 在原版伺服器內跑同一批配置（`Level.setBlock` 不通知放零件，最後一個用 flags 3），比對 tick 40、tick 120 的西緣與零件是否完整。**2 行 × 4 欄的 1,935,360 個（排列 × 最後放的零件）Kiln 與原版全部相同，原版也沒有任何一個會飛。** 所以這個空間裡「Kiln 沒找到」不是 Kiln 的活塞／觀察者／黏液比原版弱：原版同樣沒有。
 - 沒有搜尋的：更大的空間（3 維、更多零件、混用紅石粉與中繼器）。公認的飛行機器（雙觀察者雙黏性活塞雙黏液）應該在更寬的空間裡；這個結論只是「在上面那個空間裡沒有」，不是「Kiln 的飛行機器會飛」。
 - 代替的向量：`machine55`（`InteractVectors.java`，6 個）——黏性活塞推拉蜜塊上的玩家與豬（蜜塊 15/16 高，站在實際高度），紅石塊來來回回三次推拉蜜塊或黏液塊上的玩家，以及搜尋找到的一個**會自己持續震盪**的觀察者＋活塞配置（玩家與豬、牛站在它的黏液塊上；最後一個零件由玩家放下去：`BlockItem.place`）。6 個全部通過。**過程中的一個教訓**：先放觀察者再放生物，機器在生物生成的那一 tick 就開始動，原版的第一 tick 與 Kiln 差半格（生物剛生成還不算站在地上）；放進來之前先讓生物站穩（`idle` 三步），之後逐位相同。
+
+### 6.9 wp56（`wp56-small`）：shulker 盒蓋、玩家游泳水花音、4 個重錄不符的生物、會飛的機器、村民撿物品
+
+wp55 留下的小缺口，這一輪的做法照舊：**先錄原版，再讓 Kiln 對**。向量在 `work/wp56/`（`interact/shulker56.jsonl`、`interact/swim56.jsonl`、`interact/flyer56.jsonl`、`flyer/`），
+`tools/parity_suites.py` 新增 `interact56`；生物向量（`pickup56_villager_*`、重錄的 6 個 scenario）併入 `work/m6-mobs2/vectors.jsonl`（原檔備份為 `.pre-wp56`）；
+（`work/wp54/interact/sound54.jsonl` 沒有動。）
+
+| 項目 | 內容 | 原版向量 | 驗證端 |
+|---|---|---|---|
+| shulker 盒蓋 | 新模組 `kiln-blocks/src/behaviour/shulker.rs`（`ShulkerBoxBlockEntity` 的動畫：block event 1 帶開啟者數，`OPENING`／`OPENED`／`CLOSING`／`CLOSED`、每 tick ±0.1、`doNeighborUpdates` 的兩個時機）、`kiln-entity/src/lid.rs`（`getBoundingBox`＝盒子隨蓋子升高的形狀、`moveCollidedEntities`＝蓋子這個 tick 掃過的區域，把裡面的實體用 `MoverType.SHULKER_BOX` 推一個「區域厚度＋0.01」）。蓋子還在動的盒子才存（`MovingPistons.lids`，與移動中的活塞同一個容器，所以島、玩家身體、碰撞掃描都不用多接線）；碰撞掃描對這種盒子用蓋子的形狀（原版：`ShulkerBoxBlock.getShape` 看方塊實體）。`canOpen` 改成原版的算法：蓋子掃過的那一格（縮小 1e-6）不能有方塊碰撞，也不能有「可被碰撞」的實體（船、活的 shulker）；舊的近似（前面那格有沒有碰撞）會讓船壓著的盒子照樣打開。玩家（不是旁觀者）用伺服器身體被推，與活塞同一條路 | `shulker56` 46：盒子朝上 × 10 種實體站在蓋子上與蓋子邊緣、船（蓋子打不開）、掉下去的東西（礦車、盔甲座）、沉在蓋子區域裡的實體、朝東／西／南／北／下的盒子前面的實體、一群實體、玩家站在蓋子上／邊緣／前面、上面有方塊打不開、開到一半關上、開兩次 | `interact_parity`（46／46，逐 tick 的實體位置、速度、玩家位置、盒子狀態；兩次錄製逐項相同） |
+| 玩家游泳的水花音與划水音 | 划水音（`Entity.waterSwimSound`）與水花（`doWaterSplashEffect`）的亂數抽取早就是移植的，缺的是：(1) 入水的水花原版在 `LivingEntity.checkFallDamage` 的 `updateFluidInteraction`（封包移動之後）與 `baseTick`（tick 裡）兩處，Kiln 兩處都只更新了 `wasTouchingWater`，沒有發聲；(2) 玩家的水花與划水用 `entity.player.splash`、`entity.player.splash.high_speed`、`entity.player.swim`（Kiln 的水花走生物表，落到 `entity.generic.splash`）。補上，抽取共用 `Entity::water_splash_draws`（音調、粒子位置，再依伺服器身體的速度算音量）；玩家身體的亂數可以固定種子（`Player::seed_body_random`，向量的 `seed_player` 步驟） | `swim56` 9：從 4 種高度跳進水池（小水花與高速水花）、3 種速度在水下划、涉水（腳在 1 格深的水裡走）、從水裡浮上來；原版的玩家亂數固定種子，每個 step 後跑 `ServerGamePacketListenerImpl.tickPlayer`（`doTick` 再把玩家放回用戶端宣稱的位置，與連接每 tick 做的一樣）。（另一個錯路：以為封包的移動從身體上一個 tick 結束的位置開始而改了 Kiln，是自己的 harness 少了 snap back 造成的假象，`effect_parity` 的 16 個摔落向量抓到，已還原。） | `interact_parity` 9／9 |
+| 4 個重錄不符的生物 scenario（`give_allay`、`stacks_allay`、`tongue_frog_*`） | **是 harness 的問題，不是 Kiln 的**：(1) 原版物品實體的建構子從沒設種子的亂數抽 yaw 與（沒明講動量時）動量，每次錄製不同——`MobVectors.Adopt` 現在把出現的物品的亂數固定並記下 `rseed`，`mob_parity` 取錄製的 yaw、動量與亂數；(2) `getEntities` 的順序是實體區段的順序，不是建立的順序——這一個 tick 出現的物品改成當集合比；(3) 出現的物品當 tick 就被合併掉的（`mergeWithNeighbours` 發生在同 tick 後面的物品的 tick）原版不會列出，Kiln 的測試把已移除的也列了；(4) 青蛙吃掉史萊姆時原版**掉戰利品**（`frog` 殺的史萊姆掉一個史萊姆球），Kiln 的重播不掉戰利品：`tongue_frog_*` 設 `mob_drops` 關（與其他不比戰利品的 scenario 一樣）。兩次錄製比對：除了錄下來的 yaw／動量，其餘逐項相同 | 6 個 scenario（`give_allay`、`stacks_allay`、`tongue_frog_slime`、`_magma_cube`、`_big_slime`、`_unreachable`）併入 `m6-mobs2/vectors.jsonl`（取代舊的） | `mob_parity` |
+| 會飛的機器（wp54、wp55 留下的自走機器缺口） | **找到了**。wp55 的搜尋有兩個限制：活塞只朝東西、觀察者只看同一平面——而最小的雙向引擎（2 觀察者、2 黏性活塞、2 黏液塊）是**立體**的：觀察者在上層，靠活塞的**準連接**（quasi-connectivity：活塞也讀它上面那格四周的訊號）觸發活塞。新搜尋 `flyer_search_3d`（`kiln-blocks/src/flyer_search.rs`）：一個 X×Y×Z 的盒子，兩個活塞（黏性／普通、6 個朝向）、兩個觀察者（6 個朝向）、黏液塊與蜂蜜塊任意放，每個觀察者的背面要碰到活塞或活塞上方那格，每種啟動方式（每個零件各當一次最後放的、或在旁邊放一塊石頭再拿走）各試一次，100 tick，要求零件一個不少且 tick 40 到 100 之間平均移動 ≥ 3 格。2×2×2：62,208 個配置，0 個會飛；3×2×2（黏性）：1,912,176 個，**4 個**；3×2×2（任何活塞）：7,648,704 個，8 個（同一個設計，其中一個活塞是普通的）；一個黏液加一個蜂蜜：3,824,352 個，8 個；兩個蜂蜜：1,912,176 個，4 個；3×3×2 與 4×2×2 各取 1/16 的索引空間（1,576,116 個 0 個、1,119,744 個 2 個，都是同一個設計）；三個黏液塊的版本跑到一半停了（107 個，都是同一個設計加一個放哪都行的黏液塊）。加紅石粉或中繼器（4 個朝向、延遲 1）進 2×2×2、觀察者的方向不設限：32,659,200 個配置，0 個（要有第三排才飛得起來）。**找到的 127 個不同的機器全部送進原版（`tools/Flyer3D.java`）：原版逐個一樣會飛，方向與距離相同（60 tick 6 格，向北或向南）**；另外 5,101 個 Kiln 判為不會飛的取樣配置，原版也都不會飛（0 個差異）。設計：黏性活塞朝北在 (0,0,1)、朝南在 (1,0,0)；黏液塊在 (0,0,0) 與 (1,0,1)；觀察者在上層 (0,1,0) 朝西、(1,1,1) 朝東；在 (2,1,1) 放一塊石頭再拿掉就啟動。**機器下面不能有地板**：黏液塊會把下面的方塊一起拖，超過 12 格就推不動（原版與 Kiln 都是，`FLYER_FLOOR=1` 可驗）。向量帶乘客：蜂蜜塊接在機器上（3 種配置：活塞上方一塊、前方一塊、前方兩塊），豬、村民、玩家站在蜂蜜上被帶著走（玩家與蜂蜜同步前進約 11 格，豬與村民的拖動只在活塞的階段，落後零點幾格）；站在活塞頂上的豬被留在原地；站在多接出去的黏液塊上的玩家被帶走 | `flyer56` 12（機器本身逐 tick 的 240 格方塊狀態與移動中活塞的方塊實體資料；3 種蜂蜜配置 × 豬／村民／玩家；活塞頂的豬；黏液塊上的玩家） | `interact_parity` 12／12 |
+| 村民撿物品 | 村民的 `pickUpItem`（`InventoryCarrier.pickUpItem`）：想要的（`#villager_picks_up`、食物、職業要的）而且放得下的物品進村民自己的 8 格背包，剩下的留在地上。Kiln 之前有 `wantsToPickUp` 沒有撿的動作（通用撿拾跳過村民）。同時所有生物的撿拾補上 `take_item_entity`（`LivingEntity.take`：撿的東西飛向撿的人）封包（通用撿拾、村民、悅靈、狐狸、貓熊、海豚、豬布林、硫磺方塊） | `pickup56_villager_*` 11（麵包、一疊麵包、種子、農夫的馬鈴薯、鑽石、棍子、圖書管理員的書與紙、背包有 63 個麵包再丟 5 個、只剩一格、全滿）；`equip_trace` 加上村民背包的簽名 | `mob_parity` 11／11 |
+
+驗證（VM，release，`--no-fail-fast`）：workspace 測試在沒有與有 `KILN_DATAPACK` 時各 161 個測試目標全綠（各 1,210 個測試）；`tools/parity_suites.py` 全部 97 次執行 exit 0：`mob_parity` **1416**／1416
+（wp55 是 1405，+11 `pickup56_villager_*`；6 個重錄的取代舊的；567,381 個生物狀態逐項相同）、`mob_esound55` 28／28、`interact56`：`shulker56` **46**／46、`swim56` **9**／9、`flyer56` **12**／12、
+`interact54-*` 112／314／20、`interact55-*`（138、6）、`interact52-*`（62、44、16、13、4）、`place55`（19440 個環境、2,532,144 次放置、2,516,611 次相同，其餘 7 個是遊戲管理員方塊）、`support55` 30／30、
+`block_parity`、`determinism` 6／6、`plugin_compat` 皆過。
+這一輪順手抓到並修掉的：(1) `kiln-plugin-host` 的 `examples::custom_dir` 每次呼叫共用同一個目錄名，同一個測試檔的兩個測試並行時一個會把另一個正在寫的目錄清掉（`kiln-sim/tests/plugins.rs` 兩次裡約失敗一次，
+`example plugins: No such file or directory`），改成每次呼叫一個目錄；(2) 一個走錯的路：以為原版的封包移動從身體上一個 tick 結束的位置開始，改了 Kiln（`body_at`），`effect_parity` 的 16 個摔落向量立刻抓到，
+原因是自己的 harness 用 `doTick` 而不是連接的 `tickPlayer`（後者在 `doTick` 之後把玩家放回用戶端宣稱的位置），Kiln 原本的做法才對，已還原；harness 改用 `tickPlayer`。
+
+**這一輪沒有做的：**
+
+- **襲擊者撿一般物品**（`Raider.pickUpItem` 除了旗幟走 `super`、掠奪者的 `wantsItem` 與 5 格背包）：旗幟撿拾是 Kiln 的 goal，非旗幟的撿拾仍被通用撿拾跳過。沒有向量。
+- **蓋子形狀只用在實體碰撞**：射線與方塊支撐（`getShape` 的其他用途）仍用靜態的整格形狀，開到一半的蓋子（伸出方塊外 0.5 格）不擋射線。
+- **快樂恐魔的 `canBeCollidedWith`**（決定盒子能不能開）只照船與活的 shulker 算；快樂恐魔取決於客戶端／騎乘狀態，沒做。
+- 重播一個出生就在空中的物體（掉落的礦車、盔甲座）比原版多 tick 一次（`summon` 與第一個 tick 在同一個 sim tick 裡），所以這類向量只收站在東西上的；兩個重疊的生物出生時也一樣（互推多一次）。這是重播的對齊問題，不是 Kiln 與原版的差異。
+- 搜尋的範圍：3×3×2 與 4×2×2 只取 1/16 的索引空間（窮舉要數小時）；紅石粉與中繼器只搜了 2×2×2（0 個，要第三排才飛得起來）；更大的盒子、更多零件沒有搜（最小的機器已經找到，更大的多半是它的重複）。
 
 ## 7. 重跑
 
@@ -647,6 +677,12 @@ java ... tools/InteractVectors.java work/wp55/interact/place55.jsonl place55_be_
 java ... tools/InteractVectors.java work/wp55/interact/machine55.jsonl machine55_    # 觀察者／活塞機器與乘客
 java ... tools/MobVectors.java work/wp55/mobs/vectors_full.jsonl                      # 整套重錄：多了 esound_trace（entity sound 封包）；voice55_*（變種音效）與 pushout55_*（物品推出）
 java ... tools/FlyerCheck.java <kiln-blocks flyer_dump 的輸出> <out.jsonl>            # 飛行機器搜尋：原版對跑
+# wp56 的向量（Kiln 端：parity_suites 的 interact56；生物向量併入 m6-mobs2/vectors.jsonl，備份 .pre-wp56）
+java ... tools/InteractVectors.java work/wp56/interact/shulker56.jsonl shulker56      # shulker 盒蓋推實體；另有 swim56（游泳水花與划水）、flyer56（會飛的機器帶乘客）
+java ... tools/MobVectors.java work/wp56/mobs/p.jsonl "give_allay|stacks_allay|tongue_frog|pickup56"   # 重錄的 6 個與村民撿拾；併入前先備份
+java ... tools/Flyer3D.java <flyer_search_3d 的 JSON 行> <out.jsonl>                  # 立體搜尋找到的機器在原版對跑；FLYER_FLOOR=1 在機器下面鋪地板（原版不會飛）
+# 搜尋（kiln-blocks）：cargo test --release -p kiln-blocks --lib -- --ignored --exact flyer_search::flyer_search_3d --nocapture
+#   環境變數 KILN_FLYER_X／_Y／_Z（盒子）、_SLIMES／_HONEY、_ANY_PISTON、_PARTS／_PART（取 1/N）、_SAMPLE（印出不會飛的取樣給 Flyer3D）；flyer_search_extra 加紅石粉與中繼器
 # 外掛 1.0 guest：sh crates/kiln-plugin-host/tests/fixtures/compat10/build.sh（要 wasm32-wasip2 target）；cargo test -p kiln-plugin-host --test api_compat --test wit_freeze
 # 與原版互載、指令對跑
 python tools/admin_check.py --kiln-exe target/release/kiln

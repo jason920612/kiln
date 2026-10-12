@@ -190,6 +190,10 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
         self.base.moving_piston(pos)
     }
 
+    fn shulker_lid(&self, pos: BlockPos) -> Option<f32> {
+        self.base.shulker_lid(pos)
+    }
+
     fn has_moving_pistons(&self) -> bool {
         self.base.has_moving_pistons()
     }

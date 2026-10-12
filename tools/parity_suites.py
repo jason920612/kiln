@@ -106,6 +106,9 @@ SUITES = {
     # (wp55 also: the voices of the sound variants -- voice55_* scenarios -- are folded into m6-mobs2/vectors.jsonl (backup .pre-wp55), and the
     # entity sound packets of goats, frogs, allays, breezes, sniffers and copper golems are compared in their own recording.)
     "mob_esound55": (["-p", "kiln-entity", "--test", "mob_parity"], {"KILN_MOB_VECTORS": vec("wp55/mobs/esound55.jsonl")}),
+    # wp56 suites: recorded into <work>/wp56 (a swimming player: splashes and strokes with the player's random pinned, swim56.jsonl). The four mob scenarios wp55 could not
+    # replay (give_allay, stacks_allay, tongue_frog_*) are re-recorded into m6-mobs2/vectors.jsonl (backup .pre-wp56).
+    "interact56": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp56/interact/*.jsonl"}),
     "plugin_compat": (["-p", "kiln-plugin-host", "--test", "api_compat", "--test", "wit_freeze"], {}),
 }
 

@@ -288,6 +288,8 @@ pub enum Event {
     /// `Level.playSound(null, entity, sound, source, volume, pitch)`: a sound that follows an entity (an entity sound packet;
     /// `pos` is where the entity is, for who hears it).
     EntitySound { entity: i32, pos: Vec3, sound: &'static str, source: &'static str, volume: f32, pitch: f32 },
+    /// `LivingEntity.take(item, amount)`: the item entity `item` flies to `collector` (a `take_item_entity` packet to who tracks the item).
+    TakeItem { item: i32, collector: i32, amount: i32 },
     /// `Level.levelEvent` (block break particles 2001, fizz 1501, ...).
     LevelEvent { event: i32, pos: BlockPos, data: i32 },
     /// `Level.blockEvent(pos, block, a, b)` for the block at `pos` (a spawner's delay reset).
@@ -689,9 +691,16 @@ pub trait EntityLevel {
     }
 
     /// Whether any `moving_piston` block entity is registered: the level's block epoch does not
-    /// see their progress, so scans that read their shapes are not reused (`false`: none).
+    /// see their progress (nor that of a shulker lid on the move), so scans that read their shapes are not reused (`false`: none).
     fn has_moving_pistons(&self) -> bool {
         false
+    }
+
+    /// The shown progress (`getProgress(1.0f)`) of the lid of the shulker box at `pos` while the lid is on the move, which
+    /// gives the box its shape (`ShulkerBoxBlock.getShape`); `None`: the lid is shut (the block's own shape).
+    fn shulker_lid(&self, pos: BlockPos) -> Option<f32> {
+        let _ = pos;
+        None
     }
 
     /// Runs `f` on entity `id` taken out of the level (as the entity being ticked is: the level

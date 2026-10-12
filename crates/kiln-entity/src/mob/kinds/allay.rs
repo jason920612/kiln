@@ -264,8 +264,8 @@ impl Kind for Allay {
                 } else {
                     d.stack.set_count(rest.count());
                 }
-                let _ = count;
                 mob::on_item_pickup(e, m, level, thrower, &stack);
+                mob::take_item(e, level, id, count - rest.count());
                 st_mut(m).last_item = Some((id, pos, eye));
                 if !e.silent {
                     level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.item.pickup", source: "neutral", volume: 0.2, pitch: 1.0 });
