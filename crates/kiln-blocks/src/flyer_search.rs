@@ -941,3 +941,72 @@ fn flyer_riders() {
     });
     println!("{} variants fly", found.load(std::sync::atomic::Ordering::Relaxed));
 }
+
+/// The machines of `flyer_search_3d` with one more piece, redstone dust or a repeater (any facing, delay 1), and no restriction on where the
+/// observers' backs point: the whole box (`KILN_FLYER_X` x `_Y` x `_Z`, 2 x 2 x 2 by default) with two sticky pistons, two observers, two slime blocks and the extra.
+#[test]
+#[ignore]
+fn flyer_search_extra() {
+    let env = |k: &str, d: usize| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+    let (nx, ny, nz) = (env("KILN_FLYER_X", 2), env("KILN_FLYER_Y", 2), env("KILN_FLYER_Z", 2));
+    let threads = env("KILN_FLYER_THREADS", 8);
+    let cells: Vec<Cell> = (0..nx as i32).flat_map(|x| (0..ny as i32).flat_map(move |y| (0..nz as i32).map(move |z| (x, y, z)))).collect();
+    let n = cells.len();
+    let npieces = 7;
+    let extras: Vec<u16> = std::iter::once(state::parse_state("minecraft:redstone_wire").unwrap())
+        .chain(DIRS[..4].iter().map(|d| state::parse_state(&format!("minecraft:repeater[facing={},delay=1,locked=false,powered=false]", d.0)).unwrap()))
+        .collect();
+    let total: usize = (0..npieces).fold(1, |a, i| a * (n - i));
+    let (found, tried) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    std::thread::scope(|sc| {
+        for t in 0..threads {
+            let (found, tried, cells, extras) = (&found, &tried, &cells, &extras);
+            sc.spawn(move || {
+                let mut k = t;
+                while k < total {
+                    let mut m = k;
+                    k += threads;
+                    let mut free: Vec<usize> = (0..n).collect();
+                    let mut at = Vec::new();
+                    for i in 0..npieces {
+                        let j = m % (n - i);
+                        m /= n - i;
+                        at.push(free.remove(j));
+                    }
+                    if at[0] > at[1] || at[2] > at[3] || at[4] > at[5] {
+                        continue;
+                    }
+                    let pos = |i: usize| cells[at[i]];
+                    for o in 0..36 {
+                        for pk in 0..36 {
+                            for &extra in extras.iter() {
+                                let pieces: Vec<(Cell, u16)> = vec![
+                                    (pos(0), piston_state(true, pk % 6)),
+                                    (pos(1), piston_state(true, pk / 6)),
+                                    (pos(2), observer_state(o % 6)),
+                                    (pos(3), observer_state(o / 6)),
+                                    (pos(4), d::SLIME_BLOCK),
+                                    (pos(5), d::SLIME_BLOCK),
+                                    (pos(6), extra),
+                                ];
+                                tried.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                let mut starts: Vec<(Cell, bool)> = pieces.iter().map(|&(c, _)| (c, false)).collect();
+                                starts.extend(cells.iter().filter(|c| !pieces.iter().any(|p| p.0 == **c)).map(|&c| (c, true)));
+                                for (c, tap) in starts {
+                                    if let Some(v) = run3(&pieces, c, tap, 100)
+                                        && v.iter().any(|d| d.abs() >= 3)
+                                    {
+                                        found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        println!("FLIES {v:?} with {:?} started at {c:?} (tap {tap})", pieces.iter().map(|&(c, s)| (c, kiln_data::blocks_types::block_of(s).name)).collect::<Vec<_>>());
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    println!("{} layouts fly of {} tried", found.load(std::sync::atomic::Ordering::Relaxed), tried.load(std::sync::atomic::Ordering::Relaxed));
+}
