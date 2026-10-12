@@ -8783,6 +8783,56 @@ public class MobVectors {
         scenariosWp55Voices(out);
         scenariosWp55Pushout(out);
         scenariosWp56Villagers(out);
+        scenariosWp57Raiders(out);
+    }
+
+    // ------------------------------------------------------------------ wp57: raiders pick up ordinary items (Raider.pickUpItem falls through to Mob.pickUpItem)
+
+    static void scenariosWp57Raiders(List<Scenario> out) {
+        // an illager wearing nothing picks up armor and weapons as any mob that can hold loot; a pillager takes nothing but banners
+        out.add(raiderPickup("vindicator_helmet", "vindicator", "", "minecraft:iron_helmet"));
+        out.add(raiderPickup("vindicator_chest_stack", "vindicator", "", "minecraft:diamond_chestplate*3"));
+        out.add(raiderPickup("vindicator_sword_over_axe", "vindicator", worn("mainhand", "minecraft:iron_axe"), "minecraft:diamond_sword"));
+        out.add(raiderPickup("vindicator_axe_over_sword", "vindicator", worn("mainhand", "minecraft:diamond_sword"), "minecraft:wooden_axe"));
+        out.add(raiderPickup("vindicator_stick", "vindicator", "", "minecraft:stick*5"));
+        out.add(raiderPickup("vindicator_worse_helmet", "vindicator", worn("head", "minecraft:diamond_helmet"), "minecraft:leather_helmet"));
+        out.add(raiderPickup("vindicator_banner", "vindicator", "", "minecraft:white_banner"));
+        out.add(raiderPickup("vindicator_no_loot", "vindicator", "", "minecraft:iron_helmet", false));
+        out.add(raiderPickup("pillager_helmet", "pillager", "", "minecraft:iron_helmet"));
+        out.add(raiderPickup("pillager_sword", "pillager", "", "minecraft:iron_sword"));
+        out.add(raiderPickup("pillager_arrows", "pillager", "", "minecraft:arrow*16"));
+        out.add(raiderPickup("pillager_banner", "pillager", "", "minecraft:white_banner"));
+        out.add(raiderPickup("pillager_black_banner_over_banner", "pillager", worn("head", "minecraft:white_banner"), "minecraft:black_banner"));
+        out.add(raiderPickup("evoker_helmet", "evoker", "", "minecraft:golden_helmet"));
+        out.add(raiderPickup("evoker_totem", "evoker", "", "minecraft:totem_of_undying"));
+        out.add(raiderPickup("illusioner_bow", "illusioner", worn("mainhand", "minecraft:bow"), "minecraft:iron_sword"));
+        out.add(raiderPickup("illusioner_boots", "illusioner", "", "minecraft:iron_boots"));
+        out.add(raiderPickup("witch_helmet", "witch", "", "minecraft:iron_helmet"));
+        out.add(raiderPickup("witch_potion", "witch", "", "minecraft:potion"));
+        out.add(raiderPickup("ravager_helmet", "ravager", "", "minecraft:iron_helmet"));
+        out.add(raiderPickup("ravager_sword", "ravager", "", "minecraft:iron_sword"));
+    }
+
+    static Scenario raiderPickup(String name, String mob, String extra, String item) {
+        return raiderPickup(name, mob, extra, item, true);
+    }
+
+    static Scenario raiderPickup(String name, String mob, String extra, String item, boolean loot) {
+        long seed = 57000L + Math.abs(name.hashCode() % 1000);
+        MobSpec m = new MobSpec("minecraft:" + mob, 0.5, BY, 0.5, 30f, seed);
+        m.nbt = "{NoAI:1b,PersistenceRequired:1b" + (loot ? ",CanPickUpLoot:1b" : "") + (extra.isEmpty() ? "" : "," + extra) + "}";
+        Scenario s = new Scenario("pickup57_raider_" + name);
+        s.mobs.add(m);
+        MobSpec it = new MobSpec("minecraft:item", 0.9, BY, 0.5, 0f, 0);
+        it.mainHand = item;
+        s.others.add(it);
+        s.player = new double[] {9.5, BY, 5.5};
+        s.playerCreative = true;
+        s.traceEquip = true;
+        s.levelSeed = 5700 + Math.abs(name.hashCode() % 300);
+        s.ticks = 30;
+        floor(s, 16, "minecraft:grass_block");
+        return s;
     }
 
     // ------------------------------------------------------------------ wp56: a villager picks up what it wants into its inventory
