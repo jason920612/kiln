@@ -240,6 +240,19 @@ public class InventoryVectors {
         public void levelEvent(net.minecraft.world.entity.Entity e, int type, BlockPos pos, int data) {}
     }
 
+    static class FakeAdvancements extends net.minecraft.server.PlayerAdvancements {
+        FakeAdvancements() {
+            super(null, null, null, null, null);
+        }
+
+        @Override
+        public <T extends net.minecraft.advancements.CriterionTriggerInstance> java.util.Map<net.minecraft.server.PlayerAdvancements.TriggerInstanceKey, T> getTriggerMapForType(net.minecraft.advancements.triggers.CriterionTrigger<T> trigger) {
+            return java.util.Map.of();
+        }
+    }
+
+    static net.minecraft.server.PlayerAdvancements FAKE_ADVANCEMENTS;
+
     static class FakePlayer extends ServerPlayer {
         GameType mode;
         List<String> sink;
@@ -256,6 +269,12 @@ public class InventoryVectors {
         @Override
         public GameType gameMode() {
             return mode;
+        }
+
+        // (a brewed potion triggers an advancement criterion; the fake player has no advancements, so the trigger finds nothing)
+        @Override
+        public net.minecraft.server.PlayerAdvancements getAdvancements() {
+            return FAKE_ADVANCEMENTS;
         }
 
         @Override
@@ -532,6 +551,7 @@ public class InventoryVectors {
     static Session session(String kind, int containerId, boolean creative) throws Exception {
         Session s = new Session();
         s.kind = kind;
+        if (FAKE_ADVANCEMENTS == null) FAKE_ADVANCEMENTS = (net.minecraft.server.PlayerAdvancements) U.allocateInstance(FakeAdvancements.class);
         FakePlayer p = (FakePlayer) U.allocateInstance(FakePlayer.class);
         p.mode = creative ? GameType.CREATIVE : GameType.SURVIVAL;
         p.sink = s.sink;
@@ -567,9 +587,9 @@ public class InventoryVectors {
             case "stonecutter" -> new StonecutterMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
             case "smithing" -> new SmithingMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
             case "loom" -> new LoomMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
-            case "anvil" -> new AnvilMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
-            case "grindstone" -> new GrindstoneMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
-            case "cartography" -> new CartographyTableMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
+            case "anvil" -> new AnvilMenu(id, s.inv, ContainerLevelAccess.NULL);
+            case "grindstone" -> new GrindstoneMenu(id, s.inv, ContainerLevelAccess.NULL);
+            case "cartography" -> new CartographyTableMenu(id, s.inv, ContainerLevelAccess.NULL);
             case "brewing" -> new BrewingStandMenu(id, s.inv, s.block, s.data);
             default -> throw new IllegalArgumentException(s.kind);
         };
@@ -598,6 +618,9 @@ public class InventoryVectors {
                 boolean creative = rng.nextInt(5) == 0;
                 int id = kind.equals("inventory") ? 0 : 1 + rng.nextInt(100);
                 Session s = session(kind, id, creative);
+                // (the anvil costs levels; the draws are the anvils alone, so the other kinds sequences stay what they were)
+                int xp = kind.equals("anvil") ? (rng.nextInt(3) == 0 ? 0 : rng.nextInt(40)) : 0;
+                s.player.experienceLevel = xp;
                 String[] pool = kind.equals("crafting") || (kind.equals("inventory") && rng.nextBoolean()) ? CRAFT_POOL
                         : kind.equals("stonecutter") ? STONE_POOL : kind.equals("smithing") ? SMITH_POOL : kind.equals("loom") ? LOOM_POOL
                         : kind.equals("anvil") ? ANVIL_POOL : kind.equals("grindstone") ? GRIND_POOL : kind.equals("cartography") ? CARTO_POOL : kind.equals("brewing") ? BREW_POOL : CLICK_POOL;
@@ -641,7 +664,7 @@ public class InventoryVectors {
                 s.menu.addSlotListener(NO_LISTENER);
                 s.menu.setSynchronizer(new Sync((FakeConnection) s.player.connection));
                 StringBuilder b = new StringBuilder();
-                b.append("{\"kind\": \"").append(kind).append("\", \"container_id\": ").append(id).append(", \"creative\": ").append(creative)
+                b.append("{\"kind\": \"").append(kind).append("\", \"container_id\": ").append(id).append(", \"creative\": ").append(creative).append(", \"xp_level\": ").append(xp)
                         .append(", \"selected\": ").append(s.inv.getSelectedSlot()).append(", \"inv\": ").append(hexList(inv0))
                         .append(", \"block\": ").append(hexList(block0)).append(", \"grid\": ").append(hexList(grid)).append(", \"data\": [").append(s.data.get(0)).append(", ").append(s.data.get(1))
                         .append(", ").append(s.data.get(2)).append(", ").append(s.data.get(3)).append("], \"open\": ").append(drain(s)).append(", \"steps\": [");

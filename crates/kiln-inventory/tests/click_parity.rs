@@ -193,7 +193,7 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
     block.data = seq["data"].as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect();
     let has_block = !matches!(kind, "inventory" | "crafting" | "stonecutter" | "smithing" | "loom" | "anvil" | "grindstone" | "cartography");
     let mut menu = menu_for(kind, id);
-    let flags = PlayerFlags { creative, infinite_materials: creative, ..Default::default() };
+    let flags = PlayerFlags { creative, infinite_materials: creative, xp_level: seq.get("xp_level").and_then(Json::as_i64).unwrap_or(0) as i32, ..Default::default() };
     let mut world = NoWorld;
     let mut out = Vec::new();
     macro_rules! env {
