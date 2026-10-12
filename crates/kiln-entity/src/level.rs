@@ -1026,6 +1026,13 @@ pub trait EntityLevel {
         None
     }
 
+    /// The type of `owner`, an entity that may live in a part of the world this level does not
+    /// reach (a cloud of dragon's breath outlives its dragon's region): lets a death message
+    /// still name it.
+    fn hint_owner_type(&mut self, owner: i32, type_name: &'static str) {
+        let _ = (owner, type_name);
+    }
+
     /// `MobEffect.applyInstantaneousEffect` on player or entity `id` (a splash potion's or a
     /// cloud's instant health or harm at `scale`; `source`: the potion or cloud and its
     /// position, `owner`: who threw it). Implementations reach mobs through

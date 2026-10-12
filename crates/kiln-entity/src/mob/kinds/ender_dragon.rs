@@ -364,6 +364,7 @@ pub fn spawn_breath_cloud(
     let cloud = AreaEffectCloud {
         owner: owner.map(|o| o.0),
         owner_uuid: owner.map(|o| o.1).filter(|&u| u != 0),
+        owner_type: owner.map(|_| "minecraft:ender_dragon"),
         radius,
         duration,
         radius_per_tick,
