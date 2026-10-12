@@ -569,9 +569,6 @@ struct Player {
     /// The server's own body of the player (see [`phantom`]): its velocity, its stuck
     /// multiplier (`makeStuckInBlock`) and the movements of the tick.
     phantom: Option<Box<kiln_entity::entity::Entity>>,
-    /// Where the body stood after the last tick, with the position the player was put back to: the next packet's move starts from
-    /// the body (`handleMovePlayer` moves it by the claim minus `lastGood`, not by the claim minus where the body is).
-    body_at: Option<([f64; 3], [f64; 3])>,
     server_delta: [f64; 3],
     stuck_speed: [f64; 3],
     movements: Vec<phantom::Mv>,
@@ -3646,7 +3643,6 @@ impl Sim {
             on_ground_no_blocks: false,
             was_touching_water: false,
             phantom: None,
-            body_at: None,
             server_delta: [0.0; 3],
             stuck_speed: [0.0; 3],
             movements: Vec::new(),

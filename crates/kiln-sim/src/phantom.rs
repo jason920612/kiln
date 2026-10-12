@@ -320,8 +320,7 @@ impl Player {
     pub(crate) fn server_packet_move(&mut self, from: [f64; 3], d: [f64; 3], was_on_ground: bool, cells: &CellSet<Cell>, game_time: i64, min_y: i32, fast_lava: bool) -> [f64; 3] {
         let mut level = PhantomLevel::new(cells, game_time, min_y, fast_lava);
         let (to, on_ground) = (self.pos, self.on_ground);
-        // The body stands where its last tick left it, `from` being where the player was put back to.
-        self.pos = self.body_at.take().filter(|(put_back, _)| *put_back == from).map_or(from, |(_, body)| body);
+        self.pos = from;
         self.on_ground = was_on_ground;
         let mut e = self.phantom_in(&level);
         self.pos = to;

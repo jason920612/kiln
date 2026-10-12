@@ -929,7 +929,6 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     p.tick_freezing(&block, &mut ctx);
     // `Player.tick`'s last step.
     p.update_pose(cells, env.game_time, env.min_y);
-    p.body_at = Some((snap, p.pos));
     p.pos = snap;
     if let Some(travel) = p.pending_travel.take() {
         t.portals.push(travel);
