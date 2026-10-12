@@ -148,6 +148,8 @@ mod weather_parity;
 #[cfg(test)]
 mod item_parity;
 #[cfg(test)]
+mod lid_parity;
+#[cfg(test)]
 mod interact_parity;
 
 use bytes::Bytes;
