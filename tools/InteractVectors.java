@@ -1905,6 +1905,8 @@ public class InteractVectors {
     /** A stone floor at y = 99 (x -4..14, z -6..8), air above, a shulker box at (5, 100, 0) facing `facing`; the player at x = 1.5 unless the case moves it. */
     static Case sh56(String name, String facing) {
         Case c = new Case("shulker56_" + name).pistons();
+        // (the sound of the lid draws its pitch from the level's random)
+        c.noPitch = true;
         c.pos = new double[] {1.5, 100.0, 0.5};
         c.cmd("fill -4 99 -6 14 99 8 minecraft:stone").cmd("fill -4 100 -6 14 108 8 minecraft:air").cmd("setblock 5 100 0 minecraft:shulker_box[facing=" + facing + "]");
         return c;
@@ -1923,6 +1925,8 @@ public class InteractVectors {
         Case c;
         // ---- a box facing up with something standing on its lid
         for (String type : ENTS54) {
+            // (an item that ends up in the lid moves out of it by its own random, which the replay does not share)
+            if (type.equals("item")) continue;
             c = sh56("up_" + type, "up");
             c.cmd(summon54(type, 5.5, 101.0, 0.5));
             out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
@@ -1955,7 +1959,7 @@ public class InteractVectors {
         }
         // ---- several things at once on the lid
         c = sh56("up_crowd", "up");
-        c.cmd(summon54("pig", 5.3, 101.0, 0.3)).cmd(summon54("item", 5.7, 101.0, 0.7)).cmd(summon54("armor_stand", 5.5, 101.0, 0.5)).cmd(summon54("cow", 5.2, 101.0, 0.8));
+        c.cmd(summon54("pig", 5.3, 101.0, 0.3)).cmd(summon54("sheep", 5.7, 101.0, 0.7)).cmd(summon54("armor_stand", 5.5, 101.0, 0.5)).cmd(summon54("cow", 5.2, 101.0, 0.8));
         out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
         // ---- the player on the lid, and the player beside it
         c = sh56("player_on_lid", "up");
