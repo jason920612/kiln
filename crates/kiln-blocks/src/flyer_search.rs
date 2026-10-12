@@ -674,7 +674,7 @@ fn run3(pieces: &[(Cell, u16)], start: Cell, tap: bool, ticks: i32) -> Option<[i
         let (mut sum, mut count, mut h) = ([0i64; 3], 0usize, 0u64);
         for x in 0..64 {
             for z in -8..24 {
-                for y in 80..125 {
+                for y in 70..130 {
                     let s = level.block(BlockPos::new(x, y, z));
                     if !is_air(s) && !state::is(s, d::PISTON_HEAD) && !state::is(s, d::MOVING_PISTON) {
                         sum[0] += x as i64;
@@ -688,9 +688,12 @@ fn run3(pieces: &[(Cell, u16)], start: Cell, tap: bool, ticks: i32) -> Option<[i
         }
         (sum, count, h)
     };
-    let (mut h20, mut at40) = (0u64, [0i64; 3]);
+    let (h0, mut h20, mut at40) = (measure(&level).2, 0u64, [0i64; 3]);
     for t in 1..=ticks {
         level.tick(0, &chunks);
+        if t == 10 && measure(&level).2 == h0 {
+            return None;
+        }
         if t == 20 || t == 30 || t == 40 || t == ticks {
             let (sum, count, h) = measure(&level);
             if count != pieces.len() {
