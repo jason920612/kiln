@@ -727,6 +727,7 @@ fn flyer_search_3d() {
     let (nx, ny, nz) = (env("KILN_FLYER_X", 3), env("KILN_FLYER_Y", 2), env("KILN_FLYER_Z", 2));
     let (slimes, honeys, threads) = (env("KILN_FLYER_SLIMES", 2), env("KILN_FLYER_HONEY", 0), env("KILN_FLYER_THREADS", 8));
     let sticky_only = std::env::var_os("KILN_FLYER_ANY_PISTON").is_none();
+    let sample = env("KILN_FLYER_SAMPLE", 0);
     let (part, parts) = (env("KILN_FLYER_PART", 0), env("KILN_FLYER_PARTS", 1));
     let cells: Vec<Cell> = (0..nx as i32).flat_map(|x| (0..ny as i32).flat_map(move |y| (0..nz as i32).map(move |z| (x, y, z)))).collect();
     let n = cells.len();
@@ -782,6 +783,25 @@ fn flyer_search_3d() {
                                 pieces.push((pos(4 + slimes + i), d::HONEY_BLOCK));
                             }
                             tried.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            // a sample of the layouts, for the vanilla check of what does NOT fly: the first start's outcome (`null`: broke up or stood still)
+                            if sample > 0 && tried.load(std::sync::atomic::Ordering::Relaxed) % sample == 0 {
+                                let c = pieces[0].0;
+                                let v = run3(&pieces, c, false, 100);
+                                let json: Vec<String> = pieces
+                                    .iter()
+                                    .map(|&(c, s)| {
+                                        let b = kiln_data::blocks_types::block_of(s);
+                                        let extra = match b.property(s, "facing") {
+                                            Some(f) if b.name.ends_with("observer") => format!("[facing={f},powered=false]"),
+                                            Some(f) => format!("[facing={f},extended=false]"),
+                                            None => String::new(),
+                                        };
+                                        format!("[{},{},{},\"{}{}\"]", c.0, c.1, c.2, b.name, extra)
+                                    })
+                                    .collect();
+                                let mv = v.map_or("null".to_string(), |v| format!("[{},{},{}]", v[0], v[1], v[2]));
+                                println!("SAMPLE {{\"pieces\":[{}],\"start\":[{},{},{}],\"tap\":false,\"move\":{mv}}}", json.join(","), c.0, c.1, c.2);
+                            }
                             // started by a piece placed last, or by a block put beside the machine and taken away
                             let mut starts: Vec<(Cell, bool)> = pieces.iter().map(|&(c, _)| (c, false)).collect();
                             starts.extend(cells.iter().filter(|c| !pieces.iter().any(|p| p.0 == **c)).map(|&c| (c, true)));

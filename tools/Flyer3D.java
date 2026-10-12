@@ -165,9 +165,11 @@ public class Flyer3D {
                 boolean intact = n == pieces.size();
                 long[] mv = new long[3];
                 for (int a = 0; a < 3; a++) mv[a] = n == 0 ? 0 : (res[1][a] - res[0][a]) / n;
-                int[] kiln = ints(line, "move");
-                boolean same = intact && mv[0] == kiln[0] && mv[1] == kiln[1] && mv[2] == kiln[2];
+                boolean kilnNull = line.contains("\"move\":null");
+                int[] kiln = kilnNull ? new int[3] : ints(line, "move");
+                boolean same = kilnNull ? true : (intact && mv[0] == kiln[0] && mv[1] == kiln[1] && mv[2] == kiln[2]);
                 boolean fly = intact && (Math.abs(mv[0]) >= 3 || Math.abs(mv[1]) >= 3 || Math.abs(mv[2]) >= 3);
+                if (kilnNull && fly) same = false;
                 if (!same) differ++;
                 if (fly) flies++;
                 w.println(line.substring(0, line.lastIndexOf('}')) + ",\"vanilla\":[" + mv[0] + "," + mv[1] + "," + mv[2] + "],\"intact\":" + intact + ",\"same\":" + same + "}");
