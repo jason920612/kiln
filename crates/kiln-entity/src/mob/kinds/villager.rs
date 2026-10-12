@@ -883,7 +883,7 @@ pub fn inventory_of(m: &MobData) -> &[ItemStack] {
 /// `InventoryCarrier.pickUpItem` for the item entity `id` the villager wants (and has room for): into the inventory, the rest stays.
 pub fn pick_up_item(e: &Entity, m: &mut MobData, level: &mut dyn EntityLevel, id: i32) {
     let Some(item) = level.entity(id) else { return };
-    let EntityKind::Item(d) = &item.kind else { return };
+    let crate::entity::EntityKind::Item(d) = &item.kind else { return };
     let (stack, thrower) = (d.stack.clone(), d.thrower);
     let Some(st) = state_mut(m) else { return };
     if !can_add_item(st, &stack) {
@@ -897,7 +897,7 @@ pub fn pick_up_item(e: &Entity, m: &mut MobData, level: &mut dyn EntityLevel, id
     let Some(item) = level.entity_mut(id) else { return };
     if rest.is_empty() {
         item.discard();
-    } else if let EntityKind::Item(d) = &mut item.kind {
+    } else if let crate::entity::EntityKind::Item(d) = &mut item.kind {
         d.stack.set_count(rest.count());
     }
 }
