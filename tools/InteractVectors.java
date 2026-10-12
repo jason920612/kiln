@@ -224,7 +224,7 @@ public class InteractVectors {
         /** wp54: the case is left out when the observer heard nothing (the item could not be placed). */
         boolean dropIfSilent;
 
-        /** wp56: the player's own server tick (`ServerPlayer.doTick`: its fluid update, its body's travel) follows every step, as the connection runs it between the client's packets. */
+        /** wp56: the connection's tick of the player (`tickPlayer`: its `doTick`, then the snap back to where the client says it is) follows every step. */
         boolean ticksPlayer;
 
         Case observer(double x, double y, double z) {
@@ -5095,11 +5095,8 @@ public class InteractVectors {
         if (c.watchMaps) resetMaps();
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
-            if (c.ticksPlayer) {
-                if (System.getenv("SWIM_DEBUG") != null) System.out.println("SWIMDBG " + c.name + " before doTick pos " + p.position() + " delta " + p.getDeltaMovement() + " water " + p.isInWater() + " ground " + p.onGround());
-                p.doTick();
-                if (System.getenv("SWIM_DEBUG") != null) System.out.println("SWIMDBG " + c.name + " after doTick pos " + p.position() + " delta " + p.getDeltaMovement() + " water " + p.isInWater() + " ground " + p.onGround());
-            }
+            // (`ServerGamePacketListenerImpl.tickPlayer`: `doTick`, then the connection puts the player back where the client said it is)
+            if (c.ticksPlayer) call(p.connection, "tickPlayer");
             if (c.tickCushions && !"tick_cushions".equals(s.get("op"))) {
                 if (c.noPitch) addAttackTicks(p, 1);
                 for (var cu : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.Cushion.class, new AABB(-16, 60, -16, 32, 330, 32))) cu.tick();
