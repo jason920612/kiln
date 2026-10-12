@@ -335,7 +335,6 @@ fn told_attribute(packets: &[bytes::Bytes], entity_id: i32, attribute: &str) -> 
 #[test]
 fn armor_and_tool_attributes_reach_the_client_when_equipment_changes() {
     let mut w = World::new(&["Wearer"]);
-    w.console("gamemode survival Wearer");
     w.ticks(5);
     let stats = w.clients[0].stats.clone();
     *stats.log.lock().unwrap() = Some(Vec::new());
@@ -343,6 +342,8 @@ fn armor_and_tool_attributes_reach_the_client_when_equipment_changes() {
     for (slot, item) in [(5, "diamond_helmet"), (6, "diamond_chestplate"), (7, "diamond_leggings"), (8, "diamond_boots")] {
         w.give(1, slot, &format!("minecraft:{item}"));
     }
+    w.ticks(5);
+    w.console("gamemode survival Wearer");
     w.ticks(5);
     let packets = stats.log.lock().unwrap().clone().unwrap();
     let armor = told_attribute(&packets, me, "minecraft:armor").expect("the armor attribute is sent when armor is put on");
