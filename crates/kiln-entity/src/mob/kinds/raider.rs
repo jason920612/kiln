@@ -511,12 +511,6 @@ impl CustomGoal for ObtainRaidLeaderBannerGoal {
     }
 }
 
-/// The `Raider` types.
-pub fn is_raider(kind: MobKind) -> bool {
-    use MobKind::*;
-    matches!(kind, Pillager | Vindicator | Evoker | Illusioner | Ravager | Witch)
-}
-
 /// `Raider.pickUpItem` (with `Pillager.pickUpItem` over it): an ominous banner in an active raid without a leader is worn
 /// and its wearer leads the wave; any other item goes to `Mob.pickUpItem`, except that a pillager takes nothing but
 /// banners (its `wantsItem` asks for a white banner, which `BannerItem` has already sent the other way).
