@@ -32,6 +32,8 @@ fn menu_for(kind: &str, id: i32) -> Menu {
         "grindstone" => Menu::grindstone(id),
         "cartography" => Menu::cartography_table(id),
         "brewing" => Menu::brewing_stand(id),
+        "beacon" => Menu::beacon(id),
+        "lectern" => Menu::lectern(id),
         _ => panic!("unknown menu kind {kind}"),
     }
 }
@@ -191,7 +193,7 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
     inv.selected = seq["selected"].as_u64().unwrap() as usize;
     let mut block = SimpleContainer::from_items(stacks(&seq["block"]));
     block.data = seq["data"].as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect();
-    let has_block = !matches!(kind, "inventory" | "crafting" | "stonecutter" | "smithing" | "loom" | "anvil" | "grindstone" | "cartography");
+    let has_block = !matches!(kind, "inventory" | "crafting" | "stonecutter" | "smithing" | "loom" | "anvil" | "grindstone" | "cartography" | "beacon");
     let mut menu = menu_for(kind, id);
     let flags = PlayerFlags { creative, infinite_materials: creative, xp_level: seq.get("xp_level").and_then(Json::as_i64).unwrap_or(0) as i32, ..Default::default() };
     let mut no_world = NoWorld;
@@ -217,7 +219,7 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
         };
     }
     // A crafting grid starts at slot 1, station inputs at slot 0.
-    let first = if matches!(kind, "stonecutter" | "smithing" | "loom" | "anvil" | "grindstone" | "cartography") { 0 } else { 1 };
+    let first = if matches!(kind, "stonecutter" | "smithing" | "loom" | "anvil" | "grindstone" | "cartography" | "beacon") { 0 } else { 1 };
     for (i, s) in seq.get("grid").map(stacks).unwrap_or_default().into_iter().enumerate() {
         if !s.is_empty() {
             menu.set_slot(&mut env!(), first + i, s);

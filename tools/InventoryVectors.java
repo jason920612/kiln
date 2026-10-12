@@ -85,6 +85,8 @@ import net.minecraft.world.flag.FeatureFlagSet;
 import net.minecraft.world.flag.FeatureFlags;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.AnvilMenu;
+import net.minecraft.world.inventory.BeaconMenu;
+import net.minecraft.world.inventory.LecternMenu;
 import net.minecraft.world.inventory.BrewingStandMenu;
 import net.minecraft.world.inventory.CartographyTableMenu;
 import net.minecraft.world.inventory.GrindstoneMenu;
@@ -494,6 +496,16 @@ public class InventoryVectors {
         "honey_bottle", "experience_bottle", "stone[max_stack_size=7]", "potion[max_stack_size=3]", "glass_bottle", "glass_bottle", "potion", "nether_wart", "blaze_powder",
     };
 
+    static final String[] BEACON_POOL = {
+        "iron_ingot", "gold_ingot", "diamond", "emerald", "netherite_ingot", "stone", "iron_ingot[max_stack_size=3]", "bundle", "stick", "iron_ingot", "emerald", "diamond",
+        "copper_ingot", "iron_block", "dirt",
+    };
+
+    static final String[] LECTERN_POOL = {
+        "written_book[written_book_content={title:\"t\",author:\"a\",generation:1,pages:[\"x\"]}]", "writable_book", "book", "stone", "written_book[written_book_content={title:\"u\",author:\"b\",generation:0,pages:[\"y\",\"z\"]}]",
+        "writable_book[writable_book_content={pages:[{raw:\"p\"}]}]", "paper", "bundle",
+    };
+
     static ItemStack randomStack(Random rng, String[] pool) {
         String text = pool[rng.nextInt(pool.length)];
         ItemStack s = parse(text, 1);
@@ -547,6 +559,7 @@ public class InventoryVectors {
             case "hopper" -> 5;
             case "furnace", "blast_furnace", "smoker" -> 3;
             case "brewing" -> 5;
+            case "lectern" -> 1;
             default -> 0;
         };
     }
@@ -604,6 +617,8 @@ public class InventoryVectors {
             case "grindstone" -> new GrindstoneMenu(id, s.inv, FAKE_ACCESS);
             case "cartography" -> new CartographyTableMenu(id, s.inv, FAKE_ACCESS);
             case "brewing" -> new BrewingStandMenu(id, s.inv, s.block, s.data);
+            case "beacon" -> new BeaconMenu(id, s.inv);
+            case "lectern" -> new LecternMenu(id, s.block, s.data);
             default -> throw new IllegalArgumentException(s.kind);
         };
     }
@@ -636,7 +651,7 @@ public class InventoryVectors {
                 s.player.experienceLevel = xp;
                 String[] pool = kind.equals("crafting") || (kind.equals("inventory") && rng.nextBoolean()) ? CRAFT_POOL
                         : kind.equals("stonecutter") ? STONE_POOL : kind.equals("smithing") ? SMITH_POOL : kind.equals("loom") ? LOOM_POOL
-                        : kind.equals("anvil") ? ANVIL_POOL : kind.equals("grindstone") ? GRIND_POOL : kind.equals("cartography") ? CARTO_POOL : kind.equals("brewing") ? BREW_POOL : CLICK_POOL;
+                        : kind.equals("anvil") ? ANVIL_POOL : kind.equals("grindstone") ? GRIND_POOL : kind.equals("cartography") ? CARTO_POOL : kind.equals("brewing") ? BREW_POOL : kind.equals("beacon") ? BEACON_POOL : kind.equals("lectern") ? LECTERN_POOL : CLICK_POOL;
                 double fill = rng.nextDouble();
                 for (int i = 0; i < 43; i++) {
                     if (rng.nextDouble() < fill * 0.8) s.inv.setItem(i, randomStack(rng, pool));
@@ -667,7 +682,7 @@ public class InventoryVectors {
                         grid = g;
                     }
                 }
-                boolean station = kind.equals("stonecutter") || kind.equals("smithing") || kind.equals("loom") || kind.equals("anvil") || kind.equals("grindstone") || kind.equals("cartography");
+                boolean station = kind.equals("stonecutter") || kind.equals("smithing") || kind.equals("loom") || kind.equals("anvil") || kind.equals("grindstone") || kind.equals("cartography") || kind.equals("beacon");
                 if (station && rng.nextInt(4) < 3) grid = stationInput(kind, rng);
                 for (int i = 0; i < grid.size(); i++) {
                     if (!grid.get(i).isEmpty()) s.menu.getSlot((station ? 0 : 1) + i).set(grid.get(i).copy());
@@ -981,6 +996,8 @@ public class InventoryVectors {
             g.add(rng.nextInt(8) == 0 ? ItemStack.EMPTY : parse(LOOM_POOL[13 + rng.nextInt(8)], 1));
             g.add(rng.nextInt(3) == 0 ? ItemStack.EMPTY : parse(LOOM_POOL[21 + rng.nextInt(10)], 1));
             if (rng.nextInt(12) == 0) g.set(rng.nextInt(3), randomStack(rng, LOOM_POOL));
+        } else if (kind.equals("beacon")) {
+            g.add(randomStack(rng, BEACON_POOL));
         } else if (kind.equals("anvil") || kind.equals("grindstone") || kind.equals("cartography")) {
             String[] pool = kind.equals("anvil") ? ANVIL_POOL : kind.equals("grindstone") ? GRIND_POOL : CARTO_POOL;
             g.add(randomStack(rng, pool));
