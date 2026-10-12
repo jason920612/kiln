@@ -716,7 +716,7 @@ fn run3(pieces: &[(Cell, u16)], start: Cell, tap: bool, ticks: i32) -> Option<[i
 
 #[test]
 #[ignore]
-fn flyer_search4() {
+fn flyer_search5() {
     let env = |k: &str, d: usize| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
     let (nx, ny, nz) = (env("KILN_FLYER_X", 3), env("KILN_FLYER_Y", 2), env("KILN_FLYER_Z", 2));
     let (slimes, honeys, threads) = (env("KILN_FLYER_SLIMES", 2), env("KILN_FLYER_HONEY", 0), env("KILN_FLYER_THREADS", 8));
