@@ -1917,15 +1917,15 @@ public class InteractVectors {
                 {"0", "0", "1", "minecraft:sticky_piston[facing=north,extended=false]"}, {"1", "0", "0", "minecraft:sticky_piston[facing=south,extended=false]"},
                 {"0", "0", "0", "minecraft:slime_block"}, {"1", "0", "1", "minecraft:slime_block"}};
         // (no updates while it is put together; the observers last, nothing beside them)
-        for (String[] e : engine) c.cmd("setblock " + (ox + Integer.parseInt(e[0])) + " " + (100 + Integer.parseInt(e[1])) + " " + (oz + Integer.parseInt(e[2])) + " " + e[3] + " strict");
-        for (int[] x : extra) c.cmd("setblock " + (ox + x[0]) + " " + (100 + x[1]) + " " + (oz + x[2]) + " " + (x[3] == 1 ? "minecraft:honey_block" : "minecraft:slime_block") + " strict");
-        c.cmd("setblock " + ox + " 101 " + oz + " minecraft:observer[facing=west,powered=false] strict");
-        c.cmd("setblock " + (ox + 1) + " 101 " + (oz + 1) + " minecraft:observer[facing=east,powered=false] strict");
+        for (String[] e : engine) c.cmd("setblock " + (ox + Integer.parseInt(e[0])) + " " + (103 + Integer.parseInt(e[1])) + " " + (oz + Integer.parseInt(e[2])) + " " + e[3] + " strict");
+        for (int[] x : extra) c.cmd("setblock " + (ox + x[0]) + " " + (103 + x[1]) + " " + (oz + x[2]) + " " + (x[3] == 1 ? "minecraft:honey_block" : "minecraft:slime_block") + " strict");
+        c.cmd("setblock " + ox + " 104 " + oz + " minecraft:observer[facing=west,powered=false] strict");
+        c.cmd("setblock " + (ox + 1) + " 104 " + (oz + 1) + " minecraft:observer[facing=east,powered=false] strict");
         for (String s : summons) c.cmd(s);
         for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
         // a stone put beside the east observer and taken away again
-        c.step(op("op", "command", "command", "setblock " + (ox + 2) + " 101 " + (oz + 1) + " minecraft:stone"));
-        c.step(op("op", "command", "command", "setblock " + (ox + 2) + " 101 " + (oz + 1) + " minecraft:air"));
+        c.step(op("op", "command", "command", "setblock " + (ox + 2) + " 104 " + (oz + 1) + " minecraft:stone"));
+        c.step(op("op", "command", "command", "setblock " + (ox + 2) + " 104 " + (oz + 1) + " minecraft:air"));
         for (int i = 0; i < 108; i++) c.step(op("op", "idle"));
         return c;
     }
@@ -1935,7 +1935,7 @@ public class InteractVectors {
         // the machine alone: where its blocks are, tick by tick (watched along its way)
         Case c = flyer56("bare", none, new double[] {1.5, 100.0, 0.5});
         for (int x = 5; x <= 9; x++)
-            for (int y = 100; y <= 102; y++)
+            for (int y = 103; y <= 105; y++)
                 for (int z = -8; z <= 7; z++) c.watch(x, y, z);
         out.add(c);
         // a honey block in front of the east observer's row (top layer), with a pig, a villager and a player on it; and two honey blocks
@@ -1943,14 +1943,14 @@ public class InteractVectors {
         String[] names = {"honey_over_piston", "honey_front", "honey_front2"};
         for (int v = 0; v < variants.length; v++) {
             int[] h = variants[v][0];
-            double hx = 6 + h[0] + 0.5, hy = 100 + h[1] + 0.9375, hz = 5 + h[2] + 0.5;
+            double hx = 6 + h[0] + 0.5, hy = 103 + h[1] + 0.9375, hz = 5 + h[2] + 0.5;
             out.add(flyer56(names[v] + "_pig", variants[v], new double[] {1.5, 100.0, 0.5}, summon54("pig", hx, hy, hz)));
             out.add(flyer56(names[v] + "_villager", variants[v], new double[] {1.5, 100.0, 0.5}, summon54("villager", hx, hy, hz)));
             out.add(flyer56(names[v] + "_player", variants[v], new double[] {hx, hy, hz}));
         }
         // a bare piston top (nothing holds a rider there) and a slime block in the machine's way (a rider on a slime block that the machine drags along)
-        out.add(flyer56("piston_top_pig", none, new double[] {1.5, 100.0, 0.5}, summon54("pig", 6.5, 101.0, 6.5)));
-        out.add(flyer56("slime_front_player", new int[][] {{0, 0, -1, 0}}, new double[] {6.5, 101.0, 4.5}));
+        out.add(flyer56("piston_top_pig", none, new double[] {1.5, 100.0, 0.5}, summon54("pig", 6.5, 104.0, 6.5)));
+        out.add(flyer56("slime_front_player", new int[][] {{0, 0, -1, 0}}, new double[] {6.5, 104.0, 4.5}));
     }
 
     // ---------------------------------------------------------------- wp56: the lid of a shulker box pushes what is in its way
