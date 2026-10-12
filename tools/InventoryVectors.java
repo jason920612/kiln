@@ -729,7 +729,8 @@ public class InventoryVectors {
                     String step;
                     if (kind.equals("inventory") && drag < 0 && rng.nextInt(25) == 0) {
                         step = creativeStep(s, rng, pool);
-                    } else if (drag < 0 && rng.nextInt(kind.equals("stonecutter") ? 4 : 60) == 0) {
+                    } else if (drag < 0 && rng.nextInt(kind.equals("stonecutter") ? 4 : 60) == 0 && !kind.equals("lectern")) {
+                        // (a lectern's buttons turn its page and take its book: the block entity does that, which this menu does not have)
                         step = buttonStep(s, rng);
                     } else if (drag < 0 && k == steps - 1 && rng.nextInt(3) == 0) {
                         s.menu.removed(s.player);
