@@ -2,7 +2,7 @@
 //! subclasses, `CoralBlock`), scaffolding that settles or falls, and sponges that soak up water.
 //! Each function follows the vanilla method call by call.
 
-use super::{sturdy, sturdy_at};
+use super::sturdy_at;
 use crate::fluid;
 use crate::level::{Effect, Level, flags, schedule_block_tick};
 use crate::pos::{BlockPos, Direction};

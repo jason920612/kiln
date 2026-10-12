@@ -1,7 +1,7 @@
 //! Redstone wire (`RedStoneWireBlock` with `DefaultRedstoneWireEvaluator`).
 
 use super::best_neighbor_signal;
-use crate::behaviour::support::wire_can_survive_on;
+use crate::behaviour::support::{wire_can_survive_in, wire_can_survive_on};
 use crate::level::{Level, flags};
 use crate::pos::{BlockPos, Direction};
 use crate::state::{self, BlockId};
@@ -139,7 +139,7 @@ pub fn connection_state<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> 
 pub fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Direction, neighbor: u16) -> u16 {
     match dir {
         Direction::Down => {
-            if wire_can_survive_on(level, pos.below()) { s } else { d::AIR }
+            if wire_can_survive_in(level, pos.below(), neighbor) { s } else { d::AIR }
         }
         Direction::Up => connection_state(level, s, pos),
         _ => {

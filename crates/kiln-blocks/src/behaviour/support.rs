@@ -1,7 +1,7 @@
 //! `canSurvive` and the blocks that pop off when their support goes: vegetation, torches,
 //! carpets, ladders, levers and buttons, diodes, redstone wire, doors and tall plants.
 
-use super::{sturdy, sturdy_at};
+use super::{sturdy, sturdy_at, sturdy_in};
 use crate::level::Level;
 use crate::pos::{BlockPos, Direction};
 use crate::state;
@@ -36,6 +36,11 @@ pub fn can_support_center_at<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: D
 /// `Block.canSupportRigidBlock` of the block at `pos` (the block below).
 pub fn can_support_rigid_at<L: Level + ?Sized>(level: &L, pos: BlockPos) -> bool {
     sturdy_at(level, pos, Direction::Up, Support::Rigid)
+}
+
+/// [`can_support_rigid_at`] for the state `s` the block at `pos` has (or is about to have).
+pub fn can_support_rigid_in<L: Level + ?Sized>(level: &L, pos: BlockPos, s: u16) -> bool {
+    sturdy_in(level, pos, s, Direction::Up, Support::Rigid)
 }
 
 /// `FaceAttachedHorizontalDirectionalBlock.getConnectedDirection`: the way the block points
@@ -165,7 +170,12 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
 
 /// `RedstoneWireBlock.canSurviveOn`.
 pub fn wire_can_survive_on<L: Level + ?Sized>(level: &L, below: BlockPos) -> bool {
-    sturdy_at(level, below, Direction::Up, Support::Full) || state::is(level.block(below), d::HOPPER)
+    wire_can_survive_in(level, below, level.block(below))
+}
+
+/// [`wire_can_survive_on`] for the state `s` the block at `below` has (or is about to have).
+pub fn wire_can_survive_in<L: Level + ?Sized>(level: &L, below: BlockPos, s: u16) -> bool {
+    sturdy_in(level, below, s, Direction::Up, Support::Full) || state::is(s, d::HOPPER)
 }
 
 /// The pop-off rules of `updateShape`: the new state (air when the block breaks), or `None`
@@ -186,8 +196,8 @@ pub fn pop_off<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Directi
         }
         C::CarpetBlock | C::WoolCarpetBlock | C::FrogspawnBlock | C::SnowLayerBlock => breaks(true),
         C::LeverBlock | C::ButtonBlock => breaks(attached_direction(s).opposite() == dir),
-        C::RepeaterBlock => dir == Direction::Down && !can_support_rigid_at(level, pos.below()),
-        C::RedstoneWireBlock => dir == Direction::Down && !wire_can_survive_on(level, pos.below()),
+        C::RepeaterBlock => dir == Direction::Down && !can_support_rigid_in(level, pos.below(), neighbor),
+        C::RedstoneWireBlock => dir == Direction::Down && !wire_can_survive_in(level, pos.below(), neighbor),
         _ if logic::is_instance(s, C::DoorBlock) => return door_update(level, s, pos, dir, neighbor),
         _ if logic::is_instance(s, C::AbstractBedBlock) => {
             // `AbstractBedBlock.updateShape`: the two halves keep each other.

@@ -44,7 +44,11 @@ pub fn sturdy(s: u16, dir: Direction, support: Support) -> bool {
 /// `BlockState.isFaceSturdy(level, pos, dir, support)` of the block at `pos`: the support shape of an open shulker box is its base wall
 /// (a full face on that side, nothing on the others), which the state alone does not tell.
 pub fn sturdy_at<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direction, support: Support) -> bool {
-    let s = level.block(pos);
+    sturdy_in(level, pos, level.block(pos), dir, support)
+}
+
+/// [`sturdy_at`] for the state `s` the block at `pos` has (or is about to have).
+pub fn sturdy_in<L: Level + ?Sized>(level: &L, pos: BlockPos, s: u16, dir: Direction, support: Support) -> bool {
     match shulker::open_base(level, s, pos) {
         Some(base) => dir == base,
         None => sturdy(s, dir, support),

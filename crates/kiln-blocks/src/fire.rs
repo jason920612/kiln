@@ -155,7 +155,6 @@ pub fn fire_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     }
     if !infiniburn {
         if !valid_fire_location(level, pos) {
-            let floor = level.block(pos.below());
             if !crate::behaviour::sturdy_at(level, pos.below(), Direction::Up, Support::Full) || age > 3 {
                 crate::remove_block(level, pos, false);
             }
