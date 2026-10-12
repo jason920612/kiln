@@ -21,8 +21,10 @@ def server(cmd):
         f.write(cmd + chr(10))
 
 
-def server_log(n=40, pattern="-v 'chunk totals|mspt mean'"):
-    return subprocess.run(f"grep {pattern} ~/wp58/server.log | tail -{n}", shell=True, capture_output=True, text=True).stdout
+def server_log(n=40):
+    """The last n server log lines without the periodic mspt / chunk totals reports."""
+    lines = (HOME / "wp58" / "server.log").read_text(errors="replace").splitlines()
+    return chr(10).join(l[:240] for l in [l for l in lines if "chunk totals" not in l and "mspt mean" not in l][-n:])
 
 
 class C:
@@ -128,9 +130,42 @@ if __name__ == "__main__":
     print(c.cmd(" ".join(sys.argv[1:])))
 
 
+TIERS = ["netherite", "diamond", "iron", "stone", "golden", "wooden"]
+
+
+def _tool_kind(block):
+    b = block.split("[")[0].replace("Block{minecraft:", "").rstrip("}")
+    if any(k in b for k in ("log", "planks", "wood", "stem", "hyphae", "chest", "table", "bookshelf", "fence", "door", "barrel", "ladder")) and "nether_brick" not in b:
+        return "axe"
+    if any(k in b for k in ("dirt", "sand", "gravel", "grass_block", "mud", "clay", "snow", "soul_s", "podzol", "mycelium", "farmland", "path")):
+        return "shovel"
+    if any(k in b for k in ("stone", "ore", "cobble", "deepslate", "netherrack", "obsidian", "brick", "furnace", "basalt", "blackstone", "terracotta", "andesite", "diorite", "granite", "tuff", "calcite", "bone_block", "iron_block", "anvil", "prismarine", "purpur", "end_stone")):
+        return "pickaxe"
+    return None
+
+
+def _equip_for(self, block):
+    kind = _tool_kind(block)
+    inv = self.state(0)["inv"]
+    if kind is None:
+        return
+    for tier in TIERS:
+        want = f"minecraft:{tier}_{kind}"
+        for e in inv:
+            if e["id"] == want:
+                if e["slot"] < 9:
+                    if self.state(0)["selected"] != e["slot"]:
+                        self.hotbar(e["slot"] + 1)
+                        time.sleep(0.1)
+                else:
+                    self.select(want)
+                return
+
+
 def _mine(self, x, y, z, timeout=20, stand=True):
     """Look at the centre of a block and hold attack until it is gone."""
     t0 = time.time()
+    self.equip_for(self.block(x, y, z))
     self.mouse("left", "down")
     try:
         while time.time() - t0 < timeout:
@@ -156,7 +191,214 @@ def _near(self, x, y, z, dist=3.0, timeout=20):
 
 
 C.mine = _mine
+C.equip_for = _equip_for
 C.near = _near
+
+
+def _ground(self, x, z, y0=200):
+    """Y of the first free block above the top solid block of column (x, z) as loaded by the client."""
+    for y in range(y0, -64, -1):
+        b = self.block(x, y, z)
+        if "air" not in b.split("[")[0] and "leaves" not in b and "grass}" not in b.split("[")[0].replace("short_", "").replace("tall_", "") + "}" and "fern" not in b and "flower" not in b:
+            return y + 1
+    return None
+
+
+def _tp(self, x, y, z):
+    server(f"tp KilnTest {x} {y} {z}")
+    time.sleep(2.0)
+
+
+C.ground, C.tp = _ground, _tp
+
+
+def _dig(self, sub, count, radius=16, exact=None, timeout=60):
+    """Mine `count` blocks whose id contains `sub` (nearest first), picking up the drops."""
+    t0 = time.time()
+    done = 0
+    while done < count and time.time() - t0 < timeout:
+        hits = [h for h in self.find(sub, radius, 60) if exact is None or self.block(*h).split("[")[0] == "Block{" + exact + "}"]
+        if not hits:
+            return done
+        h = hits[0]
+        self.near(*h, dist=3.0)
+        if self.mine(*h, timeout=15):
+            done += 1
+            self.collect(5, 4)
+    return done
+
+
+C.dig = _dig
+
+
+def _shaft_down(self, x, z, y_to, timeout=240):
+    """Stand over column (x, z) and dig straight down to level y_to (inclusive), collecting drops."""
+    t0 = time.time()
+    st = self.state(0)
+    self.walk_to(x + 0.5, z + 0.5, timeout=8, tol=0.3)
+    y = math.floor(self.state(0)["y"]) - 1
+    while y >= y_to and time.time() - t0 < timeout:
+        b = self.block(x, y, z)
+        if "air" not in b.split("[")[0] and "water" not in b and "lava" not in b:
+            self.mine(x, y, z, timeout=15)
+        elif "lava" in b:
+            raise RuntimeError(f"lava at {x},{y},{z}")
+        self.collect(3, 3)
+        y -= 1
+        time.sleep(0.1)
+    return self.state(0)["y"]
+
+
+C.shaft_down = _shaft_down
+
+
+FACES = {"up": (0, 1, 0), "down": (0, -1, 0), "north": (0, 0, -1), "south": (0, 0, 1), "east": (1, 0, 0), "west": (-1, 0, 0)}
+
+
+def _solid(b):
+    n = b.split("[")[0]
+    return not any(k in n for k in ("air", "water", "lava", "grass}", "torch", "fern", "flower", "litter", "vine", "snow}", "rail"))
+
+
+def _place_near(self, item, avoid_own_cell=True):
+    """Place `item` on any free spot touching a solid block near the player. Returns the new block's position."""
+    st = self.state(0)
+    px, py, pz = math.floor(st["x"]), math.floor(st["y"]), math.floor(st["z"])
+    cands = []
+    for dx in range(-2, 3):
+        for dy in range(-2, 2):
+            for dz in range(-2, 3):
+                t = (px + dx, py + dy, pz + dz)
+                if not _solid(self.block(*t)):
+                    continue
+                for face, (fx, fy, fz) in FACES.items():
+                    c = (t[0] + fx, t[1] + fy, t[2] + fz)
+                    if avoid_own_cell and c[0] == px and c[2] == pz and c[1] in (py, py + 1):
+                        continue
+                    if "air" in self.block(*c).split("[")[0] and "air" in self.block(c[0], c[1] + 1, c[2]).split("[")[0] or face != "up" and "air" in self.block(*c).split("[")[0]:
+                        d = (t[0] + 0.5 - st["x"]) ** 2 + (t[1] + 0.5 - st["y"] - 1.6) ** 2 + (t[2] + 0.5 - st["z"]) ** 2
+                        cands.append((d, t, face, c))
+    cands.sort()
+    self.select(item)
+    off = {"up": (0.5, 0.95, 0.5), "north": (0.5, 0.5, 0.05), "south": (0.5, 0.5, 0.95),
+           "east": (0.95, 0.5, 0.5), "west": (0.05, 0.5, 0.5), "down": (0.5, 0.05, 0.5)}
+    for d, t, face, cpos in cands[:12]:
+        h = self.aim(*t, *off[face])
+        if h and h.get("type") == "block" and (h["x"], h["y"], h["z"]) == t and h["face"] == face:
+            self.mouse("right", "tap")
+            time.sleep(0.3)
+            if not "air" in self.block(*cpos).split("[")[0]:
+                return cpos
+    return None
+
+
+C.place_near = _place_near
+
+
+def _tunnel_to(self, h, maxsteps=40):
+    """Dig and walk towards block h (x, y, z) until it is mined. Returns True when mined."""
+    for _ in range(maxsteps):
+        b = self.block(*h)
+        if "air" in b.split("[")[0]:
+            return True
+        st = self.state(0)
+        close = abs(st["x"] - (h[0] + .5)) < 3.8 and abs(st["z"] - (h[2] + .5)) < 3.8 and abs(st["y"] + 1.6 - (h[1] + .5)) < 3.8
+        aim = self.aim(*h)
+        if close and aim and aim.get("type") == "block" and (aim["x"], aim["y"], aim["z"]) == tuple(h):
+            self.mine(*h, timeout=20)
+            self.collect(5, 5)
+            return True
+        if aim and aim.get("type") == "block":
+            self.mine(aim["x"], aim["y"], aim["z"], timeout=15)
+            self.collect(4, 3)
+        self.hold("w", 0.3)
+    return False
+
+
+C.tunnel_to = _tunnel_to
+
+
+def _safe_tp(self, x, z, y_hint=100):
+    """Teleport above column (x, z) under slow falling, wait for its chunk, settle on the ground."""
+    server("effect give KilnTest minecraft:slow_falling 60 0 true")
+    self.tp(x + 0.5, y_hint + 20, z + 0.5)
+    for _ in range(40):
+        g = self.ground(math.floor(x), math.floor(z), y_hint + 40)
+        if g is not None and self.block(math.floor(x), g - 1, math.floor(z)) != "":
+            break
+        time.sleep(0.5)
+    g = self.ground(math.floor(x), math.floor(z), y_hint + 40)
+    if g is not None:
+        server(f"tp KilnTest {x + 0.5} {g} {z + 0.5}")
+        time.sleep(1.5)
+    server("effect clear KilnTest minecraft:slow_falling")
+    return g
+
+
+C.safe_tp = _safe_tp
+
+
+def _place_at(self, item, tgt, tries=3):
+    """Put `item` into the free cell tgt by clicking a solid neighbour's face that touches it."""
+    off = {"up": (0.5, 0.95, 0.5), "north": (0.5, 0.5, 0.05), "south": (0.5, 0.5, 0.95),
+           "east": (0.95, 0.5, 0.5), "west": (0.05, 0.5, 0.5), "down": (0.5, 0.05, 0.5)}
+    opposite = {"up": "down", "down": "up", "north": "south", "south": "north", "east": "west", "west": "east"}
+    for _ in range(tries):
+        if item.split(":")[1] in self.block(*tgt):
+            return True
+        self.select(item)
+        for face, (fx, fy, fz) in FACES.items():
+            sup = (tgt[0] + fx, tgt[1] + fy, tgt[2] + fz)
+            if not _solid(self.block(*sup)):
+                continue
+            click_face = opposite[face]  # the support's face that touches the target cell
+            h = self.aim(*sup, *off[click_face])
+            if h and h.get("type") == "block" and (h["x"], h["y"], h["z"]) == sup and h["face"] == click_face:
+                self.mouse("right", "tap")
+                time.sleep(0.3)
+                if item.split(":")[1] in self.block(*tgt):
+                    return True
+    return False
+
+
+C.place_at = _place_at
+
+
+def _pillar(self, n, item="minecraft:dirt"):
+    """Jump and place `item` under the feet n times (the player climbs n blocks)."""
+    self.select(item)
+    y0 = self.state(0)["y"]
+    for i in range(n):
+        target = y0 + i + 1
+        for _ in range(8):
+            self.look(0, 90)
+            self.key("space", "down")
+            time.sleep(0.28)
+            self.mouse("right", "tap")
+            self.key("space", "up")
+            time.sleep(0.45)
+            if self.state(0)["y"] >= target - 0.05:
+                break
+    return self.state(0)["y"]
+
+
+C.pillar = _pillar
+
+
+def _wait_ready(self, timeout=30):
+    """Wait until the client is in the game with no loading screen or overlay."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        s = self.state(0)
+        if s["inGame"] and s["overlay"] is None and s["screen"] in (None,):
+            return True
+        if s["screen"] == "DeathScreen":
+            self.respawn()
+        time.sleep(0.5)
+    return False
+
+
+C.wait_ready = _wait_ready
 
 
 def shot(name):
@@ -186,9 +428,13 @@ def _screen(self):
 
 
 def _open_inv(self):
-    if self.screen() != "InventoryScreen":
+    for _ in range(5):
+        if self.screen() == "InventoryScreen":
+            break
+        if self.screen() is not None:
+            self.close()
         self.key("e")
-        time.sleep(0.4)
+        time.sleep(0.5)
     return self.state(0)
 
 
