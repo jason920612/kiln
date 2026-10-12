@@ -130,6 +130,9 @@ public class Flyer3D {
                 server.submit(() -> {
                     try {
                         clear();
+                        if (System.getenv("FLYER_FLOOR") != null) {
+                            for (int fx = 0; fx < 64; fx++) for (int fz = -8; fz < 24; fz++) level.setBlock(new BlockPos(fx, 99, fz), Blocks.STONE.defaultBlockState(), QUIET);
+                        }
                         BlockPos st = new BlockPos(OX + start[0], OY + start[1], OZ + start[2]);
                         BlockPos trigger = null;
                         BlockState trigState = null;
