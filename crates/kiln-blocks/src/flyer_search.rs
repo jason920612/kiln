@@ -799,3 +799,43 @@ fn flyer_search_3d() {
     });
     println!("{} layouts fly of {} tried", found.load(std::sync::atomic::Ordering::Relaxed), tried.load(std::sync::atomic::Ordering::Relaxed));
 }
+
+#[test]
+#[ignore]
+fn flyer_time() {
+    use std::time::Instant;
+    let t = Instant::now();
+    for _ in 0..200 {
+        let mut level = TestLevel::void();
+        level.load_chunks((-1, -1), (4, 1));
+    }
+    println!("create + load: {:?} each", t.elapsed() / 200);
+    let pieces = [((0, 0, 0), piston_state(true, 3)), ((1, 0, 0), d::SLIME_BLOCK), ((2, 0, 0), observer_state(2))];
+    let t = Instant::now();
+    for _ in 0..200 {
+        let _ = run3(&pieces, (0, 0, 0), false, 100);
+    }
+    println!("run3: {:?} each", t.elapsed() / 200);
+    let mut level = TestLevel::void();
+    level.load_chunks((-1, -1), (4, 1));
+    let t = Instant::now();
+    for _ in 0..200 {
+        level.tick(0, &[]);
+    }
+    println!("tick: {:?} each", t.elapsed() / 200);
+    let t = Instant::now();
+    for _ in 0..20 {
+        let (mut c, mut s) = (0, 0u64);
+        for x in 0..64 {
+            for z in -8..24 {
+                for y in 70..130 {
+                    let b = level.block(BlockPos::new(x, y, z));
+                    if !is_air(b) { c += 1; }
+                    s += b as u64;
+                }
+            }
+        }
+        let _ = (c, s);
+    }
+    println!("scan: {:?} each", t.elapsed() / 20);
+}
