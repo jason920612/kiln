@@ -8791,8 +8791,8 @@ public class MobVectors {
         StringBuilder sb = new StringBuilder("Inventory:[");
         for (int i = 0; i < items.length; i++) {
             if (i > 0) sb.append(',');
-            String[] t = items[i].split("\*");
-            sb.append("{Slot:").append(i).append("b,id:\"").append(t[0]).append("\",count:").append(t.length > 1 ? t[1] : "1").append('}');
+            int star = items[i].indexOf('*');
+            sb.append("{Slot:").append(i).append("b,id:\"").append(star < 0 ? items[i] : items[i].substring(0, star)).append("\",count:").append(star < 0 ? "1" : items[i].substring(star + 1)).append('}');
         }
         return sb.append(']').toString();
     }
