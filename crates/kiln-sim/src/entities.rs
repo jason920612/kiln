@@ -1159,6 +1159,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.moving_piston(kb(pos))
     }
 
+    fn shulker_lid(&self, pos: BlockPos) -> Option<f32> {
+        self.level.shulker_lid(kb(pos))
+    }
+
     fn has_moving_pistons(&self) -> bool {
         self.level.has_moving_pistons()
     }

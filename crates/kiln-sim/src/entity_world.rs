@@ -113,10 +113,19 @@ impl<'a, 'l> World<'a, 'l> {
         })
     }
 
+    /// The shown progress of the lid of the shulker box at `pos` while it moves, as collision reads it.
+    pub fn shulker_lid(&self, pos: BlockPos) -> Option<f32> {
+        let pistons = match self {
+            World::Region(l) => &l.blocks.data.pistons,
+            World::Island(i) => i.pistons,
+        };
+        pistons.lids.get(&pos).map(kiln_blocks::Lid::shown)
+    }
+
     pub fn has_moving_pistons(&self) -> bool {
         match self {
-            World::Region(l) => !l.blocks.data.pistons.is_empty(),
-            World::Island(i) => !i.pistons.is_empty(),
+            World::Region(l) => !l.blocks.data.pistons.is_empty() || !l.blocks.data.pistons.lids.is_empty(),
+            World::Island(i) => !i.pistons.is_empty() || !i.pistons.lids.is_empty(),
         }
     }
 

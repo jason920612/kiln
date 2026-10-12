@@ -113,6 +113,9 @@ pub enum Effect {
     /// (`moveCollidedEntities`) and stuck to honey or slime (`moveStuckEntities`) are
     /// carried to `progress`.
     PistonMove { pos: BlockPos, piston: MovingPiston, progress: f32 },
+    /// `ShulkerBoxBlockEntity.updateAnimation` while opening: the entities in the lid's way (`moveCollidedEntities`) are pushed
+    /// along `facing` over the strip the lid covered going from `progress_old` to `progress`.
+    ShulkerLid { pos: BlockPos, facing: Direction, progress_old: f32, progress: f32 },
     /// `SnifferEggBlock.tick`: a baby sniffer hatches at the egg's center (the egg is gone).
     HatchSniffer { pos: BlockPos },
     /// `FrogspawnBlock.tick`: the tadpoles that hatch at `pos` (the spawn is gone): for each,

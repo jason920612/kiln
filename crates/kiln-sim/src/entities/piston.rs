@@ -1,7 +1,9 @@
 //! Moving pistons pushing what is in their way: `PistonMovingBlockEntity.tick`'s
 //! `moveCollidedEntities` and `moveStuckEntities`, for the region's entities (through
 //! kiln-entity's [`kiln_entity::piston`]) and its players (their server bodies, see
-//! [`crate::phantom`]). The block entity ticks after the entities, so this runs once they have.
+//! [`crate::phantom`]), and the lid of an opening shulker box doing the same
+//! (`ShulkerBoxBlockEntity.moveCollidedEntities`, [`kiln_entity::lid`]). The block entities tick
+//! after the entities, so this runs once they have.
 
 use super::*;
 use kiln_entity::piston::MovingPistonView;
@@ -13,12 +15,26 @@ pub(crate) struct Push {
     pub progress: f32,
 }
 
+/// A shulker box whose lid rose this tick, from `progress_old` to `progress`.
+pub(crate) struct LidPush {
+    pub pos: kiln_blocks::BlockPos,
+    pub facing: kiln_blocks::Direction,
+    pub progress_old: f32,
+    pub progress: f32,
+}
+
+/// What a block entity of the tick pushes with.
+pub(crate) enum Pushed {
+    Piston(Push),
+    Lid(LidPush),
+}
+
 pub(crate) fn view_of(m: &kiln_blocks::MovingPiston) -> MovingPistonView {
     MovingPistonView { moved: m.moved, direction: kiln_entity::math::Direction::ALL[m.direction.index()], extending: m.extending, source: m.source, progress: m.progress }
 }
 
-/// Pushes the entities and players for every piston of `pushes`, in order.
-pub(crate) fn push(entities: &mut Entities, level: &mut RegionLevel, players: &mut [&mut Player], spawns: &mut Vec<Spawn>, deaths: &mut Vec<health::Death>, pushes: &[Push]) {
+/// Pushes the entities and players for every block entity of `pushes`, in order.
+pub(crate) fn push(entities: &mut Entities, level: &mut RegionLevel, players: &mut [&mut Player], spawns: &mut Vec<Spawn>, deaths: &mut Vec<health::Death>, pushes: &[Pushed]) {
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
@@ -49,7 +65,24 @@ pub(crate) fn push(entities: &mut Entities, level: &mut RegionLevel, players: &m
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
-    for push in pushes {
+    for pushed in pushes {
+        let push = match pushed {
+            Pushed::Piston(push) => push,
+            Pushed::Lid(lid) => {
+                let facing = kiln_entity::math::Direction::ALL[lid.facing.index()];
+                let plan = kiln_entity::lid::plan(BlockPos::new(lid.pos.x, lid.pos.y, lid.pos.z), facing, lid.progress_old, lid.progress);
+                kiln_entity::lid::move_entities(&mut sim, &plan);
+                for p in sim.players.iter_mut().filter(|p| live(p) && p.game_mode != 3) {
+                    if !p.bounding_box().intersects(&plan.area) {
+                        continue;
+                    }
+                    let cells = sim.level.cells();
+                    let pistons = sim.level.pistons();
+                    p.piston_push(cells, pistons, game_time, min_y, fast_lava, |body, level| kiln_entity::lid::push_entity(&plan, body, level));
+                }
+                continue;
+            }
+        };
         let view = view_of(&push.piston);
         let pos = BlockPos::new(push.pos.x, push.pos.y, push.pos.z);
         let (collided, stuck) = kiln_entity::piston::move_entities(&mut sim, pos, &view, push.progress);

@@ -39,6 +39,7 @@ pub enum Kind {
     Bed,
     Anvil,
     ConcretePowder,
+    ShulkerBox,
 }
 
 fn classify(name: &str) -> Kind {
@@ -76,6 +77,8 @@ fn classify(name: &str) -> Kind {
         _ if n.ends_with("_fence_gate") => Kind::FenceGate,
         _ if n.ends_with("_bed") => Kind::Bed,
         _ if n.ends_with("_concrete_powder") => Kind::ConcretePowder,
+        "shulker_box" => Kind::ShulkerBox,
+        _ if n.ends_with("_shulker_box") => Kind::ShulkerBox,
         _ => Kind::Other,
     }
 }

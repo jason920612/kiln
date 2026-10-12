@@ -271,6 +271,10 @@ fn set_block_state<L: Level>(level: &mut L, pos: BlockPos, state: u16, flags: u3
         // piston's block entity just goes.
         level.data().pistons.remove(pos);
     }
+    // A shulker box that goes takes its lid with it (a new box is closed).
+    if changed && !level.data().pistons.lids.is_empty() && behaviour::shulker::is_shulker_box(old) {
+        level.data().pistons.lids.remove(&pos);
+    }
     let moved = flags & flags::MOVE_BY_PISTON != 0;
     if (changed || logic::is_instance(state, BlockClass::BaseRailBlock)) && (flags & flags::NEIGHBORS != 0 || moved) {
         behaviour::affect_neighbors_after_removal(level, old, pos, moved);

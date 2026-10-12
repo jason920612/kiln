@@ -119,6 +119,9 @@ pub struct MovingPistons {
     /// `LevelChunk.tickersInLevel`.
     at: HashMap<BlockPos, usize>,
     ticking: bool,
+    /// The shulker boxes whose lid is on the move (see [`crate::behaviour::shulker`]): block entities
+    /// with a shape that changes, kept with the moving pistons so that the levels that read the one read the other.
+    pub lids: std::collections::BTreeMap<BlockPos, crate::behaviour::shulker::Lid>,
 }
 
 impl MovingPistons {
@@ -173,7 +176,9 @@ impl MovingPistons {
         let mut rest: Vec<_> = self.entities.drain().collect();
         rest.sort_by_key(|(p, _)| *p);
         out.extend(rest);
+        let lids = std::mem::take(&mut self.lids);
         *self = Self::default();
+        self.lids = lids;
         out
     }
 

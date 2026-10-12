@@ -33,6 +33,11 @@ pub(crate) struct PhantomLevel<'a> {
 }
 
 impl<'a> PhantomLevel<'a> {
+    /// The moving pistons and shulker lids the level's shapes read.
+    pub(crate) fn set_pistons(&mut self, pistons: &'a kiln_blocks::MovingPistons) {
+        self.pistons = Some(pistons);
+    }
+
     pub(crate) fn new(cells: &'a CellSet<Cell>, game_time: i64, min_y: i32, fast_lava: bool) -> Self {
         PhantomLevel { cells, rng: LegacyRandom::new(0), game_time, min_y, fast_lava, pistons: None, sounds: Vec::new() }
     }
@@ -71,8 +76,12 @@ impl EntityLevel for PhantomLevel<'_> {
         self.pistons?.get(kiln_blocks::BlockPos::new(pos.x, pos.y, pos.z)).map(crate::entities::piston::view_of)
     }
 
+    fn shulker_lid(&self, pos: BlockPos) -> Option<f32> {
+        self.pistons?.lids.get(&kiln_blocks::BlockPos::new(pos.x, pos.y, pos.z)).map(kiln_blocks::Lid::shown)
+    }
+
     fn has_moving_pistons(&self) -> bool {
-        self.pistons.is_some_and(|p| !p.is_empty())
+        self.pistons.is_some_and(|p| !p.is_empty() || !p.lids.is_empty())
     }
 
     fn entities_in(&self, _area: &Aabb, _filter: EntityFilter, _exclude: i32) -> Vec<i32> {

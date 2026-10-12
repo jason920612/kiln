@@ -36,6 +36,7 @@ mod place_parity;
 mod flyer_search;
 
 pub use behaviour::piston::{MovingPiston, MovingPistons, tick_moving_pistons};
+pub use behaviour::shulker::{Lid, LidStatus, tick_lids};
 pub use fluid::FluidType;
 pub use level::{Effect, EntityKind, Level, LevelData, Rules, flags, schedule_block_tick, schedule_fluid_tick};
 pub use pos::{Axis, BlockPos, Direction};

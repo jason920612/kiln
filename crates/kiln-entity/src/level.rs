@@ -689,9 +689,16 @@ pub trait EntityLevel {
     }
 
     /// Whether any `moving_piston` block entity is registered: the level's block epoch does not
-    /// see their progress, so scans that read their shapes are not reused (`false`: none).
+    /// see their progress (nor that of a shulker lid on the move), so scans that read their shapes are not reused (`false`: none).
     fn has_moving_pistons(&self) -> bool {
         false
+    }
+
+    /// The shown progress (`getProgress(1.0f)`) of the lid of the shulker box at `pos` while the lid is on the move, which
+    /// gives the box its shape (`ShulkerBoxBlock.getShape`); `None`: the lid is shut (the block's own shape).
+    fn shulker_lid(&self, pos: BlockPos) -> Option<f32> {
+        let _ = pos;
+        None
     }
 
     /// Runs `f` on entity `id` taken out of the level (as the entity being ticked is: the level
