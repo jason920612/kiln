@@ -792,6 +792,16 @@ fn flyer_search_3d() {
                                     found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                     let list: Vec<String> = pieces.iter().map(|&(c, s)| format!("{c:?}={}", kiln_data::blocks_types::block_of(s).name.trim_start_matches("minecraft:").to_owned() + &kiln_data::blocks_types::block_of(s).property(s, "facing").map(|f| format!("[{f}]")).unwrap_or_default())).collect();
                                     println!("FLIES {v:?}: {} started by {} at {c:?}", list.join(" "), if tap { "a block put and taken away" } else { "the piece placed last" });
+                                    let json: Vec<String> = pieces.iter().map(|&(c, s)| {
+                                        let b = kiln_data::blocks_types::block_of(s);
+                                        let extra = match b.property(s, "facing") {
+                                            Some(f) if b.name.ends_with("observer") => format!("[facing={f},powered=false]"),
+                                            Some(f) => format!("[facing={f},extended=false]"),
+                                            None => String::new(),
+                                        };
+                                        format!("[{},{},{},\"{}{}\"]", c.0, c.1, c.2, b.name, extra)
+                                    }).collect();
+                                    println!("JSON {{\"pieces\":[{}],\"start\":[{},{},{}],\"tap\":{tap},\"move\":[{},{},{}]}}", json.join(","), c.0, c.1, c.2, v[0], v[1], v[2]);
                                     break;
                                 }
                             }
