@@ -76,6 +76,12 @@
 - 終界出生平台 (100,49,0) 緊貼主島邊緣的終界石(平台把周圍挖成一個洞);世界生成的地形資料來自 vanilla datapack 並由 `kiln-worldgen/tests/dimensions.rs` 對照 vanilla,這裡沒有另外比對。
 - 被指令傳到另一個維度的「已死亡」玩家(我自己的腳本造成),客戶端的死亡畫面會停住、重生按鈕一直灰色,重新連線才恢復;vanilla 的 `/tp` 對死亡玩家的行為我沒有驗證,不當成 Kiln 問題。
 
+## 最終驗證(VM,分支 wp58-playthrough)
+
+- `cargo test --workspace --release` 不帶 `KILN_DATAPACK`:全綠。
+- `KILN_DATAPACK=/home/test/kiln/work/generated cargo test --workspace --release`:全綠(第一次跑時 `kiln-plugin-host/tests/examples.rs` 有兩個測試失敗,之後單獨重跑三次是「失敗、失敗、通過」,每次失敗的測試不同——VM 當時被其他人的建置撐到 load average 17,外掛的牆鐘預算超時會 fail-closed;負載降下來後整個 workspace 重跑全綠。這是既有的負載敏感測試,與本分支無關)。
+- `kiln-sim --test determinism`:通過。`kiln-entity mob_parity`:通過。注意:共用的 `~/kiln/work/m6-mobs2/vectors.jsonl` 在今天被另一條工作線(wp57)加了 21 個 `pickup57_*` 場景,它們需要 wp57 分支的修正,本分支(從 main 81380d9 分出)不可能通過;我把這些場景濾掉後的向量放在 `~/wp58/mob-vectors.jsonl`(`KILN_MOB_VECTORS`),其餘 1445 個場景全部與 vanilla 一致。
+
 ## 還沒做到 / 後續
 
 - 終界城的船與鞘翅(`locate` 的城堡附近搜不到龍頭;可能這座城沒有船,要多找幾座)。
