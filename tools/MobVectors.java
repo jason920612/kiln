@@ -753,9 +753,10 @@ public class MobVectors {
             Entity o = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(spec.type)).create(level, EntitySpawnReason.COMMAND);
             o.setId(pinId++);
             o.snapTo(spec.x, spec.y, spec.z, spec.yaw, 0f);
-            // wp28: an item entity's stack is `mainHand` (an item id, count 1).
+            // wp28: an item entity's stack is `mainHand` (an item id; wp56: "id*count" for more than one).
             if (o instanceof net.minecraft.world.entity.item.ItemEntity ie && spec.mainHand != null)
-                ie.setItem(new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(spec.mainHand))));
+                ie.setItem(new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(spec.mainHand.substring(0, spec.mainHand.contains("*") ? spec.mainHand.indexOf('*') : spec.mainHand.length()))),
+                        spec.mainHand.contains("*") ? Integer.parseInt(spec.mainHand.substring(spec.mainHand.indexOf('*') + 1)) : 1));
             // wp33: a projectile flies with `motion`, its random pinned to `seed`.
             if (spec.motion != null) {
                 o.setDeltaMovement(spec.motion[0], spec.motion[1], spec.motion[2]);
@@ -1324,6 +1325,10 @@ public class MobVectors {
         var by = chances.getClass().getMethod("byEquipment", EquipmentSlot.class);
         EquipmentSlot[] six = {EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND, EquipmentSlot.FEET, EquipmentSlot.LEGS, EquipmentSlot.CHEST, EquipmentSlot.HEAD};
         long h = 0;
+        // wp56: a villager's inventory (what it picked up)
+        if (m instanceof net.minecraft.world.entity.npc.villager.AbstractVillager av) {
+            for (int i = 0; i < av.getInventory().getContainerSize(); i++) h += (long) (i + 1) * itemSig(av.getInventory().getItem(i)) * 7919;
+        }
         for (int i = 0; i < 6; i++) h += (i + 1) * (itemSig(m.getItemBySlot(six[i])) * 131 + Float.floatToIntBits((Float) by.invoke(chances, six[i])));
         for (EquipmentSlot slot : new EquipmentSlot[] {EquipmentSlot.BODY, EquipmentSlot.SADDLE}) {
             ItemStack st = m.getItemBySlot(slot);
@@ -8777,6 +8782,57 @@ public class MobVectors {
         scenariosWp53Pickup(out);
         scenariosWp55Voices(out);
         scenariosWp55Pushout(out);
+        scenariosWp56Villagers(out);
+    }
+
+    // ------------------------------------------------------------------ wp56: a villager picks up what it wants into its inventory
+
+    static String inventoryOf(String... items) {
+        StringBuilder sb = new StringBuilder("Inventory:[");
+        for (int i = 0; i < items.length; i++) {
+            if (i > 0) sb.append(',');
+            String[] t = items[i].split("\*");
+            sb.append("{Slot:").append(i).append("b,id:\"").append(t[0]).append("\",count:").append(t.length > 1 ? t[1] : "1").append('}');
+        }
+        return sb.append(']').toString();
+    }
+
+    static void scenariosWp56Villagers(List<Scenario> out) {
+        String farmer = "VillagerData:{profession:\"minecraft:farmer\",level:1,type:\"minecraft:plains\"}";
+        String librarian = "VillagerData:{profession:\"minecraft:librarian\",level:1,type:\"minecraft:plains\"}";
+        String none = "VillagerData:{profession:\"minecraft:none\",level:1,type:\"minecraft:plains\"}";
+        // what a villager takes: food, seeds, what its trade asks for; and not the rest
+        out.add(villagerPickup("bread", none, "minecraft:bread"));
+        out.add(villagerPickup("bread5", none, "minecraft:bread*5"));
+        out.add(villagerPickup("seeds", none, "minecraft:wheat_seeds*3"));
+        out.add(villagerPickup("potato_farmer", farmer, "minecraft:potato*2"));
+        out.add(villagerPickup("diamond", none, "minecraft:diamond"));
+        out.add(villagerPickup("stick", farmer, "minecraft:stick"));
+        out.add(villagerPickup("book_librarian", librarian, "minecraft:book*2"));
+        out.add(villagerPickup("paper_librarian", librarian, "minecraft:paper*4"));
+        // room: a stack of 63 takes one and the rest goes to the empty slot; a full inventory takes nothing; the stack that does not fit stays
+        out.add(villagerPickup("top_up", none + "," + inventoryOf("minecraft:bread*63"), "minecraft:bread*5"));
+        String full = inventoryOf("minecraft:stone*64", "minecraft:stone*64", "minecraft:stone*64", "minecraft:stone*64", "minecraft:stone*64", "minecraft:stone*64", "minecraft:stone*64", "minecraft:bread*63");
+        out.add(villagerPickup("one_fits", none + "," + full, "minecraft:bread*5"));
+        out.add(villagerPickup("full", none + "," + inventoryOf("minecraft:stone*64", "minecraft:stone*64", "minecraft:stone*64", "minecraft:stone*64", "minecraft:stone*64", "minecraft:stone*64", "minecraft:stone*64", "minecraft:stone*64"), "minecraft:bread"));
+    }
+
+    static Scenario villagerPickup(String name, String extra, String item) {
+        long seed = 56000L + Math.abs(name.hashCode() % 1000);
+        MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 30f, seed);
+        m.nbt = "{NoAI:1b,PersistenceRequired:1b," + extra + "}";
+        Scenario s = new Scenario("pickup56_villager_" + name);
+        s.mobs.add(m);
+        MobSpec it = new MobSpec("minecraft:item", 0.9, BY, 0.5, 0f, 0);
+        it.mainHand = item;
+        s.others.add(it);
+        s.player = new double[] {9.5, BY, 5.5};
+        s.playerCreative = true;
+        s.traceEquip = true;
+        s.levelSeed = 5600 + Math.abs(name.hashCode() % 300);
+        s.ticks = 30;
+        floor(s, 16, "minecraft:grass_block");
+        return s;
     }
 
     // ------------------------------------------------------------------ wp53: Mob.aiStep picks up what lies at its feet

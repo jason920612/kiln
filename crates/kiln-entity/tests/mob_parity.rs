@@ -426,6 +426,10 @@ fn item_sig(st: &kiln_item::ItemStack) -> i64 {
 /// `MobVectors.equipSig`: the six slots with their drop chances, then the filled body and saddle slots.
 fn equip_sig(m: &mob::MobData) -> i64 {
     let mut h = 0i64;
+    // (a villager's inventory: what it picked up)
+    for (i, s) in mob::kinds::villager::inventory_of(m).iter().enumerate() {
+        h = h.wrapping_add((i as i64 + 1).wrapping_mul(item_sig(s)).wrapping_mul(7919));
+    }
     for i in 0..6 {
         h = h.wrapping_add((i as i64 + 1).wrapping_mul(item_sig(&m.equipment[i]).wrapping_mul(131).wrapping_add(m.drop_chances[i].to_bits() as i32 as i64)));
     }
@@ -651,7 +655,10 @@ fn replay(s: &Value) -> Result<usize, String> {
         if let Some(item) = o.get("item").and_then(Value::as_str) {
             fields.push((
                 "Item".into(),
-                kiln_proto::nbt::Tag::Compound(vec![("id".into(), kiln_proto::nbt::Tag::String(item.to_owned())), ("count".into(), kiln_proto::nbt::Tag::Int(1))]),
+                kiln_proto::nbt::Tag::Compound(vec![
+                    ("id".into(), kiln_proto::nbt::Tag::String(item.split('*').next().unwrap().to_owned())),
+                    ("count".into(), kiln_proto::nbt::Tag::Int(item.split('*').nth(1).map_or(1, |n| n.parse().unwrap()))),
+                ]),
             ));
         }
         // (wp33: a projectile's motion and the seed of its random.)

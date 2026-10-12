@@ -287,6 +287,7 @@ impl Kind for Panda {
             item.discard();
             let taken = m.equipment[MAINHAND].clone();
             crate::mob::on_item_pickup(e, m, level, thrower, &taken);
+            crate::mob::take_item(e, level, id, taken.count());
         }
     }
 

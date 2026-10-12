@@ -202,6 +202,7 @@ impl Kind for Dolphin {
             let thrower = d.thrower;
             item.discard();
             mob::on_item_pickup(e, m, level, thrower, &stack);
+            mob::take_item(e, level, id, stack.count());
             hold(m, stack);
         }
     }
