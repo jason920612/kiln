@@ -950,6 +950,7 @@ fn flyer_search_extra() {
     let env = |k: &str, d: usize| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
     let (nx, ny, nz) = (env("KILN_FLYER_X", 2), env("KILN_FLYER_Y", 2), env("KILN_FLYER_Z", 2));
     let threads = env("KILN_FLYER_THREADS", 8);
+    let (part, parts) = (env("KILN_FLYER_PART", 0), env("KILN_FLYER_PARTS", 1));
     let cells: Vec<Cell> = (0..nx as i32).flat_map(|x| (0..ny as i32).flat_map(move |y| (0..nz as i32).map(move |z| (x, y, z)))).collect();
     let n = cells.len();
     let npieces = 7;
@@ -962,10 +963,10 @@ fn flyer_search_extra() {
         for t in 0..threads {
             let (found, tried, cells, extras) = (&found, &tried, &cells, &extras);
             sc.spawn(move || {
-                let mut k = t;
+                let mut k = t + threads * part;
                 while k < total {
                     let mut m = k;
-                    k += threads;
+                    k += threads * parts;
                     let mut free: Vec<usize> = (0..n).collect();
                     let mut at = Vec::new();
                     for i in 0..npieces {
