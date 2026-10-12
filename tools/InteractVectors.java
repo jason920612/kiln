@@ -1869,9 +1869,7 @@ public class InteractVectors {
                 if (fall == 12.0 && !"slime_block".equals(name) && !"honey_block".equals(name)) break;
             }
             c = new Case("sound54_walk_" + name).moves().observer(8.5, 99.0, 2.5);
-            // (a honey block is 15/16 high: that is where a player walks on it, and where the server's body stays)
-            double top = "honey_block".equals(name) ? 98.9375 : 99.0;
-            c.pos = new double[] {3.5, top, 0.5};
+            c.pos = new double[] {3.5, 99.0, 0.5};
             c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air").cmd("fill 3 98 0 12 98 1 " + block);
             for (int i = 1; i <= 8; i++) c.step(move(3.5 + i, 99.0, 0.5, true));
             out.add(c);
