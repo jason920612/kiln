@@ -1873,7 +1873,7 @@ public class InteractVectors {
             double top = "honey_block".equals(name) ? 98.9375 : 99.0;
             c.pos = new double[] {3.5, top, 0.5};
             c.cmd("fill -4 98 -6 12 98 8 minecraft:stone").cmd("fill -4 99 -6 12 106 8 minecraft:air").cmd("fill 3 98 0 12 98 1 " + block);
-            for (int i = 1; i <= 8; i++) c.step(move(3.5 + i, top, 0.5, true));
+            for (int i = 1; i <= 8; i++) c.step(move(3.5 + i, 99.0, 0.5, true));
             out.add(c);
         }
         // sneaking is silent on the ground; in the air it is not
