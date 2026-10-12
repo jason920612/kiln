@@ -1959,7 +1959,9 @@ public class InteractVectors {
         }
         // ---- several things at once on the lid
         c = sh56("up_crowd", "up");
-// (what overlaps on the lid is not pushable: two mobs that overlap push each other by the ticks before the first row, which the replay counts differently)        c.cmd(summon54("villager", 5.75, 101.0, 0.75)).cmd(summon54("armor_stand", 5.3, 101.0, 0.3)).cmd(summon54("chicken", 5.9, 101.0, 0.1));        out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+        // (what overlaps on the lid is not pushable: two mobs that overlap push each other by the ticks before the first row, which the replay counts differently)
+        c.cmd(summon54("villager", 5.75, 101.0, 0.75)).cmd(summon54("armor_stand", 5.3, 101.0, 0.3)).cmd(summon54("chicken", 5.9, 101.0, 0.1));
+        out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
         // ---- the player on the lid, and the player beside it
         c = sh56("player_on_lid", "up");
         c.pos = new double[] {5.5, 101.0, 0.5};
