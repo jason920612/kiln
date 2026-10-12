@@ -1429,7 +1429,7 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
             }
             // Entities carried by pistons are not simulated yet; game events went to their
             // listeners when they happened.
-            Effect::PistonMove { .. } | Effect::GameEvent { .. } | Effect::BlockGameEvent { .. } => {}
+            Effect::PistonMove { .. } | Effect::ShulkerLid { .. } | Effect::GameEvent { .. } | Effect::BlockGameEvent { .. } => {}
         }
     }
 }
