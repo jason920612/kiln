@@ -2025,6 +2025,8 @@ impl Sim {
             .or_else(|| part.hearts.map.get(&p).map(|h| h.save()))
             .or_else(|| part.spawners.map.get(&p).map(|s| s.save()))
             .or_else(|| part.containers.map.get(&p).map(|c| c.save()))
+            // (a moving piston's own fields, with the `id` and position the chunk's copy has)
+            .or_else(|| part.data.pistons.get(p).map(|m| m.to_nbt()))
     }
 
     /// The saved form (`saveWithFullMetadata`) of the block entity at an overworld position as
