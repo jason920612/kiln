@@ -64,6 +64,11 @@ pub(crate) const WAYPOINT_TRANSMIT_RANGE: Attr =
 /// The attributes effects change that clients are told about (`Attribute.isClientSyncable`).
 pub(crate) const EFFECT_SYNCED: [Attr; 6] = [MOVEMENT_SPEED, ATTACK_SPEED, SAFE_FALL_DISTANCE, MAX_HEALTH, MAX_ABSORPTION, LUCK];
 
+/// The syncable attributes (`Attribute.isClientSyncable`) that equipment and enchantments change:
+/// the armor bar, mining and swimming speed the client predicts all read them.
+pub(crate) const EQUIPMENT_SYNCED: [Attr; 6] =
+    [ARMOR, ARMOR_TOUGHNESS, MINING_EFFICIENCY, SUBMERGED_MINING_SPEED, WATER_MOVEMENT_EFFICIENCY, OXYGEN_BONUS];
+
 impl Attr {
     pub(crate) fn name(&self) -> &'static str {
         self.name
@@ -399,6 +404,7 @@ impl Player {
         self.soul_sent = self.soul_speed.is_some();
         let lists: Vec<Listed> = EFFECT_SYNCED
             .iter()
+            .chain(EQUIPMENT_SYNCED.iter())
             .chain(with_efficiency.then_some(&MOVEMENT_EFFICIENCY))
             .filter_map(|a| Some((kiln_data::builtin_id("minecraft:attribute", a.name)?, self.with_base(*a).base, self.attribute_modifiers(*a))))
             .collect();
@@ -432,6 +438,9 @@ impl Player {
             let stack = self.inv.equipped(*slot);
             if self.equipment_seen[i] != *stack {
                 self.equipment_seen[i] = stack.clone();
+                // `LivingEntity.collectEquipmentChanges`: the old item's attribute modifiers go and
+                // the new one's come, and the clients are told.
+                self.attributes_dirty = true;
             }
         }
     }
