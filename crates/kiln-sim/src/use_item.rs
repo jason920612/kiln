@@ -35,28 +35,34 @@ pub(crate) fn view_vector(rot: [f32; 2]) -> Vec3 {
 /// `Item.getPlayerPOVHitResult`: `level.clip` from the eyes along the view for the block
 /// interaction range, with the blocks' outline shapes (`getShape`) and the fluids of `fluid`.
 /// `None`: a miss.
-pub(crate) fn pov_hit(p: &Player, block: &dyn Fn(kiln_blocks::BlockPos) -> u16, fluid: FluidMode) -> Option<PovHit> {
-    pov_hit_rot(p, p.rot, block, fluid)
+pub(crate) fn pov_hit(p: &Player, block: &dyn Fn(kiln_blocks::BlockPos) -> u16, lid: &dyn Fn(kiln_blocks::BlockPos) -> Option<f32>, fluid: FluidMode) -> Option<PovHit> {
+    pov_hit_rot(p, p.rot, block, lid, fluid)
 }
 
 /// [`pov_hit`] looking at `rot` instead of the player's rotation.
-pub(crate) fn pov_hit_rot(p: &Player, rot: [f32; 2], block: &dyn Fn(kiln_blocks::BlockPos) -> u16, fluid: FluidMode) -> Option<PovHit> {
+pub(crate) fn pov_hit_rot(p: &Player, rot: [f32; 2], block: &dyn Fn(kiln_blocks::BlockPos) -> u16, lid: &dyn Fn(kiln_blocks::BlockPos) -> Option<f32>, fluid: FluidMode) -> Option<PovHit> {
     let eye = p.eye_position();
     let from = Vec3::new(eye[0], eye[1], eye[2]);
     let range = p.block_interaction_range();
     let to = from + view_vector(rot).scale(range);
-    clip(from, to, block, fluid)
+    clip(from, to, block, lid, fluid)
 }
 
 /// `Level.clip` with `ClipContext.Block.OUTLINE` (see [`pov_hit`] for the shapes).
-pub(crate) fn clip(from: Vec3, to: Vec3, block: &dyn Fn(kiln_blocks::BlockPos) -> u16, fluid: FluidMode) -> Option<PovHit> {
+pub(crate) fn clip(from: Vec3, to: Vec3, block: &dyn Fn(kiln_blocks::BlockPos) -> u16, lid: &dyn Fn(kiln_blocks::BlockPos) -> Option<f32>, fluid: FluidMode) -> Option<PovHit> {
     use kiln_entity::clip::{shape_clip, traverse_blocks};
     use kiln_entity::physics;
     let kb = |p: EBlockPos| kiln_blocks::BlockPos::new(p.x, p.y, p.z);
     traverse_blocks(from, to, |pos| {
         let state = block(kb(pos));
         let shape = physics::outline_shape(state);
+        // A shulker box with its lid on the move: the lid's box (`ShulkerBoxBlock.getShape`).
+        let lid_box = (kiln_entity::blocks::kind(state) == kiln_entity::blocks::Kind::ShulkerBox)
+            .then(|| lid(kb(pos)))
+            .flatten()
+            .and_then(|shown| kiln_entity::lid::lid_shape(kiln_entity::lid::facing_of(state), shown));
         let block_hit = match physics::outline_offset(state, pos.x, pos.z) {
+            _ if lid_box.is_some() => shape_clip(lid_box.as_ref().unwrap(), from, to, pos),
             // Offset blocks (flowers): the shape moved to where the block sits.
             Some((ox, oz)) => shape_clip(&shape.moved(ox, 0.0, oz), from, to, pos),
             None => shape_clip(shape, from, to, pos),

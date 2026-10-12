@@ -447,7 +447,7 @@ fn fang(e: &Entity, level: &mut dyn EntityLevel, x: f64, z: f64, min_y: f64, max
     let mut found = false;
     loop {
         let below = pos.below();
-        if crate::physics::is_face_sturdy(level.block(below), crate::math::Direction::Up) {
+        if crate::collision::is_face_sturdy_at(level, below, crate::math::Direction::Up) {
             let s = level.block(pos);
             if !kiln_data::blocks_types::is_air(s) {
                 let (shape, _) = crate::collision::collision_shape(s, pos, &crate::collision::CollisionContext::EMPTY);

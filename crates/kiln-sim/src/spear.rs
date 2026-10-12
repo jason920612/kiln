@@ -220,7 +220,14 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         let cells = &*self.level.cells;
         kiln_entity::clip::traverse_blocks(from, to, |p| {
             let s = cells.get_block(p.x, p.y, p.z).unwrap_or(kiln_data::blocks::default_state::VOID_AIR);
-            let (shape, _) = kiln_entity::collision::collision_shape(s, p, &kiln_entity::collision::CollisionContext::EMPTY);
+            let lid = (kiln_entity::blocks::kind(s) == kiln_entity::blocks::Kind::ShulkerBox)
+                .then(|| kiln_blocks::Level::shulker_lid(&*self.level, kiln_blocks::BlockPos::new(p.x, p.y, p.z)))
+                .flatten()
+                .and_then(|l| kiln_entity::lid::lid_shape(kiln_entity::lid::facing_of(s), l.shown()));
+            let shape = match lid {
+                Some(lid) => std::borrow::Cow::Owned(lid),
+                None => kiln_entity::collision::collision_shape(s, p, &kiln_entity::collision::CollisionContext::EMPTY).0,
+            };
             kiln_entity::clip::shape_clip(&shape, from, to, p).map(|(l, _)| l)
         })
     }

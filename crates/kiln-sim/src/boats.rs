@@ -39,7 +39,7 @@ pub(crate) fn use_item(p: &mut Player, level: &mut RegionLevel, off_hand: bool, 
     let stack = p.in_hand(off_hand).clone();
     let hit = {
         let lv = &*level;
-        pov_hit(p, &|pos| lv.block(pos), FluidMode::Any)
+        pov_hit(p, &|pos| lv.block(pos), &|pos| lv.shulker_lid(pos).map(|l| l.shown()), FluidMode::Any)
     };
     let Some(hit) = hit else { return };
     let Some(kind) = kiln_data::entities::by_name(stack.item_name()) else { return };

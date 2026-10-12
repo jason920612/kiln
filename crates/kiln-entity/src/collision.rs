@@ -69,6 +69,15 @@ pub fn collision_shape(state: u16, pos: BlockPos, ctx: &CollisionContext) -> (Co
     }
 }
 
+/// `BlockState.isFaceSturdy(level, pos, dir, FULL)`: an open shulker box only has its base wall to stand on (`getBlockSupportShape`).
+pub fn is_face_sturdy_at(level: &dyn EntityLevel, pos: BlockPos, dir: Direction) -> bool {
+    let state = level.block(pos);
+    if kind(state) == Kind::ShulkerBox && level.shulker_lid(pos).is_some() {
+        return dir == crate::lid::facing_of(state).opposite();
+    }
+    physics::is_face_sturdy(state, dir)
+}
+
 /// `ShulkerBoxBlock.getShape` of the box at `pos` while its lid is on the move (the box of the lid, which reaches out of the block); `None`: not
 /// such a box.
 pub fn lid_shape_at(level: &dyn EntityLevel, pos: BlockPos, state: u16) -> Option<Shape> {

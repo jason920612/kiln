@@ -19,7 +19,7 @@ pub fn height(level: &dyn EntityLevel, pos: BlockPos, f: &FluidState) -> f32 {
 
 /// `FluidState.getHeightForCamera`.
 fn height_for_camera(level: &dyn EntityLevel, pos: BlockPos, f: &FluidState) -> f32 {
-    if f.source && physics::is_face_sturdy(level.block(pos.above()), Direction::Down) {
+    if f.source && crate::collision::is_face_sturdy_at(level, pos.above(), Direction::Down) {
         return 1.0;
     }
     height(level, pos, f)

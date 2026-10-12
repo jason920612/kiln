@@ -313,7 +313,7 @@ impl EntityExt for ShulkerBullet {
                 let pos = e.block_position();
                 let axis = d.axis();
                 let n = pos.relative(d);
-                if level.is_loaded(n) && crate::physics::is_face_sturdy(level.block(n), Direction::Up) {
+                if level.is_loaded(n) && crate::collision::is_face_sturdy_at(level, n, Direction::Up) {
                     self.select_next_move_direction(e, level, Some(axis), Some(t));
                 } else {
                     let tb = BlockPos::containing(t.pos.x, t.pos.y, t.pos.z);

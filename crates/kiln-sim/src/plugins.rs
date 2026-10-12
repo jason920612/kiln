@@ -282,7 +282,7 @@ fn bucket_target(p: &Player, rot: [f32; 2], cells: &CellSet<Cell>, empty: bool) 
     use crate::use_item::FluidMode;
     let block = |pos: kiln_blocks::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(kiln_data::blocks::default_state::VOID_AIR);
     let fluid = if empty { FluidMode::SourceOnly } else { FluidMode::None };
-    let hit = crate::use_item::pov_hit_rot(p, rot, &block, fluid)?;
+    let hit = crate::use_item::pov_hit_rot(p, rot, &block, &|_| None, fluid)?;
     let next = hit.pos.relative(hit.face);
     Some(([hit.pos.x, hit.pos.y, hit.pos.z], [next.x, next.y, next.z]))
 }

@@ -413,7 +413,7 @@ fn weaving(e: &mut Entity, level: &mut dyn EntityLevel) {
             origin.z + super::mth::next_int_between(&mut e.random, -1, 1),
         );
         let below = p.below();
-        if !chosen.contains(&p) && crate::physics::can_be_replaced(level.block(p)) && crate::physics::is_face_sturdy(level.block(below), crate::math::Direction::Up) {
+        if !chosen.contains(&p) && crate::physics::can_be_replaced(level.block(p)) && crate::collision::is_face_sturdy_at(level, below, crate::math::Direction::Up) {
             chosen.push(p);
             if chosen.len() >= count {
                 break;
