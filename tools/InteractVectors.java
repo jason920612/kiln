@@ -1961,6 +1961,12 @@ public class InteractVectors {
         c = sh56("up_crowd", "up");
         c.cmd(summon54("pig", 5.3, 101.0, 0.3)).cmd(summon54("sheep", 5.7, 101.0, 0.7)).cmd(summon54("armor_stand", 5.5, 101.0, 0.5)).cmd(summon54("cow", 5.2, 101.0, 0.8));
         out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
+        c = sh56("up_crowd_mobs", "up");
+        c.cmd(summon54("pig", 5.3, 101.0, 0.3)).cmd(summon54("sheep", 5.7, 101.0, 0.7)).cmd(summon54("cow", 5.2, 101.0, 0.8));
+        out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 4, 0));
+        c = sh56("up_pair", "up");
+        c.cmd(summon54("pig", 5.3, 101.0, 0.3)).cmd(summon54("cow", 5.2, 101.0, 0.8));
+        out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 4, 0));
         // ---- the player on the lid, and the player beside it
         c = sh56("player_on_lid", "up");
         c.pos = new double[] {5.5, 101.0, 0.5};
