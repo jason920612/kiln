@@ -1900,6 +1900,59 @@ public class InteractVectors {
         }
     }
 
+    // ---------------------------------------------------------------- wp56: a flying machine with passengers
+
+    /**
+     * The flying machine `flyer_search_3d` of kiln-blocks found (and `tools/Flyer3D.java` confirmed in vanilla): two sticky pistons, two slime blocks and two observers in 2 x 2 x 2,
+     * which fly north 6 blocks in 60 ticks once a block is put beside the east observer and taken away. Cells are (x, y, z) from `(ox, 100, oz)`; `extra` are the blocks of
+     * `riders` (honey for the passengers to stand on): (x, y, z, block).
+     */
+    static Case flyer56(String name, int[][] extra, double[] pos, String... summons) {
+        Case c = new Case("flyer56_" + name).pistons();
+        c.noPitch = true;
+        c.pos = pos;
+        int ox = 6, oz = 5;
+        c.cmd("fill -4 99 -16 14 99 8 minecraft:stone").cmd("fill -4 100 -16 14 110 8 minecraft:air");
+        String[][] engine = {
+                {"0", "0", "1", "minecraft:sticky_piston[facing=north,extended=false]"}, {"1", "0", "0", "minecraft:sticky_piston[facing=south,extended=false]"},
+                {"0", "0", "0", "minecraft:slime_block"}, {"1", "0", "1", "minecraft:slime_block"}};
+        // (no updates while it is put together; the observers last, nothing beside them)
+        for (String[] e : engine) c.cmd("setblock " + (ox + Integer.parseInt(e[0])) + " " + (100 + Integer.parseInt(e[1])) + " " + (oz + Integer.parseInt(e[2])) + " " + e[3] + " strict");
+        for (int[] x : extra) c.cmd("setblock " + (ox + x[0]) + " " + (100 + x[1]) + " " + (oz + x[2]) + " " + (x[3] == 1 ? "minecraft:honey_block" : "minecraft:slime_block") + " strict");
+        c.cmd("setblock " + ox + " 101 " + oz + " minecraft:observer[facing=west,powered=false] strict");
+        c.cmd("setblock " + (ox + 1) + " 101 " + (oz + 1) + " minecraft:observer[facing=east,powered=false] strict");
+        for (String s : summons) c.cmd(s);
+        for (int i = 0; i < 3; i++) c.step(op("op", "idle"));
+        // a stone put beside the east observer and taken away again
+        c.step(op("op", "command", "command", "setblock " + (ox + 2) + " 101 " + (oz + 1) + " minecraft:stone"));
+        c.step(op("op", "command", "command", "setblock " + (ox + 2) + " 101 " + (oz + 1) + " minecraft:air"));
+        for (int i = 0; i < 108; i++) c.step(op("op", "idle"));
+        return c;
+    }
+
+    static void flyers56(List<Case> out) {
+        int[][] none = {};
+        // the machine alone: where its blocks are, tick by tick (watched along its way)
+        Case c = flyer56("bare", none, new double[] {1.5, 100.0, 0.5});
+        for (int x = 5; x <= 9; x++)
+            for (int y = 100; y <= 102; y++)
+                for (int z = -8; z <= 7; z++) c.watch(x, y, z);
+        out.add(c);
+        // a honey block in front of the east observer's row (top layer), with a pig, a villager and a player on it; and two honey blocks
+        int[][][] variants = {{{1, 1, 0, 1}}, {{0, 1, -1, 1}}, {{0, 1, -1, 1}, {1, 1, -1, 1}}};
+        String[] names = {"honey_over_piston", "honey_front", "honey_front2"};
+        for (int v = 0; v < variants.length; v++) {
+            int[] h = variants[v][0];
+            double hx = 6 + h[0] + 0.5, hy = 100 + h[1] + 0.9375, hz = 5 + h[2] + 0.5;
+            out.add(flyer56(names[v] + "_pig", variants[v], new double[] {1.5, 100.0, 0.5}, summon54("pig", hx, hy, hz)));
+            out.add(flyer56(names[v] + "_villager", variants[v], new double[] {1.5, 100.0, 0.5}, summon54("villager", hx, hy, hz)));
+            out.add(flyer56(names[v] + "_player", variants[v], new double[] {hx, hy, hz}));
+        }
+        // a bare piston top (nothing holds a rider there) and a slime block in the machine's way (a rider on a slime block that the machine drags along)
+        out.add(flyer56("piston_top_pig", none, new double[] {1.5, 100.0, 0.5}, summon54("pig", 6.5, 101.0, 6.5)));
+        out.add(flyer56("slime_front_player", new int[][] {{0, 0, -1, 0}}, new double[] {6.5, 101.0, 4.5}));
+    }
+
     // ---------------------------------------------------------------- wp56: the lid of a shulker box pushes what is in its way
 
     /** A stone floor at y = 99 (x -4..14, z -6..8), air above, a shulker box at (5, 100, 0) facing `facing`; the player at x = 1.5 unless the case moves it. */
@@ -5328,6 +5381,7 @@ public class InteractVectors {
             sounds54(all);
             swims56(all);
             shulkers56(all);
+            flyers56(all);
             mannequins54(all);
             placeBlockEntities55(all);
             machines55(all);
