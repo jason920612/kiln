@@ -625,6 +625,10 @@ impl Level for RegionLevel<'_> {
         &mut self.blocks.data
     }
 
+    fn shulker_lid(&self, pos: BlockPos) -> Option<kiln_blocks::Lid> {
+        self.blocks.data.pistons.lids.get(&pos).copied()
+    }
+
     fn rules(&self) -> &kiln_blocks::Rules {
         &self.env.rules
     }

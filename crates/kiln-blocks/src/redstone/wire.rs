@@ -81,7 +81,7 @@ fn connecting_side_with<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direct
     let n = pos.relative(dir);
     let ns = level.block(n);
     if climb {
-        let supports = logic::is_instance(ns, BlockClass::TrapDoorBlock) || wire_can_survive_on(ns);
+        let supports = logic::is_instance(ns, BlockClass::TrapDoorBlock) || wire_can_survive_on(level, n);
         if supports && connects_to(level.block(n.above()), None) {
             return if logic::face_sturdy(ns, dir.opposite() as u8, Support::Full) { RedstoneSide::Up } else { RedstoneSide::Side };
         }
@@ -139,7 +139,7 @@ pub fn connection_state<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> 
 pub fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Direction, neighbor: u16) -> u16 {
     match dir {
         Direction::Down => {
-            if wire_can_survive_on(neighbor) { s } else { d::AIR }
+            if wire_can_survive_on(level, pos.below()) { s } else { d::AIR }
         }
         Direction::Up => connection_state(level, s, pos),
         _ => {
@@ -282,7 +282,7 @@ pub fn affect_neighbors_after_removal<L: Level>(level: &mut L, s: u16, pos: Bloc
 }
 
 pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
-    if wire_can_survive_on(level.block(pos.below())) {
+    if wire_can_survive_on(level, pos.below()) {
         update_power(level, pos, s);
     } else {
         drop_and_remove(level, pos, s);

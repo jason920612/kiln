@@ -36,7 +36,7 @@ fn valid_fire_location<L: Level + ?Sized>(level: &L, pos: BlockPos) -> bool {
 /// plain fire; otherwise a face toward each burnable side and up.
 pub fn fire_for_placement<L: Level + ?Sized>(level: &L, pos: BlockPos) -> u16 {
     let below = level.block(pos.below());
-    if can_burn(below) || crate::behaviour::sturdy(below, Direction::Up, Support::Full) {
+    if can_burn(below) || crate::behaviour::sturdy_at(level, pos.below(), Direction::Up, Support::Full) {
         return d::FIRE;
     }
     let mut s = d::FIRE;
@@ -61,7 +61,7 @@ pub fn soul_fire_survives_on(below: u16) -> bool {
 
 /// `FireBlock.canSurvive`: a sturdy floor or something burnable beside it.
 pub fn fire_can_survive<L: Level + ?Sized>(level: &L, pos: BlockPos) -> bool {
-    crate::behaviour::sturdy(level.block(pos.below()), Direction::Up, Support::Full) || valid_fire_location(level, pos)
+    crate::behaviour::sturdy_at(level, pos.below(), Direction::Up, Support::Full) || valid_fire_location(level, pos)
 }
 
 /// `BaseFireBlock.canSurvive` for either kind of fire.
@@ -156,7 +156,7 @@ pub fn fire_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     if !infiniburn {
         if !valid_fire_location(level, pos) {
             let floor = level.block(pos.below());
-            if !crate::behaviour::sturdy(floor, Direction::Up, Support::Full) || age > 3 {
+            if !crate::behaviour::sturdy_at(level, pos.below(), Direction::Up, Support::Full) || age > 3 {
                 crate::remove_block(level, pos, false);
             }
             return;

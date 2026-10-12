@@ -126,3 +126,12 @@ fn do_neighbor_updates<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
 pub fn is_shulker_box(s: u16) -> bool {
     kiln_data::block_logic::block_class(s) == BlockClass::ShulkerBoxBlock
 }
+
+/// `ShulkerBoxBlock.getBlockSupportShape`: a box whose lid is not closed (`!isClosed()`, in any phase of the animation) only
+/// has `SHAPES_OPEN_SUPPORT[facing.opposite]`, a one pixel wall on its base. The side of that wall, when `s` at `pos` is such a box.
+pub fn open_base<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> Option<Direction> {
+    if !is_shulker_box(s) || level.shulker_lid(pos).is_none_or(|l| l.status == LidStatus::Closed) {
+        return None;
+    }
+    Some(state::get_dir(s, "facing").unwrap_or(Direction::Up).opposite())
+}

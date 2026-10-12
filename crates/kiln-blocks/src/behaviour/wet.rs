@@ -2,7 +2,7 @@
 //! subclasses, `CoralBlock`), scaffolding that settles or falls, and sponges that soak up water.
 //! Each function follows the vanilla method call by call.
 
-use super::sturdy;
+use super::{sturdy, sturdy_at};
 use crate::fluid;
 use crate::level::{Effect, Level, flags, schedule_block_tick};
 use crate::pos::{BlockPos, Direction};
@@ -37,9 +37,9 @@ pub fn coral_can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) ->
     if is_wall_fan(s) {
         let facing = state::get_dir(s, "facing").unwrap_or(Direction::North);
         let behind = pos.relative(facing.opposite());
-        sturdy(level.block(behind), facing, Support::Full)
+        sturdy_at(level, behind, facing, Support::Full)
     } else {
-        sturdy(level.block(pos.below()), Direction::Up, Support::Full)
+        sturdy_at(level, pos.below(), Direction::Up, Support::Full)
     }
 }
 
@@ -128,7 +128,7 @@ pub(crate) fn scaffolding_distance<L: Level + ?Sized>(level: &L, pos: BlockPos) 
     let mut distance = 7;
     if state::is(below, d::SCAFFOLDING) {
         distance = state::get_int(below, "distance");
-    } else if sturdy(below, Direction::Up, Support::Full) {
+    } else if sturdy_at(level, pos.below(), Direction::Up, Support::Full) {
         return 0;
     }
     for dir in Direction::HORIZONTAL {

@@ -3,7 +3,7 @@
 //! that need water or a given ground, multiface blocks, speleothems, and the rest of the
 //! blocks vanilla refuses to place in some surroundings.
 
-use crate::behaviour::{growth, speleothem, sturdy, support, wet};
+use crate::behaviour::{growth, speleothem, sturdy, sturdy_at, support, wet};
 use crate::level::Level;
 use crate::placement::Ctx;
 use crate::pos::{Axis, BlockPos, Direction};
@@ -60,22 +60,22 @@ pub(crate) fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -
         return Some(match class {
         C::StandingSignBlock | C::BannerBlock | C::CakeBlock => logic::is_solid(below()),
         C::WallSignBlock | C::WallBannerBlock => logic::is_solid(level.block(pos.relative(facing().opposite()))),
-        C::CeilingHangingSignBlock => sturdy(above(), Direction::Down, Support::Center),
-        C::AmethystClusterBlock => sturdy(level.block(pos.relative(facing().opposite())), facing(), Support::Full),
+        C::CeilingHangingSignBlock => sturdy_at(level, pos.above(), Direction::Down, Support::Center),
+        C::AmethystClusterBlock => sturdy_at(level, pos.relative(facing().opposite()), facing(), Support::Full),
         C::BigDripleafBlock => crate::behaviour::misc3::dripleaf_can_survive(level, s, pos),
         C::BambooStalkBlock | C::BambooSaplingBlock => crate::tags::is(below(), "minecraft:supports_bamboo"),
-        C::CandleBlock => support::can_support_center(below(), Direction::Up),
+        C::CandleBlock => support::can_support_center_at(level, pos.below(), Direction::Up),
         C::LanternBlock | C::WeatheringLanternBlock => {
             let dir = if state::get_bool(s, "hanging") { Direction::Down } else { Direction::Up };
-            support::can_support_center(level.block(pos.relative(dir.opposite())), dir)
+            support::can_support_center_at(level, pos.relative(dir.opposite()), dir)
         }
-        C::SporeBlossomBlock => support::can_support_center(above(), Direction::Down) && !water_at(level, pos),
-        C::HangingRootsBlock => sturdy(above(), Direction::Down, Support::Full),
+        C::SporeBlossomBlock => support::can_support_center_at(level, pos.above(), Direction::Down) && !water_at(level, pos),
+        C::HangingRootsBlock => sturdy_at(level, pos.above(), Direction::Down, Support::Full),
         C::TripWireHookBlock => {
             let f = facing();
-            f.is_horizontal() && sturdy(level.block(pos.relative(f.opposite())), f, Support::Full)
+            f.is_horizontal() && sturdy_at(level, pos.relative(f.opposite()), f, Support::Full)
         }
-        C::ShelfMushroomBlock => sturdy(level.block(pos.relative(facing().opposite())), facing(), Support::Full),
+        C::ShelfMushroomBlock => sturdy_at(level, pos.relative(facing().opposite()), facing(), Support::Full),
         C::MossyCarpetBlock => {
             let b = below();
             if state::get_bool(s, "bottom") { !is_air(b) } else { state::same_block(b, s) && state::get_bool(b, "bottom") }
@@ -462,7 +462,7 @@ pub(crate) fn concrete_should_solidify<L: Level + ?Sized>(level: &L, pos: BlockP
     // (the block below only counts when the powder itself is in water, which returned above)
     Direction::ALL.iter().filter(|&&dir| dir != Direction::Down).any(|&dir| {
         let n = level.block(pos.relative(dir));
-        water(n) && !sturdy(n, dir.opposite(), Support::Full)
+        water(n) && !sturdy_at(level, pos.relative(dir), dir.opposite(), Support::Full)
     })
 }
 

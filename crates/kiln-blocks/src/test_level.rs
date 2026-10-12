@@ -261,6 +261,10 @@ impl Level for TestLevel {
         &mut self.data
     }
 
+    fn shulker_lid(&self, pos: BlockPos) -> Option<crate::behaviour::shulker::Lid> {
+        self.data.pistons.lids.get(&pos).copied()
+    }
+
     fn rules(&self) -> &Rules {
         &self.rules
     }

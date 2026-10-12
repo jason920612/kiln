@@ -41,6 +41,16 @@ pub fn sturdy(s: u16, dir: Direction, support: Support) -> bool {
     logic::face_sturdy(s, dir as u8, support)
 }
 
+/// `BlockState.isFaceSturdy(level, pos, dir, support)` of the block at `pos`: the support shape of an open shulker box is its base wall
+/// (a full face on that side, nothing on the others), which the state alone does not tell.
+pub fn sturdy_at<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direction, support: Support) -> bool {
+    let s = level.block(pos);
+    match shulker::open_base(level, s, pos) {
+        Some(base) => dir == base,
+        None => sturdy(s, dir, support),
+    }
+}
+
 /// The support tag of stems, fungi and roots (their `supportBlocks` constructor argument).
 pub(crate) fn params_tag(s: u16) -> Option<&'static str> {
     logic::params(s).support_tag
