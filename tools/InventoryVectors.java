@@ -592,9 +592,35 @@ public class InventoryVectors {
         p.connection = conn;
         s.player = p;
         int n = blockSize(kind);
-        s.block = new SimpleContainer(Math.max(n, 1));
+        // (the lectern's book: one at most, as its block entity holds)
+        s.block = kind.equals("lectern") ? new SimpleContainer(1) {
+            @Override
+            public int getMaxStackSize() {
+                return 1;
+            }
+        } : new SimpleContainer(Math.max(n, 1));
         s.data = new SimpleContainerData(4);
         return s;
+    }
+
+    /** The first `n` values of the session's data, as the container data of a menu that has `n` (the session always keeps four to record). */
+    static net.minecraft.world.inventory.ContainerData dataView(net.minecraft.world.inventory.ContainerData d, int n) {
+        return new net.minecraft.world.inventory.ContainerData() {
+            @Override
+            public int get(int i) {
+                return d.get(i);
+            }
+
+            @Override
+            public void set(int i, int v) {
+                d.set(i, v);
+            }
+
+            @Override
+            public int getCount() {
+                return n;
+            }
+        };
     }
 
     static AbstractContainerMenu createMenu(Session s, int id) {
@@ -616,9 +642,9 @@ public class InventoryVectors {
             case "anvil" -> new AnvilMenu(id, s.inv, FAKE_ACCESS);
             case "grindstone" -> new GrindstoneMenu(id, s.inv, FAKE_ACCESS);
             case "cartography" -> new CartographyTableMenu(id, s.inv, FAKE_ACCESS);
-            case "brewing" -> new BrewingStandMenu(id, s.inv, s.block, s.data);
+            case "brewing" -> new BrewingStandMenu(id, s.inv, s.block, dataView(s.data, 2));
             case "beacon" -> new BeaconMenu(id, s.inv);
-            case "lectern" -> new LecternMenu(id, s.block, s.data);
+            case "lectern" -> new LecternMenu(id, s.block, dataView(s.data, 1));
             default -> throw new IllegalArgumentException(s.kind);
         };
     }
@@ -658,7 +684,7 @@ public class InventoryVectors {
                 }
                 s.inv.setSelectedSlot(rng.nextInt(9));
                 for (int i = 0; i < s.block.getContainerSize(); i++) {
-                    if (rng.nextDouble() < fill * 0.6) s.block.getItems().set(i, randomStack(rng, pool));
+                    if (rng.nextDouble() < fill * 0.6) s.block.getItems().set(i, kind.equals("lectern") ? randomStack(rng, pool).copyWithCount(1) : randomStack(rng, pool));
                 }
                 for (int i = 0; i < 4; i++) s.data.set(i, rng.nextInt(300));
                 List<ItemStack> inv0 = new ArrayList<>();
@@ -998,6 +1024,8 @@ public class InventoryVectors {
             if (rng.nextInt(12) == 0) g.set(rng.nextInt(3), randomStack(rng, LOOM_POOL));
         } else if (kind.equals("beacon")) {
             g.add(randomStack(rng, BEACON_POOL));
+            g.get(0).setCount(1);
+            return g;
         } else if (kind.equals("anvil") || kind.equals("grindstone") || kind.equals("cartography")) {
             String[] pool = kind.equals("anvil") ? ANVIL_POOL : kind.equals("grindstone") ? GRIND_POOL : CARTO_POOL;
             g.add(randomStack(rng, pool));
