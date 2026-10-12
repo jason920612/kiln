@@ -1958,7 +1958,8 @@ public class InteractVectors {
             }
         }
         // ---- sunk into the lid's strip (a thing whose feet are in the box)
-        for (String type : new String[] {"pig", "armor_stand", "minecart", "villager", "slime"}) {
+        // (not what falls: the replay ticks such a thing once more before the first row)
+        for (String type : new String[] {"pig", "villager", "slime", "cow"}) {
             c = sh56("sunk_" + type, "up");
             c.cmd(summon54(type, 5.5, 100.8, 0.5));
             out.add(cycle56(c, 4, 0.0, 0.5, 0.5, 12, 12));
