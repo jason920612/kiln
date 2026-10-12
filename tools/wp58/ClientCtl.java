@@ -284,6 +284,49 @@ public class ClientCtl {
                     return arr.toString();
                 });
             }
+            case "findbox": { // findbox SUBSTRING X0 Y0 Z0 X1 Y1 Z1 [MAX]: blocks in a box (loaded chunks only), nearest to the player first
+                String sub = a[1];
+                int x0 = Integer.parseInt(a[2]), y0 = Integer.parseInt(a[3]), z0 = Integer.parseInt(a[4]);
+                int x1 = Integer.parseInt(a[5]), y1 = Integer.parseInt(a[6]), z1 = Integer.parseInt(a[7]);
+                int max = a.length > 8 ? Integer.parseInt(a[8]) : 40;
+                return onMain(() -> {
+                    JsonArray arr = new JsonArray();
+                    var pos = new BlockPos.MutableBlockPos();
+                    var pp = mc.player.blockPosition();
+                    java.util.List<int[]> hits = new java.util.ArrayList<>();
+                    for (int cx = x0 >> 4; cx <= x1 >> 4; cx++) {
+                        for (int cz = z0 >> 4; cz <= z1 >> 4; cz++) {
+                            if (mc.level.getChunk(cx, cz, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false) == null) {
+                                continue;
+                            }
+                            for (int x = Math.max(x0, cx << 4); x <= Math.min(x1, (cx << 4) + 15); x++) {
+                                for (int z = Math.max(z0, cz << 4); z <= Math.min(z1, (cz << 4) + 15); z++) {
+                                    for (int y = y0; y <= y1; y++) {
+                                        pos.set(x, y, z);
+                                        var st = mc.level.getBlockState(pos);
+                                        if (st.isAir()) {
+                                            continue;
+                                        }
+                                        if (BuiltInRegistries.BLOCK.getKey(st.getBlock()).getPath().contains(sub)) {
+                                            int dx = x - pp.getX(), dy = y - pp.getY(), dz = z - pp.getZ();
+                                            hits.add(new int[] {x, y, z, dx * dx + dy * dy + dz * dz});
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    hits.sort((p1, p2) -> Integer.compare(p1[3], p2[3]));
+                    for (int i = 0; i < Math.min(max, hits.size()); i++) {
+                        JsonArray h = new JsonArray();
+                        h.add(hits.get(i)[0]);
+                        h.add(hits.get(i)[1]);
+                        h.add(hits.get(i)[2]);
+                        arr.add(h);
+                    }
+                    return arr.toString();
+                });
+            }
             default:
                 return "ERR unknown command " + a[0];
         }
@@ -298,6 +341,10 @@ public class ClientCtl {
         o.addProperty("screen", mc.gui.screen() == null ? (String) null : mc.gui.screen().getClass().getSimpleName());
         o.addProperty("overlay", mc.gui.overlay() == null ? (String) null : mc.gui.overlay().getClass().getSimpleName());
         o.addProperty("grabbed", mc.mouseHandler.isMouseGrabbed());
+        o.addProperty("guiScale", mc.getWindow().getGuiScale());
+        if (mc.gui.screen() != null) {
+            o.addProperty("title", mc.gui.screen().getTitle().getString());
+        }
         var p = mc.player;
         if (p == null || mc.level == null) {
             o.addProperty("inGame", false);
@@ -377,6 +424,15 @@ public class ClientCtl {
             o.add("slots", slots);
             o.addProperty("carried", id(c.getMenu().getCarried()) + " x" + c.getMenu().getCarried().getCount());
             o.addProperty("menu", c.getMenu().getClass().getSimpleName());
+            try {
+                Field lp = AbstractContainerScreen.class.getDeclaredField("leftPos");
+                Field tp = AbstractContainerScreen.class.getDeclaredField("topPos");
+                lp.setAccessible(true);
+                tp.setAccessible(true);
+                o.addProperty("leftPos", lp.getInt(c));
+                o.addProperty("topPos", tp.getInt(c));
+            } catch (Exception ignored) {
+            }
         }
         return o;
     }

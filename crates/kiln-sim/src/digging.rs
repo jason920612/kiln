@@ -156,6 +156,9 @@ pub(crate) fn player_action(p: &mut Player, level: &mut RegionLevel, action: i32
                 return;
             }
             let state = level.block(bp);
+            if !is_air(state) {
+                interact::attack(level, bp);
+            }
             let progress = if is_air(state) { 1.0 } else { p.destroy_progress(level, state) };
             if !is_air(state) && progress >= 1.0 {
                 destroy_or_resend(p, level, pos);

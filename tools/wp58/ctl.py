@@ -339,25 +339,32 @@ C.safe_tp = _safe_tp
 
 
 def _place_at(self, item, tgt, tries=3):
-    """Put `item` into the free cell tgt by clicking a solid neighbour's face that touches it."""
+    """Put `item` into the free cell tgt by clicking a solid neighbour's face that touches it
+    (sneaking, so containers and workbenches are not opened by the click)."""
     off = {"up": (0.5, 0.95, 0.5), "north": (0.5, 0.5, 0.05), "south": (0.5, 0.5, 0.95),
            "east": (0.95, 0.5, 0.5), "west": (0.05, 0.5, 0.5), "down": (0.5, 0.05, 0.5)}
     opposite = {"up": "down", "down": "up", "north": "south", "south": "north", "east": "west", "west": "east"}
-    for _ in range(tries):
-        if item.split(":")[1] in self.block(*tgt):
-            return True
-        self.select(item)
-        for face, (fx, fy, fz) in FACES.items():
-            sup = (tgt[0] + fx, tgt[1] + fy, tgt[2] + fz)
-            if not _solid(self.block(*sup)):
-                continue
-            click_face = opposite[face]  # the support's face that touches the target cell
-            h = self.aim(*sup, *off[click_face])
-            if h and h.get("type") == "block" and (h["x"], h["y"], h["z"]) == sup and h["face"] == click_face:
-                self.mouse("right", "tap")
-                time.sleep(0.3)
-                if item.split(":")[1] in self.block(*tgt):
-                    return True
+    self.select(item)
+    self.key("shift", "down")
+    time.sleep(0.2)
+    try:
+        for _ in range(tries):
+            if item.split(":")[1] in self.block(*tgt):
+                return True
+            for face, (fx, fy, fz) in FACES.items():
+                sup = (tgt[0] + fx, tgt[1] + fy, tgt[2] + fz)
+                if not _solid(self.block(*sup)):
+                    continue
+                click_face = opposite[face]  # the support's face that touches the target cell
+                h = self.aim(*sup, *off[click_face])
+                if h and h.get("type") == "block" and (h["x"], h["y"], h["z"]) == sup and h["face"] == click_face:
+                    self.mouse("right", "tap")
+                    time.sleep(0.3)
+                    if item.split(":")[1] in self.block(*tgt):
+                        return True
+    finally:
+        self.key("shift", "up")
+        time.sleep(0.1)
     return False
 
 
@@ -399,6 +406,102 @@ def _wait_ready(self, timeout=30):
 
 
 C.wait_ready = _wait_ready
+
+
+def _clear_plants(self, x0, y0, z0, x1, y1, z1):
+    """Break the plants (non-solid, non-air blocks) inside the box so they cannot intercept aiming."""
+    n = 0
+    for z in range(z0, z1 + 1):
+        for x in range(x0, x1 + 1):
+            for y in range(y0, y1 + 1):
+                b = self.block(x, y, z)
+                if "air" not in b.split("[")[0] and not _solid(b) and "water" not in b and "lava" not in b and "portal" not in b:
+                    self.near(x, y, z, dist=3.5)
+                    self.mine(x, y, z, timeout=5)
+                    n += 1
+    return n
+
+
+C.clear_plants = _clear_plants
+
+
+def _workbench(self):
+    """Position of a crafting table within reach, placing one from the inventory if none is near."""
+    st = self.state(0)
+    px, py, pz = math.floor(st["x"]), math.floor(st["y"]), math.floor(st["z"])
+    for dx in range(-3, 4):
+        for dy in range(-2, 3):
+            for dz in range(-3, 4):
+                if "crafting_table" in self.block(px + dx, py + dy, pz + dz):
+                    return (px + dx, py + dy, pz + dz)
+    self.clear_plants(px - 2, py - 1, pz - 2, px + 2, py + 2, pz + 2)
+    if "minecraft:crafting_table" not in self.inv():
+        self.open_inv()
+        self.craft2(["PP", "PP"], {"P": "minecraft:oak_planks"})
+    return self.place_near("minecraft:crafting_table")
+
+
+C.workbench = _workbench
+
+
+def _findbox(self, sub, x0, y0, z0, x1, y1, z1, n=40):
+    return json.loads(self.cmd(f"findbox {sub} {x0} {y0} {z0} {x1} {y1} {z1} {n}"))
+
+
+C.findbox = _findbox
+
+
+def _shoot(self, x, y, z, charge=1.2, lead=(0, 0, 0)):
+    """Draw the bow in hand at the point (x, y, z) (+ lead) for `charge` seconds and release."""
+    self.lookat(x + lead[0], y + lead[1], z + lead[2])
+    self.mouse("right", "down")
+    time.sleep(charge)
+    self.lookat(x + lead[0], y + lead[1], z + lead[2])
+    self.mouse("right", "up")
+
+
+C.shoot = _shoot
+
+
+def solve_pitch(h, dy, v=3.0, drag=0.99, g=0.05):
+    """Launch pitch (degrees, negative = up) at which an arrow of speed v reaches horizontal distance h
+    at height difference dy (`dy` up from the eye): the lower of the two solutions, by simulation."""
+    best = None
+    for k in range(-890, 891):
+        pitch = k / 10.0
+        vy = -math.sin(math.radians(pitch)) * v
+        vh = math.cos(math.radians(pitch)) * v
+        x = y = 0.0
+        err = None
+        for _ in range(400):
+            x += vh
+            y += vy
+            vh *= drag
+            vy = vy * drag - g
+            if x >= h:
+                err = abs(y - dy)
+                break
+        if err is not None and (best is None or err < best[0]):
+            best = (err, pitch)
+    return best[1] if best else None
+
+
+def _shoot_ballistic(self, x, y, z, charge=1.25):
+    """Aim a fully drawn bow at the point so that the arrow's drop is accounted for, and loose."""
+    st = self.state(0)
+    ex, ey, ez = st["x"], st["y"] + 1.62, st["z"]
+    dx, dz = x - ex, z - ez
+    h = math.hypot(dx, dz)
+    pitch = solve_pitch(h, y - ey)
+    yaw = math.degrees(math.atan2(-dx, dz))
+    self.look(yaw, pitch if pitch is not None else 0)
+    self.mouse("right", "down")
+    time.sleep(charge)
+    self.look(yaw, pitch if pitch is not None else 0)
+    self.mouse("right", "up")
+
+
+C.shoot_ballistic = _shoot_ballistic
 
 
 def shot(name):
@@ -518,8 +621,20 @@ def _select(self, item):
 
 
 def _aim(self, x, y, z, fx=0.5, fy=0.5, fz=0.5, wait=0.25):
+    """Look at a point of block (x, y, z); the hit result is refreshed once per rendered frame
+    (software GL is slow), so wait until it names the block. A sneaking player's eye is lower
+    than the server-side value the agent uses, so on a miss the pitch is nudged downwards."""
     self.lookat(x + fx, y + fy, z + fz)
     time.sleep(wait)
+    for nudge in (0, 0, 2, 4, 6, -2):
+        for _ in range(4):
+            h = self.state(0).get("hit")
+            if h and h.get("type") == "block" and (h["x"], h["y"], h["z"]) == (x, y, z):
+                return h
+            time.sleep(0.15)
+        if nudge:
+            st = self.state(0)
+            self.look(st["yaw"], max(-90, min(90, st["pitch"] + nudge)))
     return self.state(0).get("hit")
 
 
