@@ -187,6 +187,7 @@ fn data_merge_keeps_the_entitys_random_so_foals_differ() {
         let speed = attrs.iter().find(|a| a.get("id").and_then(Tag::as_str) == Some("minecraft:movement_speed")).and_then(|a| a.get("base")).and_then(Tag::as_f64).unwrap();
         speeds.push(speed);
         assert!(sim.step([ToSim::Console("kill @e[type=minecraft:horse,tag=!pa,tag=!pb]".into())]));
+        settle(&mut sim, &mut client, 5);
     }
     speeds.dedup();
     assert!(speeds.len() >= 3, "foals differ: {speeds:?}");
