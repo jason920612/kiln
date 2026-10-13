@@ -4,6 +4,7 @@ Usable as a module (`from ctl import C; c = C()`) or a CLI: python tools/wp58/ct
 """
 import json
 import math
+import os
 import socket
 import subprocess
 import sys
@@ -12,18 +13,19 @@ from pathlib import Path
 
 # Runs on the VM next to the server (~/wp58) and the real client (Xvfb :99, ~/mc-client).
 HOME = Path.home()
-SHOTS = HOME / "wp58" / "shots"
+PLAY = HOME / os.environ.get("KILN_PLAY_DIR", "wp58")  # wp59 sets KILN_PLAY_DIR=wp59
+SHOTS = PLAY / "shots"
 
 
 def server(cmd):
-    """Run a console command on the wp58 server (its console is the fifo ~/wp58/console)."""
-    with open(HOME / "wp58" / "console", "w") as f:
+    """Run a console command on the wp58 server (its console is the fifo $KILN_PLAY_DIR/console)."""
+    with open(PLAY / "console", "w") as f:
         f.write(cmd + chr(10))
 
 
 def server_log(n=40):
     """The last n server log lines without the periodic mspt / chunk totals reports."""
-    lines = (HOME / "wp58" / "server.log").read_text(errors="replace").splitlines()
+    lines = (PLAY / "server.log").read_text(errors="replace").splitlines()
     return chr(10).join(l[:240] for l in [l for l in lines if "chunk totals" not in l and "mspt mean" not in l][-n:])
 
 

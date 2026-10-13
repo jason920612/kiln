@@ -63,3 +63,80 @@ fn chunks_do_not_depend_on_thread_count_or_order() {
     assert!(again.blocks == reference[4].blocks);
     eprintln!("{compared} chunks identical; pipeline {:?}", shared.stats());
 }
+
+/// Entity ids (`id` fields) of the generated entities of the chunks in the window.
+fn generated_ids(world: &Arc<Worldgen>, x0: i32, x1: i32, z0: i32, z1: i32) -> Vec<String> {
+    use kiln_proto::nbt::Tag;
+    let pipeline = Pipeline::new(world.clone());
+    let mut gs = GenScratch::default();
+    let mut ids = Vec::new();
+    for x in x0..=x1 {
+        for z in z0..=z1 {
+            for e in &pipeline.full(&mut gs, x, z).entities {
+                if let Tag::Compound(fields) = e
+                    && let Some((_, Tag::String(id))) = fields.iter().find(|(k, _)| k == "id")
+                {
+                    ids.push(id.clone());
+                }
+            }
+        }
+    }
+    ids
+}
+
+/// wp59: the real client found a monument with no elder guardians: generation only drew their
+/// random numbers. Seed 59 has a monument at (320, -224) (`/locate structure minecraft:monument`).
+#[test]
+fn an_ocean_monument_comes_with_its_three_elder_guardians() {
+    let Some(world) = world(59) else { return };
+    let ids = generated_ids(&world, 15, 25, -19, -9);
+    let elders = ids.iter().filter(|i| *i == "minecraft:elder_guardian").count();
+    assert_eq!(elders, 3, "two wing rooms and the penthouse: {ids:?}");
+}
+
+/// wp59: a woodland mansion has its evokers and vindicators (`Mage` and `Warrior` data markers;
+/// the allay groups only come with some rooms); seed 59 has one at (368, -928).
+#[test]
+fn a_woodland_mansion_is_inhabited() {
+    let Some(world) = world(59) else { return };
+    let ids = generated_ids(&world, 16, 31, -66, -50);
+    let count = |t: &str| ids.iter().filter(|i| *i == t).count();
+    assert!(count("minecraft:evoker") >= 1, "{ids:?}");
+    assert!(count("minecraft:vindicator") >= 1, "{ids:?}");
+}
+
+/// wp59: a swamp hut has its witch and its black cat (`SwampHutPiece`); seed 59 has one at
+/// (-704, 880) (`/locate structure minecraft:swamp_hut`).
+#[test]
+fn a_swamp_hut_has_its_witch_and_cat() {
+    use kiln_proto::nbt::Tag;
+    let Some(world) = world(59) else { return };
+    let pipeline = Pipeline::new(world.clone());
+    let mut gs = GenScratch::default();
+    let (mut witches, mut cats) = (0, 0);
+    for x in -48..=-40 {
+        for z in 52..=58 {
+            for e in &pipeline.full(&mut gs, x, z).entities {
+                let Tag::Compound(f) = e else { continue };
+                match f.iter().find(|(k, _)| k == "id").and_then(|(_, v)| v.as_str()) {
+                    Some("minecraft:witch") => witches += 1,
+                    Some("minecraft:cat") => {
+                        cats += 1;
+                        assert_eq!(f.iter().find(|(k, _)| k == "variant").and_then(|(_, v)| v.as_str()), Some("minecraft:black"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert_eq!((witches, cats), (1, 1));
+}
+
+/// wp59: ocean ruins put a persistent drowned on each `drowned` data marker; seed 59 has a cold
+/// ruin at (160, 480) (`/locate structure minecraft:ocean_ruin_cold`).
+#[test]
+fn an_ocean_ruin_has_drowned() {
+    let Some(world) = world(59) else { return };
+    let ids = generated_ids(&world, 5, 15, 25, 35);
+    assert!(ids.iter().any(|i| i == "minecraft:drowned"), "{ids:?}");
+}

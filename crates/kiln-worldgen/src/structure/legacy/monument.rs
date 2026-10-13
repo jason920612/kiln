@@ -755,6 +755,19 @@ fn water_box(b: &PieceBase, r: &mut Region, cb: &BoundingBox, x0: i32, y0: i32, 
 
 /// `generateBoxOnFillOnly`: `s` where the box holds still water.
 #[allow(clippy::too_many_arguments)]
+/// `OceanMonumentPiece.spawnElder`: an elder guardian at full health at a piece-relative block
+/// of the chunk being built (a wing room's or the penthouse's), with `finalizeSpawn`'s draws
+/// from the region's random.
+fn spawn_elder(b: &PieceBase, r: &mut Region, cb: &BoundingBox, x: i32, y: i32, z: i32) {
+    let p = b.world_pos(x, y, z);
+    if !cb.is_inside(p) {
+        return;
+    }
+    let (px, py, pz) = (p.x as f64 + 0.5, p.y as f64, p.z as f64 + 0.5);
+    r.add_entity(px, pz, crate::feature::entity_tag("minecraft:elder_guardian", [px, py, pz], 0.0, vec![("Health".into(), Tag::Float(80.0))]));
+    super::mansion::finalize_spawn_draws(r.level_random(), false);
+}
+
 fn fill_only_box(b: &PieceBase, r: &mut Region, cb: &BoundingBox, x0: i32, y0: i32, z0: i32, x1: i32, y1: i32, z1: i32, s: u16) {
     for y in y0..=y1 {
         for x in x0..=x1 {
@@ -1417,6 +1430,7 @@ impl Child {
                     b.place_block(r, BASE_LIGHT, 13, 7, 20, cb);
                     b.generate_box(r, cb, 6, 0, 21, 7, 4, 21, BASE_LIGHT, BASE_LIGHT, false);
                     b.generate_box(r, cb, 15, 0, 21, 16, 4, 21, BASE_LIGHT, BASE_LIGHT, false);
+                    spawn_elder(b, r, cb, 11, 2, 16);
                 } else if design == 1 {
                     b.generate_box(r, cb, 9, 3, 18, 13, 3, 20, BASE_LIGHT, BASE_LIGHT, false);
                     b.generate_box(r, cb, 9, 0, 18, 9, 2, 18, BASE_LIGHT, BASE_LIGHT, false);
@@ -1441,6 +1455,7 @@ impl Child {
                     }
                     b.generate_box(r, cb, 8, 3, 8, 8, 3, 13, BASE_BLACK, BASE_BLACK, false);
                     b.generate_box(r, cb, 14, 3, 8, 14, 3, 13, BASE_BLACK, BASE_BLACK, false);
+                    spawn_elder(b, r, cb, 11, 5, 13);
                 }
             }
             Room::Penthouse => {
@@ -1477,6 +1492,7 @@ impl Child {
                 b.generate_box(r, cb, 8, 0, 10, 8, 2, 10, BASE_LIGHT, BASE_LIGHT, false);
                 b.generate_box(r, cb, 6, -1, 7, 7, -1, 8, BASE_BLACK, BASE_BLACK, false);
                 water_box(b, r, cb, 6, -1, 3, 7, -1, 4);
+                spawn_elder(b, r, cb, 6, 1, 6);
             }
         }
     }

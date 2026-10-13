@@ -111,3 +111,30 @@ fn camels_stroll_about_and_live_on() {
     }
     assert!(moved > 1.0, "the camel strolled about ({moved})");
 }
+
+/// wp59: the real client playthrough found chickens that never laid: `gameplay/chicken_lay`
+/// picks the egg by `entity_properties` of `this` (the chicken's variant component), and the loot
+/// context knew nothing of the chicken's components, so every alternative failed.
+#[test]
+fn a_chicken_lays_the_egg_of_its_variant() {
+    if std::env::var_os("KILN_DATAPACK").is_none() {
+        eprintln!("no vanilla datapack (KILN_DATAPACK): the chicken_lay loot table is missing; skipped");
+        return;
+    }
+    let mut w = World::new();
+    let p = w.client.pos;
+    for (variant, egg) in [("minecraft:temperate", "minecraft:egg"), ("minecraft:warm", "minecraft:brown_egg"), ("minecraft:cold", "minecraft:blue_egg")] {
+        w.run("kill @e[type=minecraft:item]");
+        w.run(&format!(
+            "summon minecraft:chicken {} {} {} {{PersistenceRequired:1b,EggLayTime:3,variant:\"{variant}\"}}",
+            p[0] + 3.0,
+            p[1],
+            p[2] + 3.0
+        ));
+        w.ticks(12);
+        let stacks = w.sim.item_stacks();
+        assert!(stacks.iter().any(|s| kiln_item::registry::ITEM.name(s.item()) == Some(egg)), "a {variant} chicken lays {egg}: {:?}", stacks.iter().map(|s| kiln_item::registry::ITEM.name(s.item())).collect::<Vec<_>>());
+        w.run("kill @e[type=minecraft:chicken]");
+        w.ticks(2);
+    }
+}

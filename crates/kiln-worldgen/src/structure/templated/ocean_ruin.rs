@@ -257,6 +257,11 @@ impl Piece for OceanRuinPiece {
                 super::set_loot(r, random, p, table, true);
             }
             "drowned" => {
+                // `OceanRuinPiece.handleDataMarker`: a persistent drowned on the marker, which
+                // then turns into water (or air above the sea).
+                let (x, y, z) = (p.x as f64 + 0.5, p.y as f64, p.z as f64 + 0.5);
+                r.add_entity(x, z, crate::feature::entity_tag("minecraft:drowned", [x, y, z], 0.0, vec![("PersistenceRequired".to_string(), Tag::Byte(1))]));
+                crate::structure::legacy::mansion::finalize_spawn_draws(r.level_random(), false);
                 let s = if p.y > r.sea_level() { state::AIR } else { state::WATER };
                 r.set(p, s, 2);
             }

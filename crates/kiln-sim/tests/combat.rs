@@ -300,3 +300,62 @@ fn raised_shields_block_until_an_axe_disables_them() {
     w.attack(1, 2);
     assert!(w.health(2) < 20.0, "the lowered shield blocks nothing: {}", w.health(2));
 }
+
+/// What the last `update_attributes` packet to a client says about `attribute`:
+/// (base, the modifier amounts), if it lists it.
+fn told_attribute(packets: &[bytes::Bytes], entity_id: i32, attribute: &str) -> Option<(f64, Vec<f64>)> {
+    use kiln_proto::codec::Reader;
+    let want = kiln_data::builtin_id("minecraft:attribute", attribute).unwrap();
+    let mut found = None;
+    for p in packets {
+        let mut r = Reader::new(p);
+        if r.varint().ok() != Some(kiln_data::packets::play::clientbound::UPDATE_ATTRIBUTES) || r.varint().ok() != Some(entity_id) {
+            continue;
+        }
+        for _ in 0..r.varint().unwrap() {
+            let (id, base) = (r.varint().unwrap(), r.f64().unwrap());
+            let mods: Vec<f64> = (0..r.varint().unwrap())
+                .map(|_| {
+                    r.string(256).unwrap();
+                    let amount = r.f64().unwrap();
+                    r.varint().unwrap();
+                    amount
+                })
+                .collect();
+            if id == want {
+                found = Some((base, mods));
+            }
+        }
+    }
+    found
+}
+
+/// wp59: the real client's armor bar stayed empty: the server computed the armor points but
+/// only told clients six attributes (the ones effects change) and never when the equipment did.
+#[test]
+fn armor_and_tool_attributes_reach_the_client_when_equipment_changes() {
+    let mut w = World::new(&["Wearer"]);
+    w.ticks(5);
+    let stats = w.clients[0].stats.clone();
+    *stats.log.lock().unwrap() = Some(Vec::new());
+    let me = w.sim.entity_id(1).unwrap();
+    for (slot, item) in [(5, "diamond_helmet"), (6, "diamond_chestplate"), (7, "diamond_leggings"), (8, "diamond_boots")] {
+        w.give(1, slot, &format!("minecraft:{item}"));
+    }
+    w.ticks(5);
+    w.console("gamemode survival Wearer");
+    w.ticks(5);
+    let packets = stats.log.lock().unwrap().clone().unwrap();
+    let armor = told_attribute(&packets, me, "minecraft:armor").expect("the armor attribute is sent when armor is put on");
+    assert_eq!(armor.1.len(), 4, "one modifier per piece: {armor:?}");
+    assert_eq!(armor.1.iter().sum::<f64>(), 20.0, "diamond armor is 3+8+6+3 points");
+    let toughness = told_attribute(&packets, me, "minecraft:armor_toughness").expect("armor toughness too");
+    assert_eq!(toughness.1.iter().sum::<f64>(), 8.0, "4 x 2");
+    // And when it comes off again the client hears the modifiers are gone.
+    *stats.log.lock().unwrap() = Some(Vec::new());
+    w.console("item replace entity Wearer armor.chest with minecraft:air");
+    w.ticks(5);
+    let packets = stats.log.lock().unwrap().clone().unwrap();
+    let armor = told_attribute(&packets, me, "minecraft:armor").expect("the change is sent");
+    assert_eq!(armor.1.len(), 3, "{armor:?}");
+}

@@ -844,15 +844,23 @@ impl MansionPiece {
             create_chest_at(r, cb, random, p, "minecraft:chests/woodland_mansion", Some(s));
             return;
         }
-        // Mobs are not spawned, but their `finalizeSpawn` draws from the region's random are
-        // made, and their markers are cleared as vanilla does once it adds them.
-        let (mobs, weapon) = match marker {
-            "Mage" => (1, false),
-            "Warrior" => (1, true),
-            "Group of Allays" => (r.level_random().next_int_bounded(3) + 1, false),
+        // `Mage`, `Warrior` and `Group of Allays`: persistent mobs standing on the marker, which
+        // is cleared (their `finalizeSpawn` draws come from the region's random, as in vanilla).
+        let (id, mobs, weapon) = match marker {
+            "Mage" => ("minecraft:evoker", 1, false),
+            "Warrior" => ("minecraft:vindicator", 1, true),
+            "Group of Allays" => ("minecraft:allay", r.level_random().next_int_bounded(3) + 1, false),
             _ => return,
         };
         for _ in 0..mobs {
+            let (x, y, z) = (p.x as f64 + 0.5, p.y as f64, p.z as f64 + 0.5);
+            let mut extra = vec![("PersistenceRequired".to_string(), Tag::Byte(1))];
+            if weapon {
+                // `Vindicator.populateDefaultEquipmentSlots`: an iron axe in the main hand.
+                let axe = Tag::Compound(vec![("count".into(), Tag::Int(1)), ("id".into(), Tag::String("minecraft:iron_axe".into()))]);
+                extra.push(("equipment".to_string(), Tag::Compound(vec![("mainhand".to_string(), axe)])));
+            }
+            r.add_entity(x, z, crate::feature::entity_tag(id, [x, y, z], 0.0, extra));
             finalize_spawn_draws(r.level_random(), weapon);
         }
         r.set(p, crate::blocks::state::AIR, 2);
@@ -864,7 +872,7 @@ impl MansionPiece {
 /// (`weapon`) also rolls to enchant its iron axe (`enchantSpawnedEquipment`, chance
 /// `0.25 * specialMultiplier`). Kiln assumes a special multiplier of 0 (effective difficulty
 /// below 2: easy, or normal early on), so the enchantment itself is never rolled.
-fn finalize_spawn_draws(random: &mut impl RandomSource, weapon: bool) {
+pub(crate) fn finalize_spawn_draws(random: &mut impl RandomSource, weapon: bool) {
     random.next_double();
     random.next_double();
     random.next_float();
