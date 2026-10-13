@@ -146,3 +146,59 @@ fn bone_meal_on_grass_grows_short_grass_and_flowers() {
     let grass = count(&w, from, to, "minecraft:short_grass") + count(&w, from, to, "minecraft:tall_grass");
     assert!(grass >= 10, "bone meal sprouts grass around the block: {grass}");
 }
+
+/// wp60: a bee nest on a tree that grew from a sapling next to flowers: the feature filled the
+/// nest block entity with bees after the block was placed, and the live nest kept none of them
+/// (the chunk's saved copy had them), so the nest never let a bee out.
+#[test]
+fn a_grown_trees_bee_nest_has_living_bees() {
+    let Some(pack) = datapack() else { return };
+    let mut w = World::new(pack);
+    let [gx, gy, gz] = w.ground;
+    let (from, to) = ([gx - 6, gy + 1, gz - 6], [gx + 6, gy + 25, gz + 6]);
+    w.run(&format!("setblock {gx} {gy} {gz} minecraft:dirt"));
+    let mut found = None;
+    // (5 % of the oaks that grow beside flowers carry a nest.)
+    for _try in 0..160 {
+        w.run("gamerule minecraft:random_tick_speed 0");
+        w.run(&format!("fill {} {} {} {} {} {} minecraft:air", from[0], from[1], from[2], to[0], to[1], to[2]));
+        w.run(&format!("setblock {gx} {} {gz} minecraft:oak_sapling", gy + 1));
+        w.run(&format!("setblock {} {} {gz} minecraft:dandelion", gx + 1, gy + 1));
+        w.run("gamerule minecraft:random_tick_speed 3000");
+        for _ in 0..200 {
+            w.ticks(1);
+            if count(&w, from, to, "minecraft:oak_log") > 0 {
+                break;
+            }
+        }
+        w.run("gamerule minecraft:random_tick_speed 0");
+        for x in from[0]..=to[0] {
+            for y in from[1]..=to[1] {
+                for z in from[2]..=to[2] {
+                    if w.name([x, y, z]) == "minecraft:bee_nest" {
+                        found = Some([x, y, z]);
+                    }
+                }
+            }
+        }
+        if found.is_some() {
+            break;
+        }
+    }
+    let nest = found.expect("no tree with a bee nest in 160 tries");
+    let ticks_in_hive = |w: &World| -> Vec<i64> {
+        let be = w.sim.block_entity_nbt(nest[0], nest[1], nest[2]).expect("the nest is a live block entity");
+        match be.get("bees") {
+            Some(kiln_proto::nbt::Tag::List(l)) => l.iter().filter_map(|b| b.get("ticks_in_hive").and_then(|t| t.as_i64())).collect(),
+            _ => Vec::new(),
+        }
+    };
+    let before = ticks_in_hive(&w);
+    assert!((2..=3).contains(&before.len()), "the feature put 2-3 bees in the nest: {before:?}");
+    w.ticks(30);
+    let after = ticks_in_hive(&w);
+    assert_eq!(after.len(), before.len());
+    for (a, b) in after.iter().zip(&before) {
+        assert_eq!(*a, b + 30, "the bees' time in the hive counts: {before:?} -> {after:?}");
+    }
+}

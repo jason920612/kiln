@@ -216,3 +216,22 @@ def free_spot(c, x0, y0, z0, r=12, dy=8, need_ground=True):
                     if best is None or d < best[0]:
                         best = (d, x, y, z)
     return best
+
+
+# ---- the vanilla reference server (tools/wp58/wp60_vanilla.sh): console fifo and log in ~/wp60/vanilla ----
+VDIR = HOME / "wp60" / "vanilla"
+
+def vsv(cmd, wait=0.8, show=True):
+    """Run a command on the vanilla reference server; return the log lines it produced."""
+    log = VDIR / "server.log"
+    n = log.stat().st_size
+    with open(VDIR / "console", "w") as f:
+        f.write(cmd + chr(10))
+    time.sleep(wait)
+    with open(log, "rb") as f:
+        f.seek(n)
+        txt = f.read().decode(errors="replace")
+    out = "\n".join(re.sub(r"^\[[0-9:]+\] \[[^\]]*\]: ", "", l) for l in txt.splitlines())
+    if show and out:
+        print(out[:1500])
+    return out
