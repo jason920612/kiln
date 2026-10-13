@@ -12,6 +12,8 @@
 //! with `verify_locator_bar` still comparing the optimised bar against the straightforward one.
 //! wp54: the packet digests were re-recorded (the state hashes are the old ones): walkers now make the step and landing sounds
 //! other players hear, which the packet streams of the crowd did not have before.
+//! wp59: the packet digests were re-recorded (the state hashes are the same): the login's Update Attributes packet now lists
+//! the equipment-driven attributes (armor, toughness, mining and swimming efficiency, oxygen bonus) clients need.
 
 use kiln_sim::testing::{Churn, Client, Walker, group_offset, join};
 use kiln_sim::{Sim, SimConfig};
@@ -96,19 +98,19 @@ fn check(s: Scenario, hash: u64, digest: u64, regions: usize) {
 /// One region, everyone close: block links.
 #[test]
 fn crowd_in_one_region() {
-    check(Scenario { players: 150, groups: 4, spacing: 48.0, walk: false, ticks: 150, events: no_events }, 0xe94274c461b259ab, 0x126b1188f28c7067, 1);
+    check(Scenario { players: 150, groups: 4, spacing: 48.0, walk: false, ticks: 150, events: no_events }, 0xe94274c461b259ab, 0x45379799a318b2a4, 1);
 }
 
 /// Groups far enough apart for chunk links, walking.
 #[test]
 fn groups_with_chunk_links() {
-    check(Scenario { players: 80, groups: 4, spacing: 200.0, walk: true, ticks: 150, events: no_events }, 0x9d96bd81102791fd, 0x37bf42f26b7f02ac, 1);
+    check(Scenario { players: 80, groups: 4, spacing: 200.0, walk: true, ticks: 150, events: no_events }, 0x9d96bd81102791fd, 0x438e8bdeaed2c6b9, 1);
 }
 
 /// Groups past the locator bar's 332 blocks: azimuth links, one region each.
 #[test]
 fn groups_with_azimuth_links() {
-    check(Scenario { players: 60, groups: 3, spacing: 1500.0, walk: true, ticks: 150, events: no_events }, 0x16e1ef1b0c272be9, 0x424a5a73c526379e, 3);
+    check(Scenario { players: 60, groups: 3, spacing: 1500.0, walk: true, ticks: 150, events: no_events }, 0x16e1ef1b0c272be9, 0x2295b54ae462e3fc, 3);
 }
 
 /// The locator bar's other paths: team colors (connections keep the color they were made
@@ -140,5 +142,5 @@ fn locator_events(k: usize, inbox: &mut Vec<kiln_link::ToSim>) {
 /// scenarios kept their first constants, which Linux now reproduces.
 #[test]
 fn locator_bar_commands_and_dimensions() {
-    check(Scenario { players: 40, groups: 2, spacing: 120.0, walk: true, ticks: 120, events: locator_events }, 0xff6bf67d90731153, 0x6f47c50ba75c223a, 2);
+    check(Scenario { players: 40, groups: 2, spacing: 120.0, walk: true, ticks: 120, events: locator_events }, 0xff6bf67d90731153, 0x499303e49fdafb6b, 2);
 }
