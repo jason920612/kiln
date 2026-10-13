@@ -375,6 +375,18 @@ public class ClientCtl {
                     }
                     return "ERR no container screen";
                 });
+            case "comps": // comps SLOT: the item and its component patch of a container slot (inv SLOT with "inv N")
+                return onMain(() -> {
+                    ItemStack st;
+                    if (a.length > 2 && a[1].equals("inv")) {
+                        st = mc.player.getInventory().getItem(Integer.parseInt(a[2]));
+                    } else if (mc.gui.screen() instanceof AbstractContainerScreen<?> c) {
+                        st = c.getMenu().slots.get(Integer.parseInt(a[1])).getItem();
+                    } else {
+                        return "ERR no container screen";
+                    }
+                    return id(st) + " x" + st.getCount() + " " + st.getComponentsPatch();
+                });
             case "attrlist": // every registered attribute with its client-sync flag
                 return onMain(() -> {
                     JsonObject o = new JsonObject();
