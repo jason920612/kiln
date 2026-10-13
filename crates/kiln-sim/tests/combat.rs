@@ -405,6 +405,8 @@ fn every_syncable_attribute_reaches_the_client() {
     assert!(told_attribute(&packets, me, "minecraft:attack_damage").is_none());
     assert!(told_attribute(&packets, me, "minecraft:knockback_resistance").is_none());
     // Creative mode's reach modifiers are sent when the mode changes.
+    w.console("gamemode survival Tweaker");
+    w.ticks(3);
     *stats.log.lock().unwrap() = Some(Vec::new());
     w.console("gamemode creative Tweaker");
     w.ticks(3);
