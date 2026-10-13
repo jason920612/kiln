@@ -21,7 +21,7 @@ simulation-distance=8
 max-tick-time=-1
 sync-chunk-writes=false
 enable-command-block=true
-generate-structures=false
+generate-structures=true
 pause-when-empty-seconds=-1
 level-seed=60
 PROP
