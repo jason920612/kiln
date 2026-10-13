@@ -2,7 +2,7 @@
 # wp60 server on the VM: ~/wp60/world, port 25585, console through the ~/wp60/console fifo.
 # usage: wp60_start.sh [binary]   (default: the wp60-playthrough3 checkout's release build)
 mkdir -p ~/wp60 && cd ~/wp60
-pkill -f "wp60/kiln-run" 2>/dev/null
+[ -p console ] && echo stop > console; sleep 3; pkill -x kiln-run 2>/dev/null
 sleep 1
 cp "${1:-$HOME/wt/wp60-playthrough3/target/release/kiln}" ~/wp60/kiln-run
 [ -p console ] || mkfifo console
