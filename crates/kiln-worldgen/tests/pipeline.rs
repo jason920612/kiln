@@ -156,3 +156,26 @@ fn every_ocean_monument_of_seed_60_has_three_elder_guardians() {
         results.push(elders);
     }
 }
+
+/// wp60: where the elders of seed 60's monuments stand (debug).
+#[test]
+fn where_the_elders_stand() {
+    use kiln_proto::nbt::Tag;
+    let Some(world) = world(60) else { return };
+    let pipeline = Pipeline::new(world.clone());
+    let mut gs = GenScratch::default();
+    for (x, z) in [(-352, 160), (3840, 3808)] {
+        let (cx, cz) = (x >> 4, z >> 4);
+        eprintln!("monument ({x}, {z}) chunks {cx}..{} {cz}..{}", cx + 5, cz + 5);
+        for ccx in cx - 1..=cx + 5 {
+            for ccz in cz - 1..=cz + 5 {
+                for e in &pipeline.full(&mut gs, ccx, ccz).entities {
+                    let Tag::Compound(f) = e else { continue };
+                    if f.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:elder_guardian")) {
+                        eprintln!("  elder in chunk ({ccx}, {ccz}): {:?}", f.iter().find(|(k, _)| k == "Pos").map(|(_, v)| v));
+                    }
+                }
+            }
+        }
+    }
+}
