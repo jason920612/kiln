@@ -481,6 +481,58 @@ mod tests {
         assert_eq!(d.effective_difficulty, 1.5);
         assert_eq!(d.special_multiplier, 0.0);
     }
+
+    /// The mobs of structures (`finalizeSpawn` with `STRUCTURE`): a drowned of an ocean ruin holds a trident or a
+    /// fishing rod one time in ten and is a baby one time in twenty; a bastion's piglin brute holds its golden
+    /// axe and its piglins wear gold pieces (and are neither babies nor given a spawn weapon).
+    #[test]
+    fn structure_mobs_are_finalized() {
+        use kiln_proto::nbt::Tag;
+        let make = |id: &str, n: i32| -> Spawn {
+            let tag = Tag::Compound(vec![
+                ("id".into(), Tag::String(id.into())),
+                ("UUID".into(), Tag::IntArray(vec![n, n ^ 0x5555, 7, n.wrapping_mul(31)])),
+                ("Pos".into(), Tag::List(vec![Tag::Double(0.5), Tag::Double(64.0), Tag::Double(0.5)])),
+            ]);
+            let spawn = Spawn::from_saved(&tag, i64::from(n), true).expect("loads");
+            finalize_structure_mob(spawn, 2, 0)
+        };
+        let (mut tools, mut babies) = (0, 0);
+        for n in 0..4000 {
+            let s = make("minecraft:drowned", n);
+            let e = match &s.body {
+                crate::entities::Body::Loaded(e) => e,
+                crate::entities::Body::LoadedStack(_, riders) => &riders[0].entity,
+                _ => panic!("a loaded mob"),
+            };
+            let m = mob::data(e).unwrap();
+            let held = m.equipment[mob::MAINHAND].item_name();
+            if held == "minecraft:trident" || held == "minecraft:fishing_rod" {
+                tools += 1;
+            }
+            if m.baby() {
+                babies += 1;
+            }
+        }
+        assert!((300..=500).contains(&tools), "about 10% of 4000 drowned hold a trident or a rod: {tools}");
+        assert!((120..=280).contains(&babies), "about 5% of 4000 drowned are babies: {babies}");
+        for n in 0..50 {
+            let brute = make("minecraft:piglin_brute", n);
+            let crate::entities::Body::Loaded(e) = &brute.body else { panic!("a loaded mob") };
+            assert_eq!(mob::data(e).unwrap().equipment[mob::MAINHAND].item_name(), "minecraft:golden_axe");
+        }
+        let (mut armored, mut armed, mut baby_piglins) = (0, 0, 0);
+        for n in 0..2000 {
+            let piglin = make("minecraft:piglin", n);
+            let crate::entities::Body::Loaded(e) = &piglin.body else { panic!("a loaded mob") };
+            let m = mob::data(e).unwrap();
+            armored += [mob::HEAD, mob::CHEST, mob::LEGS, mob::FEET].iter().filter(|&&s| !m.equipment[s].is_empty()).count();
+            armed += !m.equipment[mob::MAINHAND].is_empty() as i32;
+            baby_piglins += m.baby() as i32;
+        }
+        assert!((600..=1000).contains(&armored), "gold pieces: each of 4 slots at 10% of 2000 piglins: {armored}");
+        assert_eq!((armed, baby_piglins), (0, 0), "a structure's piglins keep what their template gave them and are adults");
+    }
 }
 
 /// The client-syncable attributes of a mob (`AttributeMap.getSyncableAttributes`) as an Update
