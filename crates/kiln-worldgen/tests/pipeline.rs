@@ -104,3 +104,30 @@ fn a_woodland_mansion_is_inhabited() {
     assert!(count("minecraft:evoker") >= 1, "{ids:?}");
     assert!(count("minecraft:vindicator") >= 1, "{ids:?}");
 }
+
+/// wp59: a swamp hut has its witch and its black cat (`SwampHutPiece`); seed 59 has one at
+/// (-704, 880) (`/locate structure minecraft:swamp_hut`).
+#[test]
+fn a_swamp_hut_has_its_witch_and_cat() {
+    use kiln_proto::nbt::Tag;
+    let Some(world) = world(59) else { return };
+    let pipeline = Pipeline::new(world.clone());
+    let mut gs = GenScratch::default();
+    let (mut witches, mut cats) = (0, 0);
+    for x in -48..=-40 {
+        for z in 52..=58 {
+            for e in &pipeline.full(&mut gs, x, z).entities {
+                let Tag::Compound(f) = e else { continue };
+                match f.iter().find(|(k, _)| k == "id").and_then(|(_, v)| v.as_str()) {
+                    Some("minecraft:witch") => witches += 1,
+                    Some("minecraft:cat") => {
+                        cats += 1;
+                        assert_eq!(f.iter().find(|(k, _)| k == "variant").and_then(|(_, v)| v.as_str()), Some("minecraft:black"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert_eq!((witches, cats), (1, 1));
+}

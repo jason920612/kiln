@@ -740,7 +740,7 @@ impl Piece for HutPiece {
         self.s.save(flags_tag(&["Witch", "Cat"], &self.mobs))
     }
 
-    /// The hut; Kiln does not spawn its witch and cat, only records that they would have been.
+    /// The hut, with its witch and cat.
     fn place(&self, _cx: &PlaceContext, r: &mut Region, _random: &mut WorldgenRandom, cb: &BoundingBox, _chunk: (i32, i32), _pivot: BlockPos) {
         if !self.s.update_average_ground_height(r, cb, 0) {
             return;
@@ -784,9 +784,21 @@ impl Piece for HutPiece {
                 b.fill_column_down(r, st("minecraft:oak_log"), v13, -1, v12, cb);
             }
         }
-        if cb.is_inside(b.world_pos(2, 2, 5)) {
-            for f in &self.mobs {
-                f.store(true, Ordering::Relaxed);
+        // `SwampHutPiece.postProcess`: a persistent witch, then a persistent (black) cat, standing at
+        // (2, 2, 5) of the hut the first time a chunk holding that block is built.
+        let at = b.world_pos(2, 2, 5);
+        if cb.is_inside(at) {
+            let (x, y, z) = (at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5);
+            let persistent = || vec![("PersistenceRequired".to_string(), Tag::Byte(1))];
+            if !self.mobs[0].swap(true, Ordering::Relaxed) {
+                r.add_entity(x, z, crate::feature::entity_tag("minecraft:witch", [x, y, z], 0.0, persistent()));
+                super::mansion::finalize_spawn_draws(r.level_random(), false);
+            }
+            if !self.mobs[1].swap(true, Ordering::Relaxed) {
+                let mut extra = persistent();
+                extra.push(("variant".to_string(), Tag::String("minecraft:black".into())));
+                r.add_entity(x, z, crate::feature::entity_tag("minecraft:cat", [x, y, z], 0.0, extra));
+                super::mansion::finalize_spawn_draws(r.level_random(), false);
             }
         }
     }
