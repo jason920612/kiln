@@ -482,3 +482,48 @@ mod tests {
         assert_eq!(d.special_multiplier, 0.0);
     }
 }
+
+/// The client-syncable attributes of a mob (`AttributeMap.getSyncableAttributes`) as an Update
+/// Attributes packet; `None` when it has none.
+pub(crate) fn attributes_packet(entity_id: i32, m: &MobData) -> Option<bytes::Bytes> {
+    use kiln_proto::packets::entity::{AttributeModifier, AttributeSnapshot, ModifierOperation};
+    let list: Vec<(i32, &mob::attributes::Instance)> = m
+        .attrs
+        .list
+        .iter()
+        .filter(|i| i.attr.is_client_syncable())
+        .filter_map(|i| Some((kiln_data::builtin_id("minecraft:attribute", i.attr.name())?, i)))
+        .collect();
+    if list.is_empty() {
+        return None;
+    }
+    let op = |o: mob::attributes::Op| match o {
+        mob::attributes::Op::AddValue => ModifierOperation::AddValue,
+        mob::attributes::Op::AddMultipliedBase => ModifierOperation::AddMultipliedBase,
+        mob::attributes::Op::AddMultipliedTotal => ModifierOperation::AddMultipliedTotal,
+    };
+    let mods: Vec<Vec<AttributeModifier>> =
+        list.iter().map(|(_, i)| i.modifiers.iter().map(|x| AttributeModifier { id: &x.id, amount: x.amount, operation: op(x.op) }).collect()).collect();
+    let snapshots: Vec<AttributeSnapshot> =
+        list.iter().zip(&mods).map(|((id, i), modifiers)| AttributeSnapshot { attribute: *id, base: i.base, modifiers }).collect();
+    Some(kiln_proto::packets::entity::update_attributes(entity_id, &snapshots))
+}
+
+/// A hash of what [`attributes_packet`] would say (never 0), to tell when the viewers' copy is stale.
+pub(crate) fn attributes_hash(m: &MobData) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut mix = |v: u64| h = (h ^ v).wrapping_mul(0x0000_0100_0000_01b3);
+    for i in m.attrs.list.iter().filter(|i| i.attr.is_client_syncable()) {
+        mix(i.attr as u64);
+        mix(i.base.to_bits());
+        for x in &i.modifiers {
+            mix(x.amount.to_bits());
+            mix(x.op as u64);
+            for b in x.id.bytes() {
+                mix(b as u64);
+            }
+        }
+        mix(u64::MAX);
+    }
+    h | 1
+}

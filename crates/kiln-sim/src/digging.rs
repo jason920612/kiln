@@ -68,7 +68,7 @@ impl Player {
     /// `Player.isWithinBlockInteractionRange`: the block's box within the block interaction
     /// range (4.5, 5 in creative) plus `buffer` of the eyes.
     pub(crate) fn can_reach_block(&self, pos: [i32; 3], buffer: f64) -> bool {
-        let range = if self.game_mode == 1 { 5.0 } else { 4.5 } + buffer;
+        let range = self.block_interaction_range() + buffer;
         let eye = [self.pos[0], self.pos[1] + self.eye_height(), self.pos[2]];
         let d2: f64 = (0..3)
             .map(|i| {

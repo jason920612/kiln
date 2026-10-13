@@ -823,6 +823,8 @@ impl Host for Sim {
             return false;
         }
         p.game_mode = mode as u8;
+        // (Creative adds the reach modifier.)
+        p.attributes_dirty = true;
         const CHANGE_GAME_MODE: u8 = 3;
         p.send(packets::game_event(CHANGE_GAME_MODE, mode as u8 as f32));
         // `ServerPlayer.setGameMode` into spectator: the shoulders' parrots fly off.

@@ -93,9 +93,9 @@ pub(crate) fn clip(from: Vec3, to: Vec3, block: &dyn Fn(kiln_blocks::BlockPos) -
 }
 
 impl Player {
-    /// `Player.blockInteractionRange` (4.5, 5 in creative).
+    /// `Player.blockInteractionRange`: the attribute (4.5, 5 in creative).
     pub(crate) fn block_interaction_range(&self) -> f64 {
-        if self.game_mode == 1 { 5.0 } else { 4.5 }
+        self.attribute(crate::combat::BLOCK_INTERACTION_RANGE)
     }
 
     /// The inventory slot of a hand.
