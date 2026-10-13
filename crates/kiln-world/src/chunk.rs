@@ -814,3 +814,8 @@ mod any_block_tests {
         assert!(c.any_block_in((0, 15), (-100, 100), (0, 15), &is_fire));
     }
 }
+
+/// The field generation puts on a mob it placed for a structure (`EntitySpawnReason.STRUCTURE`): the
+/// simulation runs `finalizeSpawn` on it as it takes the chunk in (random equipment, baby chance...)
+/// and drops the field. It is not part of any saved form.
+pub const FINALIZE_ON_LOAD: &str = "kiln:finalize";

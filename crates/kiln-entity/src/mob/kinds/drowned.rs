@@ -205,15 +205,21 @@ impl Kind for Drowned {
                 m.drop_chances[mob::OFFHAND] = 2.0;
             }
         }
-        // Natural drowned with a trident ride a zombie nautilus half the time (not as calves, not
-        // in rivers): it is placed and turned like the drowned, finalized with no group data.
-        if group.natural
+        // Natural and structure drowned with a trident ride a zombie nautilus half the time (not as
+        // calves, not in rivers): it is placed and turned like the drowned, finalized with no group
+        // data (a structure's stays).
+        if (group.natural || group.structure)
             && holds_trident(m)
             && r.next_float() < 0.5
             && !m.baby()
             && !ctx.biome.is_some_and(|b| mob::species::biome_tag(b, "minecraft:more_frequent_drowned_spawns"))
         {
             let mut nautilus = mob::new_jockey(e, mob::MobKind::ZombieNautilus);
+            if group.structure {
+                if let Some(nm) = mob::data_mut(&mut nautilus) {
+                    nm.persistence_required = true;
+                }
+            }
             mob::finalize_spawn(&mut nautilus, r, ctx, &mut GroupData::default(), true);
             group.companions.push(mob::Companion { entity: nautilus, seat: mob::Seat::UnderMob });
         }

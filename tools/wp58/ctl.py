@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Runs on the VM next to the server (~/wp58) and the real client (Xvfb :99, ~/mc-client).
 HOME = Path.home()
-PLAY = HOME / os.environ.get("KILN_PLAY_DIR", "wp58")  # wp59 sets KILN_PLAY_DIR=wp59
+PLAY = HOME / os.environ.get("KILN_PLAY_DIR", "wp58")  # wp59/wp60 set KILN_PLAY_DIR
 SHOTS = PLAY / "shots"
 
 

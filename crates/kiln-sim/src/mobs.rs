@@ -481,4 +481,126 @@ mod tests {
         assert_eq!(d.effective_difficulty, 1.5);
         assert_eq!(d.special_multiplier, 0.0);
     }
+
+    /// The mobs of structures (`finalizeSpawn` with `STRUCTURE`): a drowned of an ocean ruin holds a trident or a
+    /// fishing rod one time in ten and is a baby one time in twenty; a bastion's piglin brute holds its golden
+    /// axe and its piglins wear gold pieces (and are neither babies nor given a spawn weapon).
+    #[test]
+    fn structure_mobs_are_finalized() {
+        use kiln_proto::nbt::Tag;
+        let make = |id: &str, n: i32| -> Spawn {
+            let tag = Tag::Compound(vec![
+                ("id".into(), Tag::String(id.into())),
+                ("UUID".into(), Tag::IntArray(vec![n, n ^ 0x5555, 7, n.wrapping_mul(31)])),
+                ("Pos".into(), Tag::List(vec![Tag::Double(0.5), Tag::Double(64.0), Tag::Double(0.5)])),
+            ]);
+            let spawn = Spawn::from_saved(&tag, i64::from(n), true).expect("loads");
+            finalize_structure_mob(spawn, 2, 0)
+        };
+        let (mut tools, mut babies) = (0, 0);
+        for n in 0..4000 {
+            let s = make("minecraft:drowned", n);
+            let e = match &s.body {
+                crate::entities::Body::Loaded(e) => e,
+                crate::entities::Body::LoadedStack(_, riders) => &riders[0].entity,
+                _ => panic!("a loaded mob"),
+            };
+            let m = mob::data(e).unwrap();
+            let held = m.equipment[mob::MAINHAND].item_name();
+            if held == "minecraft:trident" || held == "minecraft:fishing_rod" {
+                tools += 1;
+            }
+            if m.baby() {
+                babies += 1;
+            }
+        }
+        assert!((300..=500).contains(&tools), "about 10% of 4000 drowned hold a trident or a rod: {tools}");
+        assert!((120..=280).contains(&babies), "about 5% of 4000 drowned are babies: {babies}");
+        for n in 0..50 {
+            let brute = make("minecraft:piglin_brute", n);
+            let crate::entities::Body::Loaded(e) = &brute.body else { panic!("a loaded mob") };
+            assert_eq!(mob::data(e).unwrap().equipment[mob::MAINHAND].item_name(), "minecraft:golden_axe");
+        }
+        let (mut armored, mut armed, mut baby_piglins) = (0, 0, 0);
+        for n in 0..2000 {
+            let piglin = make("minecraft:piglin", n);
+            let crate::entities::Body::Loaded(e) = &piglin.body else { panic!("a loaded mob") };
+            let m = mob::data(e).unwrap();
+            armored += [mob::HEAD, mob::CHEST, mob::LEGS, mob::FEET].iter().filter(|&&s| !m.equipment[s].is_empty()).count();
+            armed += !m.equipment[mob::MAINHAND].is_empty() as i32;
+            baby_piglins += m.baby() as i32;
+        }
+        assert!((600..=1000).contains(&armored), "gold pieces: each of 4 slots at 10% of 2000 piglins: {armored}");
+        assert_eq!((armed, baby_piglins), (0, 0), "a structure's piglins keep what their template gave them and are adults");
+    }
+}
+
+/// The client-syncable attributes of a mob (`AttributeMap.getSyncableAttributes`) as an Update
+/// Attributes packet; `None` when it has none.
+pub(crate) fn attributes_packet(entity_id: i32, m: &MobData) -> Option<bytes::Bytes> {
+    use kiln_proto::packets::entity::{AttributeModifier, AttributeSnapshot, ModifierOperation};
+    let list: Vec<(i32, &mob::attributes::Instance)> = m
+        .attrs
+        .list
+        .iter()
+        .filter(|i| i.attr.is_client_syncable())
+        .filter_map(|i| Some((kiln_data::builtin_id("minecraft:attribute", i.attr.name())?, i)))
+        .collect();
+    if list.is_empty() {
+        return None;
+    }
+    let op = |o: mob::attributes::Op| match o {
+        mob::attributes::Op::AddValue => ModifierOperation::AddValue,
+        mob::attributes::Op::AddMultipliedBase => ModifierOperation::AddMultipliedBase,
+        mob::attributes::Op::AddMultipliedTotal => ModifierOperation::AddMultipliedTotal,
+    };
+    let mods: Vec<Vec<AttributeModifier>> =
+        list.iter().map(|(_, i)| i.modifiers.iter().map(|x| AttributeModifier { id: &x.id, amount: x.amount, operation: op(x.op) }).collect()).collect();
+    let snapshots: Vec<AttributeSnapshot> =
+        list.iter().zip(&mods).map(|((id, i), modifiers)| AttributeSnapshot { attribute: *id, base: i.base, modifiers }).collect();
+    Some(kiln_proto::packets::entity::update_attributes(entity_id, &snapshots))
+}
+
+/// A hash of what [`attributes_packet`] would say (never 0), to tell when the viewers' copy is stale.
+pub(crate) fn attributes_hash(m: &MobData) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut mix = |v: u64| h = (h ^ v).wrapping_mul(0x0000_0100_0000_01b3);
+    for i in m.attrs.list.iter().filter(|i| i.attr.is_client_syncable()) {
+        mix(i.attr as u64);
+        mix(i.base.to_bits());
+        for x in &i.modifiers {
+            mix(x.amount.to_bits());
+            mix(x.op as u64);
+            for b in x.id.bytes() {
+                mix(b as u64);
+            }
+        }
+        mix(u64::MAX);
+    }
+    h | 1
+}
+
+/// `StructureTemplate.placeEntities` / the pieces' data markers: `finalizeSpawn` with
+/// `EntitySpawnReason.STRUCTURE` on a mob a chunk's generation placed (random equipment and
+/// enchantments, a baby's chance, a zombie nautilus under a trident drowned), with the entity's own
+/// random. Entities that are not mobs pass through.
+pub(crate) fn finalize_structure_mob(mut spawn: Spawn, difficulty: u8, game_time: i64) -> Spawn {
+    use crate::entities::Body;
+    let Body::Loaded(e) = &mut spawn.body else { return spawn };
+    if mob::data(e).is_none() {
+        return spawn;
+    }
+    let ctx = difficulty_instance(difficulty, game_time, 0, 1.0);
+    let mut random = kiln_javamath::random::LegacyRandom::new(crate::entities::seed_for_uuid(e.uuid) ^ 0x5374_7275_6374);
+    let mut group = mob::GroupData { structure: true, ..Default::default() };
+    mob::finalize_spawn(e, &mut random, &ctx, &mut group, false);
+    // A trident drowned on its nautilus: the nautilus is the root of the stack, the drowned rides it.
+    if let Some(i) = group.companions.iter().position(|c| c.seat == mob::Seat::UnderMob) {
+        let vehicle = group.companions.swap_remove(i).entity;
+        let Body::Loaded(rider) = std::mem::replace(&mut spawn.body, Body::Lightning { visual_only: false }) else { return spawn };
+        let kind = kiln_data::entities::by_name(vehicle.type_name).unwrap_or(spawn.kind);
+        let pos = [vehicle.position().x, vehicle.position().y, vehicle.position().z];
+        return Spawn { kind, pos, vel: [0.0; 3], body: Body::LoadedStack(Box::new(vehicle), vec![kiln_entity::persist::Rider { entity: *rider, vehicle: 0 }]) };
+    }
+    spawn
 }

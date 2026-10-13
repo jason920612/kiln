@@ -140,3 +140,16 @@ fn an_ocean_ruin_has_drowned() {
     let ids = generated_ids(&world, 5, 15, 25, 35);
     assert!(ids.iter().any(|i| i == "minecraft:drowned"), "{ids:?}");
 }
+
+/// wp60: monuments of other seeds have their three elders too: `/locate structure minecraft:monument` names the middle
+/// of the monument (the real client looked for them off-centre and found two).
+#[test]
+fn every_ocean_monument_of_seed_60_has_three_elder_guardians() {
+    let Some(world) = world(60) else { return };
+    for (x, z) in [(-352, 160), (3840, 3808), (6768, -6432), (-5312, 2240)] {
+        let (cx, cz) = (x >> 4, z >> 4);
+        let ids = generated_ids(&world, cx - 3, cx + 3, cz - 3, cz + 3);
+        let elders = ids.iter().filter(|i| *i == "minecraft:elder_guardian").count();
+        assert_eq!(elders, 3, "monument at ({x}, {z}): {ids:?}");
+    }
+}

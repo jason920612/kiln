@@ -360,6 +360,111 @@ public class ClientCtl {
                     return arr.toString();
                 });
             }
+            case "menubutton": // menubutton I: the container menu button (loom pattern, stonecutter recipe, enchanting option...)
+                return onMain(() -> {
+                    if (mc.gui.screen() instanceof AbstractContainerScreen<?> c) {
+                        mc.gameMode.handleInventoryButtonClick(c.getMenu().containerId, Integer.parseInt(a[1]));
+                        return "ok";
+                    }
+                    return "ERR no container screen";
+                });
+            case "slotitem": // slotitem N: full component string of slot N of the open container
+                return onMain(() -> {
+                    if (mc.gui.screen() instanceof AbstractContainerScreen<?> c) {
+                        return c.getMenu().slots.get(Integer.parseInt(a[1])).getItem().toString();
+                    }
+                    return "ERR no container screen";
+                });
+            case "comps": // comps SLOT: the item and its component patch of a container slot (inv SLOT with "inv N")
+                return onMain(() -> {
+                    ItemStack st;
+                    if (a.length > 2 && a[1].equals("inv")) {
+                        st = mc.player.getInventory().getItem(Integer.parseInt(a[2]));
+                    } else if (mc.gui.screen() instanceof AbstractContainerScreen<?> c) {
+                        st = c.getMenu().slots.get(Integer.parseInt(a[1])).getItem();
+                    } else {
+                        return "ERR no container screen";
+                    }
+                    return id(st) + " x" + st.getCount() + " " + st.getComponentsPatch();
+                });
+            case "attrlist": // every registered attribute with its client-sync flag
+                return onMain(() -> {
+                    JsonObject o = new JsonObject();
+                    BuiltInRegistries.ATTRIBUTE.listElements().forEach(h -> o.addProperty(h.getRegisteredName(), h.value().isClientSyncable()));
+                    return o.toString();
+                });
+            case "attrs": // attrs [EID]: the client's attribute values of the player (or entity EID)
+                return onMain(() -> {
+                    Entity en = a.length > 1 ? mc.level.getEntity(Integer.parseInt(a[1])) : mc.player;
+                    JsonObject o = new JsonObject();
+                    if (en instanceof net.minecraft.world.entity.LivingEntity le) {
+                        BuiltInRegistries.ATTRIBUTE.listElements().forEach(h -> {
+                            if (le.getAttributes().hasAttribute(h)) {
+                                var inst = le.getAttributes().getInstance(h);
+                                JsonObject e = new JsonObject();
+                                e.addProperty("v", inst.getValue());
+                                e.addProperty("base", inst.getBaseValue());
+                                e.addProperty("mods", inst.getModifiers().size());
+                                o.add(h.getRegisteredName(), e);
+                            }
+                        });
+                    }
+                    return o.toString();
+                });
+            case "entdata": // entdata EID: the non-default synched entity data values the client holds
+                return onMain(() -> {
+                    Entity en = mc.level.getEntity(Integer.parseInt(a[1]));
+                    if (en == null) {
+                        return "ERR no entity";
+                    }
+                    StringBuilder sb = new StringBuilder();
+                    for (var v : en.getEntityData().getNonDefaultValues()) {
+                        sb.append(v.id()).append('=').append(v.value()).append("; ");
+                    }
+                    var leash = en instanceof net.minecraft.world.entity.Leashable l ? l.getLeashHolder() : null;
+                    sb.append("| leash=").append(leash == null ? "none" : BuiltInRegistries.ENTITY_TYPE.getKey(leash.getType()).getPath());
+                    sb.append(" scale=").append(en instanceof net.minecraft.world.entity.LivingEntity le ? le.getScale() : 1.0);
+                    sb.append(" passengers=").append(en.getPassengers().size());
+                    return sb.toString();
+                });
+            case "mapinfo": // mapinfo [SLOT]: the map in the main hand (or inventory SLOT) as the client's map data sees it
+                return onMain(() -> {
+                    ItemStack st = a.length > 1 ? mc.player.getInventory().getItem(Integer.parseInt(a[1])) : mc.player.getMainHandItem();
+                    var mid = st.get(net.minecraft.core.component.DataComponents.MAP_ID);
+                    JsonObject o = new JsonObject();
+                    o.addProperty("item", id(st));
+                    if (mid == null) {
+                        return o.toString();
+                    }
+                    o.addProperty("mapId", mid.id());
+                    var md = mc.level.getMapData(mid);
+                    if (md == null) {
+                        o.addProperty("data", false);
+                        return o.toString();
+                    }
+                    o.addProperty("data", true);
+                    o.addProperty("scale", md.scale);
+                    o.addProperty("locked", md.locked);
+                    o.addProperty("cx", md.centerX);
+                    o.addProperty("cz", md.centerZ);
+                    o.addProperty("dim", md.dimension.toString());
+                    int nz = 0;
+                    long h = 0;
+                    for (byte b : md.colors) {
+                        if (b != 0) {
+                            nz++;
+                        }
+                        h = h * 31 + b;
+                    }
+                    o.addProperty("nonzero", nz);
+                    o.addProperty("hash", h);
+                    JsonArray decs = new JsonArray();
+                    for (var d : md.getDecorations()) {
+                        decs.add(d.type().getRegisteredName() + "@" + d.x() + "," + d.y() + "," + d.rot() + (d.name().isPresent() ? ":" + d.name().get().getString() : ""));
+                    }
+                    o.add("decorations", decs);
+                    return o.toString();
+                });
             default:
                 return "ERR unknown command " + a[0];
         }

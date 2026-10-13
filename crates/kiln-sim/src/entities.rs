@@ -81,6 +81,8 @@ pub(crate) struct Entity {
     section: Option<[i32; 3]>,
     /// A mob's entity data and equipment as its viewers last got them.
     meta_sent: Vec<u8>,
+    /// Hash of a mob's syncable attributes as its viewers last got them (0: none yet).
+    attrs_sent: u64,
     /// Passengers as viewers last got them (Set Passengers).
     passengers_sent: Vec<i32>,
     equipment_sent: Vec<(u8, kiln_item::ItemStack)>,
@@ -375,6 +377,7 @@ impl Entity {
             seen_by: Vec::new(),
             section: None,
             meta_sent: Vec::new(),
+            attrs_sent: 0,
             passengers_sent: Vec::new(),
             equipment_sent: Vec::new(),
             leash_sent: None,
@@ -434,6 +437,7 @@ impl Entity {
         self.tracker = MovementTracker::new(self.id, self.kind.update_interval, &self.move_state());
         self.sent_vel = self.vel;
         self.meta_sent = Vec::new();
+        self.attrs_sent = 0;
         self.passengers_sent = Vec::new();
         self.equipment_sent = Vec::new();
         self.leash_sent = None;
@@ -539,6 +543,12 @@ impl Entity {
             self.tracker.spawn(self.uuid, self.kind.id, self.vel, spawn_data)
         };
         let mut out = vec![entity::bundle_delimiter(), spawn, entity::set_entity_data(self.id, &self.metadata())];
+        // `ServerEntity.sendPairingData`: a living entity's syncable attributes (a horse's speed and jump).
+        if let EntityKind::Mob(m) = &self.phys().kind
+            && let Some(pkt) = crate::mobs::attributes_packet(self.id, m)
+        {
+            out.push(pkt);
+        }
         // `ServerEntity.sendPairingData`: a mob's equipment.
         if let EntityKind::Mob(m) = &self.phys().kind {
             let worn = crate::mobs::shown_equipment(m);
@@ -3996,6 +4006,16 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
                 packets.push(entity::set_entity_data(e.id, &meta));
             }
             e.meta_sent = meta.entries().to_vec();
+        }
+        // `ServerEntity.sendDirtyEntityData`: attributes that changed (effects, babies, taming, `/attribute`).
+        let hash = crate::mobs::attributes_hash(m);
+        if hash != e.attrs_sent {
+            if e.attrs_sent != 0
+                && let Some(pkt) = crate::mobs::attributes_packet(e.id, m)
+            {
+                packets.push(pkt);
+            }
+            e.attrs_sent = hash;
         }
         let worn = crate::mobs::shown_equipment(m);
         if worn.len() != e.equipment_sent.len() || worn.iter().zip(&e.equipment_sent).any(|(a, b)| a.0 != b.0 || !kiln_inventory::stack::matches(&a.1, &b.1)) {

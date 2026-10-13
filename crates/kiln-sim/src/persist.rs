@@ -765,10 +765,20 @@ impl crate::Dim {
             return;
         }
         let mut raw = Vec::new();
-        for tag in tags {
+        for mut tag in tags {
+            // A mob generation placed for a structure: `finalizeSpawn` (`STRUCTURE`) runs on it now.
+            let finalize = match &mut tag {
+                Tag::Compound(fields) => {
+                    let before = fields.len();
+                    fields.retain(|(k, _)| k != kiln_world::chunk::FINALIZE_ON_LOAD);
+                    fields.len() != before
+                }
+                _ => false,
+            };
             let uuid = tag.get("UUID").and_then(persist::uuid_from_tag).unwrap_or(0);
             // (`EntityType.loadEntitiesRecursive`: the root and its `Passengers`.)
             match entities::Spawn::from_saved(&tag, entities::seed_for_uuid(uuid), true) {
+                Ok(spawn) if finalize => self.spawns.push(crate::mobs::finalize_structure_mob(spawn, self.difficulty, self.game_time)),
                 Ok(spawn) => self.spawns.push(spawn),
                 Err(LoadError::Discarded) => {}
                 Err(LoadError::NotSimulated) => raw.push(tag),

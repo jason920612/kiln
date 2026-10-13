@@ -41,6 +41,8 @@ pub(crate) const ARMOR_TOUGHNESS: Attr = Attr { name: "minecraft:armor_toughness
 pub(crate) const KNOCKBACK_RESISTANCE: Attr = Attr { name: "minecraft:knockback_resistance", base: 0.0, min: 0.0, max: 1.0 };
 pub(crate) const ENTITY_INTERACTION_RANGE: Attr =
     Attr { name: "minecraft:entity_interaction_range", base: 3.0, min: 0.0, max: 64.0 };
+pub(crate) const BLOCK_INTERACTION_RANGE: Attr =
+    Attr { name: "minecraft:block_interaction_range", base: 4.5, min: 0.0, max: 64.0 };
 pub(crate) const MOVEMENT_SPEED: Attr = Attr { name: "minecraft:movement_speed", base: 0.10000000149011612, min: 0.0, max: 1024.0 };
 pub(crate) const SWEEPING_DAMAGE_RATIO: Attr = Attr { name: "minecraft:sweeping_damage_ratio", base: 0.0, min: 0.0, max: 1.0 };
 pub(crate) const MINING_EFFICIENCY: Attr = Attr { name: "minecraft:mining_efficiency", base: 0.0, min: 0.0, max: 1024.0 };
@@ -60,14 +62,6 @@ pub(crate) const WATER_MOVEMENT_EFFICIENCY: Attr = Attr { name: "minecraft:water
 pub(crate) const OXYGEN_BONUS: Attr = Attr { name: "minecraft:oxygen_bonus", base: 0.0, min: 0.0, max: 1024.0 };
 pub(crate) const WAYPOINT_TRANSMIT_RANGE: Attr =
     Attr { name: "minecraft:waypoint_transmit_range", base: 6.0e7, min: 0.0, max: 6.0e7 };
-
-/// The attributes effects change that clients are told about (`Attribute.isClientSyncable`).
-pub(crate) const EFFECT_SYNCED: [Attr; 6] = [MOVEMENT_SPEED, ATTACK_SPEED, SAFE_FALL_DISTANCE, MAX_HEALTH, MAX_ABSORPTION, LUCK];
-
-/// The syncable attributes (`Attribute.isClientSyncable`) that equipment and enchantments change:
-/// the armor bar, mining and swimming speed the client predicts all read them.
-pub(crate) const EQUIPMENT_SYNCED: [Attr; 6] =
-    [ARMOR, ARMOR_TOUGHNESS, MINING_EFFICIENCY, SUBMERGED_MINING_SPEED, WATER_MOVEMENT_EFFICIENCY, OXYGEN_BONUS];
 
 impl Attr {
     pub(crate) fn name(&self) -> &'static str {
@@ -91,8 +85,9 @@ pub(crate) struct CommandAttributes {
     pub modifiers: Vec<(&'static str, String, f64, AttributeOperation)>,
 }
 
-/// `Player.CREATIVE_ENTITY_INTERACTION_RANGE_MODIFIER_VALUE`.
+/// `Player.CREATIVE_ENTITY_INTERACTION_RANGE_MODIFIER_VALUE`, and `ServerPlayer`'s creative block reach modifier.
 const CREATIVE_ENTITY_RANGE: f64 = 2.0;
+const CREATIVE_BLOCK_RANGE: f64 = 0.5;
 /// `LivingEntity.SPEED_MODIFIER_SPRINTING` (multiplies the total).
 const SPRINT_SPEED: f64 = 0.30000001192092896;
 /// Extra reach the server allows on top of the attack range (`handleAttack`'s buffer).
@@ -338,11 +333,19 @@ impl Player {
     /// The modifiers on `attr`: the equipment's, the creative reach and sprint speed ones, then
     /// the active effects' (id, amount, operation).
     pub(crate) fn attribute_modifiers(&self, attr: Attr) -> Vec<(String, f64, AttributeOperation)> {
+        self.attribute_modifiers_with(attr, &self.equipment_modifiers())
+    }
+
+    /// [`Player::attribute_modifiers`] with the equipment's modifiers already collected.
+    fn attribute_modifiers_with(&self, attr: Attr, equipment: &[(i32, String, f64, AttributeOperation)]) -> Vec<(String, f64, AttributeOperation)> {
         let Some(id) = kiln_item::registry::ATTRIBUTE.id(attr.name) else { return Vec::new() };
         let mut mods: Vec<(String, f64, AttributeOperation)> =
-            self.equipment_modifiers().into_iter().filter(|m| m.0 == id).map(|m| (m.1, m.2, m.3)).collect();
+            equipment.iter().filter(|m| m.0 == id).map(|m| (m.1.clone(), m.2, m.3)).collect();
         if attr.name == ENTITY_INTERACTION_RANGE.name && self.game_mode == 1 {
             mods.push(("minecraft:creative_mode_entity_range".into(), CREATIVE_ENTITY_RANGE, AttributeOperation::AddValue));
+        }
+        if attr.name == BLOCK_INTERACTION_RANGE.name && self.game_mode == 1 {
+            mods.push(("minecraft:creative_mode_block_range".into(), CREATIVE_BLOCK_RANGE, AttributeOperation::AddValue));
         }
         if attr.name == MOVEMENT_SPEED.name
             && let Some(amount) = self.frost_speed
@@ -395,18 +398,17 @@ impl Player {
         attribute_value(attr, mods.iter().map(|m| (m.1, m.2)))
     }
 
-    /// `ClientboundUpdateAttributesPacket` for the attributes effects change.
-    pub(crate) fn effect_attributes_packet(&mut self) -> bytes::Bytes {
+    /// `ClientboundUpdateAttributesPacket` with every client-syncable attribute
+    /// (`AttributeMap.getSyncableAttributes`): the client predicts movement (gravity, step height,
+    /// jump strength, sneaking speed), reach, scale and the HUD from them.
+    pub(crate) fn attributes_packet(&self) -> bytes::Bytes {
         use kiln_proto::packets::entity::{AttributeModifier, AttributeSnapshot, ModifierOperation};
         type Listed = (i32, f64, Vec<(String, f64, AttributeOperation)>);
-        // (Movement efficiency is told while the soul speed boots hold it, and once more when they let go.)
-        let with_efficiency = self.soul_speed.is_some() || self.soul_sent;
-        self.soul_sent = self.soul_speed.is_some();
-        let lists: Vec<Listed> = EFFECT_SYNCED
+        let equipment = self.equipment_modifiers();
+        let lists: Vec<Listed> = crate::command_data::PLAYER_ATTRIBUTES
             .iter()
-            .chain(EQUIPMENT_SYNCED.iter())
-            .chain(with_efficiency.then_some(&MOVEMENT_EFFICIENCY))
-            .filter_map(|a| Some((kiln_data::builtin_id("minecraft:attribute", a.name)?, self.with_base(*a).base, self.attribute_modifiers(*a))))
+            .filter(|a| kiln_entity::mob::attributes::syncable_name(a.name))
+            .filter_map(|a| Some((kiln_data::builtin_id("minecraft:attribute", a.name)?, self.with_base(*a).base, self.attribute_modifiers_with(*a, &equipment))))
             .collect();
         let op = |o: AttributeOperation| match o {
             AttributeOperation::AddValue => ModifierOperation::AddValue,

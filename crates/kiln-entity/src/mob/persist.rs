@@ -195,11 +195,19 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     o.put("current_impulse_context_reset_grace_time", Tag::Int(0));
     o.put("DeathTime", Tag::Short(m.death_time as i16));
     o.put("AbsorptionAmount", Tag::Float(m.absorption));
+    // (A base `/attribute` set back to the registry default is still not the type's own: a horse's 53
+    // health set to 20 has to be saved or it comes back as 53.)
+    let type_defaults = m.kind.attributes();
     let attrs: Vec<Tag> = m
         .attrs
         .list
         .iter()
-        .filter(|i| !i.modifiers.is_empty() || i.base != i.attr.info().1 || (m.kind.is_mob() && matches!(i.attr, Attr::MovementSpeed | Attr::FollowRange)))
+        .filter(|i| {
+            !i.modifiers.is_empty()
+                || i.base != i.attr.info().1
+                || i.base != type_defaults.base(i.attr)
+                || (m.kind.is_mob() && matches!(i.attr, Attr::MovementSpeed | Attr::FollowRange))
+        })
         // (A mannequin has the living entity attributes only.)
         .filter(|i| m.kind.is_mob() || !matches!(i.attr, Attr::FollowRange | Attr::TemptRange | Attr::AttackDamage))
         .map(|i| {

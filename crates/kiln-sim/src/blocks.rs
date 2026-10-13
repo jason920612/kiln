@@ -840,7 +840,17 @@ impl Level for RegionLevel<'_> {
                 }
             }
         }
+        // A bee nest the feature filled with bees is already a live block entity (made when the
+        // block was placed, without bees): its occupants have to come from the new data too, or
+        // the nest never ticks them out.
+        let nbt = be.nbt.clone();
         chunk.set_block_entity(x, pos.y, z, be);
+        if let Some(c) = self.blocks.containers.get_mut(pos)
+            && c.kind == crate::container::BeKind::Beehive
+        {
+            c.hive = Some(Box::new(crate::beehive::Hive::load(&nbt)));
+            c.mark_changed();
+        }
     }
 }
 

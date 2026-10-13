@@ -359,3 +359,99 @@ fn armor_and_tool_attributes_reach_the_client_when_equipment_changes() {
     let armor = told_attribute(&packets, me, "minecraft:armor").expect("the change is sent");
     assert_eq!(armor.1.len(), 3, "{armor:?}");
 }
+
+/// wp60: the client predicts its own movement from gravity, step height, jump strength and
+/// sneaking speed, draws other players at their scale and checks reach with the interaction
+/// ranges, but the server only told it 12 of vanilla's 30 syncable attributes.
+#[test]
+fn every_syncable_attribute_reaches_the_client() {
+    let mut w = World::new(&["Tweaker"]);
+    w.ticks(5);
+    let stats = w.clients[0].stats.clone();
+    *stats.log.lock().unwrap() = Some(Vec::new());
+    let me = w.sim.entity_id(1).unwrap();
+    for (attr, v) in [
+        ("scale", 2.0),
+        ("gravity", 0.04),
+        ("step_height", 1.5),
+        ("jump_strength", 0.8),
+        ("sneaking_speed", 0.5),
+        ("block_interaction_range", 7.0),
+        ("entity_interaction_range", 5.0),
+        ("movement_efficiency", 0.5),
+        ("fall_damage_multiplier", 0.25),
+        ("burning_time", 0.5),
+    ] {
+        w.console(&format!("attribute Tweaker minecraft:{attr} base set {v}"));
+    }
+    w.ticks(3);
+    let packets = stats.log.lock().unwrap().clone().unwrap();
+    for (attr, v) in [
+        ("scale", 2.0),
+        ("gravity", 0.04),
+        ("step_height", 1.5),
+        ("jump_strength", 0.8),
+        ("sneaking_speed", 0.5),
+        ("block_interaction_range", 7.0),
+        ("entity_interaction_range", 5.0),
+        ("movement_efficiency", 0.5),
+        ("fall_damage_multiplier", 0.25),
+        ("burning_time", 0.5),
+    ] {
+        let told = told_attribute(&packets, me, &format!("minecraft:{attr}")).unwrap_or_else(|| panic!("{attr} is sent"));
+        assert_eq!(told.0, v, "{attr}: {told:?}");
+    }
+    // The server-only attributes stay home.
+    assert!(told_attribute(&packets, me, "minecraft:attack_damage").is_none());
+    assert!(told_attribute(&packets, me, "minecraft:knockback_resistance").is_none());
+    // Creative mode's reach modifiers are sent when the mode changes.
+    w.console("gamemode survival Tweaker");
+    w.ticks(3);
+    *stats.log.lock().unwrap() = Some(Vec::new());
+    w.console("gamemode creative Tweaker");
+    w.ticks(3);
+    let packets = stats.log.lock().unwrap().clone().unwrap();
+    assert_eq!(told_attribute(&packets, me, "minecraft:block_interaction_range").expect("block reach").1, vec![0.5]);
+    assert_eq!(told_attribute(&packets, me, "minecraft:entity_interaction_range").expect("entity reach").1, vec![2.0]);
+}
+
+/// wp60: clients never heard a mob's attributes, so a horse the player rode used the client's
+/// default speed and jump strength instead of its own rolled ones.
+#[test]
+fn a_mobs_attributes_are_sent_when_it_appears_and_when_they_change() {
+    let mut w = World::new(&["Rider"]);
+    w.ticks(5);
+    let stats = w.clients[0].stats.clone();
+    *stats.log.lock().unwrap() = Some(Vec::new());
+    let me = w.sim.entity_id(1).unwrap();
+    w.console("summon minecraft:horse ~2 ~ ~");
+    w.ticks(5);
+    let packets = stats.log.lock().unwrap().clone().unwrap();
+    let horse = horse_id(&packets, me).expect("an attribute packet for the horse");
+    let speed = told_attribute(&packets, horse, "minecraft:movement_speed").expect("speed");
+    let jump = told_attribute(&packets, horse, "minecraft:jump_strength").expect("jump");
+    assert!((0.1125..=0.3375).contains(&speed.0), "a rolled horse speed, not the default 0.7: {speed:?}");
+    assert!((0.4..=1.0).contains(&jump.0), "a rolled jump strength: {jump:?}");
+    assert!(told_attribute(&packets, horse, "minecraft:follow_range").is_none(), "follow range is server-only");
+    // A change after the viewers have it is sent again.
+    *stats.log.lock().unwrap() = Some(Vec::new());
+    w.console("attribute @e[type=minecraft:horse,limit=1] minecraft:scale base set 2");
+    w.console("effect give @e[type=minecraft:horse,limit=1] minecraft:speed 30 1");
+    w.ticks(3);
+    let packets = stats.log.lock().unwrap().clone().unwrap();
+    assert_eq!(told_attribute(&packets, horse, "minecraft:scale").expect("scale").0, 2.0);
+    assert_eq!(told_attribute(&packets, horse, "minecraft:movement_speed").expect("speed modifier").1.len(), 1);
+}
+
+/// The entity id of the one non-player entity an Update Attributes packet in `packets` is about.
+fn horse_id(packets: &[bytes::Bytes], me: i32) -> Option<i32> {
+    use kiln_proto::codec::Reader;
+    packets.iter().find_map(|p| {
+        let mut r = Reader::new(p);
+        if r.varint().ok()? != kiln_data::packets::play::clientbound::UPDATE_ATTRIBUTES {
+            return None;
+        }
+        let id = r.varint().ok()?;
+        (id != me).then_some(id)
+    })
+}

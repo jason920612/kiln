@@ -582,11 +582,10 @@ struct Player {
     frost_speed: Option<f64>,
     /// `LivingEntity.lastPos`: the block the location-changed enchantments last ran for; whether the
     /// player landed this tick (`checkFallDamage` runs them too); the soul speed level whose modifiers
-    /// are on; whether the client was told of movement efficiency.
+    /// are on.
     loc_last_pos: Option<[i32; 3]>,
     loc_landed: bool,
     soul_speed: Option<i32>,
-    soul_sent: bool,
     /// Block changes a player's own tick asks of its region (melted powder snow, trampled
     /// farmland).
     block_edits: Vec<fall::BlockEdit>,
@@ -907,6 +906,8 @@ struct Dim {
 
     /// World age, for the scheduled ticks of chunks that load or unload.
     game_time: i64,
+    /// The difficulty `finalizeSpawn` of the structure mobs a chunk brings reads (kept up to date by the tick).
+    difficulty: u8,
     /// Entity chunks (`entities/`), when the world is saved somewhere.
     entity_store: Option<kiln_storage::EntityStore>,
     /// Point of interest chunks (`poi/`), when the world is saved somewhere.
@@ -1014,6 +1015,7 @@ impl Dim {
             flush_when_encoded: false,
             unlit: Vec::new(),
             game_time,
+            difficulty: 2,
             entity_store,
             poi_store,
             raids: raid::Raids::new(),
@@ -3655,7 +3657,6 @@ impl Sim {
             loc_last_pos: None,
             loc_landed: false,
             soul_speed: None,
-            soul_sent: false,
             block_edits: Vec::new(),
             flying: false,
             dead: joining.health <= 0.0,
@@ -3842,6 +3843,7 @@ impl Sim {
             self.game_time += 1;
             for d in &mut self.dims {
                 d.game_time = self.game_time;
+                d.difficulty = self.commands.difficulty as u8;
             }
         }
         self.tick_functions();

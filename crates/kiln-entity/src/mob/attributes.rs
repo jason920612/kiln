@@ -71,9 +71,31 @@ impl Attr {
         self.info().0
     }
 
+    /// `Attribute.isClientSyncable`: whether clients are told about the attribute.
+    pub fn is_client_syncable(self) -> bool {
+        syncable_name(self.name())
+    }
+
     pub fn by_name(name: &str) -> Option<Attr> {
         ALL.iter().copied().find(|a| a.name() == name || a.name().strip_prefix("minecraft:") == Some(name))
     }
+}
+
+/// `Attribute.isClientSyncable` by registry name: every attribute except the ones only the
+/// server reads (knockback resistance, attack damage and knockback, the AI ranges, the
+/// reinforcement chance, the waypoint ranges).
+pub fn syncable_name(name: &str) -> bool {
+    !matches!(
+        name,
+        "minecraft:knockback_resistance"
+            | "minecraft:attack_knockback"
+            | "minecraft:attack_damage"
+            | "minecraft:follow_range"
+            | "minecraft:tempt_range"
+            | "minecraft:spawn_reinforcements"
+            | "minecraft:waypoint_transmit_range"
+            | "minecraft:waypoint_receive_range"
+    )
 }
 
 pub const ALL: [Attr; 27] = {

@@ -126,3 +126,71 @@ fn items_survive_a_restart() {
     settle(&mut sim, &mut client, 5);
     assert_eq!(items(&sim).len(), 2);
 }
+
+/// wp60: `/attribute` set a horse's max health to 20 (the registry default, not the horse's own
+/// 53); the save left the attribute out, so a `/data merge` (which reloads the saved fields) or a
+/// chunk reload gave the horse its 53 back and parents with 30 max health never bred.
+#[test]
+fn an_attribute_set_to_the_registry_default_is_saved() {
+    let dir = world("attribute_default");
+    let mut sim = Sim::new(SimConfig::new(8, 4, Some(dir)));
+    let (msg, stats) = join(1, "Tamer", 2);
+    assert!(sim.step([msg, ToSim::Console("gamemode creative Tamer".into()), ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
+    let mut client = Client::new(1, stats);
+    settle(&mut sim, &mut client, 5);
+    let [x, y, z] = client.pos.map(|c| c.floor() as i32);
+    assert!(sim.step([ToSim::Console(format!("summon minecraft:horse {x} {y} {z} {{Tags:[\"h\"]}}"))]));
+    settle(&mut sim, &mut client, 3);
+    assert!(sim.step([ToSim::Console("attribute @e[type=minecraft:horse,limit=1] minecraft:max_health base set 20".into())]));
+    assert!(sim.step([ToSim::Console("data merge entity @e[type=minecraft:horse,limit=1] {Health:20f}".into())]));
+    settle(&mut sim, &mut client, 3);
+    let horse = sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:horse")).expect("the horse");
+    let Some(Tag::List(attrs)) = horse.get("attributes") else { panic!("saved attributes: {horse:?}") };
+    let max_health = attrs.iter().find(|a| a.get("id").and_then(Tag::as_str) == Some("minecraft:max_health")).expect("max_health is saved");
+    assert_eq!(max_health.get("base").and_then(Tag::as_f64), Some(20.0));
+}
+
+/// wp60: `/data merge entity` reloads a mob from its saved fields, and the reload gave it a fresh
+/// random from its UUID: a pair of horses whose `InLove` was set again and again bred the same
+/// foal every time (same stats, same coat).
+#[test]
+fn data_merge_keeps_the_entitys_random_so_foals_differ() {
+    let dir = world("merge_random");
+    let mut sim = Sim::new(SimConfig::new(8, 4, Some(dir)));
+    let (msg, stats) = join(1, "Breeder", 2);
+    assert!(sim.step([msg, ToSim::Console("gamemode creative Breeder".into()), ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
+    let mut client = Client::new(1, stats);
+    settle(&mut sim, &mut client, 5);
+    let [x, y, z] = client.pos.map(|c| c.floor() as i32);
+    assert!(sim.step([ToSim::Console(format!("fill {} {} {} {} {} {} stone", x - 8, y - 1, z - 8, x + 8, y - 1, z + 8))]));
+    for (tag, dx) in [("pa", 0), ("pb", 2)] {
+        assert!(sim.step([ToSim::Console(format!("summon minecraft:horse {} {y} {z} {{Tags:[\"{tag}\"],Tame:1b}}", x + dx))]));
+    }
+    settle(&mut sim, &mut client, 3);
+    let mut speeds = Vec::new();
+    for _ in 0..4 {
+        for tag in ["pa", "pb"] {
+            assert!(sim.step([ToSim::Console(format!("data merge entity @e[type=minecraft:horse,tag={tag},limit=1] {{InLove:600,Age:0,Health:53f}}"))]));
+        }
+        for _ in 0..200 {
+            settle(&mut sim, &mut client, 1);
+            if sim.entity_nbt().iter().any(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:horse") && t.get("Age").and_then(Tag::as_i64).is_some_and(|a| a < 0) && t.get("DeathTime").and_then(Tag::as_i64) == Some(0)) {
+                break;
+            }
+        }
+        let foal = sim
+            .entity_nbt()
+            .into_iter()
+            .find(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:horse") && t.get("Age").and_then(Tag::as_i64).is_some_and(|a| a < 0) && t.get("DeathTime").and_then(Tag::as_i64) == Some(0))
+            .expect("the pair bred");
+        let Some(Tag::List(attrs)) = foal.get("attributes") else { panic!("{foal:?}") };
+        let speed = attrs.iter().find(|a| a.get("id").and_then(Tag::as_str) == Some("minecraft:movement_speed")).and_then(|a| a.get("base")).and_then(Tag::as_f64).unwrap();
+        speeds.push(speed);
+        assert!(sim.step([ToSim::Console("kill @e[type=minecraft:horse,tag=!pa,tag=!pb]".into())]));
+        settle(&mut sim, &mut client, 5);
+    }
+    eprintln!("foal speeds {speeds:?}");
+    speeds.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    speeds.dedup();
+    assert!(speeds.len() >= 3, "foals differ: {speeds:?}");
+}

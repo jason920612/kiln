@@ -124,6 +124,8 @@ impl Player {
             entity::bundle_delimiter(),
             self.tracker.spawn(self.uuid, PLAYER.id, [0.0; 3], 0),
             entity::set_entity_data(self.entity_id, &self.spawn_metadata()),
+            // `ServerEntity.sendPairingData`: the syncable attributes (scale shows on other clients).
+            self.attributes_packet(),
         ];
         // `ServerEntity.sendPairingData`: the equipment that is not empty.
         let worn: Vec<(u8, &kiln_item::ItemStack)> =
@@ -453,7 +455,7 @@ fn encode_movement(target: &mut Player) -> Encoded {
         to_self.push(entity::set_entity_data(target.entity_id, &d));
     }
     if std::mem::take(&mut target.attributes_dirty) {
-        let pkt = target.effect_attributes_packet();
+        let pkt = target.attributes_packet();
         to_self.push(pkt.clone());
         packets.push(pkt);
     }
