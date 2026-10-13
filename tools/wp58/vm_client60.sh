@@ -28,5 +28,5 @@ setsid nohup java -Xmx2G -XX:+UseG1GC --enable-native-access=ALL-UNNAMED --add-e
   -cp "$(cat ~/mc-client/classpath.txt)" net.minecraft.client.main.Main \
   --username KilnTest --version 26.3 --gameDir $G --assetsDir ~/mc-client/assets --assetIndex 34 \
   --uuid 00000000000000000000000000000000 --accessToken 0 --userType legacy --versionType release \
-  --width 960 --height 540 --quickPlayMultiplayer localhost:25585 > $G/stdout.log 2>&1 < /dev/null &
+  --width 960 --height 540 --quickPlayMultiplayer localhost:${KILN_CLIENT_PORT:-25585} > $G/stdout.log 2>&1 < /dev/null &
 echo started
