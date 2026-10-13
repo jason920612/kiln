@@ -22,6 +22,7 @@ max-tick-time=-1
 sync-chunk-writes=false
 enable-command-block=true
 generate-structures=false
+pause-when-empty-seconds=-1
 level-seed=60
 PROP
 [ -p console ] || mkfifo console
