@@ -175,6 +175,7 @@ vanilla 參考伺服器(種子 60)與 Kiln 在同一批座標,用 `execute … r
   蜂巢不載入蜜蜂(`a_grown_trees_bee_nest_has_living_bees`)、屬性基底不存(`an_attribute_set_to_the_registry_default_is_saved`)、
   `/data merge` 重設隨機數(`data_merge_keeps_the_entitys_random_so_foals_differ`)、豬布林在結構裡仍給武器/嬰兒(`structure_mobs_are_finalized`)。
 - VM 上 `~/wt/wp60-playthrough3/target` 已刪;客戶端、伺服器(Kiln、第二個 Kiln、vanilla)已停。
+
 ## 還沒做到 / 後續
 
 - 驢×驢、騾、羊駝的繁殖與強度遺傳:Kiln 與 vanilla 的統計並排沒有完成(`Equine::offspring_attributes` 與馬共用,馬的統計吻合)。
