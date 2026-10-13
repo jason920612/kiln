@@ -527,3 +527,28 @@ pub(crate) fn attributes_hash(m: &MobData) -> u64 {
     }
     h | 1
 }
+
+/// `StructureTemplate.placeEntities` / the pieces' data markers: `finalizeSpawn` with
+/// `EntitySpawnReason.STRUCTURE` on a mob a chunk's generation placed (random equipment and
+/// enchantments, a baby's chance, a zombie nautilus under a trident drowned), with the entity's own
+/// random. Entities that are not mobs pass through.
+pub(crate) fn finalize_structure_mob(mut spawn: Spawn, difficulty: u8, game_time: i64) -> Spawn {
+    use crate::entities::Body;
+    let Body::Loaded(e) = &mut spawn.body else { return spawn };
+    if mob::data(e).is_none() {
+        return spawn;
+    }
+    let ctx = difficulty_instance(difficulty, game_time, 0, 1.0);
+    let mut random = kiln_javamath::random::LegacyRandom::new(crate::entities::seed_for_uuid(e.uuid) ^ 0x5374_7275_6374);
+    let mut group = mob::GroupData { structure: true, ..Default::default() };
+    mob::finalize_spawn(e, &mut random, &ctx, &mut group, false);
+    // A trident drowned on its nautilus: the nautilus is the root of the stack, the drowned rides it.
+    if let Some(i) = group.companions.iter().position(|c| c.seat == mob::Seat::UnderMob) {
+        let vehicle = group.companions.swap_remove(i).entity;
+        let Body::Loaded(rider) = std::mem::replace(&mut spawn.body, Body::Lightning { visual_only: false }) else { return spawn };
+        let kind = kiln_data::entities::by_name(vehicle.type_name).unwrap_or(spawn.kind);
+        let pos = [vehicle.position().x, vehicle.position().y, vehicle.position().z];
+        return Spawn { kind, pos, vel: [0.0; 3], body: Body::LoadedStack(Box::new(vehicle), vec![kiln_entity::persist::Rider { entity: *rider, vehicle: 0 }]) };
+    }
+    spawn
+}

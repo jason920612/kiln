@@ -408,7 +408,7 @@ impl Template {
             super::shape::update_placed_shapes(r, flags, &placed, min, max);
         }
         if !settings.ignore_entities {
-            self.place_entities(r, p, settings.mirror, settings.rotation, settings.pivot, bbox);
+            self.place_entities(r, p, settings.mirror, settings.rotation, settings.pivot, bbox, settings.finalize_entities);
         }
         true
     }
@@ -416,8 +416,9 @@ impl Template {
     /// `placeEntities`: the recorded entities inside `bbox`, moved and turned with the
     /// template, go to their chunks' entity lists (`UUID` dropped). Vanilla then runs
     /// `finalizeSpawn` on mobs when the settings ask for it (random equipment and the like
-    /// from the level's random); that is left to whoever loads the entity.
-    fn place_entities(&self, r: &mut Region, p: BlockPos, m: Mirror, rot: Rotation, pivot: BlockPos, bbox: Option<BoundingBox>) {
+    /// from the level's random); the simulation does that when it loads the entity, for the ones marked with
+    /// [`kiln_world::chunk::FINALIZE_ON_LOAD`].
+    fn place_entities(&self, r: &mut Region, p: BlockPos, m: Mirror, rot: Rotation, pivot: BlockPos, bbox: Option<BoundingBox>, finalize: bool) {
         for e in &self.entities {
             let bp = transform(e.block_pos, m, rot, pivot).offset(p.x, p.y, p.z);
             if bbox.is_some_and(|b| !b.is_inside(bp)) {
@@ -464,6 +465,9 @@ impl Template {
             }
             if !fields.iter().any(|(k, _)| k == "Pos") {
                 fields.push(("Pos".into(), Tag::List(pos.iter().map(|&c| Tag::Double(c)).collect())));
+            }
+            if finalize {
+                fields.push((kiln_world::chunk::FINALIZE_ON_LOAD.to_string(), Tag::Byte(1)));
             }
             r.add_entity(pos[0], pos[2], Tag::Compound(fields));
         }

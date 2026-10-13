@@ -906,6 +906,8 @@ struct Dim {
 
     /// World age, for the scheduled ticks of chunks that load or unload.
     game_time: i64,
+    /// The difficulty `finalizeSpawn` of the structure mobs a chunk brings reads (kept up to date by the tick).
+    difficulty: u8,
     /// Entity chunks (`entities/`), when the world is saved somewhere.
     entity_store: Option<kiln_storage::EntityStore>,
     /// Point of interest chunks (`poi/`), when the world is saved somewhere.
@@ -1013,6 +1015,7 @@ impl Dim {
             flush_when_encoded: false,
             unlit: Vec::new(),
             game_time,
+            difficulty: 2,
             entity_store,
             poi_store,
             raids: raid::Raids::new(),
@@ -3840,6 +3843,7 @@ impl Sim {
             self.game_time += 1;
             for d in &mut self.dims {
                 d.game_time = self.game_time;
+                d.difficulty = self.commands.difficulty as u8;
             }
         }
         self.tick_functions();

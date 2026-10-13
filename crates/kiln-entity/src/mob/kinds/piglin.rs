@@ -1461,12 +1461,15 @@ impl Kind for Piglin {
         sync_target(m, &*level);
     }
 
-    fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, _group: &mut GroupData) {
-        // Not a structure spawn: a baby, or an adult with a weapon.
-        if r.next_float() < 0.2 {
-            set_baby(e, m, true);
-        } else if let Some(s) = ItemStack::of(spawn_weapon(&mut e.random), 1) {
-            m.equipment[MAINHAND] = s;
+    fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, group: &mut GroupData) {
+        // Not a structure spawn: a baby, or an adult with a weapon (a structure's piglins carry
+        // what their template gave them).
+        if !group.structure {
+            if r.next_float() < 0.2 {
+                set_baby(e, m, true);
+            } else if let Some(s) = ItemStack::of(spawn_weapon(&mut e.random), 1) {
+                m.equipment[MAINHAND] = s;
+            }
         }
         // `PiglinAi.initMemories`: hunted recently for 30-120 s.
         let hunted = sample(r, TIME_BETWEEN_HUNTS.0, TIME_BETWEEN_HUNTS.1);
