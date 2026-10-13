@@ -126,3 +126,26 @@ fn items_survive_a_restart() {
     settle(&mut sim, &mut client, 5);
     assert_eq!(items(&sim).len(), 2);
 }
+
+/// wp60: `/attribute` set a horse's max health to 20 (the registry default, not the horse's own
+/// 53); the save left the attribute out, so a `/data merge` (which reloads the saved fields) or a
+/// chunk reload gave the horse its 53 back and parents with 30 max health never bred.
+#[test]
+fn an_attribute_set_to_the_registry_default_is_saved() {
+    let dir = world("attribute_default");
+    let mut sim = Sim::new(SimConfig::new(8, 4, Some(dir)));
+    let (msg, stats) = join(1, "Tamer", 2);
+    assert!(sim.step([msg, ToSim::Console("gamemode creative Tamer".into()), ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
+    let mut client = Client::new(1, stats);
+    settle(&mut sim, &mut client, 5);
+    let [x, y, z] = client.pos.map(|c| c.floor() as i32);
+    assert!(sim.step([ToSim::Console(format!("summon minecraft:horse {x} {y} {z} {{Tags:[\"h\"]}}"))]));
+    settle(&mut sim, &mut client, 3);
+    assert!(sim.step([ToSim::Console("attribute @e[type=minecraft:horse,limit=1] minecraft:max_health base set 20".into())]));
+    assert!(sim.step([ToSim::Console("data merge entity @e[type=minecraft:horse,limit=1] {Health:20f}".into())]));
+    settle(&mut sim, &mut client, 3);
+    let horse = sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:horse")).expect("the horse");
+    let Some(Tag::List(attrs)) = horse.get("attributes") else { panic!("saved attributes: {horse:?}") };
+    let max_health = attrs.iter().find(|a| a.get("id").and_then(Tag::as_str) == Some("minecraft:max_health")).expect("max_health is saved");
+    assert_eq!(max_health.get("base").and_then(Tag::as_f64), Some(20.0));
+}
