@@ -93,3 +93,15 @@ fn an_ocean_monument_comes_with_its_three_elder_guardians() {
     let elders = ids.iter().filter(|i| *i == "minecraft:elder_guardian").count();
     assert_eq!(elders, 3, "two wing rooms and the penthouse: {ids:?}");
 }
+
+/// wp59: a woodland mansion has its evokers, vindicators and allays (`Mage`, `Warrior` and
+/// `Group of Allays` data markers); seed 59 has one at (368, -928).
+#[test]
+fn a_woodland_mansion_is_inhabited() {
+    let Some(world) = world(59) else { return };
+    let ids = generated_ids(&world, 16, 31, -66, -50);
+    let count = |t: &str| ids.iter().filter(|i| *i == t).count();
+    assert!(count("minecraft:evoker") >= 1, "{ids:?}");
+    assert!(count("minecraft:vindicator") >= 1, "{ids:?}");
+    assert!(count("minecraft:allay") >= 1, "{ids:?}");
+}
