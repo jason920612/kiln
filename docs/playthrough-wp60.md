@@ -162,10 +162,19 @@ vanilla 參考伺服器(種子 60)與 Kiln 在同一批座標,用 `execute … r
 - 流浪商人的商品、地圖交易的結果是獨立的物品(`ocean_monument_map` 等),不是帶元件的 `filled_map`。
 - 比較器/中繼器 `facing` 是輸入側;用 `/setblock` 放的不會自己啟動第一次更新。
 
-## 最終驗證(VM,分支 wp60-playthrough3)
+## 最終驗證(VM,分支 wp60-playthrough3,提交 `9ba1a80` 之後只有文件變動)
 
-(見下方「最終驗證」小節,在全部測試跑完後補上。)
-
+- `cargo test --workspace --release --no-fail-fast` 不帶 `KILN_DATAPACK`:全綠(EXIT 0)。第一輪(改動後立刻跑)只有 `kiln-sim/tests/crowd_golden.rs` 的 4 個情境失敗——
+  狀態雜湊沒變、封包串雜湊變了(登入與配對的 Update Attributes 變長),與 wp45/wp54/wp59 一樣屬於預期的重新錄製;新值 `0x315277188ac2469e`、`0x475d93024d7942ac`、`0xd51533e91aa0dd81`、`0x225295d733920c1d`,檔頭註記 wp60。
+- `KILN_DATAPACK=/home/test/kiln/work/generated cargo test --workspace --release --no-fail-fast`:全綠(EXIT 0)。
+- `kiln-sim --test determinism`:通過。
+- `kiln-entity --test mob_parity`(`work/m6-mobs2/vectors.jsonl`,先備份成 `~/wp60/vectors.jsonl.bak`,沒有新增向量):**1437 個情境全部與 vanilla 一致**(568011 個 mob 狀態)。
+- `tools/parity_suites.py --skip-workspace`:102 個 suite 行,全部 exit 0。
+- 負向檢查(在 VM 的工作樹上逐項把修正拿掉,各自的新測試都會失敗,之後 `git checkout` 還原):
+  生物的屬性不送(`a_mobs_attributes_are_sent_when_it_appears_and_when_they_change`)、玩家只送舊的 12 個(`every_syncable_attribute_reaches_the_client`)、
+  蜂巢不載入蜜蜂(`a_grown_trees_bee_nest_has_living_bees`)、屬性基底不存(`an_attribute_set_to_the_registry_default_is_saved`)、
+  `/data merge` 重設隨機數(`data_merge_keeps_the_entitys_random_so_foals_differ`)、豬布林在結構裡仍給武器/嬰兒(`structure_mobs_are_finalized`)。
+- VM 上 `~/wt/wp60-playthrough3/target` 已刪;客戶端、伺服器(Kiln、第二個 Kiln、vanilla)已停。
 ## 還沒做到 / 後續
 
 - 驢×驢、騾、羊駝的繁殖與強度遺傳:Kiln 與 vanilla 的統計並排沒有完成(`Equine::offspring_attributes` 與馬共用,馬的統計吻合)。
