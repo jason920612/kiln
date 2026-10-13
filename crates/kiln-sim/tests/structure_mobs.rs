@@ -23,8 +23,14 @@ fn datapack() -> Option<PathBuf> {
 
 /// A player standing at `at`, waiting until the chunks around are loaded; the types and positions of the
 /// entities within `radius` blocks.
-fn visit(seed: i64, pack: PathBuf, at: [i32; 3], radius: f64, settle_ticks: usize) -> Vec<(&'static str, [f64; 3])> {
-    let mut config = SimConfig::new(6, 3, None);
+fn visit(seed: i64, pack: PathBuf, at: [i32; 3], radius: f64, settle_ticks: usize, world: Option<&str>) -> Vec<(&'static str, [f64; 3])> {
+    let dir = world.map(|name| {
+        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    });
+    let mut config = SimConfig::new(6, 3, dir);
     config.noise = Some(NoiseConfig { seed, datapack: pack, threads: 4 });
     let mut sim = Sim::new(config);
     let (msg, stats) = join(1, "Visitor", 2);
@@ -48,7 +54,11 @@ fn visit(seed: i64, pack: PathBuf, at: [i32; 3], radius: f64, settle_ticks: usiz
 fn an_ocean_monument_in_the_running_world_has_its_elder_guardians() {
     let Some(pack) = datapack() else { return };
     // `/locate structure minecraft:monument` in seed 60: (-352, 160); the monument spans 58 blocks from there.
-    let found = visit(60, pack, [-352 + 29, 80, 160 + 29], 70.0, 1500);
+    let found = visit(60, pack, [-352 + 29, 80, 160 + 29], 70.0, 1500, Some("monument_world"));
     let elders = found.iter().filter(|(t, _)| *t == "minecraft:elder_guardian").count();
-    assert!(elders >= 2, "elder guardians in the loaded monument: {found:?}");
+    let mut kinds = std::collections::BTreeMap::new();
+    for (t, _) in &found {
+        *kinds.entry(*t).or_insert(0) += 1;
+    }
+    assert!(elders >= 2, "elder guardians in the loaded monument: {kinds:?}");
 }
