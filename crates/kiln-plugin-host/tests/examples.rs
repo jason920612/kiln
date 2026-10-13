@@ -36,6 +36,10 @@ fn registries() -> Arc<Registries> {
     })))
 }
 
+/// The per-call budget of the tests that are not about timeouts: a 200 ms budget still timed
+/// out now and then when the whole workspace ran in parallel with other builds on a loaded VM.
+const GENEROUS: Duration = Duration::from_secs(5);
+
 fn config(call_budget: Duration) -> RuntimeConfig {
     RuntimeConfig { spawn: SPAWN, call_budget, registries: registries(), ..RuntimeConfig::default() }
 }
@@ -43,7 +47,7 @@ fn config(call_budget: Duration) -> RuntimeConfig {
 /// Tests run in parallel with compilations; a generous budget keeps preemption from turning
 /// into timeouts (the timeout test sets the real default).
 fn runtime(plugins: &[(&str, &str)], data_dir: Option<std::path::PathBuf>) -> PluginRuntime {
-    runtime_cfg(plugins, RuntimeConfig { data_dir, ..config(Duration::from_millis(200)) })
+    runtime_cfg(plugins, RuntimeConfig { data_dir, ..config(GENEROUS) })
 }
 
 fn runtime_cfg(plugins: &[(&str, &str)], cfg: RuntimeConfig) -> PluginRuntime {
@@ -257,7 +261,7 @@ fn manifest_filters_keep_events_on_the_host() {
             s.filter.area = Some(kiln_plugin_host::Area { level: Some("minecraft:overworld".into()), center: None, radius: 32 });
         }
     }
-    let mut rt = PluginRuntime::new(vec![(manifest, wasm)], config(Duration::from_millis(200))).unwrap();
+    let mut rt = PluginRuntime::new(vec![(manifest, wasm)], config(GENEROUS)).unwrap();
     rt.sync_regions(0, [1]);
     let a = alice();
     let r = rt.region_mut(0, 1).unwrap();
@@ -274,7 +278,7 @@ fn manifest_filters_keep_events_on_the_host() {
 /// without a call or a strike, and the bucket refills with ticks.
 #[test]
 fn player_buckets_limit_one_player_only() {
-    let cfg = RuntimeConfig { player_burst: 4, player_events_per_second: 20, ..config(Duration::from_millis(200)) };
+    let cfg = RuntimeConfig { player_burst: 4, player_events_per_second: 20, ..config(GENEROUS) };
     let mut rt = runtime_cfg(&[("spawn-protection", "")], cfg);
     let (a, b) = (alice(), Actor::new(0xb0b, "Bob", false));
     let far = [SPAWN[0] + 500, 0, SPAWN[2]];
@@ -428,7 +432,7 @@ fn compiled_components_are_cached() {
     let ids = [("chat-format", ""), ("counter", ""), ("spawn-protection", "")];
     let start = |n| {
         let t = Instant::now();
-        let rt = runtime_cfg(&ids, RuntimeConfig { cache_dir: Some(dir.clone()), ..config(Duration::from_millis(200)) });
+        let rt = runtime_cfg(&ids, RuntimeConfig { cache_dir: Some(dir.clone()), ..config(GENEROUS) });
         println!("start {n} with the cache: {:?}", t.elapsed());
         rt
     };
@@ -451,7 +455,7 @@ fn call_overhead() {
         player_events_per_second: 0,
         tick_budget: Duration::from_secs(3600),
         tick_fuel: u64::MAX,
-        ..config(Duration::from_millis(200))
+        ..config(GENEROUS)
     };
     for mode in [ExecMode::Ordered, ExecMode::Strict] {
         let mut rt = runtime_cfg(&[("spawn-protection", ""), ("chat-format", "")], cfg(mode));
