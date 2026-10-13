@@ -141,41 +141,15 @@ fn an_ocean_ruin_has_drowned() {
     assert!(ids.iter().any(|i| i == "minecraft:drowned"), "{ids:?}");
 }
 
-/// wp60: monuments of other seeds have their elders too (the real client found none in seed 60).
+/// wp60: monuments of other seeds have their three elders too: `/locate structure minecraft:monument` names the middle
+/// of the monument (the real client looked for them off-centre and found two).
 #[test]
 fn every_ocean_monument_of_seed_60_has_three_elder_guardians() {
     let Some(world) = world(60) else { return };
-    // `/locate structure minecraft:monument`: the start chunks' corners (x, z); the monument spans
-    // 58 blocks from there.
-    let mut results = Vec::new();
     for (x, z) in [(-352, 160), (3840, 3808), (6768, -6432), (-5312, 2240)] {
         let (cx, cz) = (x >> 4, z >> 4);
-        let ids = generated_ids(&world, cx - 1, cx + 5, cz - 1, cz + 5);
+        let ids = generated_ids(&world, cx - 3, cx + 3, cz - 3, cz + 3);
         let elders = ids.iter().filter(|i| *i == "minecraft:elder_guardian").count();
-        eprintln!("monument at ({x}, {z}): {elders} elders");
-        results.push(elders);
-    }
-}
-
-/// wp60: where the elders of seed 60's monuments stand (debug).
-#[test]
-fn where_the_elders_stand() {
-    use kiln_proto::nbt::Tag;
-    let Some(world) = world(60) else { return };
-    let pipeline = Pipeline::new(world.clone());
-    let mut gs = GenScratch::default();
-    for (x, z) in [(-352, 160), (3840, 3808)] {
-        let (cx, cz) = (x >> 4, z >> 4);
-        eprintln!("monument ({x}, {z}) chunks {cx}..{} {cz}..{}", cx + 5, cz + 5);
-        for ccx in cx - 1..=cx + 5 {
-            for ccz in cz - 1..=cz + 5 {
-                for e in &pipeline.full(&mut gs, ccx, ccz).entities {
-                    let Tag::Compound(f) = e else { continue };
-                    if f.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:elder_guardian")) {
-                        eprintln!("  elder in chunk ({ccx}, {ccz}): {:?}", f.iter().find(|(k, _)| k == "Pos").map(|(_, v)| v));
-                    }
-                }
-            }
-        }
+        assert_eq!(elders, 3, "monument at ({x}, {z}): {ids:?}");
     }
 }
