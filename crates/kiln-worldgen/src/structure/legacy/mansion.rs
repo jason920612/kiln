@@ -872,7 +872,7 @@ impl MansionPiece {
 /// (`weapon`) also rolls to enchant its iron axe (`enchantSpawnedEquipment`, chance
 /// `0.25 * specialMultiplier`). Kiln assumes a special multiplier of 0 (effective difficulty
 /// below 2: easy, or normal early on), so the enchantment itself is never rolled.
-pub(super) fn finalize_spawn_draws(random: &mut impl RandomSource, weapon: bool) {
+pub(crate) fn finalize_spawn_draws(random: &mut impl RandomSource, weapon: bool) {
     random.next_double();
     random.next_double();
     random.next_float();

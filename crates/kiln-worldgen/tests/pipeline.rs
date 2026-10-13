@@ -131,3 +131,12 @@ fn a_swamp_hut_has_its_witch_and_cat() {
     }
     assert_eq!((witches, cats), (1, 1));
 }
+
+/// wp59: ocean ruins put a persistent drowned on each `drowned` data marker; seed 59 has a cold
+/// ruin at (160, 480) (`/locate structure minecraft:ocean_ruin_cold`).
+#[test]
+fn an_ocean_ruin_has_drowned() {
+    let Some(world) = world(59) else { return };
+    let ids = generated_ids(&world, 5, 15, 25, 35);
+    assert!(ids.iter().any(|i| i == "minecraft:drowned"), "{ids:?}");
+}
