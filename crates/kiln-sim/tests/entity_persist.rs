@@ -189,6 +189,8 @@ fn data_merge_keeps_the_entitys_random_so_foals_differ() {
         assert!(sim.step([ToSim::Console("kill @e[type=minecraft:horse,tag=!pa,tag=!pb]".into())]));
         settle(&mut sim, &mut client, 5);
     }
+    eprintln!("foal speeds {speeds:?}");
+    speeds.sort_by(|a, b| a.partial_cmp(b).unwrap());
     speeds.dedup();
     assert!(speeds.len() >= 3, "foals differ: {speeds:?}");
 }
