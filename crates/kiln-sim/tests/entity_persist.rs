@@ -174,19 +174,18 @@ fn data_merge_keeps_the_entitys_random_so_foals_differ() {
         }
         for _ in 0..200 {
             settle(&mut sim, &mut client, 1);
-            if sim.entity_nbt().iter().any(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:horse") && t.get("Age").and_then(Tag::as_i64).is_some_and(|a| a < 0)) {
+            if sim.entity_nbt().iter().any(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:horse") && t.get("Age").and_then(Tag::as_i64).is_some_and(|a| a < 0) && t.get("DeathTime").and_then(Tag::as_i64) == Some(0)) {
                 break;
             }
         }
         let foal = sim
             .entity_nbt()
             .into_iter()
-            .find(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:horse") && t.get("Age").and_then(Tag::as_i64).is_some_and(|a| a < 0))
+            .find(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:horse") && t.get("Age").and_then(Tag::as_i64).is_some_and(|a| a < 0) && t.get("DeathTime").and_then(Tag::as_i64) == Some(0))
             .expect("the pair bred");
         let Some(Tag::List(attrs)) = foal.get("attributes") else { panic!("{foal:?}") };
         let speed = attrs.iter().find(|a| a.get("id").and_then(Tag::as_str) == Some("minecraft:movement_speed")).and_then(|a| a.get("base")).and_then(Tag::as_f64).unwrap();
         speeds.push(speed);
-        eprintln!("foal {foal:?}");
         assert!(sim.step([ToSim::Console("kill @e[type=minecraft:horse,tag=!pa,tag=!pb]".into())]));
         settle(&mut sim, &mut client, 5);
     }
