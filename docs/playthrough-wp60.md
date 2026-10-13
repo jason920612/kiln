@@ -157,7 +157,7 @@ vanilla 參考伺服器(種子 60)與 Kiln 在同一批座標,用 `execute … r
 
 - 玩家死了(`Health 0`、`DeathScreen`):附近沒有活的玩家,所有非持久生物都不生成,指令選擇器抓不到東西。每個腳本先檢查。
 - 馬要**滿血**(`health >= max_health`)而且已馴服才能繁殖;`/summon` 帶 NBT 的馬不會 `finalizeSpawn`(屬性是預設的 53 血),不帶 NBT 才會隨機;`/data merge entity` 裡的 `Health` 不能超過上限。
-- `/attribute` 在 vanilla 只接受單一實體(選擇器要 `limit=1`);我沒有驗證 Kiln 對多實體選擇器是不是也報錯。
+- `/attribute` 與 `/data get entity` 只接受單一實體(選擇器要 `limit=1`),兩邊(vanilla 與 Kiln)一致。
 - vanilla 伺服器 26.x 沒有玩家時 60 秒後暫停 tick(`pause-when-empty-seconds`),並排比較時要設 `-1`。
 - 流浪商人的商品、地圖交易的結果是獨立的物品(`ocean_monument_map` 等),不是帶元件的 `filled_map`。
 - 比較器/中繼器 `facing` 是輸入側;用 `/setblock` 放的不會自己啟動第一次更新。
