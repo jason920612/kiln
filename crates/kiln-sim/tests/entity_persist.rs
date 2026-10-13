@@ -186,6 +186,7 @@ fn data_merge_keeps_the_entitys_random_so_foals_differ() {
         let Some(Tag::List(attrs)) = foal.get("attributes") else { panic!("{foal:?}") };
         let speed = attrs.iter().find(|a| a.get("id").and_then(Tag::as_str) == Some("minecraft:movement_speed")).and_then(|a| a.get("base")).and_then(Tag::as_f64).unwrap();
         speeds.push(speed);
+        eprintln!("foal {foal:?}");
         assert!(sim.step([ToSim::Console("kill @e[type=minecraft:horse,tag=!pa,tag=!pb]".into())]));
         settle(&mut sim, &mut client, 5);
     }
