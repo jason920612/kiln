@@ -12,7 +12,7 @@
 | 項目 | 做法 |
 | --- | --- |
 | 驅動 | `tools/wp58/ctl.py` 讀 `KILN_PLAY_DIR`(預設 `wp58`,這次 `wp59`)。`ClientCtl.java` 增加:`offers`(交易列表)、`selecttrade i`、`item slot`;狀態裡有 `effects`/`xp`/`armor`;實體清單先列生物再列掉落物(以前掉落物多時生物被 60 筆上限擠掉),並附 `hp`/`baby`/村民職業/物品 id。`tools/wp58/build_agent_vm.sh` 在 VM 上直接編譯 agent |
-| 伺服器 | `tools/wp58/wp59_start.sh`(console = fifo `~/wp59/console`,log `~/wp59/server.log`);常用輔助函式在 VM 的 `~/wp59/p59.py`(`sv`/`fill`/`kill_nearest`/`fish`/`free_spot`…) |
+| 伺服器 | `tools/wp58/wp59_start.sh`(console = fifo `~/wp59/console`,log `~/wp59/server.log`);常用輔助函式 `tools/wp58/p59.py`(`sv`/`fill`/`kill_nearest`/`fish`/`free_spot`/`alive`…,在 VM 上 `KILN_PLAY_DIR=wp59 PYTHONPATH=tools/wp58 python3 -` 餵腳本) |
 | 場地 | y=200 的 115×109 石頭/草方塊空中平台,農場蓋在上面;`tick rate 100` 用來等待(實測 100.0 tps,客戶端與伺服器都撐得住) |
 | 機器人 | `kiln-bot`:`--behavior survival --roles explorer,miner,builder,redstone`、`--behavior circle --chat-interval` |
 | 截圖 | VM 的 Xvfb `:99`(只有遊戲畫面);精選的在 `docs/wp59/*.jpg`,全部在 VM 的 `~/kiln/work/wp59/` |
@@ -143,7 +143,14 @@
 
 ## 最終驗證(VM,分支 wp59-playthrough2)
 
-(見下)
+- `cargo test --workspace --release --no-fail-fast`:不帶 `KILN_DATAPACK` 全綠(EXIT 0);帶 `KILN_DATAPACK=/home/test/kiln/work/generated` 全綠(EXIT 0)。
+  第一輪(沒有 `--no-fail-fast`)在 `kiln-sim/tests/crowd_golden.rs` 停住:4 個情境的「封包串雜湊」變了,狀態雜湊沒變——原因是問題 2 的修正讓登入的 Update Attributes 封包多列了 6 個裝備屬性(與 wp45/wp54 一樣屬於預期的重新錄製);我把 4 個封包雜湊重錄(`0x45379799a318b2a4`、`0x438e8bdeaed2c6b9`、`0x2295b54ae462e3fc`、`0x499303e49fdafb6b`)並在檔頭註記 wp59。
+- `kiln-sim --test determinism`:通過。
+- `kiln-entity --test mob_parity`(`work/m6-mobs2/vectors.jsonl`,先備份成 `~/wp59/vectors.jsonl.bak`,沒有新增向量):**1437 個情境全部與 vanilla 一致**(568011 個 mob 狀態)。
+- `tools/parity_suites.py --skip-workspace`:102 個 suite 行,全部 exit 0。
+- 負向檢查:把問題 1 的 `Components` 判斷、問題 2 的 `EQUIPMENT_SYNCED` 拿掉,對應的新測試 `a_chicken_lays_the_egg_of_its_variant`、`armor_and_tool_attributes_reach_the_client_when_equipment_changes` 都會失敗(用臨時分支 `wp59-negcheck` 在 VM 上跑,已刪除)。
+  結構生成實體的測試本來就是「有沒有實體」,拿掉修正必然失敗。
+- VM 上 `~/wt/wp59-playthrough2/target` 與臨時的 `wp59-negcheck` 已刪;客戶端、伺服器已停。
 
 ## 還沒做到 / 後續
 
