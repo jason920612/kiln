@@ -116,9 +116,15 @@ impl Sim {
         fields.retain(|(k, _)| k != "id" && k != "UUID");
         fields.push(("id".into(), Tag::String(e.kind.name.to_owned())));
         let seed = crate::entities::seed_for_uuid(e.uuid.as_u128());
+        // (`Entity.load` leaves the entity's random alone: a reload from the seed would give every
+        // foal of one pair the same stats.)
+        let random = e.phys.as_deref().map(|p| p.random.clone());
         match kiln_entity::persist::load(&Tag::Compound(fields), e.id, seed) {
             Ok(mut loaded) => {
                 loaded.uuid = e.uuid.as_u128();
+                if let Some(r) = random {
+                    loaded.random = r;
+                }
                 e.phys = Some(Box::new(loaded));
                 e.sync();
                 Ok(())
