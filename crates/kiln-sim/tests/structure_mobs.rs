@@ -62,3 +62,26 @@ fn an_ocean_monument_in_the_running_world_has_its_elder_guardians() {
     }
     assert!(elders >= 2, "elder guardians in the loaded monument: {kinds:?}");
 }
+
+/// How many elder guardians a visit finds with a given view distance (wp60 bisect).
+#[test]
+fn bisect_view_distance() {
+    let Some(pack) = datapack() else { return };
+    for view in [3u8, 4, 5, 6, 8, 10] {
+        let mut config = SimConfig::new(100, view, None);
+        config.noise = Some(NoiseConfig { seed: 60, datapack: pack.clone(), threads: 4 });
+        let mut sim = Sim::new(config);
+        let (msg, stats) = join(1, "Visitor", 2);
+        let at = [-352 + 29, 80, 160 + 29];
+        assert!(sim.step([msg, ToSim::Console("gamemode creative Visitor".into()), ToSim::Console(format!("tp Visitor {} {} {}", at[0], at[1], at[2]))]));
+        let mut client = Client::new(1, stats);
+        for _ in 0..1200 {
+            let mut inbox = Vec::new();
+            client.tick(None, &mut inbox);
+            assert!(sim.step(inbox));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let elders = sim.entities().into_iter().filter(|(t, _)| *t == "minecraft:elder_guardian").count();
+        eprintln!("view {view}: {elders} elders, {} chunks", sim.loaded_chunks().iter().sum::<usize>());
+    }
+}
