@@ -12,7 +12,7 @@ echo "eula=true" > eula.txt
 cat > server.properties <<PROP
 server-port=25591
 online-mode=false
-level-type=minecraft\:flat
+level-type=minecraft:normal
 gamemode=creative
 difficulty=normal
 spawn-protection=0
