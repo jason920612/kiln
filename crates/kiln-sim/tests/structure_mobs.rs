@@ -30,7 +30,7 @@ fn visit(seed: i64, pack: PathBuf, at: [i32; 3], radius: f64, settle_ticks: usiz
         std::fs::create_dir_all(&dir).unwrap();
         dir
     });
-    let mut config = SimConfig::new(6, 3, dir);
+    let mut config = SimConfig::new(100, 10, dir);
     config.noise = Some(NoiseConfig { seed, datapack: pack, threads: 4 });
     let mut sim = Sim::new(config);
     let (msg, stats) = join(1, "Visitor", 2);
