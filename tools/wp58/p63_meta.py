@@ -60,6 +60,9 @@ def setup(b):
     """Both players on the platform, actor in survival with full health."""
     if T == "V":
         sv("op KilnTest", show=False)
+    sv("gamerule spawn_mobs false", show=False)
+    sv("difficulty normal", show=False)
+    sv("kill @e[type=!player]", show=False)
     platform(-20, -20, 20, 20, y=199, clear=12)
     sv("gamemode survival KilnTest", show=False)
     sv("gamemode creative Obs", show=False)
