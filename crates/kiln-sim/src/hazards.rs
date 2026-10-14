@@ -195,8 +195,6 @@ impl Player {
         let on_fire = self.fire_ticks > 0;
         if self.on_fire_flag != on_fire {
             self.on_fire_flag = on_fire;
-            self.meta_dirty = true;
-            self.self_meta_dirty = true;
         }
     }
 

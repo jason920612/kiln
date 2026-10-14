@@ -136,7 +136,6 @@ impl Player {
 
     /// `ServerPlayer.onEffectAdded`: the effect with the blend flag to the player, attributes.
     fn on_effect_added(&mut self, e: &Effect) {
-        self.effects_dirty = true;
         self.send(effect_packet(e, self.entity_id, true));
         if effect_type(e.id).is_some_and(|t| t.modifier.is_some()) {
             self.attributes_dirty = true;
@@ -153,7 +152,6 @@ impl Player {
 
     /// `ServerPlayer.onEffectUpdated`: `refresh` re-applies the attribute modifiers.
     fn on_effect_updated(&mut self, e: &Effect, refresh: bool) {
-        self.effects_dirty = true;
         if refresh && effect_type(e.id).is_some_and(|t| t.modifier.is_some()) {
             self.attributes_dirty = true;
             self.refresh_dirty_attributes();
@@ -164,7 +162,6 @@ impl Player {
 
     /// `ServerPlayer.onEffectsRemoved`: a removal packet each, then the attributes.
     fn on_effects_removed(&mut self, removed: &[Effect]) {
-        self.effects_dirty = true;
         for e in removed {
             self.send(entity::remove_mob_effect(self.entity_id, e.id));
             if effect_type(e.id).is_some_and(|t| t.modifier.is_some()) {

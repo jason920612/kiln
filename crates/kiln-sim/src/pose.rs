@@ -46,8 +46,6 @@ impl Player {
         };
         if swimming != self.swimming {
             self.swimming = swimming;
-            self.meta_dirty = true;
-            self.self_meta_dirty = true;
         }
     }
 
@@ -87,8 +85,6 @@ impl Player {
         };
         if new != self.pose {
             self.pose = new;
-            self.meta_dirty = true;
-            self.self_meta_dirty = true;
         }
     }
 }

@@ -3,7 +3,7 @@
 
 use crate::{Player, Sim};
 use bytes::Bytes;
-use kiln_data::entities::{data, types::PLAYER};
+use kiln_data::entities::{DataField, data, pose, types::PLAYER};
 use kiln_link::ConnId;
 use kiln_proto::packets::entity::metadata::{HumanoidArm, shared_flags};
 use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, PlayerInfoActions, PlayerInfoEntry};
@@ -36,6 +36,53 @@ pub(crate) fn game_mode_update(uuid: uuid::Uuid, mode: i32) -> Bytes {
     entity::player_info_update(PlayerInfoActions::UPDATE_GAME_MODE, &[PlayerInfoEntry::new(uuid, "", &[], mode)])
 }
 
+/// The fields of a player's synched entity data that Kiln models, in id order
+/// (`SynchedEntityData` packs ascending ids). The others (custom name, silent, no gravity,
+/// arrows and stingers in the body) never leave their defaults.
+const SYNCHED: [DataField; 15] = [
+    data::entity::SHARED_FLAGS,
+    data::entity::AIR_SUPPLY,
+    data::entity::POSE,
+    data::entity::TICKS_FROZEN,
+    data::living_entity::LIVING_ENTITY_FLAGS,
+    data::living_entity::HEALTH,
+    data::living_entity::EFFECT_PARTICLES,
+    data::living_entity::EFFECT_AMBIENCE,
+    data::living_entity::SLEEPING_POS,
+    data::avatar::PLAYER_MAIN_HAND,
+    data::avatar::PLAYER_MODE_CUSTOMISATION,
+    data::player::PLAYER_ABSORPTION,
+    data::player::SCORE,
+    data::player::SHOULDER_PARROT_LEFT,
+    data::player::SHOULDER_PARROT_RIGHT,
+];
+
+/// The values of [`SYNCHED`] (one per field).
+pub(crate) type Synched = [DataValue; SYNCHED.len()];
+
+/// What the fields hold in a new player (`SynchedEntityData.define`): the baseline of the
+/// non-default values a viewer is paired with and of the first dirty pack.
+pub(crate) fn synched_defaults() -> Synched {
+    use DataValue as V;
+    [
+        V::Byte(0),
+        V::Int(crate::hazards::MAX_AIR),
+        V::Pose(pose::STANDING),
+        V::Int(0),
+        V::Byte(0),
+        V::Float(1.0),
+        V::Particles(Vec::new()),
+        V::Boolean(false),
+        V::OptionalBlockPos(None),
+        V::HumanoidArm(HumanoidArm::Right),
+        V::Byte(0),
+        V::Float(0.0),
+        V::Int(0),
+        V::OptionalUnsignedInt(None),
+        V::OptionalUnsignedInt(None),
+    ]
+}
+
 impl Player {
     pub(crate) fn move_state(&self) -> MoveState {
         MoveState { pos: self.pos, yaw: self.rot[0], pitch: self.rot[1], head_yaw: self.rot[0], on_ground: self.on_ground }
@@ -47,7 +94,7 @@ impl Player {
             f |= shared_flags::ON_FIRE;
         }
         // `updateInvisibilityStatus` and `updateGlowingStatus`.
-        if self.has_effect("minecraft:invisibility") {
+        if self.has_effect("minecraft:invisibility") || self.game_mode == 3 {
             f |= shared_flags::INVISIBLE;
         }
         if self.has_effect("minecraft:glowing") {
@@ -72,40 +119,72 @@ impl Player {
         self.pose
     }
 
-    /// Entity data a new viewer needs (fields that differ from their defaults).
-    fn spawn_metadata(&self) -> EntityData {
-        let mut d = EntityData::new();
-        d.set(data::living_entity::HEALTH, &DataValue::Float(20.0));
-        d.set(data::avatar::PLAYER_MODE_CUSTOMISATION, &DataValue::Byte(self.client.skin_parts as i8));
-        if self.client.main_hand == 0 {
-            d.set(data::avatar::PLAYER_MAIN_HAND, &DataValue::HumanoidArm(HumanoidArm::Left));
-        }
-        if self.shoulders.iter().any(Option::is_some) {
-            self.shoulder_data(&mut d);
-        }
-        if self.shared_flags() != 0 || self.sleep.pos.is_some() {
-            d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(self.shared_flags()));
-            d.set(data::entity::POSE, &DataValue::Pose(self.pose()));
-        }
-        if self.sleep.pos.is_some() {
-            d.set(data::living_entity::SLEEPING_POS, &DataValue::OptionalBlockPos(self.sleep.pos));
-        }
-        if self.living_flags() != 0 {
-            d.set(data::living_entity::LIVING_ENTITY_FLAGS, &DataValue::Byte(self.living_flags()));
-        }
-        if self.air != crate::hazards::MAX_AIR {
-            d.set(data::entity::AIR_SUPPLY, &DataValue::Int(self.air));
-        }
-        if !self.effects.is_empty() {
-            self.effect_data(&mut d);
-        }
-        d
+    /// The synched entity data as it stands (`SynchedEntityData`'s values).
+    fn synched(&self) -> Synched {
+        use DataValue as V;
+        let [left, right] = self.shoulder_values();
+        [
+            V::Byte(self.shared_flags()),
+            V::Int(self.air),
+            V::Pose(self.pose()),
+            V::Int(self.ticks_frozen),
+            V::Byte(self.living_flags()),
+            V::Float(self.health.max(0.0)),
+            // `updateSynchronizedMobEffectParticles` and `DATA_EFFECT_AMBIENCE_ID`.
+            V::Particles(self.effect_particles()),
+            V::Boolean(!self.effects.is_empty() && self.effects_ambient()),
+            V::OptionalBlockPos(self.sleep.pos),
+            V::HumanoidArm(if self.client.main_hand == 0 { HumanoidArm::Left } else { HumanoidArm::Right }),
+            V::Byte(self.client.skin_parts as i8),
+            V::Float(self.absorption),
+            V::Int(self.score),
+            left,
+            right,
+        ]
     }
 
-    /// `DATA_EFFECT_PARTICLES` and `DATA_EFFECT_AMBIENCE_ID`.
-    fn effect_data(&self, d: &mut EntityData) {
-        d.set(data::living_entity::EFFECT_PARTICLES, &DataValue::Particles(self.effect_particles()));
-        d.set(data::living_entity::EFFECT_AMBIENCE, &DataValue::Boolean(!self.effects.is_empty() && self.effects_ambient()));
+    /// `ClientboundPlayerAbilitiesPacket(getAbilities())`: what the game mode allows (a
+    /// creative or spectator player may fly and cannot be hurt, only a creative one breaks
+    /// blocks at once) and whether the player flies now.
+    pub(crate) fn abilities_packet(&self) -> Bytes {
+        let flyer = matches!(self.game_mode, 1 | 3);
+        kiln_proto::packets::player::player_abilities(&kiln_proto::packets::player::Abilities {
+            invulnerable: flyer,
+            flying: self.flying,
+            may_fly: flyer,
+            instabuild: self.game_mode == 1,
+            flying_speed: 0.05,
+            walking_speed: 0.1,
+        })
+    }
+
+    /// `ServerEntity.sendDirtyEntityData`: the entries that changed since the last pack, in id
+    /// order, for the viewers and the player alike.
+    pub(crate) fn pack_dirty(&mut self) -> Option<EntityData> {
+        let now = self.synched();
+        let mut d = EntityData::new();
+        for (field, (value, sent)) in SYNCHED.iter().zip(now.iter().zip(&self.meta_sent)) {
+            if value != sent {
+                d.set(*field, value);
+            }
+        }
+        if d.is_empty() {
+            return None;
+        }
+        self.meta_sent = now;
+        Some(d)
+    }
+
+    /// `ServerEntity.sendPairingData`: the non-default entries of the last pack, which a new
+    /// viewer gets with the entity.
+    fn spawn_metadata(&self) -> EntityData {
+        let mut d = EntityData::new();
+        for (field, (value, default)) in SYNCHED.iter().zip(self.meta_sent.iter().zip(&synched_defaults())) {
+            if value != default {
+                d.set(*field, value);
+            }
+        }
+        d
     }
 
     fn info_entry<'a>(&'a self, props: &'a [ProfileProperty<'a>]) -> PlayerInfoEntry<'a> {
@@ -123,10 +202,13 @@ impl Player {
         let mut out = vec![
             entity::bundle_delimiter(),
             self.tracker.spawn(self.uuid, PLAYER.id, [0.0; 3], 0),
-            entity::set_entity_data(self.entity_id, &self.spawn_metadata()),
-            // `ServerEntity.sendPairingData`: the syncable attributes (scale shows on other clients).
-            self.attributes_packet(),
         ];
+        let meta = self.spawn_metadata();
+        if !meta.is_empty() {
+            out.push(entity::set_entity_data(self.entity_id, &meta));
+        }
+        // `ServerEntity.sendPairingData`: the syncable attributes (scale shows on other clients).
+        out.push(self.attributes_packet());
         // `ServerEntity.sendPairingData`: the equipment that is not empty.
         let worn: Vec<(u8, &kiln_item::ItemStack)> =
             (0..SHOWN_SLOTS).map(|i| (i as u8, self.inv.equipped(crate::combat::SLOTS[i]))).filter(|(_, s)| !s.is_empty()).collect();
@@ -409,58 +491,18 @@ fn encode_movement(target: &mut Player) -> Encoded {
     let state = target.move_state();
     let mut packets = target.tracker.tick(&state);
     packets.extend(target.equipment_changes());
-    // `updateDataBeforeSync`: effect particles, ambience and the flags effects set.
-    let effects_dirty = std::mem::take(&mut target.effects_dirty);
-    if effects_dirty {
-        target.meta_dirty = true;
-        target.self_meta_dirty = true;
-    }
-    // Lying down or getting up: the pose and the bed position go to the player as well.
-    let sleep_dirty = std::mem::take(&mut target.sleep.meta_dirty);
-    if sleep_dirty {
-        let mut d = EntityData::new();
-        d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
-        d.set(data::living_entity::SLEEPING_POS, &DataValue::OptionalBlockPos(target.sleep.pos));
-        to_self.push(entity::set_entity_data(target.entity_id, &d));
-    }
     if std::mem::take(&mut target.woke_up) {
         // `ClientboundAnimatePacket.WAKE_UP`, to the player and its viewers.
         let pkt = entity::animate(target.entity_id, 0);
         to_self.push(pkt.clone());
         packets.push(pkt);
     }
-    if target.meta_dirty {
-        target.meta_dirty = false;
-        let mut d = EntityData::new();
-        d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
-        d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
-        d.set(data::living_entity::LIVING_ENTITY_FLAGS, &DataValue::Byte(target.living_flags()));
-        if sleep_dirty {
-            d.set(data::living_entity::SLEEPING_POS, &DataValue::OptionalBlockPos(target.sleep.pos));
-        }
-        if effects_dirty {
-            target.effect_data(&mut d);
-        }
-        if std::mem::take(&mut target.shoulder_dirty) {
-            target.shoulder_data(&mut d);
-        }
-        packets.push(entity::set_entity_data(target.entity_id, &d));
-    }
-    // What the player's own client needs of its entity data: burning, invisibility and
-    // effect particles, and the air supply (`ServerEntity.sendDirtyEntityData` sends to the
-    // player too).
-    let air_changed = target.air != target.air_sent;
-    if std::mem::take(&mut target.self_meta_dirty) || air_changed {
-        let mut d = EntityData::new();
-        d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
-        if air_changed {
-            target.air_sent = target.air;
-            d.set(data::entity::AIR_SUPPLY, &DataValue::Int(target.air));
-        }
-        if effects_dirty {
-            target.effect_data(&mut d);
-        }
-        to_self.push(entity::set_entity_data(target.entity_id, &d));
+    // `ServerEntity.sendDirtyEntityData`: the entries that changed (health, flags, pose, air,
+    // effects, ...) go to the viewers and to the player itself.
+    if let Some(d) = target.pack_dirty() {
+        let pkt = entity::set_entity_data(target.entity_id, &d);
+        to_self.push(pkt.clone());
+        packets.push(pkt);
     }
     if std::mem::take(&mut target.attributes_dirty) {
         let pkt = target.attributes_packet();

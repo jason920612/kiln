@@ -429,7 +429,6 @@ impl Player {
     pub(crate) fn start_using(&mut self, off_hand: bool, stack: &ItemStack, duration: i32) {
         self.recent_stabs.clear();
         self.using = Some(crate::consume::Using { off_hand, item: stack.item(), remaining: duration, duration, sounds: 0 });
-        self.meta_dirty = true;
     }
 
     /// `level.playSound(null, player position, ...)`: the player and everyone near hear it.

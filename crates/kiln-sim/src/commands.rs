@@ -825,14 +825,28 @@ impl Host for Sim {
         p.game_mode = mode as u8;
         // (Creative adds the reach modifier.)
         p.attributes_dirty = true;
+        // `GameType.updatePlayerAbilities` (a spectator flies, survival and adventure land) and
+        // `changeGameModeForPlayer`: flying stops when the player lands in range of the ground
+        // (`isInRangeOfGround`, here: standing on it).
+        match mode {
+            GameMode::Spectator => p.flying = true,
+            GameMode::Creative => p.flying = p.flying && !p.on_ground,
+            _ => p.flying = false,
+        }
+        // `ServerPlayerGameMode.changeGameModeForPlayer`: the abilities, then the tab list entry
+        // for everyone; `ServerPlayer.setGameMode` goes on with the game event and the
+        // abilities again.
+        p.send(p.abilities_packet());
+        let pkt = crate::players::game_mode_update(p.uuid, mode as i32);
+        self.broadcast(pkt);
+        let Some(p) = self.players.get_mut(&player.conn) else { return true };
         const CHANGE_GAME_MODE: u8 = 3;
         p.send(packets::game_event(CHANGE_GAME_MODE, mode as u8 as f32));
         // `ServerPlayer.setGameMode` into spectator: the shoulders' parrots fly off.
         if mode == GameMode::Spectator {
             p.remove_entities_on_shoulder(self.game_time);
         }
-        let pkt = crate::players::game_mode_update(p.uuid, mode as i32);
-        self.broadcast(pkt);
+        p.send(p.abilities_packet());
         true
     }
 

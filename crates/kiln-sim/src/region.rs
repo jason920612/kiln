@@ -246,7 +246,6 @@ impl RegionWork<'_> {
                 let p = &mut *self.players[i];
                 if sneaking != p.sneaking {
                     p.sneaking = sneaking;
-                    p.meta_dirty = true;
                 }
                 let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
                 let off = hand == kiln_proto::packets::serverbound::Hand::Off;
@@ -1131,7 +1130,6 @@ pub(crate) fn player_packet(
             let sneaking = flags & 0x20 != 0;
             if sneaking != p.sneaking {
                 p.sneaking = sneaking;
-                p.meta_dirty = true;
             }
         }
         PlayIn::PlayerCommand { action } if action == crate::glide::START_FALL_FLYING => {
@@ -1148,7 +1146,6 @@ pub(crate) fn player_packet(
             };
             if sprinting != p.sprinting {
                 p.sprinting = sprinting;
-                p.meta_dirty = true;
             }
         }
         // Sent by the client when its "Loading terrain" screen closes.
@@ -1362,7 +1359,6 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
         PlayIn::Interact { sneaking, .. } => {
             if sneaking != p.sneaking {
                 p.sneaking = sneaking;
-                p.meta_dirty = true;
             }
         }
         PlayIn::PlaceRecipe { container_id, recipe, use_max_items } => {

@@ -1087,11 +1087,16 @@ impl Sim {
         let time = self.time_packet();
         let weather = self.level_info_packets(dim);
         let rules = self.rules.clone();
+        // `PlayerList.sendPlayerPermissionLevel`: the level event and the command tree.
+        let tree = self.commands.dispatcher.commands_packet(self.players[&conn].permission);
         self.untrack_everywhere(conn);
         self.post_effects_pending = true;
         let p = self.players.get_mut(&conn).unwrap();
         p.send(info);
         p.send(difficulty);
+        p.permission_sent = Some(p.permission);
+        p.send(kiln_proto::packets::entity::entity_event(p.entity_id, 24 + p.permission.min(4)));
+        p.send(tree);
         // `ServerPlayer.teleport` to another level sends the post effects again.
         p.post_effects_dirty = true;
         self.sleep_status[p.dim].dirty = true;
@@ -1109,6 +1114,8 @@ impl Sim {
         p.sent_chunks.clear();
         p.unacked_batches = 0;
         p.teleport(pos, rot, now);
+        // `ServerPlayer.teleport` sends the abilities after the position.
+        p.send(p.abilities_packet());
         p.center = player_chunk(pos);
         p.send(packets::set_chunk_cache_center(p.center.x, p.center.z));
         // `PlayerList.sendLevelInfo`: world border (default), time, spawn position, weather.
@@ -1125,8 +1132,6 @@ impl Sim {
         p.sync_health();
         p.sent_xp = None;
         p.sync_experience();
-        p.self_meta_dirty = true;
-        p.attributes_dirty = true;
         let mut spawns = Vec::new();
         p.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
         info!("{} went from {} to {} at {pos:?}", p.name, DIMENSIONS[from].0, DIMENSIONS[dim].0);

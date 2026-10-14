@@ -80,7 +80,6 @@ impl Player {
             return;
         }
         self.using = Some(Using { off_hand, item, remaining: ticks, duration: ticks, sounds: 0 });
-        self.meta_dirty = true;
     }
 
     /// `LivingEntity.releaseUsingItem` / `stopUsingItem`.
@@ -90,7 +89,6 @@ impl Player {
         self.kinetic_ticks = None;
         self.brush_ticks = None;
         if self.using.take().is_some() {
-            self.meta_dirty = true;
         }
     }
 
@@ -174,7 +172,6 @@ impl Player {
     /// remainder.
     pub(crate) fn finish_using(&mut self, off_hand: bool, block: BlockAt, ctx: &mut DamageCtx) {
         self.using = None;
-        self.meta_dirty = true;
         let slot = self.hand_slot(off_hand);
         let stack = self.inv.item(slot).clone();
         let Some(consumable) = stack.get(keys::CONSUMABLE).cloned() else { return };
