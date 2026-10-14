@@ -27,6 +27,8 @@ pub mod tame;
 pub mod wolf;
 pub mod cat;
 pub mod horse;
+#[cfg(test)]
+mod equine_vectors;
 pub mod donkey;
 pub mod skeleton_horse;
 pub mod mule;
