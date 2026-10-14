@@ -413,3 +413,29 @@ fn a_joining_player_is_paired_with_its_data_and_then_packs_it_again() {
     want.set(data::avatar::PLAYER_MODE_CUSTOMISATION, &DataValue::Byte(127));
     assert_eq!(data[0], entries(&want).into_iter().collect::<Vec<u8>>(), "the health and the skin parts (the client's default)");
 }
+
+/// `LivingEntity.setSprinting` changes the sprint speed modifier, a syncable attribute: the viewers get an Update Attributes
+/// with the flag; an invisibility effect (a modifier of the locator bar's range, which clients are not told) sends none.
+#[test]
+fn sprinting_sends_the_attributes_and_invisibility_does_not() {
+    let mut w = World::new();
+    let e = w.entity();
+    let count = |log: &[Bytes], i: i32| ids(log).iter().filter(|x| **x == i).count();
+    w.watcher_log();
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 1 })]));
+    w.ticks(2);
+    let log = w.watcher_log();
+    let mut sprint = EntityData::new();
+    sprint.set(data::entity::SHARED_FLAGS, &DataValue::Byte(8));
+    assert_eq!(data_of(&log, e), [entries(&sprint)]);
+    assert_eq!(count(&log, id::UPDATE_ATTRIBUTES), 1, "the sprint speed modifier");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 2 })]));
+    w.ticks(2);
+    assert_eq!(count(&w.watcher_log(), id::UPDATE_ATTRIBUTES), 1, "and its removal");
+    w.run("effect give Actor minecraft:invisibility 100 0 true");
+    w.ticks(2);
+    assert_eq!(count(&w.watcher_log(), id::UPDATE_ATTRIBUTES), 0);
+    w.run("effect give Actor minecraft:speed 100 0 true");
+    w.ticks(2);
+    assert_eq!(count(&w.watcher_log(), id::UPDATE_ATTRIBUTES), 1, "speed is a movement speed modifier");
+}

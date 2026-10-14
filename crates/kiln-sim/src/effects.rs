@@ -134,10 +134,16 @@ impl Player {
         true
     }
 
+    /// Whether the effect's attribute modifier is on an attribute the client is told of (invisibility's is the
+    /// locator bar's range: `Attribute.isClientSyncable` is false, nothing goes out).
+    fn changes_syncable_attribute_of(e: &Effect) -> bool {
+        effect_type(e.id).is_some_and(|t| t.modifier.is_some_and(|m| kiln_entity::mob::attributes::syncable_name(m.attr)))
+    }
+
     /// `ServerPlayer.onEffectAdded`: the effect with the blend flag to the player, attributes.
     fn on_effect_added(&mut self, e: &Effect) {
         self.send(effect_packet(e, self.entity_id, true));
-        if effect_type(e.id).is_some_and(|t| t.modifier.is_some()) {
+        if Self::changes_syncable_attribute_of(e) {
             self.attributes_dirty = true;
         }
         // `MobEffect.onEffectAdded`: the omens announce themselves (`soundOnAdded`) to everyone near.
@@ -152,7 +158,7 @@ impl Player {
 
     /// `ServerPlayer.onEffectUpdated`: `refresh` re-applies the attribute modifiers.
     fn on_effect_updated(&mut self, e: &Effect, refresh: bool) {
-        if refresh && effect_type(e.id).is_some_and(|t| t.modifier.is_some()) {
+        if refresh && Self::changes_syncable_attribute_of(e) {
             self.attributes_dirty = true;
             self.refresh_dirty_attributes();
         }
@@ -164,7 +170,7 @@ impl Player {
     fn on_effects_removed(&mut self, removed: &[Effect]) {
         for e in removed {
             self.send(entity::remove_mob_effect(self.entity_id, e.id));
-            if effect_type(e.id).is_some_and(|t| t.modifier.is_some()) {
+            if Self::changes_syncable_attribute_of(e) {
                 self.attributes_dirty = true;
             }
             if Some(e.id) == effect_id("minecraft:levitation") {

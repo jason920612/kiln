@@ -1146,6 +1146,8 @@ pub(crate) fn player_packet(
             };
             if sprinting != p.sprinting {
                 p.sprinting = sprinting;
+                // (`setSprinting` updates the sprint speed modifier: the attributes are told.)
+                p.attributes_dirty = true;
             }
         }
         // Sent by the client when its "Loading terrain" screen closes.
