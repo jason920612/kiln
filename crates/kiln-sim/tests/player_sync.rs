@@ -364,3 +364,24 @@ fn a_dead_players_body_poofs_and_goes_after_twenty_ticks() {
     w.ticks(3);
     assert!(ids(&w.watcher_log()).contains(&id::ADD_ENTITY));
 }
+
+/// `Player.giveExperiencePoints` raises the score (entity data id 18, which the death screen shows) for the viewers and the
+/// player; levels do not; it is saved as `Score`.
+#[test]
+fn experience_points_raise_the_score() {
+    let mut w = World::new();
+    let e = w.entity();
+    w.watcher_log();
+    w.actor_log();
+    w.run("xp add Actor 7 levels");
+    w.ticks(2);
+    assert!(data_of(&w.watcher_log(), e).is_empty(), "levels leave the score alone");
+    w.run("xp add Actor 7 points");
+    w.ticks(2);
+    let mut score = EntityData::new();
+    score.set(data::player::SCORE, &DataValue::Int(7));
+    assert_eq!(data_of(&w.watcher_log(), e), [entries(&score)]);
+    assert_eq!(data_of(&w.actor_log(), e), [entries(&score)]);
+    let saved = w.sim.saved_player_nbt(1).unwrap();
+    assert_eq!(saved.get("Score").and_then(kiln_proto::nbt::Tag::as_i64), Some(7));
+}
