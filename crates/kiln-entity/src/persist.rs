@@ -633,6 +633,21 @@ mod tests {
         assert_eq!(back.remaining_fire_ticks, -1);
     }
 
+    /// A thrown potion breaks with the item it was thrown as: the `Item` of a summoned or saved potion is read and written
+    /// back (it used to be dropped, so the potion broke without effects).
+    #[test]
+    fn a_thrown_potion_keeps_its_item() {
+        for (kind, name) in [(Throwable::SplashPotion, "minecraft:splash_potion"), (Throwable::LingeringPotion, "minecraft:lingering_potion")] {
+            let stack = ItemStack::of(name, 1).unwrap();
+            let mut e = crate::projectile::new(4, UUID, kind, Vec3::ZERO, Vec3::ZERO, None, 6);
+            let EntityKind::Throwable(d) = &mut e.kind else { panic!("not a throwable") };
+            d.item = Some(stack.clone());
+            let back = round_trip(&e);
+            let EntityKind::Throwable(d) = &back.kind else { panic!("not a throwable") };
+            assert_eq!(d.item.as_ref(), Some(&stack), "{name}");
+        }
+    }
+
     #[test]
     fn item_without_item_is_discarded() {
         let mut tag = save(&crate::item::new(1, UUID, ItemStack::of("minecraft:stone", 1).unwrap(), 0), &no_owner);

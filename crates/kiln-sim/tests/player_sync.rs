@@ -443,15 +443,18 @@ fn sprinting_sends_the_attributes_and_invisibility_does_not() {
 // ---- wp64: arrows and stingers in the body, spectators, sneaking, instant effects, powder snow ----
 
 impl World {
-    /// `n` ticks, each with the entity data packets of the actor the watcher and the actor got in it.
-    fn data_per_tick(&mut self, n: usize) -> Vec<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
+    /// `n` ticks from `start` (which runs the first one), each with the entity data packets of the actor the watcher and the
+    /// actor got in it.
+    fn data_ticks(&mut self, n: usize, start: impl FnOnce(&mut Self)) -> Vec<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
         let e = self.entity();
-        (0..n)
-            .map(|_| {
-                self.ticks(1);
-                (data_of(&self.watcher_log(), e), data_of(&self.actor_log(), e))
-            })
-            .collect()
+        let mut out = Vec::new();
+        start(self);
+        out.push((data_of(&self.watcher_log(), e), data_of(&self.actor_log(), e)));
+        for _ in 1..n {
+            self.ticks(1);
+            out.push((data_of(&self.watcher_log(), e), data_of(&self.actor_log(), e)));
+        }
+        out
     }
 }
 
@@ -474,8 +477,8 @@ fn an_arrow_sticks_in_the_body_and_falls_out_in_time() {
     let (w1, a1) = (one(ARROW_COUNT, DataValue::Int(1)), one(ARROW_COUNT, DataValue::Int(0)));
     w.watcher_log();
     w.actor_log();
-    w.run(&format!("summon minecraft:arrow {} {} {} {{Motion:[0.0,-1.5,0.0]}}", p[0], p[1] + 2.5, p[2]));
-    let ticks = w.data_per_tick(700);
+    let summon = format!("summon minecraft:arrow {} {} {} {{Motion:[0.0,-1.5,0.0]}}", p[0], p[1] + 2.5, p[2]);
+    let ticks = w.data_ticks(700, |w| w.run(&summon));
     let at = |want: &[u8], who: usize| ticks.iter().position(|t| [&t.0, &t.1][who].iter().any(|d| contains(d, want)));
     let added = at(&w1, 0).expect("the watcher is told of the arrow");
     assert_eq!(at(&w1, 1), Some(added), "the player at the same time");
@@ -487,8 +490,7 @@ fn an_arrow_sticks_in_the_body_and_falls_out_in_time() {
     w.run("gamemode creative Actor");
     w.ticks(2);
     w.watcher_log();
-    w.run(&format!("summon minecraft:arrow {} {} {} {{Motion:[0.0,-1.5,0.0]}}", p[0], p[1] + 2.5, p[2]));
-    let ticks = w.data_per_tick(5);
+    let ticks = w.data_ticks(5, |w| w.run(&summon));
     assert!(!ticks.iter().any(|t| t.0.iter().any(|d| contains(d, &w1))), "an invulnerable player takes none");
 }
 
@@ -503,14 +505,10 @@ fn a_sting_leaves_a_stinger_in_the_body() {
     let one_stinger = one(STINGER_COUNT, DataValue::Int(1));
     w.watcher_log();
     w.actor_log();
-    // (The actor's uuid is 0:0x6b696c6e:0:1 in the test harness.)
-    w.run(&format!(
-        "summon minecraft:bee {} {} {} {{angry_at:[I;0,1801808046,0,1],anger_end_time:100000000L}}",
-        p[0] + 0.5,
-        p[1],
-        p[2] + 0.5
-    ));
-    let ticks = w.data_per_tick(200);
+    w.run(&format!("summon minecraft:bee {} {} {} {{}}", p[0] + 0.5, p[1], p[2] + 0.5));
+    w.ticks(2);
+    // Hit by the player, the bee is angry at it (`HurtByTargetGoal`) and comes for it.
+    let ticks = w.data_ticks(200, |w| w.run("damage @e[type=minecraft:bee,limit=1] 1 minecraft:player_attack by Actor"));
     let added = ticks.iter().position(|t| t.0.iter().any(|d| contains(d, &one_stinger))).expect("the watcher is told of the stinger");
     assert!(ticks[added].1.iter().any(|d| contains(d, &one_stinger)), "the player at the same time");
     // One sting only: the bee dies of it.
@@ -532,9 +530,8 @@ fn spectators_are_hidden_from_everyone_but_spectators() {
     let log = w.watcher_log();
     let seen = ids(&log);
     assert!(seen.contains(&id::PLAYER_INFO_UPDATE), "the tab list entry stays: {seen:?}");
-    let removed = seen.iter().position(|i| *i == id::REMOVE_ENTITIES).expect("a non-spectator forgets the spectator");
+    assert!(seen.contains(&id::REMOVE_ENTITIES), "a non-spectator forgets the spectator");
     assert!(data_of(&log, e).is_empty(), "no data of the spectator reaches it: the spectator went before the pack");
-    let _ = removed;
     // The spectator's own data (the invisible flag) reaches it.
     let flag = one(data::entity::SHARED_FLAGS, DataValue::Byte(32));
     assert!(data_of(&w.actor_log(), e).iter().any(|d| contains(d, &flag)), "the player is told it is invisible");
@@ -576,15 +573,13 @@ fn sneaking_sends_the_flag_and_the_pose_a_tick_apart() {
     w.watcher_log();
     w.actor_log();
     let (flag_on, pose_on) = (one(data::entity::SHARED_FLAGS, DataValue::Byte(2)), one(data::entity::POSE, DataValue::Pose(pose::CROUCHING)));
-    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerInput { flags: 0x20 })]));
-    let ticks = w.data_per_tick(3);
+    let ticks = w.data_ticks(3, |w| assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerInput { flags: 0x20 })])));
     assert_eq!(ticks[0].0, [flag_on.clone()], "the flag, alone");
     assert_eq!(ticks[1].0, [pose_on.clone()], "the pose a tick later");
     assert!(ticks[2].0.is_empty());
     assert_eq!((ticks[0].1.clone(), ticks[1].1.clone()), (ticks[0].0.clone(), ticks[1].0.clone()), "the player gets the same");
     let (flag_off, pose_off) = (one(data::entity::SHARED_FLAGS, DataValue::Byte(0)), one(data::entity::POSE, DataValue::Pose(pose::STANDING)));
-    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerInput { flags: 0 })]));
-    let ticks = w.data_per_tick(3);
+    let ticks = w.data_ticks(3, |w| assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerInput { flags: 0 })])));
     assert_eq!((&ticks[0].0[..], &ticks[1].0[..]), (&[flag_off][..], &[pose_off][..]));
 }
 
@@ -599,8 +594,7 @@ fn an_instant_effect_shows_its_particle_for_a_tick() {
     w.ticks(3);
     w.watcher_log();
     w.actor_log();
-    w.run("effect give Actor minecraft:instant_health 1 0");
-    let ticks = w.data_per_tick(3);
+    let ticks = w.data_ticks(3, |w| w.run("effect give Actor minecraft:instant_health 1 0"));
     let empty = one(EFFECT_PARTICLES, DataValue::Particles(Vec::new()));
     let prefix = &empty[..2];
     // Tick 0: one entry, the particle list (not empty); the health is not in it yet.
@@ -615,4 +609,44 @@ fn an_instant_effect_shows_its_particle_for_a_tick() {
     assert!(contains(&second[0], &one(HEALTH, DataValue::Float(16.0))[..2]), "with the health: {:?}", second[0]);
     assert!(ticks[2].0.is_empty());
     assert_eq!((ticks[0].1.clone(), ticks[1].1.clone()), (ticks[0].0.clone(), ticks[1].0.clone()));
+}
+
+/// `PowderSnowBlock.entityInside`: a player that moves in powder snow throws a snowflake about every other tick
+/// (`nextBoolean`), seen by every player within 32 blocks and by the player itself.
+#[test]
+fn walking_in_powder_snow_throws_snowflakes() {
+    let mut w = World::new();
+    let p = w.actor.pos;
+    let (x, y, z) = (p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32);
+    w.run(&format!("fill {} {} {} {} {} {} minecraft:powder_snow", x - 7, y, z - 7, x + 7, y + 1, z + 7));
+    w.ticks(2);
+    w.watcher_log();
+    w.actor_log();
+    let snowflake = kiln_data::builtin_id("minecraft:particle_type", "minecraft:snowflake").unwrap();
+    let flakes = |log: &[Bytes]| {
+        log.iter()
+            .filter(|p| packet_id(p) == id::LEVEL_PARTICLES)
+            .filter(|p| {
+                let mut r = Reader::new(p);
+                r.varint().unwrap();
+                r.varint().unwrap() == snowflake
+            })
+            .count()
+    };
+    let mut pos = p;
+    for tick in 0..80 {
+        pos[0] += if (tick / 30) % 2 == 0 { 0.1 } else { -0.1 };
+        let mut inbox = Vec::new();
+        w.actor.tick(Some(pos), &mut inbox);
+        w.watcher.tick(None, &mut inbox);
+        assert!(w.sim.step(inbox));
+    }
+    let (seen, own) = (flakes(&w.watcher_log()), flakes(&w.actor_log()));
+    assert_eq!(seen, own, "the player sees its own snowflakes");
+    assert!((20..=60).contains(&seen), "about half of 80 ticks: {seen}");
+    // Standing still: none.
+    w.ticks(2);
+    w.watcher_log();
+    w.ticks(40);
+    assert_eq!(flakes(&w.watcher_log()), 0);
 }
