@@ -288,6 +288,11 @@ fn resolve_blame(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, source: &
 }
 
 impl Kind for Creaking {
+    /// `getWalkTargetValue` is 0.
+    fn spawn_walk_target(&self, _view: &dyn ext::SpawnView, _pos: crate::math::BlockPos) -> Option<f32> {
+        Some(0.0)
+    }
+
     fn info(&self) -> &'static Info {
         &INFO
     }

@@ -618,6 +618,11 @@ impl Kind for Hoglin {
     fn check_spawn_rules(&self, view: &dyn SpawnView, pos: BlockPos, _r: &mut LegacyRandom) -> Option<bool> {
         Some(crate::blocks::block_name(view.block(pos.below())) != "minecraft:nether_wart_block")
     }
+
+    /// `Hoglin.getWalkTargetValue`: crimson nylium 10, else 0 (the repellent memory is empty at spawn).
+    fn spawn_walk_target(&self, view: &dyn SpawnView, pos: BlockPos) -> Option<f32> {
+        Some(if crate::blocks::block_name(view.block(pos.below())) == "minecraft:crimson_nylium" { 10.0 } else { 0.0 })
+    }
 }
 
 /// `Hoglin.finishConversion`: a zoglin takes its place (equipment kept, the baby flag carried

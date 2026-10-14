@@ -750,7 +750,9 @@ fn spawn_category_for_chunk(
             let yaw = r.next_float() * 360.0;
             // `isValidPositionForMob`: the walk target value and the spawn obstruction.
             let magic = light_magic(level, pos);
-            let walk = if kind.is_animal() {
+            let walk = if let Some(v) = kind.ext().and_then(|k| k.spawn_walk_target(&View(level), kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z))) {
+                v
+            } else if kind.is_animal() {
                 if kiln_data::blocks_types::block_of(level.block(pos.below())).name == "minecraft:grass_block" { 10.0 } else { magic - 0.5 }
             } else {
                 -(magic - 0.5)
