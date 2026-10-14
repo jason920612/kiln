@@ -518,10 +518,10 @@ impl Player {
                     // `PowderSnowBlock.entityInside`: a snowflake at the entity's feet, drifting by
                     // `randomBetween(-1, 1) / 12` sideways and 0.05 up (`ALTERNATIVE`: the velocity
                     // is the packet's own speed).
-                    let vx = ((self.level_rng.next_float() * 2.0 + -1.0) * 0.083333336f32) as f32;
-                    let vz = ((self.level_rng.next_float() * 2.0 + -1.0) * 0.083333336f32) as f32;
+                    let vx = (self.level_rng.next_float() * 2.0 + -1.0) * 0.083333336f32;
+                    let vz = (self.level_rng.next_float() * 2.0 + -1.0) * 0.083333336f32;
                     let at = [self.pos[0], (pos.y + 1) as f64, self.pos[2]];
-                    self.queue_particles("minecraft:snowflake", at, [0.0; 3], [vx, 0.05000000074505806f64 as f32, vz], world_fx::ParticleRandomization::Alternative);
+                    self.queue_particles("minecraft:snowflake", at, [0.0; 3], [vx, 0.05, vz], world_fx::ParticleRandomization::Alternative);
                 }
                 c.run_before(Type::Extinguish, Inside::MeltPowderSnow(pos));
                 c.apply(Type::Freeze);
