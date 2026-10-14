@@ -26,7 +26,8 @@ pause-when-empty-seconds=-1
 white-list=false
 level-seed=${VSEED:-63}
 PROP
-[ -p console ] || mkfifo console
+# a fresh fifo: a stop nobody read must not stop the new server
+rm -f console; mkfifo console
 (sleep 100000000 > console &)
 nohup java -Xmx2G -Dwp63vanilla-marker=1 -jar ~/kiln/work/server.jar nogui < console > server.log 2>&1 &
 echo started $!
