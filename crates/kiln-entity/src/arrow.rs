@@ -162,6 +162,14 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
     data(e).left_owner_checked = false;
 }
 
+/// `Arrow.getPotionContents`' effects: what a tipped arrow's item carries (`minecraft:mob_effect` name, duration,
+/// amplifier); none for any other item.
+pub fn effects_of_item(item: &kiln_item::ItemStack) -> Vec<(&'static str, i32, i32)> {
+    let Some(contents) = item.get(kiln_item::keys::POTION_CONTENTS) else { return Vec::new() };
+    let names = kiln_data::builtin_entries("minecraft:mob_effect").unwrap_or(&[]);
+    crate::effect::potion_effects(contents, 1.0).into_iter().filter_map(|fx| names.get(fx.id as usize).map(|n| (*n, fx.duration, fx.amplifier))).collect()
+}
+
 /// `stepMoveAndHit`: to the nearest entity or block hit on the path, then the hit.
 fn step_move_and_hit(e: &mut Entity, level: &mut dyn EntityLevel, from: Vec3, to: Vec3, block: Option<(BlockPos, Direction, Vec3)>) {
     if !e.is_alive() {

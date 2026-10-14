@@ -354,6 +354,8 @@ fn read_kind(type_name: &'static str, r: &mut Input) -> Result<EntityKind, LoadE
             let pierce_level = r.byte_or("PierceLevel", 0) as u8;
             let item = |t: Option<Tag>| t.and_then(|t| kiln_item::ItemStack::from_nbt(&t).ok()).filter(|s| !s.is_empty());
             let pickup_item = item(r.get("item").cloned());
+            // A tipped arrow's effects come from its item (`Arrow.getPotionContents`).
+            let effects = if type_name == "minecraft:arrow" { pickup_item.as_ref().map(crate::arrow::effects_of_item).unwrap_or_default() } else { Vec::new() };
             let weapon = item(r.get("weapon").cloned());
             let glowing = r.get("Duration").and_then(|t| match t {
                 Tag::Int(v) => Some(*v),
@@ -379,7 +381,7 @@ fn read_kind(type_name: &'static str, r: &mut Input) -> Result<EntityKind, LoadE
                 last_state,
                 crit,
                 base_damage,
-                effects: Vec::new(),
+                effects,
             })
         }
         name if crate::mob::MobKind::by_name(name).is_some() => EntityKind::MobTicking { gravity: 0.08 },
@@ -633,6 +635,27 @@ mod tests {
         assert_eq!(d.stack, stack);
         assert!(back.on_ground);
         assert_eq!(back.remaining_fire_ticks, -1);
+    }
+
+    /// A tipped arrow's effects come from its `item` when it is loaded (a summoned or saved one): healing is an instant
+    /// health effect, a plain arrow has none.
+    #[test]
+    fn a_loaded_tipped_arrow_has_its_effects() {
+        let arrow = crate::arrow::new(5, UUID, "minecraft:arrow", Vec3::ZERO, Vec3::ZERO, None, 7);
+        let mut tag = save(&arrow, &no_owner);
+        let tipped = Tag::Compound(vec![
+            ("id".into(), Tag::String("minecraft:tipped_arrow".into())),
+            ("count".into(), Tag::Int(1)),
+            ("components".into(), Tag::Compound(vec![("minecraft:potion_contents".into(), Tag::Compound(vec![("potion".into(), Tag::String("minecraft:healing".into()))]))])),
+        ]);
+        if let Tag::Compound(f) = &mut tag {
+            f.iter_mut().filter(|(k, _)| k == "item").for_each(|(_, v)| *v = tipped.clone());
+        }
+        let EntityKind::Arrow(d) = &load(&tag, 1, 0).unwrap().kind else { panic!("not an arrow") };
+        assert_eq!(d.effects, [("minecraft:instant_health", 1, 0)]);
+        let plain = load(&save(&arrow, &no_owner), 1, 0).unwrap();
+        let EntityKind::Arrow(d) = &plain.kind else { panic!("not an arrow") };
+        assert!(d.effects.is_empty());
     }
 
     /// A thrown potion breaks with the item it was thrown as: the `Item` of a summoned or saved potion is read and written
