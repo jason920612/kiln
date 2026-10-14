@@ -23,6 +23,8 @@ impl Player {
 
     /// `Player.giveExperiencePoints`.
     pub(crate) fn give_experience_points(&mut self, points: i32) {
+        // `increaseScore`: the points gained, which the death screen shows.
+        self.score = self.score.wrapping_add(points);
         self.xp_progress += points as f32 / self.xp_needed_for_next_level() as f32;
         self.xp_total = self.xp_total.saturating_add(points).max(0);
         while self.xp_progress < 0.0 {

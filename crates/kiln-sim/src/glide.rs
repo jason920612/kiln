@@ -39,8 +39,6 @@ impl Player {
     fn set_fall_flying(&mut self, on: bool) {
         if self.fall_flying != on {
             self.fall_flying = on;
-            self.meta_dirty = true;
-            self.self_meta_dirty = true;
         }
     }
 
@@ -51,8 +49,6 @@ impl Player {
         self.spin_damage = damage;
         self.spin_item = item;
         self.spin_off_hand = off_hand;
-        self.meta_dirty = true;
-        self.self_meta_dirty = true;
     }
 
     /// The countdown of the spin attack (`aiStep`'s `autoSpinAttackTicks`); what the spin
@@ -62,8 +58,6 @@ impl Player {
             self.spin_ticks -= 1;
             self.spin_check = true;
             if self.spin_ticks == 0 {
-                self.meta_dirty = true;
-                self.self_meta_dirty = true;
             }
         }
     }
@@ -83,8 +77,6 @@ impl Player {
     /// ends there, without a bounce (`autoSpinAttackTicks = 0`).
     pub(crate) fn end_spin_on_collision(&mut self) {
         self.spin_ticks = 0;
-        self.meta_dirty = true;
-        self.self_meta_dirty = true;
     }
 
     /// The spin hit something (`autoSpinAttackTicks = 0`, `setDeltaMovement(delta * -0.2)`): the
@@ -92,8 +84,6 @@ impl Player {
     pub(crate) fn stop_spin_on_hit(&mut self) {
         self.spin_ticks = 0;
         self.vel = self.vel.map(|v| v * -0.2);
-        self.meta_dirty = true;
-        self.self_meta_dirty = true;
     }
 
     /// `LivingEntity.updateFallFlying` plus the `fallFlyTicks` counter of `aiStep`.

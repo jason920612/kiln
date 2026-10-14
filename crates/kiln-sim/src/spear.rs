@@ -382,7 +382,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         p.vel = [p.vel[0] * 0.6, p.vel[1], p.vel[2] * 0.6];
         if p.sprinting {
             p.sprinting = false;
-            p.meta_dirty = true;
+            p.attributes_dirty = true;
         }
         let victim = &mut *self.players[t];
         if victim.sync_velocity {
@@ -451,7 +451,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
                 p.vel = [p.vel[0] * 0.6, p.vel[1], p.vel[2] * 0.6];
                 if p.sprinting {
                     p.sprinting = false;
-                    p.meta_dirty = true;
+                    p.attributes_dirty = true;
                 }
             }
         }

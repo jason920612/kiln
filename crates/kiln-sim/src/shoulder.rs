@@ -10,7 +10,7 @@
 use crate::Player;
 use kiln_javamath::random::RandomSource;
 use kiln_proto::nbt::Tag;
-use kiln_proto::packets::entity::{DataValue, EntityData};
+use kiln_proto::packets::entity::DataValue;
 
 /// `Parrot.Variant`s (`LEGACY_CODEC` takes the id, clamped).
 const PARROT_VARIANTS: i64 = 5;
@@ -62,9 +62,8 @@ pub(crate) fn mount(p: &mut Player, tag: Tag, game_time: i64, block: &dyn Fn(kil
 
 impl Player {
     /// The two shoulder parrot fields of the player's entity data.
-    pub(crate) fn shoulder_data(&self, d: &mut EntityData) {
-        d.set(kiln_data::entities::data::player::SHOULDER_PARROT_LEFT, &DataValue::OptionalUnsignedInt(variant(&self.shoulders[0]).map(|v| v as u32)));
-        d.set(kiln_data::entities::data::player::SHOULDER_PARROT_RIGHT, &DataValue::OptionalUnsignedInt(variant(&self.shoulders[1]).map(|v| v as u32)));
+    pub(crate) fn shoulder_values(&self) -> [DataValue; 2] {
+        [0, 1].map(|i| DataValue::OptionalUnsignedInt(variant(&self.shoulders[i]).map(|v| v as u32)))
     }
 
     /// `ServerPlayer.setEntityOnShoulder`: a parrot sits on the left shoulder, or the right one
@@ -77,8 +76,6 @@ impl Player {
             if self.shoulders[i].is_none() {
                 self.shoulders[i] = Some(tag);
                 self.shoulder_time = game_time;
-                self.shoulder_dirty = true;
-                self.meta_dirty = true;
                 return true;
             }
         }
@@ -110,8 +107,6 @@ impl Player {
         }
         for i in 0..2 {
             let Some(Tag::Compound(mut fields)) = self.shoulders[i].take() else { continue };
-            self.shoulder_dirty = true;
-            self.meta_dirty = true;
             let put = |fields: &mut Vec<(String, Tag)>, key: &str, value: Tag| match fields.iter_mut().find(|(k, _)| k == key) {
                 Some((_, v)) => *v = value,
                 None => fields.push((key.to_owned(), value)),
@@ -134,7 +129,7 @@ mod tests {
     use crate::{Sim, SimConfig};
     use kiln_link::ToSim;
     use kiln_proto::nbt::Tag;
-    use kiln_proto::packets::entity::{DataValue, EntityData};
+    use kiln_proto::packets::entity::DataValue;
 
     fn parrot(variant: i32) -> Tag {
         Tag::Compound(vec![("id".into(), Tag::String("minecraft:parrot".into())), ("Variant".into(), Tag::Int(variant))])
@@ -211,12 +206,7 @@ mod tests {
         assert_eq!(on_shoulder.get("Variant").and_then(Tag::as_i64), Some(2));
         assert!(sim.entity_ids_of("minecraft:parrot").is_empty(), "it is no longer in the world");
         // The viewers see it through the player's entity data.
-        let mut d = EntityData::new();
-        sim.players[&1].shoulder_data(&mut d);
-        let mut want = EntityData::new();
-        want.set(kiln_data::entities::data::player::SHOULDER_PARROT_LEFT, &DataValue::OptionalUnsignedInt(Some(2)));
-        want.set(kiln_data::entities::data::player::SHOULDER_PARROT_RIGHT, &DataValue::OptionalUnsignedInt(None));
-        assert_eq!(d.entries(), want.entries());
+        assert_eq!(sim.players[&1].shoulder_values(), [DataValue::OptionalUnsignedInt(Some(2)), DataValue::OptionalUnsignedInt(None)]);
         // The player flies: the parrot is set down, a parrot of its own again, owned by the player.
         sim.players.get_mut(&1).unwrap().flying = true;
         assert!(sim.step([]));
@@ -274,11 +264,6 @@ mod tests {
         let saved = sim.player_nbt(&sim.players[&1]);
         assert_eq!(saved.get("ShoulderEntityRight").and_then(|t| t.get("Variant")).and_then(Tag::as_i64), Some(4));
         assert!(saved.get("ShoulderEntityLeft").is_none());
-        let mut d = EntityData::new();
-        sim.players[&1].shoulder_data(&mut d);
-        let mut want = EntityData::new();
-        want.set(kiln_data::entities::data::player::SHOULDER_PARROT_LEFT, &DataValue::OptionalUnsignedInt(None));
-        want.set(kiln_data::entities::data::player::SHOULDER_PARROT_RIGHT, &DataValue::OptionalUnsignedInt(Some(4)));
-        assert_eq!(d.entries(), want.entries());
+        assert_eq!(sim.players[&1].shoulder_values(), [DataValue::OptionalUnsignedInt(None), DataValue::OptionalUnsignedInt(Some(4))]);
     }
 }

@@ -481,8 +481,14 @@ struct Player {
     /// The spin attack pose (a box 0.6 high) the player's last tick settled into
     /// (`updatePlayerPose` runs after `aiStep` counts the spin down).
     spin_pose: bool,
-    /// Shared flags or pose changed since the last broadcast.
-    meta_dirty: bool,
+    /// The synched entity data as viewers and the player last got it (`SynchedEntityData`'s
+    /// dirty tracking: [`players::pack_dirty`] sends what differs from it).
+    meta_sent: players::Synched,
+    /// Whether the first pack went out: until then a viewer is paired with the data as it stands (`ServerEntity`
+    /// starts with the non-default values of the new entity), and the first pack repeats them to everyone.
+    meta_primed: bool,
+    /// `Player.getScore`: the experience points gained (the death screen shows it).
+    score: i32,
     /// Arm swung this tick.
     swung: bool,
     /// `LivingEntity.swingState`: ticks into the current swing (-1 when it has just begun) and
@@ -542,18 +548,12 @@ struct Player {
     on_fire_flag: bool,
     /// `getAirSupply`.
     air: i32,
-    /// Air supply as the player's client last got it.
-    air_sent: i32,
     /// `tickCount`: ticks since joining (infinite effects tick on it).
     tick_count: i32,
     /// Active mob effects by `minecraft:mob_effect` id.
     effects: std::collections::BTreeMap<i32, effects::Effect>,
-    /// Effects changed: particles, ambience and the invisible and glowing flags go out.
-    effects_dirty: bool,
     /// An effect attribute modifier changed: Update Attributes goes out.
     attributes_dirty: bool,
-    /// Shared flags changed in a way the player's own client must see (burning, invisible).
-    self_meta_dirty: bool,
     /// Sounds the player made this tick, for its viewers.
     pending_sounds: Vec<Bytes>,
     /// `Level.soundSeedGenerator` stand-in for this player's sounds.
@@ -595,6 +595,10 @@ struct Player {
     flying: bool,
     /// Dead until the client asks to respawn.
     dead: bool,
+    /// Ticks since the death (`LivingEntity.deathTime`); at twenty the body poofs and its viewers forget it
+    /// (`body_gone`, until the respawn).
+    death_ticks: i32,
+    body_gone: bool,
     /// Died this tick: viewers see the death animation.
     died: bool,
     /// `ServerPlayer.raidOmenPosition`: where bad omen turned into raid omen.
@@ -632,11 +636,10 @@ struct Player {
     /// player's own client, get the motion.
     push_sync: bool,
     /// What sits on the shoulders (`ShoulderEntityLeft`, `ShoulderEntityRight`), when they sat
-    /// down (`timeEntitySatOnShoulder`), whether the entity data still has to say so, and the
+    /// down (`timeEntitySatOnShoulder`) and the
     /// compounds let go this tick (they become entities in the region's chunk).
     shoulders: [Option<kiln_proto::nbt::Tag>; 2],
     shoulder_time: i64,
-    shoulder_dirty: bool,
     released_shoulders: Vec<kiln_proto::nbt::Tag>,
     /// `Entity.lastKnownPosition` and the horizontal length of `lastKnownSpeed` (`computeSpeed`).
     speed_pos: Option<[f64; 3]>,
@@ -3134,11 +3137,18 @@ impl Sim {
         let weather = self.level_info_packets(dim);
         let rules = self.rules.clone();
         let keep_inventory = self.rule_bool("minecraft:keep_inventory");
+        let difficulty = packets::change_difficulty(self.commands.difficulty as u8, self.commands.difficulty_locked);
+        // `PlayerList.sendPlayerPermissionLevel`: the level event and the command tree.
+        let permission = self.players[&conn].permission;
+        let tree = self.commands.dispatcher.commands_packet(permission);
         // Viewers in the old level saw the death (or the player walk into the portal): they
         // forget it and get the entity again once tracking re-evaluates it.
         self.untrack_everywhere(conn);
         self.post_effects_pending = true;
         let p = self.players.get_mut(&conn).unwrap();
+        // `restoreFrom` (a new `ServerPlayer`, a spectator flies) sends the abilities before the Respawn packet.
+        p.flying = p.game_mode == 3;
+        p.send(p.abilities_packet());
         p.send(info_packet);
         // `PlayerList.respawn` sends the post effects again; the new player starts its first
         // tick (no waypoint until it has moved).
@@ -3148,6 +3158,8 @@ impl Sim {
         self.sleep_status[dim].dirty = true;
         p.dim = dim;
         p.dead = false;
+        p.death_ticks = 0;
+        p.body_gone = false;
         p.using = None;
         p.fall_distance = 0.0;
         p.portal = None;
@@ -3162,6 +3174,7 @@ impl Sim {
                 p.xp_level = 0;
                 p.xp_progress = 0.0;
                 p.xp_total = 0;
+                p.score = 0;
             }
             // A fresh `ServerPlayer`: no cooldowns, credit or tracked hits carry over.
             p.hurt_cooldown = 0;
@@ -3178,9 +3191,13 @@ impl Sim {
             // Its tick count too (phantoms' insomnia counts from it).
             p.tick_count = 0;
         }
-        p.effects_dirty = true;
         p.attributes_dirty = true;
-        p.self_meta_dirty = true;
+        // A fresh `ServerPlayer` (or the client's new `LocalPlayer`) has the default entity data:
+        // the first pack sends everything that differs from it.
+        if !keep_all {
+            p.meta_sent = players::synched_defaults();
+            p.meta_primed = false;
+        }
         p.vel = [0.0; 3];
         p.sync_velocity = false;
         p.sent_chunks.clear();
@@ -3200,11 +3217,16 @@ impl Sim {
         p.center = player_chunk(pos);
         p.send(packets::set_chunk_cache_center(p.center.x, p.center.z));
         p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
-        // `PlayerList.respawn` tells the new player its operator level again.
+        p.send(difficulty);
+        p.send(packets::player::set_experience(p.xp_progress, p.xp_level, p.xp_total));
+        // `PlayerList.respawn` tells the new player its operator level and commands again.
         p.permission_sent = Some(p.permission);
         p.send(packets::entity::entity_event(p.entity_id, 24 + p.permission.min(4)));
+        p.send(tree);
         p.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         p.send(time);
+        // (`sendLevelInfo` sends the spawn position again after the time.)
+        p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
         for w in weather {
             p.send(w);
         }
@@ -3549,6 +3571,10 @@ impl Sim {
             persist::vec3_of(joining.saved.raw().get("last_explosion_impact_pos")),
         );
         let impulse_grace = joining.saved.raw().get("current_impulse_context_reset_grace_time").and_then(kiln_proto::nbt::Tag::as_i64).map_or(0, |v| v as i32);
+        // `Abilities.loadSaveData` and `GameType.updatePlayerAbilities`: a spectator flies, a
+        // creative player as it was saved.
+        let flying = joining.game_mode == 3
+            || (joining.game_mode == 1 && joining.saved.raw().get("abilities").and_then(|a| a.get("flying")).and_then(Tag::as_i64) == Some(1));
         let mut player = Player {
             dim,
             conn: j.conn,
@@ -3611,7 +3637,9 @@ impl Sim {
             spin_off_hand: false,
             spin_check: false,
             spin_pose: false,
-            meta_dirty: false,
+            meta_sent: players::synched_defaults(),
+            meta_primed: false,
+            score: joining.score,
             swung: false,
             swing_ticks: 0,
             swing_duration: 0,
@@ -3642,12 +3670,9 @@ impl Sim {
             fire_ticks: joining.fire_ticks,
             on_fire_flag: false,
             air: joining.air,
-            air_sent: hazards::MAX_AIR,
             tick_count: 0,
             effects: joining.effects,
-            effects_dirty: true,
             attributes_dirty: true,
-            self_meta_dirty: true,
             pending_sounds: Vec::new(),
             sound_seed: kiln_javamath::random::LegacyRandom::new(!(j.uuid.as_u64_pair().0 as i64)),
             health: joining.health,
@@ -3670,8 +3695,10 @@ impl Sim {
             loc_landed: false,
             soul_speed: None,
             block_edits: Vec::new(),
-            flying: false,
+            flying,
             dead: joining.health <= 0.0,
+            death_ticks: 0,
+            body_gone: false,
             died: false,
             damaged: None,
             entity_events: Vec::new(),
@@ -3688,7 +3715,6 @@ impl Sim {
             push_sync: false,
             shoulders,
             shoulder_time: 0,
-            shoulder_dirty: false,
             released_shoulders: Vec::new(),
             known_movement: [0.0; 3],
             moved_this_tick: false,
@@ -3768,6 +3794,7 @@ impl Sim {
         }));
         // `PlayerList.placeNewPlayer`: the difficulty follows the login.
         player.send(packets::change_difficulty(self.commands.difficulty as u8, self.commands.difficulty_locked));
+        player.send(player.abilities_packet());
         player.send(packets::player_position(player.teleport_id, spawn, yaw, pitch));
         let [spawn_yaw, spawn_pitch] = self.spawn_rot;
         player.send(packets::set_default_spawn_position(OVERWORLD, self.spawn, spawn_yaw, spawn_pitch));

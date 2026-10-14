@@ -53,6 +53,8 @@ pub(crate) struct Joining {
     pub xp_level: i32,
     pub xp_progress: f32,
     pub xp_total: i32,
+    /// `Score`.
+    pub score: i32,
     /// `Fire`, `Air`, `AbsorptionAmount` and `active_effects`.
     pub fire_ticks: i32,
     pub air: i32,
@@ -171,6 +173,7 @@ impl Sim {
             xp_level: saved.raw().get("XpLevel").and_then(Tag::as_i64).map_or(0, |v| v as i32),
             xp_progress: saved.raw().get("XpP").and_then(Tag::as_f64).map_or(0.0, |v| v as f32),
             xp_total: saved.raw().get("XpTotal").and_then(Tag::as_i64).map_or(0, |v| v as i32),
+            score: saved.raw().get("Score").and_then(Tag::as_i64).map_or(0, |v| v as i32),
             fire_ticks: saved.raw().get("Fire").and_then(Tag::as_i64).map_or(-crate::hazards::FIRE_IMMUNE_TICKS, |f| f as i32),
             air: saved.raw().get("Air").and_then(Tag::as_i64).map_or(crate::hazards::MAX_AIR, |a| a as i32),
             absorption: saved.raw().get("AbsorptionAmount").and_then(Tag::as_f64).map_or(0.0, |a| a as f32),
@@ -339,6 +342,7 @@ impl Sim {
                 ("XpLevel", Tag::Int(p.xp_level)),
                 ("XpP", Tag::Float(p.xp_progress)),
                 ("XpTotal", Tag::Int(p.xp_total)),
+                ("Score", Tag::Int(p.score)),
                 // `Entity.saveWithoutId` and `LivingEntity.addAdditionalSaveData`.
                 ("Fire", Tag::Short(p.fire_ticks as i16)),
                 ("Air", Tag::Short(p.air as i16)),

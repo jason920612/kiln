@@ -230,7 +230,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 家族 | 類型 | 級別 | 向量數（主角 scenario） | 缺口 |
 |---|---|---|---|---|
 | 被動動物 | `pig` `cow` `sheep` `chicken` `rabbit` `fox` `wolf` `cat` `ocelot` `panda` `polar_bear` `turtle` `mooshroom` `armadillo` `sniffer` `axolotl` `goat` `frog` `tadpole` `parrot` `bat` | A（多數另有 B） | 3–29 | 豬鞍與胡蘿蔔釣竿騎乘在 wp50 補上（`eq50_pig*`）；狼鎧甲缺；貓晨間送禮不發生；`FoxStrollThroughVillage` 不執行。苦力怕、骷髏、蜘蛛、襲擊者會躲貓、狼、犰狳、嚎叫者（wp41，`avoid_*` 向量） |
-| 載具與坐騎 | `horse` `donkey` `mule` `llama` `trader_llama` `skeleton_horse` `zombie_horse` `camel` `camel_husk` `nautilus` `zombie_nautilus` | A | 2–25 | 鸚鵡螺（含殭屍鸚鵡螺）的鞍與護甲在 wp50 補上（`eq50_nautilus*`、`eq50_zombie_nautilus*`）；玩家操控坐騎只有 C；背包畫面未建模 |
+| 載具與坐騎 | `horse` `donkey` `mule` `llama` `trader_llama` `skeleton_horse` `zombie_horse` `camel` `camel_husk` `nautilus` `zombie_nautilus` | A | 2–25 | 鸚鵡螺（含殭屍鸚鵡螺）的鞍與護甲在 wp50 補上（`eq50_nautilus*`、`eq50_zombie_nautilus*`）；玩家操控坐騎只有 C；背包畫面未建模；wp63：馬／驢／騾／羊駝繁殖 4,000 次與原版逐位元相同（`EquineBreedVectors`），`eq63_*` 14 個（繁殖路徑、12 隻長商隊），修正 `FollowParentGoal` 子類別與 `checkDespawn` 亂數順序 |
 | 敵對（主世界） | `zombie` `husk` `drowned` `zombie_villager` `skeleton` `stray` `bogged` `parched` `creeper` `spider` `cave_spider` `silverfish` `slime` `enderman` `endermite` `witch` `phantom` `creaking` `warden` `breeze` `guardian` `elder_guardian` `vex` | A | 2–63（不少僅 2–4 個） | **殭屍破門缺（hard 難度）**；`MoveThroughVillage` 不啟動 |
 | 襲擊者 | `pillager` `vindicator` `evoker` `illusioner` `ravager` | A | 4–9＋27 個波次 | 襲擊裝備附魔擲了沒套用、破門缺、鐘不由玩家敲 |
 | 下界 | `zombified_piglin` `piglin` `piglin_brute` `hoglin` `zoglin` `blaze` `ghast` `magma_cube` `wither_skeleton` `strider` | A | 3–27 | 要塞生怪覆寫缺，烈焰人與凋零骷髏在自然世界遇不到；strider 無自然生成規則；strider 的鞍與胡蘿蔔釣竿在 wp50 補上（`eq50_strider*`） |
@@ -649,6 +649,23 @@ wp56 留下的最後幾個角落，做法照舊：**先錄原版，再讓 Kiln �
 - **附魔台、商人、合成器的選單點擊**：附魔台的選項要世界給的書架數與玩家的附魔亂數，商人要 `Merchant`，合成器的格子在方塊實體裡；講台的翻頁與取書按鈕是方塊實體的事（`interact_parity` 的 `lectern`，wp49）。
 - 快樂恐魔的客戶端那條（`isClientSide && entity instanceof Player` 的站上去）：伺服器不問。
 
+### 6.11 wp63（`wp63-wp61-gaps`）：玩家實體資料、abilities／指令樹封包、驢騾羊駝繁殖與商隊
+
+wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
+
+| 項目 | 原版怎麼做 | Kiln 原本 | 現在 | 證據 |
+|---|---|---|---|---|
+| 其他玩家的實體資料 | `ServerEntity.sendDirtyEntityData`：每 tick 只送**有變動的條目**（依 id 排序）給所有觀看者**和玩家自己**；配對送 `trackedDataValues` 的非預設值 | 血量（id 9）不送、配對固定送 20.0；旗標／姿勢／活體旗標三個一起重送；空氣只給自己；吸收、凍結、分數沒有 | `players::synched()` 15 個欄位 + `meta_sent` 差異打包；新增 `score`（`Score` 存檔、`giveExperiencePoints` 累加）、旁觀者隱形旗標；20 幾處手動 dirty 旗標全部刪除 | `p63_meta.py meta` 與 vanilla 並排逐條目相同（約 25 種事件）；`tests/player_sync.rs` 12 個；`crowd_golden` 封包摘要重錄（狀態雜湊不變） |
+| `PlayerAbilitiesPacket`、`CommandsPacket` | 加入、`/gamemode`（兩次）、重生、換維度送 abilities；加入、重生、換維度、`/op`、`/deop` 送權限事件＋指令樹 | **從來不送 abilities**；重生與換維度不重送指令樹；`/gamemode` 的 game event 在 `PlayerInfoUpdate` 之前 | 照原版序列；`/gamemode` 同時重算 `flying`；重生補 `ChangeDifficulty`、`SetExperience`、第二個 `SetDefaultSpawnPosition` | `p63_meta.py session` 與 vanilla 並排；`player_sync.rs` |
+| 玩家死亡後的屍體 | `tickDeath` 20 tick 後事件 60（噗）並從追蹤移除 | 屍體一直躺到重生 | 同原版 | `player_sync.rs::a_dead_players_body_poofs_and_goes_after_twenty_ticks`；間諜 |
+| 驢、騾、羊駝繁殖 | `setOffspringAttributes`、`Llama.getBreedOffspring`、馬×驢 = 騾 | 算術本來就對 | 逐位元一致（4000 次） | `EquineBreedVectors.java` ↔ `equine_vectors.rs`（種類、屬性位元、強度、毛色、亂數使用次數）；`eq63_breed_*` 12 個完整路徑 |
+| `FollowParentGoal` | `getEntitiesOfClass(animal.getClass())` 含子類別（商人羊駝是羊駝的子類別，殭屍駱駝同理） | 只認同種 | `goals::is_instance_of`（與 `BreedGoal` 共用） | `eq63_breed_10`（修正前 tick 245 分歧）；單元測試 |
+| `Mob.checkDespawn` 亂數 | `nextInt(800)` 在問 `removeWhenFarAway` 之前就抽 | 先短路掉 `removable`，永不消失的動物少抽 | 同原版（閒置 600 tick、離玩家 32 格外的動物每 tick 抽一次） | `eq63_caravan_*`（修正前第 601 tick 差一次抽取）；單元測試 |
+| 羊駝商隊 | `LlamaFollowCaravanGoal`（`firstIsLeashed` 深度上限 8）與 12 隻長商隊 | 已與短商隊相同 | 12 隻長商隊 700 tick 逐位元一致 | `eq63_caravan_0/1`（共 16,800 個 mob 狀態） |
+
+沒做（記在 `docs/wp63.md`）：身上的箭／蜂針（entity data 12／13）、旁觀者對一般玩家隱藏（`broadcastToPlayer`）、蹲下旗標與姿勢分在兩個 tick 送、瞬間效果的粒子封包。
+效能：1,000 名玩家、20 個 region、`--mobs 0`（`sim_load --spacing 800 --ticks 300 --tick-ms 50`，VM）：平均 6.00／6.06 ms → 6.10／6.10 ms（+0.07 ms），每 tick 封包數與狀態雜湊與修正前完全相同。
+
 ## 7. 重跑
 
 ```sh
@@ -722,6 +739,10 @@ python tools/admin_check.py --kiln-exe target/release/kiln
 python tools/command_diff.py --kiln-exe target/release/kiln --bot-exe target/release/kiln-bot
 python tools/command_diff.py --structures --kiln-exe target/release/kiln --bot-exe target/release/kiln-bot
 python tools/blocks_diff.py --port 25583        # 45 個 scenario
+# wp63：驢／騾／羊駝繁殖向量（原版內建伺服器繁殖 4,000 次，逐位元比對）、生物向量（eq63_*）、旁觀者客戶端的實體資料與封包序列（VM）
+python tools/equine_breed.py --samples 500
+python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      # 再併入 work/m6-mobs2/vectors.jsonl
+#   VM：bash tools/wp58/wp63_start.sh / wp63_vanilla.sh、vm_client63.sh、vm_observer63.sh，然後 TARGET=K|V python3 tools/wp58/p63_meta.py meta|session、p63_join.py，最後 p63_compare.py
 # 登入等封包的 golden 由原版驗證後寫入
 python tools/packet_vectors.py --bless
 ```

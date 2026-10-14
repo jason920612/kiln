@@ -854,6 +854,7 @@ impl Player {
     /// the death animation for viewers.
     fn die(&mut self, ctx: &mut DamageCtx) -> Death {
         self.dead = true;
+        self.death_ticks = 0;
         let credit = self.kill_credit.as_ref().map(|(name, _)| name.clone());
         // `ServerPlayer.die`: `deathCount`, `killed_by`, the deaths statistic and the timers.
         self.update_criterion("deathCount", crate::player_stats::ScoreOp::Add(1));

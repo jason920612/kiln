@@ -22,8 +22,6 @@ pub(crate) struct Sleep {
     pub counter: i32,
     /// The level's sleeping list needs updating (`updateSleepingPlayerList`).
     pub list_dirty: bool,
-    /// Pose and sleeping position changed for viewers and the player.
-    pub meta_dirty: bool,
 }
 
 /// `BedRule.Rule`.
@@ -245,9 +243,7 @@ fn start_sleeping(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: u16
     p.fire("minecraft:slept_in_bed", None, |c, _, _| matches!(c.trigger, crate::advancements::criteria::Trigger::Player));
     p.reset_stat(*crate::player_stats::stat::TIME_SINCE_REST);
     p.sleep.list_dirty = true;
-    p.sleep.meta_dirty = true;
     p.vel = [0.0; 3];
-    p.meta_dirty = true;
     let (pos, rot, now) = (p.pos, p.rot, level.env.game_time);
     p.teleport(pos, rot, now);
 }
@@ -272,8 +268,6 @@ pub(crate) fn stop_sleep_in_bed(p: &mut Player, level: &mut RegionLevel, wake_im
         p.rot = [yaw, 0.0];
     }
     p.sleep.pos = None;
-    p.sleep.meta_dirty = true;
-    p.meta_dirty = true;
     if update_list {
         p.sleep.list_dirty = true;
     }

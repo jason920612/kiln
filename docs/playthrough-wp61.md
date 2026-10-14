@@ -54,10 +54,10 @@
 
 ## 還沒做 / 已知差異
 
-- 其他玩家的血量實體資料(id 9)Kiln 沒送給旁觀者;全量重送玩家 metadata(vanilla 只送變動的)。客戶端畫面上看不出來(只影響其他玩家的血量讀值),先記錄。
-- 死亡重生後 vanilla 另外再送一次 `CommandsPacket`/`PlayerAbilitiesPacket`;Kiln 的指令樹只在加入/權限變動時送(客戶端行為相同,未驗證邊角)。
+- ~~其他玩家的血量實體資料(id 9)Kiln 沒送給旁觀者;全量重送玩家 metadata(vanilla 只送變動的)。~~ **wp63 已做**(`docs/wp63.md` §1:改成 vanilla 的 dirty 差異模型,血量/空氣/吸收/凍結/分數都送,配對用真實值)。
+- ~~死亡重生後 vanilla 另外再送一次 `CommandsPacket`/`PlayerAbilitiesPacket`~~ **wp63 已做**(§2:Kiln 原本**完全沒送過** `PlayerAbilitiesPacket`;加入、`/gamemode`(兩次)、重生、換維度、`/op`、`/deop` 的封包序列與 vanilla 並排比對一致)。
 - 地形生成本身仍不比對(vanilla 自己都因順序而異)。
-- 驢/騾繁殖統計與羊駝商隊只比對了事實;沒有像 wp60 那樣大量統計抽樣。
+- ~~驢/騾繁殖統計與羊駝商隊只比對了事實;沒有像 wp60 那樣大量統計抽樣。~~ **wp63 已做**(§3:4000 次繁殖的 vanilla 向量逐位元一致,另有 12 組繁殖路徑與 12 隻長商隊的逐 tick 比對;找到並修正 `FollowParentGoal` 子類別與 `checkDespawn` 亂數順序兩個差異)。
 - 客戶端 JVM 偶發崩潰(已知,重試即可,見記憶中的開發環境筆記)。
 
 ## 截圖

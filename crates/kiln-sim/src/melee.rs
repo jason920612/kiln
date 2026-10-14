@@ -275,7 +275,8 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         p.vel = [p.vel[0] * 0.6, p.vel[1], p.vel[2] * 0.6];
         if p.sprinting {
             p.sprinting = false;
-            p.meta_dirty = true;
+            // (`setSprinting` updates the sprint speed modifier: the attributes are told.)
+            p.attributes_dirty = true;
         }
         if let Victim::Player(t) = v {
             let victim = &mut *self.players[t];
