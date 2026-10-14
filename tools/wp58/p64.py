@@ -118,14 +118,12 @@ def arrows(b):
 
 def sting(b):
     ev = {}
-    u = uuid_of("KilnTest")
-    print("uuid", u)
-    if not u:
-        raise SystemExit("no uuid")
+    sv("difficulty normal", show=False)
     sv("tick rate 100", show=False)
-    gt = sv("time query gametime", show=False)
-    nbt = "{angry_at:[I;%s,%s,%s,%s],anger_end_time:9999999L}" % u
-    ev["sting"] = b.event("an angry bee stings", lambda: sv(f"summon minecraft:bee 0.5 201 0.5 {nbt}", show=False), wait=3.0)
+    sv("kill @e[type=minecraft:bee]", show=False)
+    time.sleep(0.5)
+    # hit by the player, the bee is angry at it and stings
+    ev["sting"] = b.event("a bee hit by the player stings it", lambda: (sv("summon minecraft:bee 0.8 200 0.8 {}", show=False), time.sleep(0.5), sv("damage @e[type=minecraft:bee,limit=1] 1 minecraft:player_attack by KilnTest", show=False)), wait=3.0, drop_re=r"^entity_data (bee|\?) |^entity_data player:KilnTest 10=\[\]$")
     ev["sting_timer"] = b.event("(the stinger count drops after 580 ticks)", lambda: time.sleep(8), wait=2.0)
     sv("kill @e[type=minecraft:bee]", show=False)
     sv("tick rate 20", show=False)

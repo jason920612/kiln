@@ -744,6 +744,17 @@ public class ClientCtl {
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundExplodePacket p) {
                 String str = p.toString().replaceAll("-?[0-9]+[.][0-9]+", "#");
                 d = "explode " + str.substring(0, Math.min(str.length(), 300));
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket p) {
+                // wp64: whose attributes, and each one's base and modifiers
+                Entity en = mc.level == null ? null : mc.level.getEntity(p.getEntityId());
+                StringBuilder sb = new StringBuilder("attributes " + (en == null ? "?" : (en instanceof net.minecraft.world.entity.player.Player pl ? "player:" + pl.getGameProfile().name() : BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath())));
+                for (var v : p.getValues()) {
+                    sb.append(' ').append(v.attribute().getRegisteredName().replace("minecraft:", "")).append('=').append(v.base());
+                    for (var m : v.modifiers()) {
+                        sb.append('[').append(m.id().getPath()).append(':').append(m.amount()).append(']');
+                    }
+                }
+                d = sb.toString();
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket p) {
                 // wp64: the actions and, per entry, the uuid's first characters, the game mode and whether it is listed
                 StringBuilder sb = new StringBuilder("player_info " + p.actions());
