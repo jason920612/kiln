@@ -2,7 +2,7 @@
 # On the VM: start (or restart) Xvfb :99 and the real 26.3 client in ~/mc-client, offline as KilnTest,
 # connecting to the Kiln server on localhost:25585, with the wp58 driver agent loaded.
 # usage: vm_client.sh [stop]
-pkill -f "mc-client/game" 2>/dev/null
+pkill -f "mc-client/game/" 2>/dev/null
 sleep 1
 [ "$1" = stop ] && exit 0
 cd ~/mc-client
