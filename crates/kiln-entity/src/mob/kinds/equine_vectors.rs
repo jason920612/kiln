@@ -112,3 +112,64 @@ fn breeding_matches_vanilla() {
     assert!(failures.is_empty(), "breeding differs from vanilla:\n{}", failures.join("\n"));
     assert!(per_case.len() >= 8, "all eight parent pairs are recorded");
 }
+
+// ---- what the breeding scenarios found (wp63)
+
+use crate::math::Vec3;
+use crate::mob::goals::{Goal, can_use};
+
+fn at(kind: MobKind, id: i32, x: f64, adult: bool) -> Entity {
+    let mut e = mob::new(kind, id, id as u128, 40 + id as i64);
+    e.set_pos(Vec3::new(x, 100.0, 0.5));
+    mob::data_mut(&mut e).unwrap().age = if adult { 0 } else { -24000 };
+    e
+}
+
+fn follows(baby_kind: MobKind, adults: &[(MobKind, f64)]) -> Option<i32> {
+    let mut level = MemoryLevel::new(0, 5);
+    for (i, (kind, x)) in adults.iter().enumerate() {
+        level.insert(at(*kind, 10 + i as i32, *x, true));
+    }
+    let mut baby = at(baby_kind, 1, 0.5, false);
+    let mut m = mob::take(&mut baby);
+    let mut goal = Goal::FollowParent { speed: 1.0, parent: None, recalc: 0 };
+    can_use(&mut goal, &mut baby, &mut m, &mut level).then(|| match goal {
+        Goal::FollowParent { parent, .. } => parent.expect("a parent"),
+        _ => unreachable!(),
+    })
+}
+
+/// `FollowParentGoal` asks for `getEntitiesOfClass(animal.getClass())`: a baby llama's parents include the trader
+/// llamas (a subclass), so a trader llama close by makes the goal wait ("close enough") although a llama is farther.
+#[test]
+fn a_baby_llama_counts_trader_llamas_as_parents() {
+    // The nearest adult is a trader llama within three blocks: nothing to follow.
+    assert_eq!(follows(MobKind::Llama, &[(MobKind::Llama, 5.5), (MobKind::TraderLlama, 2.0)]), None);
+    // Farther than that it is followed, whichever kind it is.
+    assert_eq!(follows(MobKind::Llama, &[(MobKind::Llama, 8.5), (MobKind::TraderLlama, 5.0)]), Some(11));
+    assert_eq!(follows(MobKind::Llama, &[(MobKind::TraderLlama, 5.0)]), Some(10));
+    // A baby trader llama has trader llamas only: the llama is no parent (it is not its class).
+    assert_eq!(follows(MobKind::TraderLlama, &[(MobKind::Llama, 5.0)]), None);
+    assert_eq!(follows(MobKind::TraderLlama, &[(MobKind::Llama, 2.0), (MobKind::TraderLlama, 6.0)]), Some(11));
+}
+
+/// `Mob.checkDespawn` draws `nextInt(800)` before it asks `removeWhenFarAway`: an animal (which never goes) idle for
+/// 600 ticks with no player within 32 blocks draws once per tick.
+#[test]
+fn an_idle_animal_far_from_the_players_draws_for_despawning() {
+    use crate::level::EntityLevel;
+    let level = MemoryLevel::new(0, 9);
+    let mut e = at(MobKind::Llama, 1, 0.5, true);
+    mob::data_mut(&mut e).unwrap().no_action_time = 601;
+    let mut reference = e.random.clone();
+    reference.next_int_bounded(800);
+    mob::check_despawn(&mut e, &level as &dyn EntityLevel, Some(50.0 * 50.0));
+    assert!(!e.is_removed(), "animals stay");
+    assert_eq!(e.random.next_long(), reference.next_long());
+    // Not idle long enough: no draw.
+    let mut e = at(MobKind::Llama, 2, 0.5, true);
+    mob::data_mut(&mut e).unwrap().no_action_time = 600;
+    let mut reference = e.random.clone();
+    mob::check_despawn(&mut e, &level as &dyn EntityLevel, Some(50.0 * 50.0));
+    assert_eq!(e.random.next_long(), reference.next_long());
+}
