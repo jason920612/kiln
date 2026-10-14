@@ -256,3 +256,20 @@ fn flint_and_steel_primes_tnt_without_setting_fire() {
         assert!(!state::is(w.block(at), d::FIRE), "no fire at {at:?}");
     }
 }
+
+/// wp61 (a real client next to a vanilla server): the F key (`SWAP_ITEM_WITH_OFFHAND`) trades the stacks
+/// of the two hands.
+#[test]
+fn the_swap_key_trades_the_hands() {
+    let mut w = World::new("creative");
+    let item = |n: &str| kiln_data::builtin_id("minecraft:item", n).unwrap();
+    let stack = |n: &str| ItemStack { item: item(n), count: 1, added: Vec::new(), removed: Vec::new() };
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot: 36, item: Some(stack("minecraft:diamond_sword")) })]));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot: 45, item: Some(stack("minecraft:shield")) })]));
+    let slots = |w: &World| (w.sim.inventory(1).unwrap()[36].map(|s| s.0), w.sim.inventory(1).unwrap()[45].map(|s| s.0));
+    assert_eq!(slots(&w), (Some(item("minecraft:diamond_sword")), Some(item("minecraft:shield"))));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 7, pos: [0, 0, 0], face: 0, sequence: 0 })]));
+    assert_eq!(slots(&w), (Some(item("minecraft:shield")), Some(item("minecraft:diamond_sword"))), "the hands traded");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 7, pos: [0, 0, 0], face: 0, sequence: 0 })]));
+    assert_eq!(slots(&w), (Some(item("minecraft:diamond_sword")), Some(item("minecraft:shield"))), "and back");
+}
