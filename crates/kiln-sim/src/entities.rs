@@ -1746,6 +1746,12 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         hurt
     }
 
+    fn stick_in_body(&mut self, id: i32, stinger: bool) {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) {
+            p.stick_in_body(stinger);
+        }
+    }
+
     fn push(&mut self, id: i32, v: Vec3) {
         // A player's client owns its motion: it gets the push.
         if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) {

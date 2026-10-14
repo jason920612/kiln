@@ -663,8 +663,24 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | `Mob.checkDespawn` 亂數 | `nextInt(800)` 在問 `removeWhenFarAway` 之前就抽 | 先短路掉 `removable`，永不消失的動物少抽 | 同原版（閒置 600 tick、離玩家 32 格外的動物每 tick 抽一次） | `eq63_caravan_*`（修正前第 601 tick 差一次抽取）；單元測試 |
 | 羊駝商隊 | `LlamaFollowCaravanGoal`（`firstIsLeashed` 深度上限 8）與 12 隻長商隊 | 已與短商隊相同 | 12 隻長商隊 700 tick 逐位元一致 | `eq63_caravan_0/1`（共 16,800 個 mob 狀態） |
 
-沒做（記在 `docs/wp63.md`）：身上的箭／蜂針（entity data 12／13）、旁觀者對一般玩家隱藏（`broadcastToPlayer`）、蹲下旗標與姿勢分在兩個 tick 送、瞬間效果的粒子封包。
+沒做（記在 `docs/wp63.md`，**wp64 已全部做完**，見 6.12）：身上的箭／蜂針（entity data 12／13）、旁觀者對一般玩家隱藏（`broadcastToPlayer`）、蹲下旗標與姿勢分在兩個 tick 送、瞬間效果的粒子封包。
 效能：1,000 名玩家、20 個 region、`--mobs 0`（`sim_load --spacing 800 --ticks 300 --tick-ms 50`，VM）：平均 6.00／6.06 ms → 6.10／6.10 ms（+0.07 ms），每 tick 封包數與狀態雜湊與修正前完全相同。
+
+### 6.12 wp64（`wp64-wp63-gaps`）：wp63 留下的五個小差異
+
+細節與證據見 `docs/wp64.md`。共同的根：原版一個 tick 的順序是「指令與連線封包 → `ChunkMap.tick`（誰看得到誰、每個實體 `sendChanges` 送變動的實體資料）→ 實體 tick」，
+所以實體 tick 造成的變動晚一個 tick 才送；Kiln 原本把實體資料放在 tick 結尾打包。現在 `Region::tick` 一開頭先 `update_visibility` + `broadcast_data`，再 tick。
+
+| 項目 | 原版怎麼做 | Kiln 原本 | 現在 | 證據 |
+|---|---|---|---|---|
+| 身上的箭／蜂針（id 12／13） | 箭 `hurtOrSimulate` 成功且穿透 ≤ 0 → `+1`；蜜蜂螫傷成功 → `+1`；`LivingEntity.tick` 每 `20*(30-n)` tick 掉一個；隨實體資料送給觀看者與自己 | 沒有 | `arrow_count`／`stinger_count` 與兩個計時、`EntityLevel::stick_in_body`；只做玩家（生物沒有） | 間諜：`9=17.0 12=1`、580 tick 後 `12=0`、螫傷 `9=18.0 10=[…] 13=1`，與 vanilla 相同；`player_sync.rs` 2 個 |
+| 旁觀者隱藏 | `broadcastToPlayer`：旁觀者看得到所有人、其他人看不到旁觀者；改模式後下一個移動封包重算 | 只多隱形旗標 | `sees()` 加規則、`/gamemode` 清掉 `section`；改模式只在進出創造時送屬性 | 間諜 6 個情境；`spectators_are_hidden_from_everyone_but_spectators` |
+| 粉雪 | `entityInside`：移動中 `nextBoolean` → `snowflake` 粒子（32 格內所有人與自己）；每 tick 標記速度屬性、`UpdateAttributes` 只列變動的、凍到頂後每兩個 tick 一個 | 抽 `nextBoolean` 但少抽兩個 `nextFloat`、沒粒子；屬性只在值變時送、列 30 個 | 粒子與亂數；`attrs_sent` 差異；`frost_marked`；屬性只在更新 tick 或實體資料有變動時送 | 80 tick 的走路：snowflake 101 對 101、屬性封包 156／156 對 154／156；`player_sync.rs` 2 個 |
+| 蹲下 | 旗標（0）在輸入封包的 tick 送、姿勢（6）下一個 tick 送 | 同一個封包 | 「先打包、再 tick」 | 間諜 +0／+50 ms 逐項相同；`sneaking_sends_the_flag_and_the_pose_a_tick_apart` |
+| 瞬間效果 | `/effect give`：`UpdateMobEffect`、下個 tick 開頭 `10=[粒子]`、套用並移除、再下個 tick `9=… 10=[]`；噴濺藥水 `2007/1054`（瞬間）、`2002/1053` | 同一個 tick 加了又移除，粒子變動看不到；`/summon` 的藥水沒有 `Item`、帶藥水的箭沒有 `effects` | 同上；`persist.rs` 讀寫藥水的 `Item`、箭的 `effects` 取自 `item` | 間諜：`/effect give` 三種逐項相同、level event 相同；`an_instant_effect_shows_its_particle_for_a_tick`、`a_thrown_potion_keeps_its_item`、`a_loaded_tipped_arrow_has_its_effects` |
+
+`crowd_golden` 的四個封包摘要重錄（四個狀態雜湊不變）。沒做：生物身上的箭／蜂針、中立生物的 `angry_at` 不存檔、配對時的屬性清單（vanilla 只列已建立的 4 個，Kiln 30 個）、
+同一個 tick 生成又死掉的投射物看不到 `AddEntity`、傷害事件與受傷聲音／level event 的先後。
 
 ## 7. 重跑
 
@@ -743,6 +759,9 @@ python tools/blocks_diff.py --port 25583        # 45 個 scenario
 python tools/equine_breed.py --samples 500
 python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      # 再併入 work/m6-mobs2/vectors.jsonl
 #   VM：bash tools/wp58/wp63_start.sh / wp63_vanilla.sh、vm_client63.sh、vm_observer63.sh，然後 TARGET=K|V python3 tools/wp58/p63_meta.py meta|session、p63_join.py，最後 p63_compare.py
+# wp64：玩家同步的五個小差異（箭／蜂針、旁觀者隱藏、粉雪、蹲下、瞬間效果）的即時並排
+#   VM：bash tools/wp58/wp64_start.sh / wp64_vanilla.sh、vm_client64.sh、vm_observer64.sh（KILN_CLIENT_PORT=25586|25592），然後
+#   KILN_PLAY_DIR=wp64 [TARGET=V] PYTHONPATH=tools/wp58 python3 tools/wp58/p64.py arrows|sting|spectator|powder|sneak|instant
 # 登入等封包的 golden 由原版驗證後寫入
 python tools/packet_vectors.py --bless
 ```

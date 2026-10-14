@@ -501,15 +501,18 @@ public class ClientCtl {
                 });
             case "spy": // spy on|clear|dump: count the clientbound packets, with the sounds, particles, level events and entity events
                 return onMain(() -> spy(mc, a.length > 1 ? a[1] : "dump"));
-            case "spylog": // spylog [clear]: the packets since the last clear in arrival order (wp63): class name, entity data with values
+            case "spylog": // spylog [ts] [clear]: the packets since the last clear in arrival order (wp63): class name, entity data with values; ts: "<ms since the first line> <line>" (wp64)
                 return onMain(() -> {
                     JsonArray arr = new JsonArray();
+                    boolean ts = a.length > 1 && a[1].equals("ts");
+                    boolean clear = a.length > 1 && a[a.length - 1].equals("clear");
                     synchronized (ClientCtl.class) {
-                        for (String l : SPYLOG) {
-                            arr.add(l);
+                        for (int i = 0; i < SPYLOG.size(); i++) {
+                            arr.add(ts ? (SPYTIME.get(i) - SPYTIME.get(0)) + " " + SPYLOG.get(i) : SPYLOG.get(i));
                         }
-                        if (a.length > 1 && a[1].equals("clear")) {
+                        if (clear) {
                             SPYLOG.clear();
+                            SPYTIME.clear();
                         }
                     }
                     return arr.toString();
@@ -676,6 +679,12 @@ public class ClientCtl {
 
     // wp63: ordered log of the packets (bundles unwrapped), without the per-tick noise
     static final java.util.List<String> SPYLOG = new java.util.ArrayList<>();
+    // wp64: the arrival time (ms, the JVM's clock) of every SPYLOG line, for `spylog ts`
+    static final java.util.List<Long> SPYTIME = new java.util.ArrayList<>();
+    static synchronized void spyAdd(String line) {
+        SPYLOG.add(line);
+        SPYTIME.add(System.nanoTime() / 1_000_000L);
+    }
     static final java.util.Set<String> SPY_NOISE = java.util.Set.of("ClientboundKeepAlivePacket", "ClientboundMoveEntityPacket$Pos", "ClientboundMoveEntityPacket$PosRot",
         "ClientboundMoveEntityPacket$Rot", "ClientboundRotateHeadPacket", "ClientboundSetTimePacket", "ClientboundLevelChunkWithLightPacket", "ClientboundLightUpdatePacket",
         "ClientboundForgetLevelChunkPacket", "ClientboundSetChunkCacheCenterPacket", "ClientboundBundleDelimiterPacket", "ClientboundPingPacket", "ClientboundSetEntityMotionPacket",
@@ -722,7 +731,7 @@ public class ClientCtl {
                     vals.append(' ').append(v.id()).append('=').append(v.value());
                 }
                 synchronized (ClientCtl.class) {
-                    SPYLOG.add("entity_data " + (en == null ? "?" : (en instanceof net.minecraft.world.entity.player.Player pl ? "player:" + pl.getGameProfile().name() : BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath())) + vals);
+                    spyAdd("entity_data " + (en == null ? "?" : (en instanceof net.minecraft.world.entity.player.Player pl ? "player:" + pl.getGameProfile().name() : BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath())) + vals);
                 }
                 SPY.merge("= " + d, 1, Integer::sum);
                 return;
@@ -735,6 +744,24 @@ public class ClientCtl {
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundExplodePacket p) {
                 String str = p.toString().replaceAll("-?[0-9]+[.][0-9]+", "#");
                 d = "explode " + str.substring(0, Math.min(str.length(), 300));
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket p) {
+                // wp64: whose attributes, and each one's base and modifiers
+                Entity en = mc.level == null ? null : mc.level.getEntity(p.getEntityId());
+                StringBuilder sb = new StringBuilder("attributes " + (en == null ? "?" : (en instanceof net.minecraft.world.entity.player.Player pl ? "player:" + pl.getGameProfile().name() : BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath())));
+                for (var v : p.getValues()) {
+                    sb.append(' ').append(v.attribute().getRegisteredName().replace("minecraft:", "")).append('=').append(v.base());
+                    for (var m : v.modifiers()) {
+                        sb.append('[').append(m.id().getPath()).append(':').append(m.amount()).append(']');
+                    }
+                }
+                d = sb.toString();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket p) {
+                // wp64: the actions and, per entry, the uuid's first characters, the game mode and whether it is listed
+                StringBuilder sb = new StringBuilder("player_info " + p.actions());
+                for (var en : p.entries()) {
+                    sb.append(' ').append(en.profileId().toString(), 0, 4).append(":mode=").append(en.gameMode()).append(",listed=").append(en.listed());
+                }
+                d = sb.toString();
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundGameEventPacket p) {
                 Field idf = p.getEvent().getClass().getDeclaredField("id");
                 idf.setAccessible(true);
@@ -747,7 +774,7 @@ public class ClientCtl {
             SPY.merge("= " + d, 1, Integer::sum);
         }
         if (!SPY_NOISE.contains(cn) && !cn.equals("ClientboundSetEntityDataPacket")) {
-            SPYLOG.add(d != null ? d : cn.replace("Clientbound", "").replace("Packet", ""));
+            spyAdd(d != null ? d : cn.replace("Clientbound", "").replace("Packet", ""));
         }
     }
 

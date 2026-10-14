@@ -489,6 +489,15 @@ struct Player {
     meta_primed: bool,
     /// `Player.getScore`: the experience points gained (the death screen shows it).
     score: i32,
+    /// `LivingEntity.getArrowCount` / `getStingerCount` (entity data 12 and 13): the arrows and bee stingers stuck in
+    /// the body, and the ticks until the next one of each falls out (`removeArrowTime`, `removeStingerTime`).
+    arrow_count: i32,
+    stinger_count: i32,
+    remove_arrow_time: i32,
+    remove_stinger_time: i32,
+    /// Particle packets this player's tick asks for (`ServerLevel.sendParticles` from the player's own tick, with
+    /// the position): they go to every player within 32 blocks, the player included.
+    pending_particles: Vec<([f64; 3], Bytes)>,
     /// Arm swung this tick.
     swung: bool,
     /// `LivingEntity.swingState`: ticks into the current swing (-1 when it has just begun) and
@@ -554,6 +563,13 @@ struct Player {
     effects: std::collections::BTreeMap<i32, effects::Effect>,
     /// An effect attribute modifier changed: Update Attributes goes out.
     attributes_dirty: bool,
+    /// The syncable attributes as the last Update Attributes left them (empty: the next one lists them all).
+    attrs_sent: Vec<combat::AttributeList>,
+    /// This tick's entity data pack was not empty (it opens `ServerEntity.sendChanges`' main block, where the
+    /// attributes go out, in a tick that is not an update tick).
+    data_packed: bool,
+    /// The frost modifier was taken off and put on again this tick (its attribute is sent whether its value changed or not).
+    frost_marked: bool,
     /// Sounds the player made this tick, for its viewers.
     pending_sounds: Vec<Bytes>,
     /// `Level.soundSeedGenerator` stand-in for this player's sounds.
@@ -3188,10 +3204,16 @@ impl Sim {
             p.combat = health::CombatTracker::default();
             p.attack_ticker = 0;
             p.portal_cooldown = 0;
+            p.arrow_count = 0;
+            p.stinger_count = 0;
+            p.remove_arrow_time = 0;
+            p.remove_stinger_time = 0;
             // Its tick count too (phantoms' insomnia counts from it).
             p.tick_count = 0;
         }
         p.attributes_dirty = true;
+        // (The new client knows none of them: all are listed.)
+        p.attrs_sent.clear();
         // A fresh `ServerPlayer` (or the client's new `LocalPlayer`) has the default entity data:
         // the first pack sends everything that differs from it.
         if !keep_all {
@@ -3640,6 +3662,11 @@ impl Sim {
             meta_sent: players::synched_defaults(),
             meta_primed: false,
             score: joining.score,
+            arrow_count: 0,
+            stinger_count: 0,
+            remove_arrow_time: 0,
+            remove_stinger_time: 0,
+            pending_particles: Vec::new(),
             swung: false,
             swing_ticks: 0,
             swing_duration: 0,
@@ -3673,6 +3700,9 @@ impl Sim {
             tick_count: 0,
             effects: joining.effects,
             attributes_dirty: true,
+            attrs_sent: Vec::new(),
+            data_packed: false,
+            frost_marked: false,
             pending_sounds: Vec::new(),
             sound_seed: kiln_javamath::random::LegacyRandom::new(!(j.uuid.as_u64_pair().0 as i64)),
             health: joining.health,

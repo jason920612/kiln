@@ -272,6 +272,23 @@ impl Player {
         self.send(pkt);
     }
 
+    /// `ServerLevel.sendParticles(particle, at, 1, offset, speed, randomization)` from the player's own tick: the
+    /// region hands the packet to the players within 32 blocks ([`crate::players::deliver_particles`]).
+    pub(crate) fn queue_particles(&mut self, particle: &str, at: [f64; 3], offset: [f32; 3], speed: [f32; 3], randomization: world_fx::ParticleRandomization) {
+        let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", particle) else { return };
+        let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+            particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
+            override_limiter: false,
+            always_show: false,
+            pos: at,
+            offset,
+            max_speed: speed,
+            count: 1,
+            randomization,
+        });
+        self.pending_particles.push((at, pkt));
+    }
+
     /// [`Player::queue_sound_at`] in another sound category (`level.playSound(null, ..., source, ...)`).
     pub(crate) fn queue_sound_in(&mut self, at: [f64; 3], sound: &str, source: world_fx::SoundSource, volume: f32, pitch: f32) {
         let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound) else { return };
@@ -498,7 +515,13 @@ impl Player {
                 self.reset_fall_distance();
                 let known = self.known_movement;
                 if (known[0] != 0.0 || known[2] != 0.0) && self.level_rng.next_bool() {
-                    // (The snowflake particles.)
+                    // `PowderSnowBlock.entityInside`: a snowflake at the entity's feet, drifting by
+                    // `randomBetween(-1, 1) / 12` sideways and 0.05 up (`ALTERNATIVE`: the velocity
+                    // is the packet's own speed).
+                    let vx = (self.level_rng.next_float() * 2.0 + -1.0) * 0.083333336f32;
+                    let vz = (self.level_rng.next_float() * 2.0 + -1.0) * 0.083333336f32;
+                    let at = [self.pos[0], (pos.y + 1) as f64, self.pos[2]];
+                    self.queue_particles("minecraft:snowflake", at, [0.0; 3], [vx, 0.05, vz], world_fx::ParticleRandomization::Alternative);
                 }
                 c.run_before(Type::Extinguish, Inside::MeltPowderSnow(pos));
                 c.apply(Type::Freeze);

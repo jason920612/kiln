@@ -461,6 +461,12 @@ impl RegionWork<'_> {
             win[i] += Duration::from_nanos(w - wlap);
             wlap = w;
         };
+        // `ChunkMap.tick`: who sees whom, then the players' changed entity data, before the
+        // entities tick (what the connection's packets and the commands changed since the last
+        // tick goes out now; what this tick changes, with the next one).
+        let early_movers = crate::players::update_visibility(&mut self.players, ctx);
+        crate::players::broadcast_data(&mut self.players, ctx);
+        mark(&mut self.out.times, 5);
         // Menu changes first, like vanilla's container broadcast at the start of a player tick,
         // then `stillValid`: a menu whose block went away or is out of reach closes.
         // A player without a block menu open touches only itself here, so those players
@@ -510,6 +516,7 @@ impl RegionWork<'_> {
             self.out.deaths.extend(t.deaths);
             self.out.portals.extend(t.portals);
         }
+        crate::players::deliver_particles(&mut self.players);
         self.spin_attacks(env);
         self.kinetic_attacks(env);
         self.brushes(env);
@@ -554,7 +561,12 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 4);
         // The spawner's share of the entity phase is its own sub-phase.
         self.out.times[4] = self.out.times[4].saturating_sub(self.out.times[9] - spawned_before);
-        let movers = crate::players::update_visibility(&mut self.players, ctx);
+        let mut movers = crate::players::update_visibility(&mut self.players, ctx);
+        if !early_movers.is_empty() {
+            movers.extend(early_movers);
+            movers.sort_unstable();
+            movers.dedup();
+        }
         mark(&mut self.out.times, 5);
         let dt = std::time::Instant::now();
         crate::players::broadcast_movement(&mut self.players, ctx);
@@ -898,6 +910,8 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     p.base_tick(&block, env.min_y, &env.border, &mut ctx);
     // `LivingEntity.baseTick`: a new block position runs the location-changed enchantments.
     p.tick_location_changed(&block);
+    // `LivingEntity.tick`: arrows and stingers in the body fall out in time.
+    p.tick_stuck_in_body();
     p.tick_peaceful_regeneration(env.natural_regen, ctx.rules.difficulty);
     p.tick_fall_resets(&block);
     p.tick_glide();

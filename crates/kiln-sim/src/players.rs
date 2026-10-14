@@ -17,6 +17,8 @@ use kiln_sched::{Ctx, Window};
 const PLAYER_WINDOW: Window = Window::new().item_ns(170);
 /// Visibility: each player checks every mover (or everyone, when it moved).
 const VISIBILITY_WINDOW: Window = Window::new();
+/// Per-player entity data packs: comparing the player's values with what was last sent.
+const DATA_WINDOW: Window = Window::new().item_ns(60);
 
 /// A command chat message (`say`, `me`, `msg`) through its chat type.
 pub(crate) fn chat_disguised(message: &kiln_command::ChatMessage) -> Bytes {
@@ -37,9 +39,9 @@ pub(crate) fn game_mode_update(uuid: uuid::Uuid, mode: i32) -> Bytes {
 }
 
 /// The fields of a player's synched entity data that Kiln models, in id order
-/// (`SynchedEntityData` packs ascending ids). The others (custom name, silent, no gravity,
-/// arrows and stingers in the body) never leave their defaults.
-const SYNCHED: [DataField; 15] = [
+/// (`SynchedEntityData` packs ascending ids). The others (custom name, silent, no gravity)
+/// never leave their defaults.
+const SYNCHED: [DataField; 17] = [
     data::entity::SHARED_FLAGS,
     data::entity::AIR_SUPPLY,
     data::entity::POSE,
@@ -48,6 +50,8 @@ const SYNCHED: [DataField; 15] = [
     data::living_entity::HEALTH,
     data::living_entity::EFFECT_PARTICLES,
     data::living_entity::EFFECT_AMBIENCE,
+    data::living_entity::ARROW_COUNT,
+    data::living_entity::STINGER_COUNT,
     data::living_entity::SLEEPING_POS,
     data::avatar::PLAYER_MAIN_HAND,
     data::avatar::PLAYER_MODE_CUSTOMISATION,
@@ -73,6 +77,8 @@ pub(crate) fn synched_defaults() -> Synched {
         V::Float(1.0),
         V::Particles(Vec::new()),
         V::Boolean(false),
+        V::Int(0),
+        V::Int(0),
         V::OptionalBlockPos(None),
         V::HumanoidArm(HumanoidArm::Right),
         V::Byte(0),
@@ -133,6 +139,8 @@ impl Player {
             // `updateSynchronizedMobEffectParticles` and `DATA_EFFECT_AMBIENCE_ID`.
             V::Particles(self.effect_particles()),
             V::Boolean(!self.effects.is_empty() && self.effects_ambient()),
+            V::Int(self.arrow_count),
+            V::Int(self.stinger_count),
             V::OptionalBlockPos(self.sleep.pos),
             V::HumanoidArm(if self.client.main_hand == 0 { HumanoidArm::Left } else { HumanoidArm::Right }),
             V::Byte(self.client.skin_parts as i8),
@@ -141,6 +149,33 @@ impl Player {
             left,
             right,
         ]
+    }
+
+    /// `LivingEntity.tick`'s timers for what is stuck in the body: the arrow count (and the
+    /// stinger count) loses one every `20 * (30 - count)` ticks, the time worked out when the
+    /// count is above 0 and the timer has run out.
+    pub(crate) fn tick_stuck_in_body(&mut self) {
+        for (count, timer) in [(&mut self.arrow_count, &mut self.remove_arrow_time), (&mut self.stinger_count, &mut self.remove_stinger_time)] {
+            let n = *count;
+            if n > 0 {
+                if *timer <= 0 {
+                    *timer = 20 * (30 - n);
+                }
+                *timer -= 1;
+                if *timer <= 0 {
+                    *count = n - 1;
+                }
+            }
+        }
+    }
+
+    /// `AbstractArrow.onHitEntity` / `Bee.doHurtTarget`: one more arrow or stinger in the body.
+    pub(crate) fn stick_in_body(&mut self, stinger: bool) {
+        if stinger {
+            self.stinger_count += 1;
+        } else {
+            self.arrow_count += 1;
+        }
     }
 
     /// `ClientboundPlayerAbilitiesPacket(getAbilities())`: what the game mode allows (a
@@ -372,6 +407,8 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
         moved: bool,
         /// A dead player's body, gone after twenty ticks: nobody sees it.
         gone: bool,
+        /// In spectator mode: sees everyone, and is seen only by other spectators.
+        spectator: bool,
     }
     let range_cap = PLAYER.tracking_range as f64 * 16.0;
     let snaps: Vec<Snap> = players
@@ -390,6 +427,7 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
                 view: p.view_distance,
                 moved,
                 gone: p.body_gone,
+                spectator: p.game_mode == 3,
             }
         })
         .collect();
@@ -400,11 +438,14 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
     }
 
     // Vanilla `updatePlayer`: within the entity's tracking range and the viewer's view
-    // distance, and in a chunk inside the viewer's chunk view.
+    // distance, and in a chunk inside the viewer's chunk view; `ServerPlayer.broadcastToPlayer`:
+    // a spectator sees every player (none is looking through another's eyes here), the others
+    // do not see the spectators.
     let sees = |v: &Snap, t: &Snap| {
         let (dx, dz) = (v.x - t.x, v.z - t.z);
         v.conn != t.conn
             && !t.gone
+            && (v.spectator || !t.spectator)
             && dx * dx + dz * dz <= v.range * v.range
             && (t.chunk.x - v.chunk.x).abs() <= v.view
             && (t.chunk.z - v.chunk.z).abs() <= v.view
@@ -462,6 +503,51 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
     mover_conns
 }
 
+/// `ChunkMap.tick` before the entities tick: each player's changed entity data
+/// (`ServerEntity.sendDirtyEntityData`: health, flags, pose, air, effects, ...) goes to its
+/// viewers and to the player itself, as it stands after the connection's packets and the
+/// commands and before the player's own tick. What the tick changes goes out with the next
+/// tick's pack, which is why vanilla sends a sneak's flag and its pose a tick apart and an
+/// instant effect's particle and its removal a tick apart.
+pub(crate) fn broadcast_data(players: &mut [&mut Player], ctx: &Ctx<'_>) {
+    let encoded = ctx.map_mut_with(DATA_WINDOW, players, |_, t| {
+        let mut e = Encoded { to_viewers: Vec::new(), to_self: Vec::new(), viewers: Vec::new() };
+        if let Some(d) = t.pack_dirty() {
+            t.data_packed = true;
+            let pkt = entity::set_entity_data(t.entity_id, &d);
+            e.to_self.push(pkt.clone());
+            e.to_viewers.push(pkt);
+            e.viewers = t.seen_by.clone();
+        }
+        e
+    });
+    if encoded.iter().any(|e| !e.to_self.is_empty()) {
+        deliver(players, &encoded, ctx);
+    }
+}
+
+/// `ServerLevel.sendParticles` for what the players' own ticks asked ([`Player::queue_particles`]):
+/// every player of the region whose block is within 32 blocks of the particle gets the packet
+/// (`BlockPos.closerToCenterThan`), the player itself included, in connection order.
+pub(crate) fn deliver_particles(players: &mut [&mut Player]) {
+    if players.iter().all(|p| p.pending_particles.is_empty()) {
+        return;
+    }
+    let mut asked: Vec<([f64; 3], Bytes)> = Vec::new();
+    for p in players.iter_mut() {
+        asked.append(&mut p.pending_particles);
+    }
+    for v in players.iter_mut() {
+        let block = v.pos.map(|c| c.floor() + 0.5);
+        for (at, pkt) in &asked {
+            let d: f64 = (0..3).map(|i| (block[i] - at[i]) * (block[i] - at[i])).sum();
+            if d < 32.0 * 32.0 {
+                v.send(pkt.clone());
+            }
+        }
+    }
+}
+
 /// Streams movement and metadata changes of one region's players (sorted by connection):
 /// encoded once per player, shared by its viewers.
 ///
@@ -471,6 +557,12 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
 /// packets of lower connections first, the player's own packets at its turn.
 pub(crate) fn broadcast_movement(players: &mut [&mut Player], ctx: &Ctx<'_>) {
     let encoded = ctx.map_mut_with(PLAYER_WINDOW, players, |_, t| encode_movement(t));
+    deliver(players, &encoded, ctx);
+}
+
+/// Hands every viewer what the players it sees encoded, and each player its own packets, in
+/// connection order.
+fn deliver(players: &mut [&mut Player], encoded: &[Encoded], ctx: &Ctx<'_>) {
     let mut runs: Vec<(usize, &mut [&mut Player])> = Vec::new();
     let mut start = 0;
     for run in players.chunks_mut(VIEWER_RUN) {
@@ -478,7 +570,6 @@ pub(crate) fn broadcast_movement(players: &mut [&mut Player], ctx: &Ctx<'_>) {
         runs.push((start, run));
         start += n;
     }
-    let encoded = &encoded[..];
     ctx.map_mut_with(Window::new().item_ns(19_000), &mut runs, |_, (lo, run)| deliver_movement(*lo, run, encoded));
 }
 
@@ -495,18 +586,14 @@ struct Encoded {
 fn encode_movement(target: &mut Player) -> Encoded {
     let mut to_self = Vec::new();
     let state = target.move_state();
+    // `ServerEntity.sendChanges`: the attributes go out with the entity data in the update ticks (every second one
+    // for a player) and in the ticks the entity data itself changed.
+    let attributes_due = target.tracker.due() || std::mem::take(&mut target.data_packed);
     let mut packets = target.tracker.tick(&state);
     packets.extend(target.equipment_changes());
     if std::mem::take(&mut target.woke_up) {
         // `ClientboundAnimatePacket.WAKE_UP`, to the player and its viewers.
         let pkt = entity::animate(target.entity_id, 0);
-        to_self.push(pkt.clone());
-        packets.push(pkt);
-    }
-    // `ServerEntity.sendDirtyEntityData`: the entries that changed (health, flags, pose, air,
-    // effects, ...) go to the viewers and to the player itself.
-    if let Some(d) = target.pack_dirty() {
-        let pkt = entity::set_entity_data(target.entity_id, &d);
         to_self.push(pkt.clone());
         packets.push(pkt);
     }
@@ -522,8 +609,9 @@ fn encode_movement(target: &mut Player) -> Encoded {
             target.section = None;
         }
     }
-    if std::mem::take(&mut target.attributes_dirty) {
-        let pkt = target.attributes_packet();
+    if attributes_due && std::mem::take(&mut target.attributes_dirty)
+        && let Some(pkt) = target.attributes_changes()
+    {
         to_self.push(pkt.clone());
         packets.push(pkt);
     }
