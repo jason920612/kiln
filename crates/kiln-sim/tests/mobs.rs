@@ -1006,3 +1006,20 @@ fn a_trade_levels_the_villager_up_and_gossips_once_per_tick() {
     trade_all(&mut w, villager);
     assert_eq!(trading_gossip(&w, "minecraft:villager"), None, "a villager without AI does not talk about the trade");
 }
+
+/// wp61 (a real client next to a vanilla server): flint and steel (or a fire charge) lights a creeper's
+/// fuse (`Creeper.mobInteract`); it explodes about a second and a half later and the tool wears.
+#[test]
+fn a_creeper_lit_with_flint_and_steel_blows_up() {
+    let mut w = World::new();
+    w.hold("minecraft:flint_and_steel", 1);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:creeper", [1.5, 0.0, 0.0], "{NoAI:1b,PersistenceRequired:1b}");
+    let creeper = w.mobs("minecraft:creeper")[0].0;
+    w.ticks(5);
+    assert_eq!(w.mobs("minecraft:creeper").len(), 1, "it just stands there");
+    w.interact(creeper);
+    assert_eq!(w.sim.item_damage(1, 36), Some(1), "the flint and steel wore");
+    w.ticks(40);
+    assert!(w.mobs("minecraft:creeper").is_empty(), "the lit creeper blew up");
+}

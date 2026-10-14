@@ -485,3 +485,27 @@ fn using_a_block_makes_the_arm_swing_for_the_others() {
     w.ticks(2);
     assert_eq!(swings(&w) - before, 2, "the throw swung the arm");
 }
+
+/// wp61 (a real client next to a vanilla server): milking a cow is heard by the others, not by the
+/// milker (`Player.playSound` leaves the player out).
+#[test]
+fn milking_is_heard_by_the_others_but_not_the_milker() {
+    let mut w = World::new(&["Milker", "Listener"]);
+    w.clients[0].stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
+    w.clients[1].stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
+    w.give(1, 36, "minecraft:bucket");
+    w.console("gamemode survival Milker");
+    w.console("gamerule minecraft:spawn_mobs false");
+    w.console("summon minecraft:cow ~1.5 ~ ~ {NoAI:1b,PersistenceRequired:1b}");
+    w.ticks(3);
+    let cow = w.sim.entities().iter().position(|e| e.0 == "minecraft:cow").expect("the cow");
+    let _ = cow;
+    let sounds = |c: &Client| c.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::SOUND).map_or(0, |a| a.0);
+    let (own, other) = (sounds(&w.clients[0]), sounds(&w.clients[1]));
+    let id = w.sim.entity_ids_of("minecraft:cow")[0];
+    w.step(vec![ToSim::Packet(1, PlayIn::Interact { entity_id: id, hand: kiln_proto::packets::serverbound::Hand::Main, location: [0.0, 0.5, 0.0], sneaking: false })]);
+    w.ticks(2);
+    assert!(w.sim.inventory(1).unwrap()[36].is_some_and(|s| s.0 == kiln_data::builtin_id("minecraft:item", "minecraft:milk_bucket").unwrap()), "milked");
+    assert_eq!(sounds(&w.clients[0]) - own, 0, "the milker hears nothing from the server");
+    assert_eq!(sounds(&w.clients[1]) - other, 1, "the other player hears the milking");
+}
