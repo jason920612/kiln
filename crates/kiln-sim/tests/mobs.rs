@@ -978,7 +978,7 @@ fn a_trade_levels_the_villager_up_and_gossips_once_per_tick() {
     let data = |ai: &str| format!(r#"{{{ai}PersistenceRequired:1b,Xp:1,VillagerData:{{profession:"minecraft:toolsmith",level:1,type:"minecraft:plains"}},{offers}}}"#);
     let trade_all = |w: &mut World, villager: i32| {
         w.interact(villager);
-        let (id, _, _) = w.sim.merchant_screen(1).expect("the merchant screen opened");
+        let Some((id, _, _)) = w.sim.merchant_screen(1) else { panic!("the merchant screen did not open: {:?}", nbt_of(w, "minecraft:villager")) };
         w.packet(PlayIn::SelectTrade { offer: 0 });
         w.click(id, 2, true); // shift-click: every use of the offer in one tick
         w.packet(PlayIn::ContainerClose { container_id: id });
