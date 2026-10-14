@@ -7,7 +7,7 @@
 2. Runs `cargo test -p kiln-entity --lib equine_vectors` with KILN_EQUINE_VECTORS set: every child must have exactly
    the vanilla attributes, strength and coat, and the random must have been drawn the same number of times.
 
-usage: python tools/equine_breed.py [--samples N] [--skip-java] [--out FILE]
+usage: python tools/equine_breed.py [--samples N] [--skip-java | --java-only] [--out FILE]
 """
 
 import argparse
@@ -24,6 +24,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--samples", type=int, default=400, help="breedings per parent pair (8 pairs)")
     ap.add_argument("--skip-java", action="store_true", help="reuse the existing vectors")
+    ap.add_argument("--java-only", action="store_true", help="only record the vanilla vectors")
     ap.add_argument("--out", default=str(WORK / "equine-breed" / "vectors.jsonl"))
     args = ap.parse_args()
     out = Path(args.out).resolve()
@@ -38,6 +39,8 @@ def main():
         print("\n".join(lines[-60:]))
         if p.returncode != 0:
             sys.exit(f"EquineBreedVectors failed ({p.returncode})")
+    if args.java_only:
+        return
     env = dict(os.environ, KILN_EQUINE_VECTORS=str(out))
     sys.exit(subprocess.call(["cargo", "test", "--release", "-p", "kiln-entity", "--lib", "equine_vectors", "--", "--nocapture"], cwd=ROOT, env=env))
 
