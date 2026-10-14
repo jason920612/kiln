@@ -529,7 +529,7 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
             for id in level.entities_in(&area, crate::level::EntityFilter::Living, i32::MIN) {
                 let Some(o) = level.entity(id) else { continue };
                 let crate::entity::EntityKind::Mob(om) = &o.kind else { continue };
-                if om.kind != m.kind || om.age < 0 {
+                if !is_instance_of(om.kind, m.kind) || om.age < 0 {
                     continue;
                 }
                 let d = e.position().distance_to_sqr(o.position());
@@ -1178,6 +1178,14 @@ pub fn should_panic(m: &MobData, level: &dyn EntityLevel) -> bool {
     m.last_damage_source(level.game_time()).is_some_and(|s| s.kind.is_tag("minecraft:panic_causes"))
 }
 
+/// `getEntitiesOfClass(animal.getClass())` finds the animal's class and its subclasses: a llama's finds
+/// the trader llamas, a camel's the camel husks (`FollowParentGoal`, `BreedGoal`).
+pub fn is_instance_of(candidate: MobKind, class: MobKind) -> bool {
+    candidate == class
+        || (class == MobKind::Llama && candidate == MobKind::TraderLlama)
+        || (class == MobKind::Camel && candidate == MobKind::CamelHusk)
+}
+
 /// `BreedGoal.getFreePartner`: the nearest animal of the same type within 8 blocks that can
 /// mate (both in love) and is not panicking.
 pub fn free_partner(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<i32> {
@@ -1189,8 +1197,7 @@ pub fn free_partner(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<
         // `PARTNER_TARGETING`: non-combat, 8 blocks, no line of sight needed.
         // (`getEntitiesOfClass(animal.getClass())`: a llama also finds trader llamas.)
         // (The horses' goal is `BreedGoal(..., AbstractHorse.class)`: a horse and a donkey meet.)
-        let class = om.kind == m.kind
-            || (m.kind == MobKind::Llama && om.kind == MobKind::TraderLlama)
+        let class = is_instance_of(om.kind, m.kind)
             || (matches!(m.kind, MobKind::Horse | MobKind::Donkey) && matches!(om.kind, MobKind::Horse | MobKind::Donkey));
         if !class || !o.is_alive() || om.health <= 0.0 || e.position().distance_to_sqr(o.position()) > 64.0 {
             continue;

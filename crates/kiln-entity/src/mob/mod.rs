@@ -3421,7 +3421,9 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
     }
     let near = category.no_despawn_distance() as f64;
     let no_action = m.no_action_time;
-    if !persistent && removable && no_action > 600 && e.random.next_int_bounded(800) == 0 && d > near * near {
+    // (The draw comes before `removeWhenFarAway` is asked: an animal, which never goes, still draws once a tick while it has been
+    // idle for 600 ticks and no player is within 32 blocks.)
+    if !persistent && no_action > 600 && e.random.next_int_bounded(800) == 0 && d > near * near && removable {
         e.discard();
     } else if d < near * near
         && let Some(m) = data_mut(e)
