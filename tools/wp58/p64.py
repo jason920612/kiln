@@ -150,8 +150,8 @@ def spectator(b):
 
 def powder(b):
     ev = {}
-    fill(-2, 200, -2, 2, 201, 2, "minecraft:powder_snow")
-    sv("tp KilnTest 0 199.9 0", show=False)
+    fill(-4, 200, -4, 4, 201, 4, "minecraft:powder_snow")
+    sv("tp KilnTest 0.5 200 0.5", show=False)
     time.sleep(2.0)
 
     def walk():
@@ -161,7 +161,7 @@ def powder(b):
     quiet = r"^entity_data player:\w+ [17]=-?\d+$|^SetHealth"
     ev["walk_in_powder_snow"] = b.event("walking 3 s in powder snow", walk, wait=1.0, drop_re=quiet)
     ev["stand_in_powder_snow"] = b.event("standing 2 s in powder snow", lambda: time.sleep(2.0), wait=0.5, drop_re=quiet)
-    fill(-2, 200, -2, 2, 201, 2, "minecraft:air")
+    fill(-4, 200, -4, 4, 201, 4, "minecraft:air")
     return ev
 
 
