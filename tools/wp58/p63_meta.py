@@ -24,6 +24,9 @@ def spylog(c, clear=True):
 NOISE = ("Sound", "sound", "LevelParticles", "PlayerInfo", "SetPlayerTeam", "UpdateAdvancements", "Pos", "PosRot", "TrackedWaypoint", "SystemChat", "RotateHead", "MoveEntity")
 
 
+QUIET = ("Sound", "sound", "LevelParticles", "Pos", "PosRot", "TrackedWaypoint", "RotateHead", "MoveEntity", "SystemChat", "Rot", "RemoveEntities", "AddEntity")
+
+
 def keep(lines, drop=NOISE):
     out = []
     for l in lines:
@@ -42,16 +45,15 @@ class Both:
         self.a.cmd("spy on")
         self.o.cmd("spy on")
 
-    def event(self, name, action, wait=1.5, filt=True):
-        if alive(self.a) <= 0:
+    def event(self, name, action, wait=1.5, filt=True, need_alive=True):
+        if need_alive and alive(self.a) <= 0:
             raise SystemExit("the actor is dead before " + name)
         spylog(self.a)
         spylog(self.o)
         action()
         time.sleep(wait)
         o, s = spylog(self.o), spylog(self.a)
-        if filt:
-            o, s = keep(o), keep(s)
+        o, s = keep(o, NOISE if filt else QUIET), keep(s, NOISE if filt else QUIET)
         print(f"== {name}\n  obs : {o}\n  self: {s}", flush=True)
         return {"obs": o, "self": s}
 
@@ -132,11 +134,16 @@ def session(b):
     ev["deop"] = b.event("/deop", lambda: sv("deop KilnTest", show=False), filt=False)
     ev["op"] = b.event("/op", lambda: sv("op KilnTest", show=False), filt=False)
     ev["op_again"] = b.event("/op (already op)", lambda: sv("op KilnTest", show=False), filt=False)
+    sv("gamemode creative KilnTest", show=False)
+    time.sleep(1.5)
     ev["nether"] = b.event("to the nether", lambda: sv("execute in minecraft:the_nether run tp KilnTest 0 100 0", show=False), wait=4, filt=False)
     ev["overworld"] = b.event("back to the overworld", lambda: sv("execute in minecraft:overworld run tp KilnTest 0 200 0", show=False), wait=4, filt=False)
     ev["same_dim_tp"] = b.event("same-dimension tp", lambda: sv("tp KilnTest 5 200 5", show=False), wait=2, filt=False)
+    sv("gamemode survival KilnTest", show=False)
+    time.sleep(1.5)
     sv("effect give KilnTest minecraft:speed 100 0", show=False)
     ev["kill"] = b.event("/kill", lambda: sv("kill KilnTest", show=False), wait=2, filt=False)
+    time.sleep(1)
 
     def respawn():
         c = b.a
@@ -145,7 +152,7 @@ def session(b):
                 break
             c.cmd("mousepos 480 298"); time.sleep(1.5)
             c.mouse("left", "tap"); time.sleep(2.5)
-    ev["respawn"] = b.event("respawn click", respawn, wait=3, filt=False)
+    ev["respawn"] = b.event("respawn click", respawn, wait=3, filt=False, need_alive=False)
     return ev
 
 
