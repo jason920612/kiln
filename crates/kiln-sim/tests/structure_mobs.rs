@@ -30,15 +30,11 @@ fn visit(seed: i64, pack: PathBuf, at: [i32; 3], radius: f64, settle_ticks: usiz
     let (msg, stats) = join(1, "Visitor", 2);
     assert!(sim.step([msg, ToSim::Console("gamemode creative Visitor".into()), ToSim::Console(format!("tp Visitor {} {} {}", at[0], at[1], at[2]))]));
     let mut client = Client::new(1, stats);
-    for i in 0..settle_ticks {
+    for _ in 0..settle_ticks {
         let mut inbox = Vec::new();
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
         std::thread::sleep(std::time::Duration::from_millis(5));
-        if std::env::var_os("DIAG").is_some() && i % 20 == 0 {
-            let el: Vec<_> = sim.entities().into_iter().filter(|(t, _)| *t == "minecraft:elder_guardian" || *t == "minecraft:item").map(|(t, p)| format!("{} {:.0},{:.0},{:.0}", &t[10..], p[0], p[1], p[2])).collect();
-            eprintln!("tick {i}: {el:?}");
-        }
     }
     let mut kinds = std::collections::BTreeMap::new();
     for (t, p) in sim.entities() {
