@@ -664,13 +664,14 @@ fn a_frozen_player_gets_the_speed_attribute_every_tick() {
     w.watcher_log();
     w.actor_log();
     // The number of attributes in each Update Attributes for the actor.
+    let e = w.entity();
     let listed = |log: &[Bytes]| -> Vec<i32> {
         log.iter()
             .filter(|p| packet_id(p) == id::UPDATE_ATTRIBUTES)
             .filter_map(|p| {
                 let mut r = Reader::new(p);
                 r.varint().unwrap();
-                (r.varint().unwrap() == w.entity()).then(|| r.varint().unwrap())
+                (r.varint().unwrap() == e).then(|| r.varint().unwrap())
             })
             .collect()
     };
