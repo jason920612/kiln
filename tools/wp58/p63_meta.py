@@ -7,7 +7,7 @@ real clients; TARGET=V runs it against the vanilla reference server.
 
 Output: ~/wp63/<what>_<K|V>.json (event -> {"obs": [...], "self": [...]}).
 """
-import json, os, sys, time
+import json, os, re, sys, time
 from pathlib import Path
 import p61
 from p61 import *
@@ -21,8 +21,16 @@ def spylog(c, clear=True):
     return json.loads(c.cmd("spylog clear" if clear else "spylog"))
 
 
-def keep(lines, drop=("Sound", "sound", "LevelParticles", "PlayerInfo", "SetEquipment", "SetPlayerTeam", "UpdateAdvancements")):
-    return [l for l in lines if not any(l.startswith(d) or l.startswith("= " + d) for d in drop)]
+NOISE = ("Sound", "sound", "LevelParticles", "PlayerInfo", "SetPlayerTeam", "UpdateAdvancements", "Pos", "PosRot", "TrackedWaypoint", "SystemChat", "RotateHead", "MoveEntity")
+
+
+def keep(lines, drop=NOISE):
+    out = []
+    for l in lines:
+        if l in drop or any(l.startswith(d + " ") for d in drop):
+            continue
+        out.append(re.sub(r"@[0-9a-f]+", "", l))
+    return out
 
 
 class Both:
