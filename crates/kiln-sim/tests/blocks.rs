@@ -242,7 +242,8 @@ fn digging_sends_a_level_event_every_tick() {
 #[test]
 fn flint_and_steel_primes_tnt_without_setting_fire() {
     let mut w = World::new("creative");
-    w.hold("minecraft:flint_and_steel");
+    let flint = ItemStack { item: kiln_data::builtin_id("minecraft:item", "minecraft:flint_and_steel").unwrap(), count: 1, added: Vec::new(), removed: Vec::new() };
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot: 36, item: Some(flint) })]));
     let tnt = w.at(2, 1, 0);
     w.run(&format!("setblock {} {} {} minecraft:tnt", tnt[0], tnt[1], tnt[2]));
     w.run("gamemode survival Builder");

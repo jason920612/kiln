@@ -1389,7 +1389,6 @@ fn use_item_on(
     spawns: &mut Vec<Spawn>,
 ) {
     let Some(dir) = blocks::direction(face) else { return };
-    eprintln!("use_item_on at {pos:?} face {face} reach {} cursor {cursor:?}", p.can_reach_block(pos, 1.0));
     if !p.can_reach_block(pos, 1.0) || cursor.iter().any(|&c| (c as f64 - 0.5).abs() >= 1.0000001) {
         return;
     }
@@ -1446,7 +1445,6 @@ fn use_on_block(
         kiln_data::block_logic::block_class(level.block(bp)),
         kiln_data::block_logic::BlockClass::CopperGolemStatueBlock | kiln_data::block_logic::BlockClass::WeatheringCopperGolemStatueBlock
     );
-    eprintln!("use_on_block: held {:?} sneaking {} class {:?}", held.item_name(), p.sneaking, kiln_data::block_logic::block_class(level.block(bp)));
     if !(p.sneaking && have_something) && (!held.is_empty() || statue) {
         let used = held.clone();
         if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, cursor, !main_hand, spawns) {
