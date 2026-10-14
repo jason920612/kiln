@@ -3,7 +3,7 @@
 # console through the fifo ~/wp63/vanilla/console, log ~/wp63/vanilla/server.log).
 # usage: wp63_vanilla.sh [stop]
 mkdir -p ~/wp63/vanilla && cd ~/wp63/vanilla
-if [ -p console ]; then echo stop > console; sleep 4; fi
+if [ -p console ]; then (exec 3<>console; echo stop >&3); sleep 4; fi
 pkill -f "wp63vanilla-marker" 2>/dev/null
 [ "$1" = stop ] && exit 0
 rm -rf world

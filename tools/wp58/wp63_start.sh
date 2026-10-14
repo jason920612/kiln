@@ -2,7 +2,7 @@
 # wp63 server on the VM: ~/wp63/world, port 25585, console through the ~/wp63/console fifo.
 # usage: wp63_start.sh [binary]   (default: the wp63-wp61-gaps checkout's release build)
 mkdir -p ~/wp63 && cd ~/wp63
-[ -p console ] && echo stop > console; sleep 3; pkill -x kiln-run 2>/dev/null
+[ -p console ] && (exec 3<>console; echo stop >&3); sleep 3; pkill -x kiln-run 2>/dev/null
 sleep 1
 cp "${1:-$HOME/wt/wp63-wp61-gaps/target/release/kiln}" ~/wp63/kiln-run
 [ -p console ] || mkfifo console
