@@ -657,6 +657,8 @@ fn walking_in_powder_snow_throws_snowflakes() {
 #[test]
 fn a_frozen_player_gets_the_speed_attribute_every_tick() {
     let mut w = World::new();
+    // (No regeneration: a change of the health is entity data, which would open the tick for the attributes.)
+    w.run("gamerule minecraft:natural_health_regeneration false");
     let p = w.actor.pos;
     let (x, y, z) = (p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32);
     w.run(&format!("fill {} {} {} {} {} {} minecraft:powder_snow", x - 2, y, z - 2, x + 2, y + 1, z + 2));
