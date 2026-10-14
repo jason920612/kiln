@@ -43,6 +43,8 @@ class Both:
         self.o.cmd("spy on")
 
     def event(self, name, action, wait=1.5, filt=True):
+        if alive(self.a) <= 0:
+            raise SystemExit("the actor is dead before " + name)
         spylog(self.a)
         spylog(self.o)
         action()
@@ -73,7 +75,11 @@ def setup(b):
 
 def meta(b):
     ev = {}
+    sv("gamemode creative KilnTest", show=False)
+    time.sleep(1)
     ev["tp_away_back"] = b.event("tp away and back (re-pairing: spawn data)", lambda: (sv("tp KilnTest 3000 200 3000", show=False), time.sleep(3), sv("tp KilnTest 0 200 0", show=False)), wait=4)
+    sv("gamemode survival KilnTest", show=False)
+    time.sleep(1.5)
     ev["damage4"] = b.event("damage 4", lambda: sv("damage KilnTest 4 minecraft:generic", show=False))
     time.sleep(1)
     ev["heal"] = b.event("instant_health", lambda: sv("effect give KilnTest minecraft:instant_health 1 1", show=False))
