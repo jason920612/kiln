@@ -385,3 +385,31 @@ fn experience_points_raise_the_score() {
     let saved = w.sim.saved_player_nbt(1).unwrap();
     assert_eq!(saved.get("Score").and_then(kiln_proto::nbt::Tag::as_i64), Some(7));
 }
+
+/// A new player's viewers are paired with its data, and the first pack (everything that differs from the defaults,
+/// as the constructor's sets left it dirty) follows: vanilla sends the entries twice at a join.
+#[test]
+fn a_joining_player_is_paired_with_its_data_and_then_packs_it_again() {
+    let mut sim = Sim::new(SimConfig::new(4, 4, None));
+    let (m1, s1) = join(1, "Watcher", 2);
+    log_of(&s1);
+    assert!(sim.step([m1, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
+    let mut watcher = Client::new(1, s1.clone());
+    let (m2, s2) = join(2, "Actor", 2);
+    assert!(sim.step([m2]));
+    let mut actor = Client::new(2, s2);
+    for _ in 0..8 {
+        let mut inbox = Vec::new();
+        watcher.tick(None, &mut inbox);
+        actor.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    let e = sim.entity_id(2).unwrap();
+    let data = data_of(&take(&s1), e);
+    assert_eq!(data.len(), 2, "pairing, then the first pack: {data:?}");
+    assert_eq!(data[0], data[1]);
+    let mut want = EntityData::new();
+    want.set(data::living_entity::HEALTH, &DataValue::Float(20.0));
+    want.set(data::avatar::PLAYER_MODE_CUSTOMISATION, &DataValue::Byte(127));
+    assert_eq!(data[0], entries(&want).into_iter().collect::<Vec<u8>>(), "the health and the skin parts (the client's default)");
+}

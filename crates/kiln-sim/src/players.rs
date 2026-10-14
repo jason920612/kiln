@@ -161,6 +161,7 @@ impl Player {
     /// `ServerEntity.sendDirtyEntityData`: the entries that changed since the last pack, in id
     /// order, for the viewers and the player alike.
     pub(crate) fn pack_dirty(&mut self) -> Option<EntityData> {
+        self.meta_primed = true;
         let now = self.synched();
         let mut d = EntityData::new();
         for (field, (value, sent)) in SYNCHED.iter().zip(now.iter().zip(&self.meta_sent)) {
@@ -179,7 +180,8 @@ impl Player {
     /// viewer gets with the entity.
     fn spawn_metadata(&self) -> EntityData {
         let mut d = EntityData::new();
-        for (field, (value, default)) in SYNCHED.iter().zip(self.meta_sent.iter().zip(&synched_defaults())) {
+        let basis = if self.meta_primed { self.meta_sent.clone() } else { self.synched() };
+        for (field, (value, default)) in SYNCHED.iter().zip(basis.iter().zip(&synched_defaults())) {
             if value != default {
                 d.set(*field, value);
             }

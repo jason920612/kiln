@@ -484,6 +484,9 @@ struct Player {
     /// The synched entity data as viewers and the player last got it (`SynchedEntityData`'s
     /// dirty tracking: [`players::pack_dirty`] sends what differs from it).
     meta_sent: players::Synched,
+    /// Whether the first pack went out: until then a viewer is paired with the data as it stands (`ServerEntity`
+    /// starts with the non-default values of the new entity), and the first pack repeats them to everyone.
+    meta_primed: bool,
     /// `Player.getScore`: the experience points gained (the death screen shows it).
     score: i32,
     /// Arm swung this tick.
@@ -3193,6 +3196,7 @@ impl Sim {
         // the first pack sends everything that differs from it.
         if !keep_all {
             p.meta_sent = players::synched_defaults();
+            p.meta_primed = false;
         }
         p.vel = [0.0; 3];
         p.sync_velocity = false;
@@ -3634,6 +3638,7 @@ impl Sim {
             spin_check: false,
             spin_pose: false,
             meta_sent: players::synched_defaults(),
+            meta_primed: false,
             score: joining.score,
             swung: false,
             swing_ticks: 0,
