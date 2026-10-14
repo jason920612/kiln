@@ -676,6 +676,10 @@ public class ClientCtl {
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundEntityEventPacket p) {
                 Entity en = mc.level == null ? null : p.getEntity(mc.level);
                 d = "entity_event " + p.getEventId() + " " + (en == null ? "?" : BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath());
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundBlockEventPacket p) {
+                d = "block_event " + BuiltInRegistries.BLOCK.getKey(p.getBlock()).getPath() + " " + p.getB0() + " " + p.getB1();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSwingAnimationPacket || msg instanceof net.minecraft.network.protocol.game.ClientboundAnimatePacket) {
+                d = msg.getClass().getSimpleName().replace("Clientbound", "") + " " + msg.toString();
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundGameEventPacket p) {
                 Field idf = p.getEvent().getClass().getDeclaredField("id");
                 idf.setAccessible(true);

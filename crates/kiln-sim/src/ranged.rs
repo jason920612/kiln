@@ -133,7 +133,9 @@ fn instrument(stack: &ItemStack) -> Option<(String, f32, f32)> {
 #[allow(clippy::too_many_arguments)]
 fn throw(p: &mut Player, level: &mut RegionLevel, off_hand: bool, stack: &ItemStack, kind: Throwable, sound: &'static str, speed: f32, roll: f32, spawns: &mut Vec<Spawn>) {
     let pitch = 0.4 / (level.random().next_float() * 0.4 + 0.8);
-    p.sound_for_all(sound, SoundSource::Neutral, 0.5, pitch);
+    // (`Egg.use` is the one thrown item that plays its sound for the players' category.)
+    let source = if matches!(kind, Throwable::Egg) { SoundSource::Players } else { SoundSource::Neutral };
+    p.sound_for_all(sound, source, 0.5, pitch);
     let seed = projectile_seed(level, p, spawns.len() as u64);
     let pos = Vec3::new(p.pos[0], p.eye_position()[1] - 0.10000000149011612, p.pos[2]);
     let mut e = kiln_entity::projectile::new(0, 0, kind, pos, Vec3::ZERO, Some(p.entity_id), seed);

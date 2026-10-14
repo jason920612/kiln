@@ -261,6 +261,37 @@ fn set_sound(s: u16, kind: Sounds) -> Option<&'static str> {
     })
 }
 
+/// `BlockSetType.buttonClickOff` of the button `s`.
+pub fn button_click_off(s: u16) -> &'static str {
+    match family(s) {
+        "stone" => "minecraft:block.stone_button.click_off",
+        "cherry_wood" => "minecraft:block.cherry_wood_button.click_off",
+        "bamboo_wood" => "minecraft:block.bamboo_wood_button.click_off",
+        "nether_wood" => "minecraft:block.nether_wood_button.click_off",
+        _ => "minecraft:block.wooden_button.click_off",
+    }
+}
+
+/// `BlockSetType.pressurePlateClickOn` / `pressurePlateClickOff` of the pressure plate `s`
+/// (the weighted plates are the metal set).
+pub fn plate_click(s: u16, on: bool) -> &'static str {
+    let family = if BlockId::of(s).name().contains("weighted") { "metal" } else { family(s) };
+    match (family, on) {
+        ("metal", true) => "minecraft:block.metal_pressure_plate.click_on",
+        ("metal", false) => "minecraft:block.metal_pressure_plate.click_off",
+        ("stone", true) => "minecraft:block.stone_pressure_plate.click_on",
+        ("stone", false) => "minecraft:block.stone_pressure_plate.click_off",
+        ("cherry_wood", true) => "minecraft:block.cherry_wood_pressure_plate.click_on",
+        ("cherry_wood", false) => "minecraft:block.cherry_wood_pressure_plate.click_off",
+        ("bamboo_wood", true) => "minecraft:block.bamboo_wood_pressure_plate.click_on",
+        ("bamboo_wood", false) => "minecraft:block.bamboo_wood_pressure_plate.click_off",
+        ("nether_wood", true) => "minecraft:block.nether_wood_pressure_plate.click_on",
+        ("nether_wood", false) => "minecraft:block.nether_wood_pressure_plate.click_off",
+        (_, true) => "minecraft:block.wooden_pressure_plate.click_on",
+        (_, false) => "minecraft:block.wooden_pressure_plate.click_off",
+    }
+}
+
 /// The close sound matching an open sound from [`set_sound`].
 fn close_sound(open: &'static str) -> &'static str {
     match open {
