@@ -59,7 +59,9 @@ impl Player {
         } else {
             None
         };
-        if frost != self.frost_speed {
+        // `removeFrost` and `tryAddFrost` mark the attribute every tick the modifier is on or was on.
+        if frost.is_some() || self.frost_speed.is_some() {
+            self.frost_marked = frost.is_some() && self.frost_speed.is_some();
             self.frost_speed = frost;
             self.attributes_dirty = true;
         }

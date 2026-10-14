@@ -605,8 +605,9 @@ fn encode_movement(target: &mut Player) -> Encoded {
             target.section = None;
         }
     }
-    if std::mem::take(&mut target.attributes_dirty) {
-        let pkt = target.attributes_packet();
+    if std::mem::take(&mut target.attributes_dirty)
+        && let Some(pkt) = target.attributes_changes()
+    {
         to_self.push(pkt.clone());
         packets.push(pkt);
     }

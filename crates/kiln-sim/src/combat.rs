@@ -24,6 +24,9 @@ use kiln_item::{ItemStack, keys};
 use kiln_proto::packets::entity;
 use kiln_proto::packets::world_fx;
 
+/// A syncable attribute's network id, base value and modifiers (id, amount, operation).
+pub(crate) type AttributeList = (i32, f64, Vec<(String, f64, AttributeOperation)>);
+
 /// An attribute with the player's base value (`Player.createAttributes`) and its range.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Attr {
@@ -398,18 +401,19 @@ impl Player {
         attribute_value(attr, mods.iter().map(|m| (m.1, m.2)))
     }
 
-    /// `ClientboundUpdateAttributesPacket` with every client-syncable attribute
-    /// (`AttributeMap.getSyncableAttributes`): the client predicts movement (gravity, step height,
-    /// jump strength, sneaking speed), reach, scale and the HUD from them.
-    pub(crate) fn attributes_packet(&self) -> bytes::Bytes {
-        use kiln_proto::packets::entity::{AttributeModifier, AttributeSnapshot, ModifierOperation};
-        type Listed = (i32, f64, Vec<(String, f64, AttributeOperation)>);
+    /// Every client-syncable attribute with its base value and modifiers (`AttributeMap.getSyncableAttributes`).
+    fn attribute_lists(&self) -> Vec<AttributeList> {
         let equipment = self.equipment_modifiers();
-        let lists: Vec<Listed> = crate::command_data::PLAYER_ATTRIBUTES
+        crate::command_data::PLAYER_ATTRIBUTES
             .iter()
             .filter(|a| kiln_entity::mob::attributes::syncable_name(a.name))
             .filter_map(|a| Some((kiln_data::builtin_id("minecraft:attribute", a.name)?, self.with_base(*a).base, self.attribute_modifiers_with(*a, &equipment))))
-            .collect();
+            .collect()
+    }
+
+    /// `ClientboundUpdateAttributesPacket(entity, attributes)` for `lists`.
+    fn attribute_packet(&self, lists: &[AttributeList]) -> bytes::Bytes {
+        use kiln_proto::packets::entity::{AttributeModifier, AttributeSnapshot, ModifierOperation};
         let op = |o: AttributeOperation| match o {
             AttributeOperation::AddValue => ModifierOperation::AddValue,
             AttributeOperation::AddMultipliedBase => ModifierOperation::AddMultipliedBase,
@@ -425,6 +429,29 @@ impl Player {
             .map(|((attribute, base, _), modifiers)| AttributeSnapshot { attribute: *attribute, base: *base, modifiers })
             .collect();
         kiln_proto::packets::entity::update_attributes(self.entity_id, &snapshots)
+    }
+
+    /// `ClientboundUpdateAttributesPacket` with every client-syncable attribute: the client predicts
+    /// movement (gravity, step height, jump strength, sneaking speed), reach, scale and the HUD from them.
+    pub(crate) fn attributes_packet(&self) -> bytes::Bytes {
+        self.attribute_packet(&self.attribute_lists())
+    }
+
+    /// `ServerEntity.sendChanges`: the attributes that changed since the last Update Attributes
+    /// (`AttributeMap.getAttributesToSync`), all of them for the first one. The frost modifier is taken
+    /// off and put on again every tick the player is frozen (`removeFrost`, `tryAddFrost`), which marks
+    /// its attribute changed whether its value did or not.
+    pub(crate) fn attributes_changes(&mut self) -> Option<bytes::Bytes> {
+        let now = self.attribute_lists();
+        let frost = std::mem::take(&mut self.frost_marked);
+        let speed = kiln_data::builtin_id("minecraft:attribute", MOVEMENT_SPEED.name);
+        let changed: Vec<AttributeList> = now
+            .iter()
+            .filter(|n| (frost && Some(n.0) == speed) || self.attrs_sent.iter().find(|o| o.0 == n.0) != Some(n))
+            .cloned()
+            .collect();
+        self.attrs_sent = now;
+        (!changed.is_empty()).then(|| self.attribute_packet(&changed))
     }
 
     /// Remembers the equipment for attributes and resets the attack strength when the main

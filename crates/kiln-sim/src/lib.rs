@@ -563,6 +563,10 @@ struct Player {
     effects: std::collections::BTreeMap<i32, effects::Effect>,
     /// An effect attribute modifier changed: Update Attributes goes out.
     attributes_dirty: bool,
+    /// The syncable attributes as the last Update Attributes left them (empty: the next one lists them all).
+    attrs_sent: Vec<combat::AttributeList>,
+    /// The frost modifier was taken off and put on again this tick (its attribute is sent whether its value changed or not).
+    frost_marked: bool,
     /// Sounds the player made this tick, for its viewers.
     pending_sounds: Vec<Bytes>,
     /// `Level.soundSeedGenerator` stand-in for this player's sounds.
@@ -3205,6 +3209,8 @@ impl Sim {
             p.tick_count = 0;
         }
         p.attributes_dirty = true;
+        // (The new client knows none of them: all are listed.)
+        p.attrs_sent.clear();
         // A fresh `ServerPlayer` (or the client's new `LocalPlayer`) has the default entity data:
         // the first pack sends everything that differs from it.
         if !keep_all {
@@ -3691,6 +3697,8 @@ impl Sim {
             tick_count: 0,
             effects: joining.effects,
             attributes_dirty: true,
+            attrs_sent: Vec::new(),
+            frost_marked: false,
             pending_sounds: Vec::new(),
             sound_seed: kiln_javamath::random::LegacyRandom::new(!(j.uuid.as_u64_pair().0 as i64)),
             health: joining.health,

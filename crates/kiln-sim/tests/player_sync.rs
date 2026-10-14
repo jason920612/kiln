@@ -611,8 +611,9 @@ fn an_instant_effect_shows_its_particle_for_a_tick() {
     assert_eq!((ticks[0].1.clone(), ticks[1].1.clone()), (ticks[0].0.clone(), ticks[1].0.clone()));
 }
 
-/// `PowderSnowBlock.entityInside`: a player that moves in powder snow throws a snowflake about every other tick
-/// (`nextBoolean`), seen by every player within 32 blocks and by the player itself.
+/// `PowderSnowBlock.entityInside`: a player that moves in powder snow throws snowflakes (`nextBoolean` for each pass of the
+/// movements the tick records through the block: about 1.4 a tick, as many as a vanilla server sent in the same walk), seen by
+/// every player within 32 blocks and by the player itself.
 #[test]
 fn walking_in_powder_snow_throws_snowflakes() {
     let mut w = World::new();
@@ -643,10 +644,46 @@ fn walking_in_powder_snow_throws_snowflakes() {
     }
     let (seen, own) = (flakes(&w.watcher_log()), flakes(&w.actor_log()));
     assert_eq!(seen, own, "the player sees its own snowflakes");
-    assert!((20..=60).contains(&seen), "about half of 80 ticks: {seen}");
+    assert!((90..=140).contains(&seen), "a vanilla server sent 101 in 80 ticks of the same walk: {seen}");
     // Standing still: none.
     w.ticks(2);
     w.watcher_log();
     w.ticks(40);
     assert_eq!(flakes(&w.watcher_log()), 0);
+}
+
+/// `removeFrost` and `tryAddFrost` mark the movement speed attribute changed every tick a player is frozen, and the
+/// Update Attributes lists only the attributes that changed (one here, with the frost modifier), to the viewers and the player.
+#[test]
+fn a_frozen_player_gets_the_speed_attribute_every_tick() {
+    let mut w = World::new();
+    let p = w.actor.pos;
+    let (x, y, z) = (p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32);
+    w.run(&format!("fill {} {} {} {} {} {} minecraft:powder_snow", x - 2, y, z - 2, x + 2, y + 1, z + 2));
+    w.ticks(3);
+    w.watcher_log();
+    w.actor_log();
+    // The number of attributes in each Update Attributes for the actor.
+    let listed = |log: &[Bytes]| -> Vec<i32> {
+        log.iter()
+            .filter(|p| packet_id(p) == id::UPDATE_ATTRIBUTES)
+            .filter_map(|p| {
+                let mut r = Reader::new(p);
+                r.varint().unwrap();
+                (r.varint().unwrap() == w.entity()).then(|| r.varint().unwrap())
+            })
+            .collect()
+    };
+    w.ticks(10);
+    for (who, log) in [("watcher", w.watcher_log()), ("player", w.actor_log())] {
+        assert_eq!(listed(&log), [1; 10], "{who}: one attribute, every tick");
+    }
+    // Out of the snow: the thaw takes the modifier off (one more packet) and then it is quiet.
+    w.run(&format!("fill {} {} {} {} {} {} minecraft:air", x - 2, y, z - 2, x + 2, y + 1, z + 2));
+    w.ticks(120);
+    let log = w.watcher_log();
+    let n = listed(&log);
+    assert!(n.iter().all(|c| *c == 1), "{n:?}");
+    w.ticks(20);
+    assert!(listed(&w.watcher_log()).is_empty(), "nothing once the frost is gone");
 }
