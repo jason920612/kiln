@@ -680,6 +680,9 @@ public class ClientCtl {
                 d = "block_event " + BuiltInRegistries.BLOCK.getKey(p.getBlock()).getPath() + " " + p.getB0() + " " + p.getB1();
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSwingAnimationPacket || msg instanceof net.minecraft.network.protocol.game.ClientboundAnimatePacket) {
                 d = msg.getClass().getSimpleName().replace("Clientbound", "") + " " + msg.toString();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundExplodePacket p) {
+                String str = p.toString().replaceAll("-?[0-9]+[.][0-9]+", "#");
+                d = "explode " + str.substring(0, Math.min(str.length(), 300));
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundGameEventPacket p) {
                 Field idf = p.getEvent().getClass().getDeclaredField("id");
                 idf.setAccessible(true);

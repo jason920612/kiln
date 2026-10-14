@@ -384,6 +384,10 @@ fn on_hit(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
         Throwable::ExperienceBottle => {
             // `ThrownExperienceBottle.onHit`: the splash and 3 to 11 experience.
             level.emit(Event::LevelEvent { event: 2002, pos: e.block_position(), data: -13083194 });
+            if !e.silent {
+                // `SOUND_SPELL_POTION_SPLASH`.
+                level.emit(Event::LevelEvent { event: 1053, pos: e.block_position(), data: 0 });
+            }
             let amount = 3 + e.random.next_int_bounded(5) + e.random.next_int_bounded(5);
             crate::mob::award_experience(level, e.position(), amount);
         }

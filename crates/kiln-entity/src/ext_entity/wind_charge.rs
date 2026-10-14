@@ -96,11 +96,15 @@ pub fn burst(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3, pla
     // level random as long as vanilla's), except those of the tag (3600000).
     let resist = |state: u16, _res: f32| if crate::mob::kinds::wolf::block_in_tag(state, "minecraft:blocks_wind_charge_explosions") { 3600000.0 } else { -0.3 };
     let wrapped = |state: u16, _above: u16, res: f32| resist(state, res);
-    let rules = crate::explosion::BlockRules { resistance: Some(&wrapped), knockback: player.then_some(1.22), ..Default::default() };
+    // (The burst passes its own gusts and sound to `ServerLevel.explode`: the explosion packet carries them.)
+    let fx = crate::level::ExplosionFx {
+        small_particle: "minecraft:gust_emitter_small",
+        large_particle: "minecraft:gust_emitter_large",
+        sound: if player { "minecraft:entity.wind_charge.wind_burst" } else { "minecraft:entity.breeze.wind_burst" },
+    };
+    let rules = crate::explosion::BlockRules { resistance: Some(&wrapped), knockback: player.then_some(1.22), fx: Some(fx), ..Default::default() };
     let radius = if player { 1.2 } else { 3.0 };
     crate::explosion::explode_ruled(level, source, center, radius, false, crate::explosion::Interaction::TriggerBlock, rules, false);
-    let sound = if player { "minecraft:entity.wind_charge.wind_burst" } else { "minecraft:entity.breeze.wind_burst" };
-    level.emit(Event::Sound { pos: center, sound, source: "hostile", volume: 1.0, pitch: 1.0 });
 }
 
 impl WindCharge {
