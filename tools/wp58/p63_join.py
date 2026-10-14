@@ -10,6 +10,10 @@ from p63_meta import spylog, keep, NOISE
 port = "25591" if os.environ.get("TARGET") == "V" else "25585"
 o = C(26000)
 o.cmd("spy on")
+sv("gamemode survival KilnTest", show=False)
+sv("tp KilnTest 0 200 0", show=False)
+sv("tp Obs 3 200 3", show=False)
+time.sleep(3)
 subprocess.run(["bash", str(HOME / "wt" / "wp63-wp61-gaps" / "tools" / "wp58" / "vm_client63.sh"), "stop"])
 time.sleep(6)
 spylog(o)
