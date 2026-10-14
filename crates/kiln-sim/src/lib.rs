@@ -3214,12 +3214,15 @@ impl Sim {
         p.send(packets::set_chunk_cache_center(p.center.x, p.center.z));
         p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
         p.send(difficulty);
+        p.send(packets::player::set_experience(p.xp_progress, p.xp_level, p.xp_total));
         // `PlayerList.respawn` tells the new player its operator level and commands again.
         p.permission_sent = Some(p.permission);
         p.send(packets::entity::entity_event(p.entity_id, 24 + p.permission.min(4)));
         p.send(tree);
         p.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         p.send(time);
+        // (`sendLevelInfo` sends the spawn position again after the time.)
+        p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
         for w in weather {
             p.send(w);
         }
