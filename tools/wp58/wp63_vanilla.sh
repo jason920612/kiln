@@ -23,6 +23,7 @@ sync-chunk-writes=false
 enable-command-block=true
 generate-structures=true
 pause-when-empty-seconds=-1
+white-list=false
 level-seed=${VSEED:-63}
 PROP
 [ -p console ] || mkfifo console
