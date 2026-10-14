@@ -222,24 +222,18 @@ mod powered_sounds {
         let lower = state::set(state::set(d::IRON_DOOR, "half", "lower"), "facing", "east");
         set_block(&mut level, door, lower, flags::ALL);
         set_block(&mut level, door.above(), state::set(state::set(d::IRON_DOOR, "half", "upper"), "facing", "east"), flags::ALL);
-        set_block(&mut level, door.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
         level.effects.clear();
-        let s = level.block(door);
-        door_neighbor_changed(&mut level, s, door, BlockId::of(d::REDSTONE_BLOCK));
-        assert_eq!(sounds(&level), ["minecraft:block.iron_door.open"]);
+        set_block(&mut level, door.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
+        assert_eq!(sounds(&level), ["minecraft:block.iron_door.open"], "the door's neighbour changed");
         let gate = BlockPos::new(5, y, 5);
         set_block(&mut level, gate, d::OAK_FENCE_GATE, flags::ALL);
-        set_block(&mut level, gate.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
         level.effects.clear();
-        let s = level.block(gate);
-        crate::behaviour::misc::powered_open_neighbor_changed(&mut level, s, gate);
+        set_block(&mut level, gate.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
         assert_eq!(sounds(&level), ["minecraft:block.fence_gate.open"]);
         let trapdoor = BlockPos::new(8, y, 8);
         set_block(&mut level, trapdoor, d::IRON_TRAPDOOR, flags::ALL);
-        set_block(&mut level, trapdoor.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
         level.effects.clear();
-        let s = level.block(trapdoor);
-        crate::behaviour::misc::powered_open_neighbor_changed(&mut level, s, trapdoor);
+        set_block(&mut level, trapdoor.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
         assert_eq!(sounds(&level), ["minecraft:block.iron_trapdoor.open"]);
     }
 }
