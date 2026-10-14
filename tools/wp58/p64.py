@@ -24,7 +24,7 @@ def spylog_ts(c):
     return json.loads(c.cmd("spylog ts clear"))
 
 
-def tidy(lines, drop=DROP, sounds=False):
+def tidy(lines, drop=DROP, sounds=False, drop_re=None):
     """[(ms, text)] -> grouped by tick: ["[+t ms] text", ...] with the position hashes removed."""
     out = []
     last = None
@@ -36,6 +36,8 @@ def tidy(lines, drop=DROP, sounds=False):
         if name in drop:
             continue
         if not sounds and (name in ("sound", "sound_entity") or text.startswith("Sound")):
+            continue
+        if drop_re and re.search(drop_re, text):
             continue
         out.append((ms, text))
     res = []
@@ -57,7 +59,7 @@ class Both:
         self.a.cmd("spy on")
         self.o.cmd("spy on")
 
-    def event(self, name, action, wait=1.5, sounds=False, need_alive=True):
+    def event(self, name, action, wait=1.5, sounds=False, need_alive=True, drop_re=None):
         if need_alive and alive(self.a) <= 0:
             raise SystemExit("the actor is dead before " + name)
         spylog_ts(self.a)
@@ -65,7 +67,7 @@ class Both:
         action()
         time.sleep(wait)
         o, s = spylog_ts(self.o), spylog_ts(self.a)
-        o, s = tidy(o, sounds=sounds), tidy(s, sounds=sounds)
+        o, s = tidy(o, sounds=sounds, drop_re=drop_re), tidy(s, sounds=sounds, drop_re=drop_re)
         print(f"== {name}\n  obs :", *o, sep="\n    ")
         print("  self:", *s, sep="\n    ", flush=True)
         return {"obs": o, "self": s}
@@ -154,8 +156,9 @@ def powder(b):
         b.a.key("w", "down")
         time.sleep(3.0)
         b.a.key("w", "up")
-    ev["walk_in_powder_snow"] = b.event("walking 3 s in powder snow", walk, wait=1.0)
-    ev["stand_in_powder_snow"] = b.event("standing 2 s in powder snow", lambda: time.sleep(2.0), wait=0.5)
+    quiet = r"^entity_data player:\w+ [17]=-?\d+$|^SetHealth"
+    ev["walk_in_powder_snow"] = b.event("walking 3 s in powder snow", walk, wait=1.0, drop_re=quiet)
+    ev["stand_in_powder_snow"] = b.event("standing 2 s in powder snow", lambda: time.sleep(2.0), wait=0.5, drop_re=quiet)
     fill(-2, 200, -2, 2, 201, 2, "minecraft:air")
     return ev
 
