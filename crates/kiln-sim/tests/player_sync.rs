@@ -679,6 +679,13 @@ fn a_frozen_player_gets_the_speed_attribute_every_tick() {
     for (who, log) in [("watcher", w.watcher_log()), ("player", w.actor_log())] {
         assert_eq!(listed(&log), [1; 10], "{who}: one attribute, every tick");
     }
+    // Fully frozen and standing still nothing else changes: the attribute goes out in the update ticks only (every second one),
+    // as a vanilla server did (25 packets a second for two frozen players, one every 100 ms each).
+    w.ticks(150);
+    w.watcher_log();
+    w.ticks(40);
+    let n = listed(&w.watcher_log()).len();
+    assert!((19..=22).contains(&n), "every second tick: {n} in 40");
     // Out of the snow: the thaw takes the modifier off (one more packet) and then it is quiet.
     w.run(&format!("fill {} {} {} {} {} {} minecraft:air", x - 2, y, z - 2, x + 2, y + 1, z + 2));
     w.ticks(120);

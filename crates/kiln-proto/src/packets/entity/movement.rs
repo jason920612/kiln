@@ -208,6 +208,13 @@ impl MovementTracker {
         })
     }
 
+    /// Whether the next `tick` is an update tick (`ServerEntity.sendChanges` runs its main block: the
+    /// interval is up or `Entity.needsSync` is set), which is also when what rides with the entity data
+    /// (the attributes) goes out unless the entity data itself changed.
+    pub fn due(&self) -> bool {
+        self.dirty || self.tick_count % self.update_interval == 0
+    }
+
     /// Movement packets for this tick (possibly none), in send order.
     pub fn tick(&mut self, s: &MoveState) -> Vec<Bytes> {
         let mut out = Vec::new();

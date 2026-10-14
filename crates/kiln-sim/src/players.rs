@@ -513,6 +513,7 @@ pub(crate) fn broadcast_data(players: &mut [&mut Player], ctx: &Ctx<'_>) {
     let encoded = ctx.map_mut_with(DATA_WINDOW, players, |_, t| {
         let mut e = Encoded { to_viewers: Vec::new(), to_self: Vec::new(), viewers: Vec::new() };
         if let Some(d) = t.pack_dirty() {
+            t.data_packed = true;
             let pkt = entity::set_entity_data(t.entity_id, &d);
             e.to_self.push(pkt.clone());
             e.to_viewers.push(pkt);
@@ -585,6 +586,9 @@ struct Encoded {
 fn encode_movement(target: &mut Player) -> Encoded {
     let mut to_self = Vec::new();
     let state = target.move_state();
+    // `ServerEntity.sendChanges`: the attributes go out with the entity data in the update ticks (every second one
+    // for a player) and in the ticks the entity data itself changed.
+    let attributes_due = target.tracker.due() || std::mem::take(&mut target.data_packed);
     let mut packets = target.tracker.tick(&state);
     packets.extend(target.equipment_changes());
     if std::mem::take(&mut target.woke_up) {
@@ -605,7 +609,7 @@ fn encode_movement(target: &mut Player) -> Encoded {
             target.section = None;
         }
     }
-    if std::mem::take(&mut target.attributes_dirty)
+    if attributes_due && std::mem::take(&mut target.attributes_dirty)
         && let Some(pkt) = target.attributes_changes()
     {
         to_self.push(pkt.clone());
