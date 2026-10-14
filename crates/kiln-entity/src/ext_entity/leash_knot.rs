@@ -9,8 +9,7 @@ use crate::leash;
 use crate::level::{DamageKind, EntityLevel, Event};
 use crate::math::{BlockPos, Vec3};
 use crate::mob::interact::{HeldChange, Interactor, Outcome};
-use crate::persist::{Input, Output};
-use kiln_proto::nbt::Tag;
+use crate::persist::Input;
 
 #[derive(Clone, Debug)]
 pub struct LeashKnot {
