@@ -250,3 +250,26 @@ impl EntityExt for WindCharge {
         self.owner.unwrap_or(0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::MemoryLevel;
+
+    /// wp61 (a real client next to a vanilla server): a wind burst is an explosion that passes its own
+    /// gusts and sound to the explosion packet, not a plain explosion with a second sound beside it.
+    #[test]
+    fn a_wind_burst_carries_its_own_gusts_and_sound() {
+        for (player, sound, radius) in [(true, "minecraft:entity.wind_charge.wind_burst", 1.2f32), (false, "minecraft:entity.breeze.wind_burst", 3.0)] {
+            let mut level = MemoryLevel::new();
+            burst(&mut level, None, Vec3::new(0.5, 10.0, 0.5), player);
+            let blasts: Vec<_> = level.events.iter().filter_map(|e| if let Event::Explosion { power, fx, .. } = e { Some((*power, *fx)) } else { None }).collect();
+            assert_eq!(blasts.len(), 1, "{:?}", level.events);
+            let (power, fx) = blasts[0];
+            assert_eq!(power, radius);
+            let fx = fx.expect("the burst's own gusts and sound");
+            assert_eq!((fx.small_particle, fx.large_particle, fx.sound), ("minecraft:gust_emitter_small", "minecraft:gust_emitter_large", sound));
+            assert!(!level.events.iter().any(|e| matches!(e, Event::Sound { .. })), "no sound beside the explosion packet: {:?}", level.events);
+        }
+    }
+}
