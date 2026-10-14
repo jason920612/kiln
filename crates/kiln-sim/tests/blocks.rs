@@ -236,3 +236,22 @@ fn digging_sends_a_level_event_every_tick() {
     w.ticks(5);
     assert_eq!(events(&w), settled, "no more once the dig is aborted");
 }
+
+/// wp61 (a real client next to a vanilla server): flint and steel on a TNT block primes it on the
+/// spot (`TntBlock.useItemOn`): no fire is set beside it and the tool wears by one.
+#[test]
+fn flint_and_steel_primes_tnt_without_setting_fire() {
+    let mut w = World::new("creative");
+    w.hold("minecraft:flint_and_steel");
+    let tnt = w.at(2, 1, 0);
+    w.run(&format!("setblock {} {} {} minecraft:tnt", tnt[0], tnt[1], tnt[2]));
+    w.run("gamemode survival Builder");
+    w.use_on_top(w.at(2, 1, 0), 1);
+    w.ticks(2);
+    assert!(state::is(w.block(tnt), d::AIR), "the TNT block is gone");
+    assert!(w.sim.entities().iter().any(|(kind, _)| *kind == "minecraft:tnt"), "a primed TNT: {:?}", w.sim.entities());
+    for (dx, dy, dz) in [(0, 1, 0), (1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1)] {
+        let at = [tnt[0] + dx, tnt[1] + dy, tnt[2] + dz];
+        assert!(!state::is(w.block(at), d::FIRE), "no fire at {at:?}");
+    }
+}
