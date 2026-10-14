@@ -1251,7 +1251,19 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             const DROP_ALL_ITEMS: i32 = 4;
             const DROP_ITEM: i32 = 5;
             const RELEASE_USE_ITEM: i32 = 6;
+            const SWAP_ITEM_WITH_OFFHAND: i32 = 7;
             match action {
+                // `handlePlayerAction`: the F key trades the hands' stacks (not for spectators) and stops using the item.
+                SWAP_ITEM_WITH_OFFHAND => {
+                    if p.game_mode != 3 {
+                        let (main, off) = (p.in_hand(false).clone(), p.in_hand(true).clone());
+                        p.set_in_hand(true, main);
+                        p.set_in_hand(false, off);
+                        p.stop_using();
+                        p.with_menu(&env.rules, fx.spawns, |menu, _, e| menu.broadcast_changes(e));
+                    }
+                    return;
+                }
                 RELEASE_USE_ITEM => {
                     let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                     crate::ranged::release_using(p, &mut level, fx.spawns);
@@ -1264,7 +1276,7 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                     }
                     return;
                 }
-                digging::START_DESTROY_BLOCK | digging::STOP_DESTROY_BLOCK | digging::ABORT_DESTROY_BLOCK => {
+                digging::START_DESTROY_BLOCK | digging::CHANGE_DESTROY_DIRECTION | digging::STOP_DESTROY_BLOCK | digging::ABORT_DESTROY_BLOCK => {
                     let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                     // `Level.mayInteract`: nothing outside the world border breaks.
                     if env.border.contains(pos[0] as f64, pos[2] as f64) {

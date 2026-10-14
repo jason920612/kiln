@@ -18,6 +18,7 @@ use kiln_proto::packets;
 
 /// `ServerboundPlayerActionPacket.Action` ordinals (26.3).
 pub(crate) const START_DESTROY_BLOCK: i32 = 0;
+pub(crate) const CHANGE_DESTROY_DIRECTION: i32 = 1;
 pub(crate) const ABORT_DESTROY_BLOCK: i32 = 2;
 pub(crate) const STOP_DESTROY_BLOCK: i32 = 3;
 
@@ -190,6 +191,14 @@ pub(crate) fn player_action(p: &mut Player, level: &mut RegionLevel, action: i32
                 // agrees.
                 p.digging = None;
                 p.delayed_destroy = Some(dig);
+            }
+        }
+        // The face being dug changed (26.x): the dig events carry the new one.
+        CHANGE_DESTROY_DIRECTION => {
+            if let Some(dig) = p.digging.as_mut()
+                && dig.pos == pos
+            {
+                dig.face = face as i32;
             }
         }
         ABORT_DESTROY_BLOCK => {
