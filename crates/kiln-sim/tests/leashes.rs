@@ -189,7 +189,7 @@ fn a_lead_on_a_fence_makes_a_knot_and_the_mob_stays_led() {
     let cow_nbt = w.nbt("minecraft:cow");
     assert_eq!(cow_nbt.get("leash"), Some(&Tag::IntArray(vec![fx, fy, fz])), "led by the knot on the fence");
     let knot = w.nbt("minecraft:leash_knot");
-    assert_eq!(knot.get("block_pos"), Some(&Tag::IntArray(vec![fx, fy, fz])));
+    assert_eq!(knot.get("block_pos"), None, "a vanilla knot saves nothing of its own (no `block_pos`)");
     // Taking the lead off the knot (a click on the cow with an empty hand is the player's: the
     // lead goes to the player; the knot goes away with its last lead).
     w.run("clear User");

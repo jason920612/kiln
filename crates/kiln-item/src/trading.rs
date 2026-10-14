@@ -173,14 +173,29 @@ impl MerchantOffer {
         if let Some(b) = &self.cost_b {
             m.put("buyB", b.to_value());
         }
-        m.put("sell", self.result.to_value())
-            .put("uses", Value::Int(self.uses))
-            .put("maxUses", Value::Int(self.max_uses))
-            .put("rewardExp", Value::Bool(self.reward_exp))
-            .put("specialPrice", Value::Int(self.special_price_diff))
-            .put("demand", Value::Int(self.demand))
-            .put("priceMultiplier", Value::Float(self.price_multiplier))
-            .put("xp", Value::Int(self.xp));
+        m.put("sell", self.result.to_value());
+        // (`optionalFieldOf(name, default)`: a field at its default is not written.)
+        if self.uses != 0 {
+            m.put("uses", Value::Int(self.uses));
+        }
+        if self.max_uses != 4 {
+            m.put("maxUses", Value::Int(self.max_uses));
+        }
+        if !self.reward_exp {
+            m.put("rewardExp", Value::Bool(false));
+        }
+        if self.special_price_diff != 0 {
+            m.put("specialPrice", Value::Int(self.special_price_diff));
+        }
+        if self.demand != 0 {
+            m.put("demand", Value::Int(self.demand));
+        }
+        if self.price_multiplier != 0.0 {
+            m.put("priceMultiplier", Value::Float(self.price_multiplier));
+        }
+        if self.xp != 1 {
+            m.put("xp", Value::Int(self.xp));
+        }
         m.build()
     }
 

@@ -229,15 +229,7 @@ pub fn notify_trade(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
     let Some(offer) = st.offers.as_mut().and_then(|o| o.get_mut(index)) else { return Traded { leveled_up: false } };
     offer.increase_uses();
     let (offer_xp, reward) = (offer.xp, offer.reward_exp);
-    // `onReputationEvent(TRADE, tradingPlayer)`.
-    if let Some(u) = st.trading_player.and_then(|id| level.player(id)).map(|p| p.uuid) {
-        st.gossips.on_event(crate::mob::gossip::ReputationEvent::Trade, u);
-        if st.trading_player.is_some() {
-            let hero = st.trading_player.and_then(|id| level.player(id)).and_then(|p| p.hero_of_the_village);
-            update_special_prices(st, u, hero);
-        }
-    }
-    // `rewardTradeXp`.
+    // `rewardTradeXp` (the TRADE reputation event waits for the next AI step: once per tick).
     let mut orb = 3 + e.random.next_int_bounded(4);
     st.xp += offer_xp;
     st.last_traded_player = st.trading_player;
@@ -251,6 +243,10 @@ pub fn notify_trade(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
         orb += 5;
     }
     m.ambient_sound_time = -interval;
+    if leveled_up && let Some(fx) = crate::effect::Effect::named("minecraft:regeneration", 200, 0) {
+        // `rewardTradeXp`: a villager that levels up heals for ten seconds.
+        mob::effects::add(e, m, level, fx, None);
+    }
     if reward {
         let p = e.position();
         mob::award_experience(level, Vec3::new(p.x, p.y + 0.5, p.z), orb);
@@ -286,8 +282,8 @@ pub fn with_villager<R>(e: &mut Entity, f: impl FnOnce(&mut Entity, &mut MobData
 /// `Villager.setTradingPlayer(null)` (the merchant screen closed).
 pub fn stop_trading(m: &mut MobData) {
     if let Some(st) = state_mut(m) {
+        // (Vanilla keeps the special prices until the next player opens the trade.)
         st.trading_player = None;
-        reset_special_prices(st);
     }
 }
 
@@ -1698,9 +1694,17 @@ impl Kind for Villager {
     /// the end of a trade without offers.
     fn custom_server_ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         brain::tick_brain(e, m, level);
-        if let Some(st) = state_mut(m)
-            && st.last_traded_player.take().is_some()
-        {
+        if let Some(player) = state_mut(m).and_then(|st| st.last_traded_player.take()) {
+            // `onReputationEvent(TRADE, lastTradedPlayer)`: one gossip however many trades the
+            // tick held; the trading player's prices follow.
+            if let Some((uuid, hero)) = level.player(player).map(|p| (p.uuid, p.hero_of_the_village))
+                && let Some(st) = state_mut(m)
+            {
+                st.gossips.on_event(crate::mob::gossip::ReputationEvent::Trade, uuid);
+                if st.trading_player == Some(player) {
+                    update_special_prices(st, uuid, hero);
+                }
+            }
             level.emit(Event::EntityEvent { entity: e.id, event: 14 });
         }
         // The raid check draws even outside raids.
