@@ -142,7 +142,7 @@ fn mob_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, wh
         // `Creeper.mobInteract`: `#creeper_igniters` (flint and steel, a fire charge) light the fuse.
         MobKind::Creeper if is(stack, "minecraft:flint_and_steel") || is(stack, "minecraft:fire_charge") => {
             let fire_charge = is(stack, "minecraft:fire_charge");
-            let pitch = e.random.next_float() * 0.4 + 0.8;
+            let pitch = kiln_javamath::random::RandomSource::next_float(&mut e.random) * 0.4 + 0.8;
             let sound = if fire_charge { "minecraft:item.firecharge.use" } else { "minecraft:item.flintandsteel.use" };
             level.emit(Event::Sound { pos: e.position(), sound, source: "hostile", volume: 1.0, pitch });
             if let Species::Creeper { ignited, .. } = &mut m.species {
