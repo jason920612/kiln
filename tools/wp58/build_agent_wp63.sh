@@ -1,7 +1,7 @@
 #!/bin/bash
 # On the VM: compile tools/wp58/ClientCtl.java against ~/mc-client into ~/wp63/clientctl.jar
 set -e
-SRC=${1:-$HOME/wt/wp63-wp63-gaps/tools/wp58/ClientCtl.java}
+SRC=${1:-$HOME/wt/wp63-wp61-gaps/tools/wp58/ClientCtl.java}
 OUT=$HOME/wp63/agent; rm -rf $OUT; mkdir -p $OUT
 javac -proc:none -d $OUT -cp "$(cat $HOME/mc-client/classpath.txt)" $SRC
 echo "Premain-Class: wp58.ClientCtl" > $OUT/MANIFEST.MF
