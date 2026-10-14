@@ -291,6 +291,30 @@ mod tests {
         assert_eq!(offers_from_nbt(&tag), vec![o]);
     }
 
+    /// `MerchantOffer.CODEC` writes `optionalFieldOf` fields only when they differ from their
+    /// defaults (`data get entity` on a vanilla villager shows no `uses: 0`, `demand: 0`,
+    /// `specialPrice: 0` or `rewardExp: 1b`; wp61 compared them side by side).
+    #[test]
+    fn offers_leave_out_fields_at_their_defaults() {
+        let mut o = MerchantOffer::new(emerald(3), None, ItemStack::of("minecraft:bread", 6).unwrap(), 12, 1, 0.05);
+        let keys = |o: &MerchantOffer| -> Vec<String> { o.to_value().as_map().unwrap().0.iter().filter_map(|(k, _)| if let Value::String(s) = k { Some(s.clone()) } else { None }).collect() };
+        let mut fresh = keys(&o);
+        fresh.sort();
+        assert_eq!(fresh, ["buy", "maxUses", "priceMultiplier", "sell"], "xp 1 is the default too");
+        o.uses = 2;
+        o.demand = -1;
+        o.special_price_diff = -2;
+        o.xp = 5;
+        o.reward_exp = false;
+        let mut used = keys(&o);
+        used.sort();
+        assert_eq!(used, ["buy", "demand", "maxUses", "priceMultiplier", "rewardExp", "sell", "specialPrice", "uses", "xp"]);
+        // And both read back the same.
+        for o in [MerchantOffer::new(emerald(3), None, ItemStack::of("minecraft:bread", 6).unwrap(), 4, 1, 0.0), o] {
+            assert_eq!(offers_from_nbt(&offers_to_nbt(std::slice::from_ref(&o))), vec![o]);
+        }
+    }
+
     #[test]
     fn hint_only_tries_that_offer() {
         let wheat = registry::ITEM.id("minecraft:wheat").unwrap();

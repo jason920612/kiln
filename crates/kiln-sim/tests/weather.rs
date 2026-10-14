@@ -236,3 +236,23 @@ fn fire_spreads_burns_and_respects_the_radius_rule() {
     w.ticks(1200);
     assert!(state::is(w.sim.block_at(n[0], n[1] + 1, n[2]).unwrap(), d::FIRE), "fire on netherrack stays");
 }
+
+/// wp61 (real client vs the vanilla server): the saved respawn config of a bed holds the
+/// player's yaw and pitch at the click and no `forced` (it is an `optionalFieldOf` that is false).
+#[test]
+fn a_beds_saved_respawn_config_has_the_players_pitch_and_no_forced() {
+    let mut w = World::new("survival");
+    let head = w.bed(w.at(-3, 1, 2));
+    w.run("time set 18000");
+    w.ticks(1);
+    w.click(head);
+    let nbt = w.sim.saved_player_nbt(1).expect("saved player data");
+    let respawn = nbt.get("respawn").expect("a respawn config").clone();
+    assert_eq!(respawn.get("pos"), Some(&kiln_proto::nbt::Tag::IntArray(head.to_vec())));
+    assert!(respawn.get("yaw").is_some() && respawn.get("pitch").is_some(), "{respawn:?}");
+    assert_eq!(respawn.get("forced"), None, "{respawn:?}");
+    // `/spawnpoint` is forced.
+    w.run("spawnpoint Sleeper 5 70 5");
+    let respawn = w.sim.saved_player_nbt(1).unwrap().get("respawn").unwrap().clone();
+    assert_eq!(respawn.get("forced"), Some(&kiln_proto::nbt::Tag::Byte(1)), "{respawn:?}");
+}

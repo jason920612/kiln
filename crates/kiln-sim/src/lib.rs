@@ -1975,6 +1975,11 @@ impl Sim {
         self.players.get(&conn).map(|p| (p.respawn, DIMENSIONS[p.respawn_dim].0))
     }
 
+    /// What the player's data file would hold now (`ServerPlayer.saveWithoutId`).
+    pub fn saved_player_nbt(&self, conn: ConnId) -> Option<kiln_proto::nbt::Tag> {
+        self.players.get(&conn).map(|p| self.player_nbt(p))
+    }
+
     pub fn game_time(&self) -> i64 {
         self.game_time
     }
