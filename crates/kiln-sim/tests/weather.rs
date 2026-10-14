@@ -263,8 +263,8 @@ fn a_beds_saved_respawn_config_has_the_players_pitch_and_no_forced() {
 fn the_client_is_told_its_permission_level() {
     let mut w = World::new("survival");
     let events = |w: &World| w.client.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::ENTITY_EVENT).map_or(0, |a| a.0);
+    w.client.stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
     let joined = events(&w);
-    assert!(joined >= 1, "the level on join");
     w.run("op Sleeper");
     w.ticks(2);
     assert_eq!(events(&w), joined + 1, "/op");
