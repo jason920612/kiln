@@ -79,6 +79,7 @@ def setup(b, mode="survival"):
     """Both players on the platform, actor in survival with full health."""
     if T == "V":
         sv("op KilnTest", show=False)
+    alive(b.a)
     sv("gamerule spawn_mobs false", show=False)
     sv("difficulty normal", show=False)
     sv("kill @e[type=!player]", show=False)
@@ -177,27 +178,39 @@ def sneak(b):
 def instant(b):
     ev = {}
     sv("kill @e[type=!player]", show=False)
-    ev["heal_cmd"] = b.event("/effect give instant_health", lambda: (sv("damage KilnTest 6 minecraft:generic", show=False), time.sleep(0.5), sv("effect give KilnTest minecraft:instant_health 1 0", show=False)), wait=2.0, sounds=True)
+
+    def reset(hurt=0):
+        """The actor on its spot with full health (and hurt by `hurt`), no effects, nothing in the way."""
+        alive(b.a)
+        sv("kill @e[type=!player]", show=False)
+        sv("effect clear KilnTest", show=False)
+        sv("tp KilnTest 0.5 200 0.5", show=False)
+        sv("effect give KilnTest minecraft:instant_health 1 5", show=False)
+        time.sleep(1.5)
+        if hurt:
+            sv(f"damage KilnTest {hurt} minecraft:generic", show=False)
+            time.sleep(0.6)
+
+    reset(8)
+    ev["heal_cmd"] = b.event("/effect give instant_health", lambda: sv("effect give KilnTest minecraft:instant_health 1 0", show=False), wait=2.0, sounds=True)
+    reset()
     ev["harm_cmd"] = b.event("/effect give instant_damage", lambda: sv("effect give KilnTest minecraft:instant_damage 1 0", show=False), wait=2.0, sounds=True)
+    reset()
     ev["both"] = b.event("/effect give instant_health + speed", lambda: (sv("effect give KilnTest minecraft:instant_health 1 0", show=False), sv("effect give KilnTest minecraft:speed 5 0", show=False)), wait=2.0)
-    sv("effect clear KilnTest", show=False)
-    sv("effect give KilnTest minecraft:instant_health 1 5", show=False)
-    time.sleep(1.0)
-    splash = '{Item:{id:"minecraft:splash_potion",count:1,components:{"minecraft:potion_contents":{potion:"minecraft:healing"}}},Motion:[0.0,-1.0,0.0]}'
-    ev["splash_heal"] = b.event("splash potion of healing on the actor", lambda: (sv("damage KilnTest 6 minecraft:generic", show=False), time.sleep(0.4), sv(f"summon minecraft:splash_potion 0.0 201 0.0 {splash}", show=False)), wait=2.0, sounds=True)
-    splash_h = '{Item:{id:"minecraft:splash_potion",count:1,components:{"minecraft:potion_contents":{potion:"minecraft:harming"}}},Motion:[0.0,-1.0,0.0]}'
-    ev["splash_harm"] = b.event("splash potion of harming on the actor", lambda: sv(f"summon minecraft:splash_potion 0.0 201 0.0 {splash_h}", show=False), wait=2.0, sounds=True)
-    splash_s = '{Item:{id:"minecraft:splash_potion",count:1,components:{"minecraft:potion_contents":{potion:"minecraft:swiftness"}}},Motion:[0.0,-1.0,0.0]}'
-    ev["splash_speed"] = b.event("splash potion of swiftness (not instant) on the actor", lambda: sv(f"summon minecraft:splash_potion 0.0 201 0.0 {splash_s}", show=False), wait=2.0, sounds=True)
-    sv("effect clear KilnTest", show=False)
+    for name, potion, hurt in (("splash_heal", "healing", 8), ("splash_harm", "harming", 0), ("splash_speed", "swiftness", 0)):
+        reset(hurt)
+        nbt = '{Item:{id:"minecraft:splash_potion",count:1,components:{"minecraft:potion_contents":{potion:"minecraft:%s"}}},Motion:[0.0,-1.0,0.0]}' % potion
+        ev[name] = b.event(f"splash potion of {potion} lands on the actor", lambda nbt=nbt: sv(f"summon minecraft:splash_potion 0.5 201 0.5 {nbt}", show=False), wait=2.5, sounds=True)
+    reset(8)
     ling = '{Item:{id:"minecraft:lingering_potion",count:1,components:{"minecraft:potion_contents":{potion:"minecraft:healing"}}},Motion:[0.0,-1.0,0.0]}'
-    ev["lingering_heal"] = b.event("lingering potion of healing lands next to the actor", lambda: (sv("damage KilnTest 6 minecraft:generic", show=False), time.sleep(0.4), sv(f"summon minecraft:lingering_potion 0.0 201 0.0 {ling}", show=False)), wait=5.0, sounds=True)
+    ev["lingering_heal"] = b.event("lingering potion of healing lands on the actor (2.5 s)", lambda: sv(f"summon minecraft:lingering_potion 0.5 201 0.5 {ling}", show=False), wait=2.5, sounds=True, drop_re=r"^entity_data area_effect_cloud 8=")
     sv("kill @e[type=minecraft:area_effect_cloud]", show=False)
-    tipped = '{Motion:[0.0,-1.5,0.0],item:{id:"minecraft:tipped_arrow",count:1,components:{"minecraft:potion_contents":{potion:"minecraft:healing"}}}}'
-    ev["tipped_heal"] = b.event("an arrow tipped with healing hits the actor", lambda: (sv("damage KilnTest 6 minecraft:generic", show=False), time.sleep(0.4), sv(f"summon minecraft:arrow 0.2 203 0.2 {tipped}", show=False)), wait=2.5, sounds=True)
-    tipped_h = '{Motion:[0.0,-1.5,0.0],item:{id:"minecraft:tipped_arrow",count:1,components:{"minecraft:potion_contents":{potion:"minecraft:harming"}}}}'
-    ev["tipped_harm"] = b.event("an arrow tipped with harming hits the actor", lambda: sv(f"summon minecraft:arrow 0.2 203 0.2 {tipped_h}", show=False), wait=2.5, sounds=True)
+    for name, potion, hurt in (("tipped_heal", "healing", 8), ("tipped_harm", "harming", 0)):
+        reset(hurt)
+        nbt = '{Motion:[0.0,-1.5,0.0],item:{id:"minecraft:tipped_arrow",count:1,components:{"minecraft:potion_contents":{potion:"minecraft:%s"}}}}' % potion
+        ev[name] = b.event(f"an arrow tipped with {potion} hits the actor", lambda nbt=nbt: sv(f"summon minecraft:arrow 0.5 203 0.5 {nbt}", show=False), wait=2.5, sounds=True)
     # drinking: the actor holds a healing potion and drinks
+    reset(8)
     sv("clear KilnTest", show=False)
     sv('give KilnTest minecraft:potion[minecraft:potion_contents={potion:"minecraft:healing"}]', show=False)
     time.sleep(0.5)
@@ -207,7 +220,7 @@ def instant(b):
         b.a.mouse("right", "down")
         time.sleep(2.2)
         b.a.mouse("right", "up")
-    ev["drink_heal"] = b.event("drinks a potion of healing", lambda: (sv("damage KilnTest 6 minecraft:generic", show=False), time.sleep(0.4), drink()), wait=1.5, sounds=True)
+    ev["drink_heal"] = b.event("drinks a potion of healing", drink, wait=1.5, sounds=True)
     return ev
 
 

@@ -822,9 +822,11 @@ impl Host for Sim {
         if p.game_mode == mode as u8 {
             return false;
         }
+        // (Creative adds the reach modifiers: the attributes are sent when the player enters or leaves it.)
+        if p.game_mode == 1 || mode == GameMode::Creative {
+            p.attributes_dirty = true;
+        }
         p.game_mode = mode as u8;
-        // (Creative adds the reach modifier.)
-        p.attributes_dirty = true;
         // Spectators are seen by spectators only (`ServerPlayer.broadcastToPlayer`): `ChunkMap.move`
         // (the client's next movement packet in vanilla) works out who sees whom again.
         p.section = None;
