@@ -1446,6 +1446,7 @@ fn use_on_block(
         kiln_data::block_logic::block_class(level.block(bp)),
         kiln_data::block_logic::BlockClass::CopperGolemStatueBlock | kiln_data::block_logic::BlockClass::WeatheringCopperGolemStatueBlock
     );
+    eprintln!("use_on_block: held {:?} sneaking {} class {:?}", held.item_name(), p.sneaking, kiln_data::block_logic::block_class(level.block(bp)));
     if !(p.sneaking && have_something) && (!held.is_empty() || statue) {
         let used = held.clone();
         if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, cursor, !main_hand, spawns) {
