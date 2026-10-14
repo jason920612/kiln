@@ -64,3 +64,13 @@
 
 `docs/wp61/`:`caravan1`(羊駝商隊)、`cured_offers`(治療後交易折扣)、`enchant15`(15 書架)、`leash_2knots`/`leash_after_restart`(拴繩結存檔重讀)、
 `map_K_0`/`map_V_0`(地圖並排)、`phantom`、`channeling`、`villager_levelup`、`feed_llama`、`cauldron`。
+
+## 最後驗證(VM,release)
+
+- 工作區測試:不帶資料包全綠(`crowd_golden` 的四個封包摘要因登入多送一個權限事件而重新錄製,狀態雜湊不變);帶 `KILN_DATAPACK=/home/test/kiln/work/generated` 全綠,
+  唯一例外是 `structure_mobs::an_ocean_monument_in_the_running_world_has_its_elder_guardians`:**間歇性失敗**(同一份程式連跑兩次,一次 2 隻、一次 3 隻長老守衛者),
+  測試用 wall-clock `sleep` 等多執行緒世界生成,區塊沒在 1200 tick 內全部載入時會少;與本分支改動無關,沒有處理。
+- `kiln-sim --test determinism`:6 個全過。
+- `kiln-entity --test mob_parity`(`work/m6-mobs2/vectors.jsonl`,先備份成 `~/wp61/vectors.jsonl.bak`,沒有新增向量):**1437 個情境全部與 vanilla 一致**(568011 個 mob 狀態)。
+- `tools/parity_suites.py --skip-workspace`:除了 `interact49-lectern`、`interact49-statue` 全過;這兩個是因為錄製用的 vanilla harness 不 tick `ServerPlayerGameMode`,
+  向量裡沒有挖掘中的 2019/2020 level event(真實客戶端觀察到 vanilla 有送);`interact_parity` 對 Kiln 的封包濾掉這兩種事件後兩個都過(14/14、22/22)。
