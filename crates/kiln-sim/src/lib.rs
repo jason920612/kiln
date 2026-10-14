@@ -592,6 +592,10 @@ struct Player {
     flying: bool,
     /// Dead until the client asks to respawn.
     dead: bool,
+    /// Ticks since the death (`LivingEntity.deathTime`); at twenty the body poofs and its viewers forget it
+    /// (`body_gone`, until the respawn).
+    death_ticks: i32,
+    body_gone: bool,
     /// Died this tick: viewers see the death animation.
     died: bool,
     /// `ServerPlayer.raidOmenPosition`: where bad omen turned into raid omen.
@@ -3151,6 +3155,8 @@ impl Sim {
         self.sleep_status[dim].dirty = true;
         p.dim = dim;
         p.dead = false;
+        p.death_ticks = 0;
+        p.body_gone = false;
         p.using = None;
         p.fall_distance = 0.0;
         p.portal = None;
@@ -3683,6 +3689,8 @@ impl Sim {
             block_edits: Vec::new(),
             flying,
             dead: joining.health <= 0.0,
+            death_ticks: 0,
+            body_gone: false,
             died: false,
             damaged: None,
             entity_events: Vec::new(),

@@ -368,6 +368,8 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
         range: f64,
         view: i32,
         moved: bool,
+        /// A dead player's body, gone after twenty ticks: nobody sees it.
+        gone: bool,
     }
     let range_cap = PLAYER.tracking_range as f64 * 16.0;
     let snaps: Vec<Snap> = players
@@ -385,6 +387,7 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
                 range: range_cap.min(p.view_distance as f64 * 16.0),
                 view: p.view_distance,
                 moved,
+                gone: p.body_gone,
             }
         })
         .collect();
@@ -399,6 +402,7 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
     let sees = |v: &Snap, t: &Snap| {
         let (dx, dz) = (v.x - t.x, v.z - t.z);
         v.conn != t.conn
+            && !t.gone
             && dx * dx + dz * dz <= v.range * v.range
             && (t.chunk.x - v.chunk.x).abs() <= v.view
             && (t.chunk.z - v.chunk.z).abs() <= v.view
@@ -503,6 +507,18 @@ fn encode_movement(target: &mut Player) -> Encoded {
         let pkt = entity::set_entity_data(target.entity_id, &d);
         to_self.push(pkt.clone());
         packets.push(pkt);
+    }
+    // `LivingEntity.tickDeath`: twenty ticks after the death the body poofs (`EntityEvent.POOF`) and is removed:
+    // its viewers forget it (tracking sees `body_gone`), the player keeps the death screen.
+    if target.dead && !target.body_gone {
+        target.death_ticks += 1;
+        if target.death_ticks >= 20 {
+            let pkt = entity::entity_event(target.entity_id, 60);
+            to_self.push(pkt.clone());
+            packets.push(pkt);
+            target.body_gone = true;
+            target.section = None;
+        }
     }
     if std::mem::take(&mut target.attributes_dirty) {
         let pkt = target.attributes_packet();

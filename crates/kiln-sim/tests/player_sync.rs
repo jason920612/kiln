@@ -330,3 +330,37 @@ fn a_dimension_change_sends_the_commands_and_the_abilities() {
     assert!(seen.contains(&id::PLAYER_POSITION));
     assert!(!seen.contains(&id::PLAYER_ABILITIES) && !seen.contains(&id::COMMANDS) && !seen.contains(&id::RESPAWN));
 }
+
+/// `LivingEntity.tickDeath`: twenty ticks after a player died its body poofs (entity event 60) and its viewers forget it;
+/// it comes back with the respawn.
+#[test]
+fn a_dead_players_body_poofs_and_goes_after_twenty_ticks() {
+    let mut w = World::new();
+    let e = w.entity();
+    let events = |log: &[Bytes]| -> Vec<u8> {
+        log.iter()
+            .filter(|p| packet_id(p) == id::ENTITY_EVENT)
+            .filter_map(|p| {
+                let mut r = Reader::new(p);
+                r.varint().ok()?;
+                (r.i32().ok()? == e).then(|| r.u8().unwrap())
+            })
+            .collect()
+    };
+    w.watcher_log();
+    w.actor_log();
+    w.run("kill Actor");
+    w.ticks(10);
+    let early = w.watcher_log();
+    assert_eq!(events(&early), [3], "the death animation, no poof yet");
+    assert!(!ids(&early).contains(&id::REMOVE_ENTITIES));
+    w.ticks(15);
+    let late = w.watcher_log();
+    assert_eq!(events(&late), [60], "the poof");
+    assert!(ids(&late).contains(&id::REMOVE_ENTITIES), "the viewer forgets the body");
+    assert_eq!(events(&w.actor_log()), [3, 60], "the player sees both");
+    // Back with the respawn.
+    w.respawn();
+    w.ticks(3);
+    assert!(ids(&w.watcher_log()).contains(&id::ADD_ENTITY));
+}
