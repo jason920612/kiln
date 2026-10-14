@@ -153,6 +153,7 @@ pub fn door_neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, sou
     let powered = has_neighbor_signal(level, pos) || has_neighbor_signal(level, pos.relative(other));
     if BlockId::of(s) != source && powered != state::get_bool(s, "powered") {
         if powered != state::get_bool(s, "open") {
+            crate::interact::play_powered_sound(level, pos, s, powered, crate::interact::Sounds::Door);
             level.effect(Effect::GameEvent { pos, event: if powered { "minecraft:block_open" } else { "minecraft:block_close" } });
         }
         let s = state::set_bool(state::set_bool(s, "powered", powered), "open", powered);
@@ -198,5 +199,44 @@ mod tests {
         assert_eq!(crate::interact::plate_click(d::LIGHT_WEIGHTED_PRESSURE_PLATE, true), "minecraft:block.metal_pressure_plate.click_on");
         assert_eq!(crate::interact::button_click_off(d::STONE_BUTTON), "minecraft:block.stone_button.click_off");
         assert_eq!(crate::interact::button_click_off(d::OAK_BUTTON), "minecraft:block.wooden_button.click_off");
+    }
+}
+
+#[cfg(test)]
+mod powered_sounds {
+    use super::*;
+    use crate::test_level::TestLevel;
+    use kiln_data::blocks::default_state as d;
+
+    fn sounds(level: &TestLevel) -> Vec<&'static str> {
+        level.effects.iter().filter_map(|e| if let Effect::Sound { sound, .. } = e { Some(*sound) } else { None }).collect()
+    }
+
+    /// wp61: doors, trapdoors and gates opened by redstone make their sound (an iron door its own).
+    #[test]
+    fn redstone_opens_doors_trapdoors_and_gates_with_a_sound() {
+        let mut level = TestLevel::flat(-64, 384, &[d::BEDROCK, d::STONE]);
+        level.load_chunks((-2, -2), (2, 2));
+        let y = -62;
+        let door = BlockPos::new(1, y, 1);
+        let lower = state::set(state::set(d::IRON_DOOR, "half", "lower"), "facing", "east");
+        set_block(&mut level, door, lower, flags::ALL);
+        set_block(&mut level, door.above(), state::set(state::set(d::IRON_DOOR, "half", "upper"), "facing", "east"), flags::ALL);
+        set_block(&mut level, door.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
+        level.effects.clear();
+        door_neighbor_changed(&mut level, level.block(door), door, BlockId::of(d::REDSTONE_BLOCK));
+        assert_eq!(sounds(&level), ["minecraft:block.iron_door.open"]);
+        let gate = BlockPos::new(5, y, 5);
+        set_block(&mut level, gate, d::OAK_FENCE_GATE, flags::ALL);
+        set_block(&mut level, gate.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
+        level.effects.clear();
+        crate::behaviour::misc::powered_open_neighbor_changed(&mut level, level.block(gate), gate);
+        assert_eq!(sounds(&level), ["minecraft:block.fence_gate.open"]);
+        let trapdoor = BlockPos::new(8, y, 8);
+        set_block(&mut level, trapdoor, d::IRON_TRAPDOOR, flags::ALL);
+        set_block(&mut level, trapdoor.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
+        level.effects.clear();
+        crate::behaviour::misc::powered_open_neighbor_changed(&mut level, level.block(trapdoor), trapdoor);
+        assert_eq!(sounds(&level), ["minecraft:block.iron_trapdoor.open"]);
     }
 }

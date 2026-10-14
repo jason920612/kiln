@@ -282,7 +282,10 @@ impl EntityExt for Firework {
         // `updateRotation`.
         rotate(e);
         if self.life == 0 {
-            e.play_sound(level, "minecraft:entity.firework_rocket.launch", 3.0, 1.0);
+            // (`FireworkRocketEntity.tick` plays it in the ambient category.)
+            if !e.silent {
+                level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.firework_rocket.launch", source: "ambient", volume: 3.0, pitch: 1.0 });
+            }
         }
         self.life += 1;
         if self.life > self.lifetime {

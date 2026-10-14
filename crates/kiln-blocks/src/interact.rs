@@ -202,11 +202,20 @@ fn cycle(s: u16, property: &str) -> u16 {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Sounds {
+pub enum Sounds {
     Door,
     Trapdoor,
     FenceGate,
     Button,
+}
+
+/// `DoorBlock` / `TrapDoorBlock` / `FenceGateBlock` `playSound(null, level, pos, open)` when redstone
+/// opens or closes them: everyone near hears it, with the level's random for the pitch.
+pub fn play_powered_sound<L: Level>(level: &mut L, pos: BlockPos, s: u16, open: bool, kind: Sounds) {
+    let pitch = level.random().next_float() * 0.1 + 0.9;
+    if let Some(sound) = set_sound(s, kind).map(|o| if open { o } else { close_sound(o) }) {
+        level.effect(Effect::Sound { pos, sound, volume: 1.0, pitch });
+    }
 }
 
 fn open_close_effects<L: Level>(level: &mut L, pos: BlockPos, s: u16, kind: Sounds) {
@@ -223,6 +232,8 @@ fn family(s: u16) -> &'static str {
     let name = BlockId::of(s).name();
     if name.contains("copper") {
         "copper"
+    } else if name.contains("iron") {
+        "iron"
     } else if name.contains("cherry") {
         "cherry_wood"
     } else if name.contains("bamboo") {
@@ -239,6 +250,8 @@ fn family(s: u16) -> &'static str {
 /// The open (or click-on) sound of the block's set type.
 fn set_sound(s: u16, kind: Sounds) -> Option<&'static str> {
     Some(match (kind, family(s)) {
+        (Sounds::Door, "iron") => "minecraft:block.iron_door.open",
+        (Sounds::Trapdoor, "iron") => "minecraft:block.iron_trapdoor.open",
         (Sounds::Door, "copper") => "minecraft:block.copper_door.open",
         (Sounds::Door, "cherry_wood") => "minecraft:block.cherry_wood_door.open",
         (Sounds::Door, "bamboo_wood") => "minecraft:block.bamboo_wood_door.open",
@@ -295,6 +308,8 @@ pub fn plate_click(s: u16, on: bool) -> &'static str {
 /// The close sound matching an open sound from [`set_sound`].
 fn close_sound(open: &'static str) -> &'static str {
     match open {
+        "minecraft:block.iron_door.open" => "minecraft:block.iron_door.close",
+        "minecraft:block.iron_trapdoor.open" => "minecraft:block.iron_trapdoor.close",
         "minecraft:block.copper_door.open" => "minecraft:block.copper_door.close",
         "minecraft:block.cherry_wood_door.open" => "minecraft:block.cherry_wood_door.close",
         "minecraft:block.bamboo_wood_door.open" => "minecraft:block.bamboo_wood_door.close",
