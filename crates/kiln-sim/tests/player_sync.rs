@@ -439,3 +439,180 @@ fn sprinting_sends_the_attributes_and_invisibility_does_not() {
     w.ticks(2);
     assert_eq!(count(&w.watcher_log(), id::UPDATE_ATTRIBUTES), 1, "speed is a movement speed modifier");
 }
+
+// ---- wp64: arrows and stingers in the body, spectators, sneaking, instant effects, powder snow ----
+
+impl World {
+    /// `n` ticks, each with the entity data packets of the actor the watcher and the actor got in it.
+    fn data_per_tick(&mut self, n: usize) -> Vec<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
+        let e = self.entity();
+        (0..n)
+            .map(|_| {
+                self.ticks(1);
+                (data_of(&self.watcher_log(), e), data_of(&self.actor_log(), e))
+            })
+            .collect()
+    }
+}
+
+fn one(field: kiln_data::entities::DataField, value: DataValue) -> Vec<u8> {
+    let mut d = EntityData::new();
+    d.set(field, &value);
+    entries(&d)
+}
+
+/// `AbstractArrow.onHitEntity`: a landed arrow (not a piercing one, none on an invulnerable player) raises the arrow count
+/// (entity data 12) for the viewers and the player; `LivingEntity.tick` drops one after `20 * (30 - count)` ticks, the time
+/// worked out when the count is above 0 and the timer has run out.
+#[test]
+fn an_arrow_sticks_in_the_body_and_falls_out_in_time() {
+    use kiln_data::entities::data::living_entity::ARROW_COUNT;
+    let mut w = World::new();
+    w.run("gamerule minecraft:natural_health_regeneration false");
+    w.ticks(2);
+    let p = w.actor.pos;
+    let (w1, a1) = (one(ARROW_COUNT, DataValue::Int(1)), one(ARROW_COUNT, DataValue::Int(0)));
+    w.watcher_log();
+    w.actor_log();
+    w.run(&format!("summon minecraft:arrow {} {} {} {{Motion:[0.0,-1.5,0.0]}}", p[0], p[1] + 2.5, p[2]));
+    let ticks = w.data_per_tick(700);
+    let at = |want: &[u8], who: usize| ticks.iter().position(|t| [&t.0, &t.1][who].iter().any(|d| contains(d, want)));
+    let added = at(&w1, 0).expect("the watcher is told of the arrow");
+    assert_eq!(at(&w1, 1), Some(added), "the player at the same time");
+    assert!(added < 5, "the arrow hit at once: tick {added}");
+    let gone = at(&a1, 0).expect("and of the arrow falling out");
+    assert_eq!(at(&a1, 1), Some(gone));
+    assert_eq!(gone - added, 580, "20 * (30 - 1) ticks");
+    // A creative player is not hurt: no arrow in the body.
+    w.run("gamemode creative Actor");
+    w.ticks(2);
+    w.watcher_log();
+    w.run(&format!("summon minecraft:arrow {} {} {} {{Motion:[0.0,-1.5,0.0]}}", p[0], p[1] + 2.5, p[2]));
+    let ticks = w.data_per_tick(5);
+    assert!(!ticks.iter().any(|t| t.0.iter().any(|d| contains(d, &w1))), "an invulnerable player takes none");
+}
+
+/// `Bee.doHurtTarget`: a sting raises the stinger count (entity data 13), which falls out like the arrows do.
+#[test]
+fn a_sting_leaves_a_stinger_in_the_body() {
+    use kiln_data::entities::data::living_entity::STINGER_COUNT;
+    let mut w = World::new();
+    w.run("difficulty normal");
+    w.ticks(2);
+    let p = w.actor.pos;
+    let one_stinger = one(STINGER_COUNT, DataValue::Int(1));
+    w.watcher_log();
+    w.actor_log();
+    // (The actor's uuid is 0:0x6b696c6e:0:1 in the test harness.)
+    w.run(&format!(
+        "summon minecraft:bee {} {} {} {{angry_at:[I;0,1801808046,0,1],anger_end_time:100000000L}}",
+        p[0] + 0.5,
+        p[1],
+        p[2] + 0.5
+    ));
+    let ticks = w.data_per_tick(200);
+    let added = ticks.iter().position(|t| t.0.iter().any(|d| contains(d, &one_stinger))).expect("the watcher is told of the stinger");
+    assert!(ticks[added].1.iter().any(|d| contains(d, &one_stinger)), "the player at the same time");
+    // One sting only: the bee dies of it.
+    let more = ticks.iter().flat_map(|t| &t.0).filter(|d| contains(d, &one_stinger)).count();
+    assert_eq!(more, 1);
+}
+
+/// `ServerPlayer.broadcastToPlayer`: a spectator is hidden from the players that are not spectators and seen by the
+/// spectators; changing the game mode works out who sees whom again before the data of the tick goes out.
+#[test]
+fn spectators_are_hidden_from_everyone_but_spectators() {
+    let mut w = World::new();
+    let e = w.entity();
+    let watcher_id = w.sim.entity_id(2).unwrap();
+    w.watcher_log();
+    w.actor_log();
+    w.run("gamemode spectator Actor");
+    w.ticks(3);
+    let log = w.watcher_log();
+    let seen = ids(&log);
+    assert!(seen.contains(&id::PLAYER_INFO_UPDATE), "the tab list entry stays: {seen:?}");
+    let removed = seen.iter().position(|i| *i == id::REMOVE_ENTITIES).expect("a non-spectator forgets the spectator");
+    assert!(data_of(&log, e).is_empty(), "no data of the spectator reaches it: the spectator went before the pack");
+    let _ = removed;
+    // The spectator's own data (the invisible flag) reaches it.
+    let flag = one(data::entity::SHARED_FLAGS, DataValue::Byte(32));
+    assert!(data_of(&w.actor_log(), e).iter().any(|d| contains(d, &flag)), "the player is told it is invisible");
+    // Back to survival: paired again.
+    w.run("gamemode survival Actor");
+    w.ticks(3);
+    assert!(ids(&w.watcher_log()).contains(&id::ADD_ENTITY), "seen again");
+    // Both spectators see each other.
+    w.run("gamemode spectator Actor");
+    w.ticks(3);
+    w.run("gamemode spectator Watcher");
+    w.ticks(3);
+    let seen = ids(&w.watcher_log());
+    assert!(seen.contains(&id::ADD_ENTITY), "a spectator sees the other: {seen:?}");
+    // The actor leaves spectator mode: the watcher (still a spectator) disappears for it, not the other way round.
+    w.actor_log();
+    w.watcher_log();
+    w.run("gamemode survival Actor");
+    w.ticks(3);
+    let (actor_saw, watcher_saw) = (w.actor_log(), w.watcher_log());
+    let removes = |log: &[Bytes], who: i32| {
+        log.iter().filter(|p| packet_id(p) == id::REMOVE_ENTITIES).any(|p| {
+            let mut r = Reader::new(p);
+            r.varint().unwrap();
+            let n = r.varint().unwrap();
+            (0..n).any(|_| r.varint().unwrap() == who)
+        })
+    };
+    assert!(removes(&actor_saw, watcher_id), "the actor no longer sees the spectating watcher");
+    assert!(!removes(&watcher_saw, e), "the spectating watcher still sees the actor");
+}
+
+/// Vanilla's input packet changes the shift flag at once and the player's tick the pose: the viewers get the flag in one
+/// tick and the pose in the next.
+#[test]
+fn sneaking_sends_the_flag_and_the_pose_a_tick_apart() {
+    use kiln_data::entities::pose;
+    let mut w = World::new();
+    w.watcher_log();
+    w.actor_log();
+    let (flag_on, pose_on) = (one(data::entity::SHARED_FLAGS, DataValue::Byte(2)), one(data::entity::POSE, DataValue::Pose(pose::CROUCHING)));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerInput { flags: 0x20 })]));
+    let ticks = w.data_per_tick(3);
+    assert_eq!(ticks[0].0, [flag_on.clone()], "the flag, alone");
+    assert_eq!(ticks[1].0, [pose_on.clone()], "the pose a tick later");
+    assert!(ticks[2].0.is_empty());
+    assert_eq!((ticks[0].1.clone(), ticks[1].1.clone()), (ticks[0].0.clone(), ticks[1].0.clone()), "the player gets the same");
+    let (flag_off, pose_off) = (one(data::entity::SHARED_FLAGS, DataValue::Byte(0)), one(data::entity::POSE, DataValue::Pose(pose::STANDING)));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerInput { flags: 0 })]));
+    let ticks = w.data_per_tick(3);
+    assert_eq!((&ticks[0].0[..], &ticks[1].0[..]), (&[flag_off][..], &[pose_off][..]));
+}
+
+/// `/effect give` of an instant effect: the particle goes out with the pack before the tick that applies the effect and
+/// removes it, and the removal (with the health) with the next pack; no other packet carries the particle.
+#[test]
+fn an_instant_effect_shows_its_particle_for_a_tick() {
+    use kiln_data::entities::data::living_entity::{EFFECT_PARTICLES, HEALTH};
+    let mut w = World::new();
+    w.run("gamerule minecraft:natural_health_regeneration false");
+    w.run("damage Actor 8 minecraft:generic");
+    w.ticks(3);
+    w.watcher_log();
+    w.actor_log();
+    w.run("effect give Actor minecraft:instant_health 1 0");
+    let ticks = w.data_per_tick(3);
+    let empty = one(EFFECT_PARTICLES, DataValue::Particles(Vec::new()));
+    let prefix = &empty[..2];
+    // Tick 0: one entry, the particle list (not empty); the health is not in it yet.
+    let first = &ticks[0].0;
+    assert_eq!(first.len(), 1);
+    assert!(first[0].starts_with(prefix) && first[0] != empty, "the particle: {:?}", first[0]);
+    assert!(!contains(&first[0], &one(HEALTH, DataValue::Float(16.0))[..2]));
+    // Tick 1: the effect ended and healed (4 hearts' worth is 4 points): the health and the empty list.
+    let second = &ticks[1].0;
+    assert_eq!(second.len(), 1);
+    assert!(contains(&second[0], &empty), "the particle is gone: {:?}", second[0]);
+    assert!(contains(&second[0], &one(HEALTH, DataValue::Float(16.0))[..2]), "with the health: {:?}", second[0]);
+    assert!(ticks[2].0.is_empty());
+    assert_eq!((ticks[0].1.clone(), ticks[1].1.clone()), (ticks[0].0.clone(), ticks[1].0.clone()));
+}
