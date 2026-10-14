@@ -151,6 +151,16 @@ fn throw(p: &mut Player, level: &mut RegionLevel, off_hand: bool, stack: &ItemSt
         p.inv.times_changed += 1;
     }
     p.apply_use_cooldown(stack);
+    swing_for_use(p, stack);
+}
+
+/// `ServerGamePacketListenerImpl.handleUseItem` after a successful use: the arm swings for the others
+/// (`swingAndResetAttackStrength` with the stack's interact animation).
+pub(crate) fn swing_for_use(p: &mut Player, stack: &ItemStack) {
+    let anim = stack.get(kiln_item::keys::INTERACT_ANIMATION).copied().unwrap_or_default();
+    if p.swing(anim) {
+        p.attack_ticker = 0;
+    }
 }
 
 /// `WindChargeItem.use`: a wind charge from the eyes (speed 1.5, inaccuracy 1), the throw sound
@@ -170,6 +180,7 @@ fn throw_wind_charge(p: &mut Player, level: &mut RegionLevel, off_hand: bool, st
         p.inv.times_changed += 1;
     }
     p.apply_use_cooldown(stack);
+    swing_for_use(p, stack);
 }
 
 /// A seed for a projectile's own random (`Entity.random`), independent of how regions split

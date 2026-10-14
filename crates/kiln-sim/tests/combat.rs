@@ -478,4 +478,10 @@ fn using_a_block_makes_the_arm_swing_for_the_others() {
     w.step(vec![ToSim::Packet(1, PlayIn::UseItemOn { hand: 0, pos: air, face: 1, cursor: [0.5, 0.5, 0.5], inside: false, sequence: 2 })]);
     w.ticks(10);
     assert_eq!(swings(&w) - before, 1);
+    // A thrown snowball is a use of the item that works: the arm swings once more.
+    w.console("gamemode creative Actor");
+    w.give(1, 36, "minecraft:snowball");
+    w.step(vec![ToSim::Packet(1, PlayIn::UseItem { hand: kiln_proto::packets::serverbound::Hand::Main, sequence: 3, yaw: 0.0, pitch: 0.0 })]);
+    w.ticks(2);
+    assert_eq!(swings(&w) - before, 2, "the throw swung the arm");
 }
