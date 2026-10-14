@@ -190,12 +190,12 @@ impl Player {
             if let kiln_item::Holder::Reference(id) = &consumable.sound
                 && let Some(name) = kiln_item::registry::SOUND_EVENT.name(*id)
             {
-                self.queue_sound_in(self.pos, name, kiln_proto::packets::world_fx::SoundSource::Neutral, 1.0, 1.0 + (a - b) * 0.4);
+                self.queue_sound_for_all(name, kiln_proto::packets::world_fx::SoundSource::Neutral, 1.0, 1.0 + (a - b) * 0.4);
             }
             self.eat(food.nutrition, food.saturation);
             // `Player.eat`: the burp.
             let pitch = self.entity_rng.next_float() * 0.1 + 0.9;
-            self.queue_sound("minecraft:entity.player.burp", 0.5, pitch);
+            self.queue_sound_for_all("minecraft:entity.player.burp", kiln_proto::packets::world_fx::SoundSource::Players, 0.5, pitch);
         }
         if let Some(contents) = stack.get(keys::POTION_CONTENTS) {
             let scale = stack.get(keys::POTION_DURATION_SCALE).copied().unwrap_or(1.0);
