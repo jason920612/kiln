@@ -85,7 +85,7 @@ impl Player {
         if self.swing_duration > 0 && self.swing_ticks <= self.swing_duration / 2 && self.swing_ticks > 0 {
             return false;
         }
-        self.swing_ticks = -1;
+        self.swing_ticks = 0;
         self.swing_duration = duration.max(1);
         self.swing_kind = match anim.kind {
             kiln_item::component::SwingAnimationType::None => entity::swing::NONE,
