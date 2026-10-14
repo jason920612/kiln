@@ -501,6 +501,19 @@ public class ClientCtl {
                 });
             case "spy": // spy on|clear|dump: count the clientbound packets, with the sounds, particles, level events and entity events
                 return onMain(() -> spy(mc, a.length > 1 ? a[1] : "dump"));
+            case "spylog": // spylog [clear]: the packets since the last clear in arrival order (wp63): class name, entity data with values
+                return onMain(() -> {
+                    JsonArray arr = new JsonArray();
+                    synchronized (ClientCtl.class) {
+                        for (String l : SPYLOG) {
+                            arr.add(l);
+                        }
+                        if (a.length > 1 && a[1].equals("clear")) {
+                            SPYLOG.clear();
+                        }
+                    }
+                    return arr.toString();
+                });
             case "mapdump": // mapdump PATH: the 16384 colour bytes of the map in the main hand, written raw to PATH
                 return onMain(() -> {
                     ItemStack st = mc.player.getMainHandItem();
@@ -661,8 +674,23 @@ public class ClientCtl {
     static final java.util.Map<String, Integer> SPY = new java.util.TreeMap<>();
     static boolean spyInstalled;
 
+    // wp63: ordered log of the packets (bundles unwrapped), without the per-tick noise
+    static final java.util.List<String> SPYLOG = new java.util.ArrayList<>();
+    static final java.util.Set<String> SPY_NOISE = java.util.Set.of("ClientboundKeepAlivePacket", "ClientboundMoveEntityPacket$Pos", "ClientboundMoveEntityPacket$PosRot",
+        "ClientboundMoveEntityPacket$Rot", "ClientboundRotateHeadPacket", "ClientboundSetTimePacket", "ClientboundLevelChunkWithLightPacket", "ClientboundLightUpdatePacket",
+        "ClientboundForgetLevelChunkPacket", "ClientboundSetChunkCacheCenterPacket", "ClientboundBundleDelimiterPacket", "ClientboundPingPacket", "ClientboundSetEntityMotionPacket",
+        "ClientboundEntityPositionSyncPacket", "ClientboundTeleportEntityPacket", "ClientboundChunkBatchStartPacket", "ClientboundChunkBatchFinishedPacket", "ClientboundBlockUpdatePacket",
+        "ClientboundSectionBlocksUpdatePacket", "ClientboundTickingStatePacket", "ClientboundTickingStepPacket", "ClientboundBlockEntityDataPacket");
+
     static synchronized void spyRecord(Minecraft mc, Object msg) {
-        SPY.merge(msg.getClass().getSimpleName(), 1, Integer::sum);
+        if (msg instanceof net.minecraft.network.protocol.game.ClientboundBundlePacket b) {
+            for (var sub : b.subPackets()) {
+                spyRecord(mc, sub);
+            }
+            return;
+        }
+        String cn = msg.getClass().getSimpleName();
+        SPY.merge(cn, 1, Integer::sum);
         String d = null;
         try {
             if (msg instanceof net.minecraft.network.protocol.game.ClientboundSoundPacket p) {
@@ -689,6 +717,15 @@ public class ClientCtl {
                 }
                 java.util.Collections.sort(ids);
                 d = sb.append(" ids=").append(ids).toString();
+                StringBuilder vals = new StringBuilder();
+                for (var v : p.packedItems()) {
+                    vals.append(' ').append(v.id()).append('=').append(v.value());
+                }
+                synchronized (ClientCtl.class) {
+                    SPYLOG.add("entity_data " + (en == null ? "?" : (en instanceof net.minecraft.world.entity.player.Player pl ? "player:" + pl.getGameProfile().name() : BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath())) + vals);
+                }
+                SPY.merge("= " + d, 1, Integer::sum);
+                return;
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket p) {
                 StringBuilder sb = new StringBuilder("equipment");
                 for (var pair : p.getSlots()) {
@@ -708,6 +745,9 @@ public class ClientCtl {
         }
         if (d != null) {
             SPY.merge("= " + d, 1, Integer::sum);
+        }
+        if (!SPY_NOISE.contains(cn) && !cn.equals("ClientboundSetEntityDataPacket")) {
+            SPYLOG.add(d != null ? d : cn.replace("Clientbound", "").replace("Packet", ""));
         }
     }
 
