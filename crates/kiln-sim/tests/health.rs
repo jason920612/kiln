@@ -277,3 +277,20 @@ fn chorus_fruit_teleports() {
     let d = ((tp[0] - client.pos[0]).powi(2) + (tp[2] - client.pos[2]).powi(2)).sqrt();
     assert!(d > 0.0 && d < 12.0, "teleported {d} blocks to {tp:?}");
 }
+
+/// wp61 (a real client next to a vanilla server): finishing a meal plays the item's consume sound
+/// once more (neutral category) and then the burp, both for everyone near (`LivingEntity.eat`,
+/// `Player.eat`).
+#[test]
+fn a_finished_meal_makes_its_sound_and_a_burp() {
+    let (mut sim, client) = joined();
+    client.stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
+    hold(&mut sim, "minecraft:golden_apple", 1);
+    let sounds = |c: &Client| c.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::SOUND).map_or(0, |a| a.0);
+    // Chewing: 32 ticks of use; then the finish.
+    eat(&mut sim, 20);
+    let chewing = sounds(&client);
+    eat(&mut sim, 20);
+    let done = sounds(&client);
+    assert!(done >= chewing + 2, "the finish sound and the burp followed the chewing: {chewing} -> {done}");
+}

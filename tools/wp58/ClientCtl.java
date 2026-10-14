@@ -35,7 +35,7 @@ import net.minecraft.world.phys.HitResult;
  * It never touches the operating system's keyboard or mouse, so the game window needs no focus.
  */
 public class ClientCtl {
-    static final int PORT = 25999;
+    static final int PORT = Integer.getInteger("wp61.port", 25999);
 
     public static void premain(String args) {
         Thread t = new Thread(ClientCtl::serve, "wp58-ctl");
@@ -418,7 +418,8 @@ public class ClientCtl {
                         return "ERR no entity";
                     }
                     StringBuilder sb = new StringBuilder();
-                    for (var v : en.getEntityData().getNonDefaultValues()) {
+                    var nonDefault = en.getEntityData().getNonDefaultValues();
+                    for (var v : nonDefault == null ? java.util.List.<net.minecraft.network.syncher.SynchedEntityData.DataValue<?>>of() : nonDefault) {
                         sb.append(v.id()).append('=').append(v.value()).append("; ");
                     }
                     var leash = en instanceof net.minecraft.world.entity.Leashable l ? l.getLeashHolder() : null;
@@ -464,6 +465,56 @@ public class ClientCtl {
                     }
                     o.add("decorations", decs);
                     return o.toString();
+                });
+            case "menuinfo": // menuinfo: what the open menu knows beyond its slots (enchanting costs and clues, the anvil's cost)
+                return onMain(() -> {
+                    var menu = mc.player.containerMenu;
+                    JsonObject o = new JsonObject();
+                    o.addProperty("menu", menu.getClass().getSimpleName());
+                    if (menu instanceof net.minecraft.world.inventory.EnchantmentMenu m) {
+                        JsonArray costs = new JsonArray(), clue = new JsonArray(), lvl = new JsonArray();
+                        for (int i = 0; i < 3; i++) {
+                            costs.add(m.costs[i]);
+                            clue.add(m.enchantClue[i]);
+                            lvl.add(m.levelClue[i]);
+                        }
+                        o.add("costs", costs);
+                        o.add("clue", clue);
+                        o.add("levelClue", lvl);
+                        o.addProperty("seed", m.getEnchantmentSeed());
+                        o.addProperty("lapis", m.getGoldCount());
+                    } else if (menu instanceof net.minecraft.world.inventory.AnvilMenu m) {
+                        o.addProperty("cost", m.getCost());
+                    } else if (menu instanceof net.minecraft.world.inventory.MerchantMenu m) {
+                        o.addProperty("level", m.getTraderLevel());
+                        o.addProperty("xp", m.getTraderXp());
+                    }
+                    return o.toString();
+                });
+            case "weather": // weather: the client's rain and thunder levels and the day time
+                return onMain(() -> {
+                    JsonObject o = new JsonObject();
+                    o.addProperty("rain", mc.level.getRainLevel(1.0f));
+                    o.addProperty("thunder", mc.level.getThunderLevel(1.0f));
+                    o.addProperty("gameTime", mc.level.getGameTime());
+                    return o.toString();
+                });
+            case "spy": // spy on|clear|dump: count the clientbound packets, with the sounds, particles, level events and entity events
+                return onMain(() -> spy(mc, a.length > 1 ? a[1] : "dump"));
+            case "mapdump": // mapdump PATH: the 16384 colour bytes of the map in the main hand, written raw to PATH
+                return onMain(() -> {
+                    ItemStack st = mc.player.getMainHandItem();
+                    var mid = st.get(net.minecraft.core.component.DataComponents.MAP_ID);
+                    var md = mid == null ? null : mc.level.getMapData(mid);
+                    if (md == null) {
+                        return "ERR no map data";
+                    }
+                    try {
+                        java.nio.file.Files.write(java.nio.file.Path.of(a[1]), md.colors);
+                    } catch (java.io.IOException ex) {
+                        return "ERR " + ex;
+                    }
+                    return "ok " + md.centerX + "," + md.centerZ;
                 });
             default:
                 return "ERR unknown command " + a[0];
@@ -604,5 +655,107 @@ public class ClientCtl {
             }
         }
         return o;
+    }
+
+    // ---- packet spy (wp61): what the server tells this client, to compare with a vanilla server's ----
+    static final java.util.Map<String, Integer> SPY = new java.util.TreeMap<>();
+    static boolean spyInstalled;
+
+    static synchronized void spyRecord(Minecraft mc, Object msg) {
+        SPY.merge(msg.getClass().getSimpleName(), 1, Integer::sum);
+        String d = null;
+        try {
+            if (msg instanceof net.minecraft.network.protocol.game.ClientboundSoundPacket p) {
+                d = "sound " + p.getSound().getRegisteredName() + " " + p.getSource() + " vol=" + Math.round(p.getVolume() * 100) / 100.0;
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSoundEntityPacket p) {
+                d = "sound_entity " + p.getSound().getRegisteredName() + " " + p.getSource() + " vol=" + Math.round(p.getVolume() * 100) / 100.0;
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket p) {
+                d = "particle " + BuiltInRegistries.PARTICLE_TYPE.getKey(p.particle().getType()) + " n=" + p.count();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundLevelEventPacket p) {
+                d = "level_event " + p.getType() + " data=" + p.getData();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundEntityEventPacket p) {
+                Entity en = mc.level == null ? null : p.getEntity(mc.level);
+                d = "entity_event " + p.getEventId() + " " + (en == null ? "?" : BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath());
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundBlockEventPacket p) {
+                d = "block_event " + BuiltInRegistries.BLOCK.getKey(p.getBlock()).getPath() + " " + p.getB0() + " " + p.getB1();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSwingAnimationPacket || msg instanceof net.minecraft.network.protocol.game.ClientboundAnimatePacket) {
+                d = msg.getClass().getSimpleName().replace("Clientbound", "") + " " + msg.toString();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket p) {
+                Entity en = mc.level == null ? null : mc.level.getEntity(p.id());
+                StringBuilder sb = new StringBuilder("entity_data " + (en == null ? "?" : BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath()));
+                java.util.List<Integer> ids = new java.util.ArrayList<>();
+                for (var v : p.packedItems()) {
+                    ids.add(v.id());
+                }
+                java.util.Collections.sort(ids);
+                d = sb.append(" ids=").append(ids).toString();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket p) {
+                StringBuilder sb = new StringBuilder("equipment");
+                for (var pair : p.getSlots()) {
+                    sb.append(' ').append(pair.getFirst().getName()).append('=').append(BuiltInRegistries.ITEM.getKey(pair.getSecond().getItem()).getPath()).append('x').append(pair.getSecond().getCount());
+                }
+                d = sb.toString();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundExplodePacket p) {
+                String str = p.toString().replaceAll("-?[0-9]+[.][0-9]+", "#");
+                d = "explode " + str.substring(0, Math.min(str.length(), 300));
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundGameEventPacket p) {
+                Field idf = p.getEvent().getClass().getDeclaredField("id");
+                idf.setAccessible(true);
+                d = "game_event " + idf.get(p.getEvent()) + " " + p.getParam();
+            }
+        } catch (Throwable t) {
+            d = "spy error " + t;
+        }
+        if (d != null) {
+            SPY.merge("= " + d, 1, Integer::sum);
+        }
+    }
+
+    static String spy(Minecraft mc, String what) {
+        try {
+            if (what.equals("on") && !spyInstalled) {
+                Object conn = mc.getConnection().getConnection();
+                io.netty.channel.Channel ch = null;
+                for (Field f : conn.getClass().getDeclaredFields()) {
+                    if (io.netty.channel.Channel.class.isAssignableFrom(f.getType())) {
+                        f.setAccessible(true);
+                        ch = (io.netty.channel.Channel) f.get(conn);
+                    }
+                }
+                String before = null;
+                for (var e : ch.pipeline()) {
+                    if (e.getValue() == conn) {
+                        before = e.getKey();
+                    }
+                }
+                ch.pipeline().addBefore(before, "wp61spy", new io.netty.channel.ChannelInboundHandlerAdapter() {
+                    @Override
+                    public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) throws Exception {
+                        spyRecord(mc, msg);
+                        ctx.fireChannelRead(msg);
+                    }
+                });
+                spyInstalled = true;
+            }
+            if (what.equals("clear")) {
+                synchronized (ClientCtl.class) {
+                    SPY.clear();
+                }
+            }
+            if (what.equals("off")) {
+                synchronized (ClientCtl.class) {
+                    SPY.clear();
+                }
+            }
+            JsonObject o = new JsonObject();
+            synchronized (ClientCtl.class) {
+                for (var e : SPY.entrySet()) {
+                    o.addProperty(e.getKey(), e.getValue());
+                }
+            }
+            return o.toString();
+        } catch (Throwable t) {
+            return "ERR " + t;
+        }
     }
 }

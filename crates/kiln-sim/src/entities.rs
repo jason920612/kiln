@@ -3008,11 +3008,9 @@ pub(crate) fn interact_mob(
             }
         }
     }
-    if let Some(sound) = out.player_sound
-        && let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound)
-    {
-        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), world_fx::SoundSource::Players, p.pos, 1.0, 1.0, level.env.game_time);
-        p.send(pkt);
+    if let Some(sound) = out.player_sound {
+        // `Player.playSound` (the milking): everyone near but the player, whose client does not play it.
+        p.queue_sound(sound, 1.0, 1.0);
     }
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
@@ -3285,11 +3283,16 @@ fn carry_out(
                 }
             }
         }
-        Event::Explosion { pos, power, .. } => {
+        Event::Explosion { pos, power, fx, .. } => {
             // `ServerLevel.explode` sends the explosion (sound and particle) to players within 64
             // blocks; the removed blocks reach clients as block updates.
             let at = arr(pos);
-            let particle = if power < 2.0 { "minecraft:explosion" } else { "minecraft:explosion_emitter" };
+            let particle = match fx {
+                Some(fx) if power < 2.0 => fx.small_particle,
+                Some(fx) => fx.large_particle,
+                None if power < 2.0 => "minecraft:explosion",
+                None => "minecraft:explosion_emitter",
+            };
             if let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", particle) {
                 let pkt = world_fx::level_particles(&world_fx::LevelParticles {
                     particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
@@ -3307,7 +3310,7 @@ fn carry_out(
             }
             let r = level.random();
             let pitch = (1.0 + (r.next_float() - r.next_float()) * 0.2) * 0.7;
-            send_sound(players, env, n, at, "minecraft:entity.generic.explode", world_fx::SoundSource::Blocks, 4.0, pitch);
+            send_sound(players, env, n, at, fx.map_or("minecraft:entity.generic.explode", |f| f.sound), world_fx::SoundSource::Blocks, 4.0, pitch);
         }
         Event::MobHurt { entity: id, kind, attacker, direct } => {
             // `broadcastDamageEvent`: the hurt tilt and sound for the mob's viewers.

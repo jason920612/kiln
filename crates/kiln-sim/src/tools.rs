@@ -379,6 +379,21 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
         C::CakeBlock => cake_candle(p, level, pos, s, off_hand, &stack),
         C::FlowerPotBlock => pot_plant(p, level, pos, s, off_hand, &stack),
         C::ChiseledBookShelfBlock => crate::bookshelf::use_item_on(p, level, pos, s, face, cursor, off_hand, &stack),
+        // `TntBlock.useItemOn`: fire or a fire charge primes it on the spot (no fire is placed).
+        C::TntBlock if !stack.is_empty() && matches!(stack.item_name(), "minecraft:flint_and_steel" | "minecraft:fire_charge") => {
+            if kiln_blocks::redstone::devices::prime(level, pos) {
+                kiln_blocks::remove_block(level, pos, false);
+                if stack.item_name() == "minecraft:flint_and_steel" {
+                    p.hurt_and_break(hand_slot(off_hand), 1, None);
+                } else if !p.infinite_materials() {
+                    let i = p.hand_index(off_hand);
+                    kiln_inventory::Container::item_mut(&mut p.inv, i).shrink(1);
+                    p.inv.times_changed += 1;
+                }
+                p.award_stat(Stat::item(player_stats::USED, stack.item()), 1);
+            }
+            Some(true)
+        }
         C::PumpkinBlock if !stack.is_empty() && stack.item_name() == "minecraft:shears" => {
             carve(p, level, pos, face, off_hand, spawns);
             Some(true)

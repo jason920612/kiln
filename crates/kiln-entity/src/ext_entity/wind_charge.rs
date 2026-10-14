@@ -96,11 +96,15 @@ pub fn burst(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3, pla
     // level random as long as vanilla's), except those of the tag (3600000).
     let resist = |state: u16, _res: f32| if crate::mob::kinds::wolf::block_in_tag(state, "minecraft:blocks_wind_charge_explosions") { 3600000.0 } else { -0.3 };
     let wrapped = |state: u16, _above: u16, res: f32| resist(state, res);
-    let rules = crate::explosion::BlockRules { resistance: Some(&wrapped), knockback: player.then_some(1.22), ..Default::default() };
+    // (The burst passes its own gusts and sound to `ServerLevel.explode`: the explosion packet carries them.)
+    let fx = crate::level::ExplosionFx {
+        small_particle: "minecraft:gust_emitter_small",
+        large_particle: "minecraft:gust_emitter_large",
+        sound: if player { "minecraft:entity.wind_charge.wind_burst" } else { "minecraft:entity.breeze.wind_burst" },
+    };
+    let rules = crate::explosion::BlockRules { resistance: Some(&wrapped), knockback: player.then_some(1.22), fx: Some(fx), ..Default::default() };
     let radius = if player { 1.2 } else { 3.0 };
     crate::explosion::explode_ruled(level, source, center, radius, false, crate::explosion::Interaction::TriggerBlock, rules, false);
-    let sound = if player { "minecraft:entity.wind_charge.wind_burst" } else { "minecraft:entity.breeze.wind_burst" };
-    level.emit(Event::Sound { pos: center, sound, source: "hostile", volume: 1.0, pitch: 1.0 });
 }
 
 impl WindCharge {
@@ -244,5 +248,28 @@ impl EntityExt for WindCharge {
 
     fn spawn_data(&self) -> i32 {
         self.owner.unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::MemoryLevel;
+
+    /// wp61 (a real client next to a vanilla server): a wind burst is an explosion that passes its own
+    /// gusts and sound to the explosion packet, not a plain explosion with a second sound beside it.
+    #[test]
+    fn a_wind_burst_carries_its_own_gusts_and_sound() {
+        for (player, sound, radius) in [(true, "minecraft:entity.wind_charge.wind_burst", 1.2f32), (false, "minecraft:entity.breeze.wind_burst", 3.0)] {
+            let mut level = MemoryLevel::new(-64, 1);
+            burst(&mut level, None, Vec3::new(0.5, 10.0, 0.5), player);
+            let blasts: Vec<_> = level.events.iter().filter_map(|e| if let Event::Explosion { power, fx, .. } = e { Some((*power, *fx)) } else { None }).collect();
+            assert_eq!(blasts.len(), 1, "{:?}", level.events);
+            let (power, fx) = blasts[0];
+            assert_eq!(power, radius);
+            let fx = fx.expect("the burst's own gusts and sound");
+            assert_eq!((fx.small_particle, fx.large_particle, fx.sound), ("minecraft:gust_emitter_small", "minecraft:gust_emitter_large", sound));
+            assert!(!level.events.iter().any(|e| matches!(e, Event::Sound { .. })), "no sound beside the explosion packet: {:?}", level.events);
+        }
     }
 }

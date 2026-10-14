@@ -136,14 +136,14 @@ fn use_anchor(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: u16, he
     }
     let dim = level.env.dim;
     if !(p.respawn == Some([pos.x, pos.y, pos.z]) && p.respawn_dim == dim) {
-        set_respawn(p, dim, [pos.x, pos.y, pos.z], 0.0, false);
+        set_respawn(p, dim, [pos.x, pos.y, pos.z], 0.0, 0.0, false);
         level.effect(Effect::Sound { pos, sound: "minecraft:block.respawn_anchor.set_spawn", volume: 1.0, pitch: 1.0 });
     }
     (true, Outcome::Nothing)
 }
 
 /// `ServerPlayer.setRespawnPosition(config, true)`: tells the player when the point moved.
-fn set_respawn(p: &mut Player, dim: DimId, pos: [i32; 3], angle: f32, forced: bool) {
+fn set_respawn(p: &mut Player, dim: DimId, pos: [i32; 3], angle: f32, pitch: f32, forced: bool) {
     let same = p.respawn == Some(pos) && p.respawn_dim == dim;
     if !same {
         p.send(packets::system_chat(kiln_command::tr!("block.minecraft.set_spawn").to_nbt(), false));
@@ -151,6 +151,7 @@ fn set_respawn(p: &mut Player, dim: DimId, pos: [i32; 3], angle: f32, forced: bo
     p.respawn = Some(pos);
     p.respawn_dim = dim;
     p.respawn_angle = angle;
+    p.respawn_pitch = pitch;
     p.respawn_forced = forced;
 }
 
@@ -212,7 +213,7 @@ fn start_sleep_in_bed(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s:
         return Err(Some("block.minecraft.bed.obstructed"));
     }
     if can_set_spawn {
-        set_respawn(p, dim, [pos.x, pos.y, pos.z], p.rot[0], false);
+        set_respawn(p, dim, [pos.x, pos.y, pos.z], p.rot[0], p.rot[1], false);
     }
     if !can_sleep {
         return Err(rule.error.or(Some("block.minecraft.bed.no_sleep")));

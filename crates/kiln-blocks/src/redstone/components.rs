@@ -53,6 +53,8 @@ pub fn button_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     let s = state::set_bool(s, "powered", false);
     set_block_and_update(level, pos, s);
     update_attached(level, pos, s);
+    // `ButtonBlock.checkPressed`: the click, heard by everyone (the player's own press was not).
+    level.effect(Effect::Sound { pos, sound: crate::interact::button_click_off(s), volume: 1.0, pitch: 1.0 });
     level.effect(Effect::GameEvent { pos, event: "minecraft:block_deactivate" });
 }
 
@@ -111,8 +113,10 @@ fn plate_check<L: Level>(level: &mut L, pos: BlockPos, s: u16, old: i32) {
         plate_update_neighbours(level, pos, s);
     }
     if new == 0 && old > 0 {
+        level.effect(Effect::Sound { pos, sound: crate::interact::plate_click(s, false), volume: 1.0, pitch: 1.0 });
         level.effect(Effect::GameEvent { pos, event: "minecraft:block_deactivate" });
     } else if new > 0 && old == 0 {
+        level.effect(Effect::Sound { pos, sound: crate::interact::plate_click(s, true), volume: 1.0, pitch: 1.0 });
         level.effect(Effect::GameEvent { pos, event: "minecraft:block_activate" });
     }
     if new > 0 {
@@ -149,9 +153,87 @@ pub fn door_neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, sou
     let powered = has_neighbor_signal(level, pos) || has_neighbor_signal(level, pos.relative(other));
     if BlockId::of(s) != source && powered != state::get_bool(s, "powered") {
         if powered != state::get_bool(s, "open") {
+            crate::interact::play_powered_sound(level, pos, s, powered, crate::interact::Sounds::Door);
             level.effect(Effect::GameEvent { pos, event: if powered { "minecraft:block_open" } else { "minecraft:block_close" } });
         }
         let s = state::set_bool(state::set_bool(s, "powered", powered), "open", powered);
         set_block(level, pos, s, flags::CLIENTS);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_level::TestLevel;
+    use kiln_data::blocks::default_state as d;
+
+    fn sounds(level: &TestLevel) -> Vec<&'static str> {
+        level.effects.iter().filter_map(|e| if let Effect::Sound { sound, .. } = e { Some(*sound) } else { None }).collect()
+    }
+
+    /// wp61 (a real client next to a vanilla server): a pressed button clicks again when it pops
+    /// back up, for everyone, and a plate clicks as it lets go (and as it is stepped on).
+    #[test]
+    fn buttons_and_plates_click_when_they_let_go() {
+        let mut level = TestLevel::flat(-64, 384, &[d::BEDROCK, d::STONE]);
+        level.load_chunks((-2, -2), (2, 2));
+        let y = -62;
+        let button = BlockPos::new(1, y, 1);
+        let on = state::set(state::set(d::STONE_BUTTON, "face", "floor"), "powered", "true");
+        set_block(&mut level, button, on, flags::ALL);
+        level.effects.clear();
+        button_tick(&mut level, on, button);
+        assert!(!state::get_bool(level.block(button), "powered"));
+        assert_eq!(sounds(&level), ["minecraft:block.stone_button.click_off"]);
+
+        let plate = BlockPos::new(3, y, 3);
+        let down = state::set(d::OAK_PRESSURE_PLATE, "powered", "true");
+        set_block(&mut level, plate, down, flags::ALL);
+        level.effects.clear();
+        plate_tick(&mut level, down, plate);
+        assert_eq!(sounds(&level), ["minecraft:block.wooden_pressure_plate.click_off"], "nobody on it: it lets go");
+        // The sounds of every set type.
+        assert_eq!(crate::interact::plate_click(d::STONE_PRESSURE_PLATE, true), "minecraft:block.stone_pressure_plate.click_on");
+        assert_eq!(crate::interact::plate_click(d::OAK_PRESSURE_PLATE, true), "minecraft:block.wooden_pressure_plate.click_on");
+        assert_eq!(crate::interact::plate_click(d::HEAVY_WEIGHTED_PRESSURE_PLATE, false), "minecraft:block.metal_pressure_plate.click_off");
+        assert_eq!(crate::interact::plate_click(d::LIGHT_WEIGHTED_PRESSURE_PLATE, true), "minecraft:block.metal_pressure_plate.click_on");
+        assert_eq!(crate::interact::button_click_off(d::STONE_BUTTON), "minecraft:block.stone_button.click_off");
+        assert_eq!(crate::interact::button_click_off(d::OAK_BUTTON), "minecraft:block.wooden_button.click_off");
+    }
+}
+
+#[cfg(test)]
+mod powered_sounds {
+    use super::*;
+    use crate::test_level::TestLevel;
+    use kiln_data::blocks::default_state as d;
+
+    fn sounds(level: &TestLevel) -> Vec<&'static str> {
+        level.effects.iter().filter_map(|e| if let Effect::Sound { sound, .. } = e { Some(*sound) } else { None }).collect()
+    }
+
+    /// wp61: doors, trapdoors and gates opened by redstone make their sound (an iron door its own).
+    #[test]
+    fn redstone_opens_doors_trapdoors_and_gates_with_a_sound() {
+        let mut level = TestLevel::flat(-64, 384, &[d::BEDROCK, d::STONE]);
+        level.load_chunks((-2, -2), (2, 2));
+        let y = -62;
+        let door = BlockPos::new(1, y, 1);
+        let lower = state::set(state::set(d::IRON_DOOR, "half", "lower"), "facing", "east");
+        set_block(&mut level, door, lower, flags::ALL);
+        set_block(&mut level, door.above(), state::set(state::set(d::IRON_DOOR, "half", "upper"), "facing", "east"), flags::ALL);
+        level.effects.clear();
+        set_block(&mut level, door.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
+        assert_eq!(sounds(&level), ["minecraft:block.iron_door.open"], "the door's neighbour changed");
+        let gate = BlockPos::new(5, y, 5);
+        set_block(&mut level, gate, d::OAK_FENCE_GATE, flags::ALL);
+        level.effects.clear();
+        set_block(&mut level, gate.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
+        assert_eq!(sounds(&level), ["minecraft:block.fence_gate.open"]);
+        let trapdoor = BlockPos::new(8, y, 8);
+        set_block(&mut level, trapdoor, d::IRON_TRAPDOOR, flags::ALL);
+        level.effects.clear();
+        set_block(&mut level, trapdoor.relative(Direction::North), d::REDSTONE_BLOCK, flags::ALL);
+        assert_eq!(sounds(&level), ["minecraft:block.iron_trapdoor.open"]);
     }
 }

@@ -173,14 +173,29 @@ impl MerchantOffer {
         if let Some(b) = &self.cost_b {
             m.put("buyB", b.to_value());
         }
-        m.put("sell", self.result.to_value())
-            .put("uses", Value::Int(self.uses))
-            .put("maxUses", Value::Int(self.max_uses))
-            .put("rewardExp", Value::Bool(self.reward_exp))
-            .put("specialPrice", Value::Int(self.special_price_diff))
-            .put("demand", Value::Int(self.demand))
-            .put("priceMultiplier", Value::Float(self.price_multiplier))
-            .put("xp", Value::Int(self.xp));
+        m.put("sell", self.result.to_value());
+        // (`optionalFieldOf(name, default)`: a field at its default is not written.)
+        if self.uses != 0 {
+            m.put("uses", Value::Int(self.uses));
+        }
+        if self.max_uses != 4 {
+            m.put("maxUses", Value::Int(self.max_uses));
+        }
+        if !self.reward_exp {
+            m.put("rewardExp", Value::Bool(false));
+        }
+        if self.special_price_diff != 0 {
+            m.put("specialPrice", Value::Int(self.special_price_diff));
+        }
+        if self.demand != 0 {
+            m.put("demand", Value::Int(self.demand));
+        }
+        if self.price_multiplier != 0.0 {
+            m.put("priceMultiplier", Value::Float(self.price_multiplier));
+        }
+        if self.xp != 1 {
+            m.put("xp", Value::Int(self.xp));
+        }
         m.build()
     }
 
@@ -274,6 +289,30 @@ mod tests {
         let o = MerchantOffer::new(emerald(3), Some(ItemCost::new(registry::ITEM.id("minecraft:book").unwrap(), 1)), ItemStack::of("minecraft:bookshelf", 1).unwrap(), 12, 5, 0.2);
         let tag = offers_to_nbt(std::slice::from_ref(&o));
         assert_eq!(offers_from_nbt(&tag), vec![o]);
+    }
+
+    /// `MerchantOffer.CODEC` writes `optionalFieldOf` fields only when they differ from their
+    /// defaults (`data get entity` on a vanilla villager shows no `uses: 0`, `demand: 0`,
+    /// `specialPrice: 0` or `rewardExp: 1b`; wp61 compared them side by side).
+    #[test]
+    fn offers_leave_out_fields_at_their_defaults() {
+        let mut o = MerchantOffer::new(emerald(3), None, ItemStack::of("minecraft:bread", 6).unwrap(), 12, 1, 0.05);
+        let keys = |o: &MerchantOffer| -> Vec<String> { o.to_value().as_map().unwrap().0.iter().filter_map(|(k, _)| if let Value::String(s) = k { Some(s.clone()) } else { None }).collect() };
+        let mut fresh = keys(&o);
+        fresh.sort();
+        assert_eq!(fresh, ["buy", "maxUses", "priceMultiplier", "sell"], "xp 1 is the default too");
+        o.uses = 2;
+        o.demand = -1;
+        o.special_price_diff = -2;
+        o.xp = 5;
+        o.reward_exp = false;
+        let mut used = keys(&o);
+        used.sort();
+        assert_eq!(used, ["buy", "demand", "maxUses", "priceMultiplier", "rewardExp", "sell", "specialPrice", "uses", "xp"]);
+        // And both read back the same.
+        for o in [MerchantOffer::new(emerald(3), None, ItemStack::of("minecraft:bread", 6).unwrap(), 4, 1, 0.0), o] {
+            assert_eq!(offers_from_nbt(&offers_to_nbt(std::slice::from_ref(&o))), vec![o]);
+        }
     }
 
     #[test]

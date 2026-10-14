@@ -455,3 +455,57 @@ fn horse_id(packets: &[bytes::Bytes], me: i32) -> Option<i32> {
         (id != me).then_some(id)
     })
 }
+
+/// wp61 (a real client next to a vanilla server): a successful use of a block (a lever here) moves
+/// the user's arm for the players who watch (`swingAndResetAttackStrength`), and a click on nothing
+/// does not.
+#[test]
+fn using_a_block_makes_the_arm_swing_for_the_others() {
+    let mut w = World::new(&["Actor", "Watcher"]);
+    w.console("gamemode survival Actor");
+    w.clients[1].stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
+    let base = w.clients[0].pos;
+    let at = [base[0].floor() as i32 + 1, base[1].floor() as i32, base[2].floor() as i32];
+    w.console(&format!("setblock {} {} {} minecraft:lever[face=floor,facing=east]", at[0], at[1], at[2]));
+    w.ticks(3);
+    let swings = |w: &World| w.clients[1].stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::SWING_ANIMATION).map_or(0, |a| a.0);
+    let before = swings(&w);
+    w.step(vec![ToSim::Packet(1, PlayIn::UseItemOn { hand: 0, pos: at, face: 1, cursor: [0.5, 0.2, 0.5], inside: false, sequence: 1 })]);
+    w.ticks(2);
+    assert_eq!(swings(&w) - before, 1, "the lever click swung the arm once for the watcher");
+    // A click on air (nothing to use) swings nothing.
+    let air = [at[0] + 3, at[1] + 5, at[2]];
+    w.step(vec![ToSim::Packet(1, PlayIn::UseItemOn { hand: 0, pos: air, face: 1, cursor: [0.5, 0.5, 0.5], inside: false, sequence: 2 })]);
+    w.ticks(10);
+    assert_eq!(swings(&w) - before, 1);
+    // A thrown snowball is a use of the item that works: the arm swings once more.
+    w.console("gamemode creative Actor");
+    w.give(1, 36, "minecraft:snowball");
+    w.step(vec![ToSim::Packet(1, PlayIn::UseItem { hand: kiln_proto::packets::serverbound::Hand::Main, sequence: 3, yaw: 0.0, pitch: 0.0 })]);
+    w.ticks(2);
+    assert_eq!(swings(&w) - before, 2, "the throw swung the arm");
+}
+
+/// wp61 (a real client next to a vanilla server): milking a cow is heard by the others, not by the
+/// milker (`Player.playSound` leaves the player out).
+#[test]
+fn milking_is_heard_by_the_others_but_not_the_milker() {
+    let mut w = World::new(&["Milker", "Listener"]);
+    w.clients[0].stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
+    w.clients[1].stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
+    w.give(1, 36, "minecraft:bucket");
+    w.console("gamemode survival Milker");
+    w.console("gamerule minecraft:spawn_mobs false");
+    w.console("execute at Milker run summon minecraft:cow ~1.5 ~ ~ {NoAI:1b,PersistenceRequired:1b}");
+    w.ticks(3);
+    let cow = w.sim.entities().iter().position(|e| e.0 == "minecraft:cow").expect("the cow");
+    let _ = cow;
+    let sounds = |c: &Client| c.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::SOUND).map_or(0, |a| a.0);
+    let (own, other) = (sounds(&w.clients[0]), sounds(&w.clients[1]));
+    let id = w.sim.entity_ids_of("minecraft:cow")[0];
+    w.step(vec![ToSim::Packet(1, PlayIn::Interact { entity_id: id, hand: kiln_proto::packets::serverbound::Hand::Main, location: [0.0, 0.5, 0.0], sneaking: false })]);
+    w.ticks(2);
+    assert!(w.sim.inventory(1).unwrap()[36].is_some_and(|s| s.0 == kiln_data::builtin_id("minecraft:item", "minecraft:milk_bucket").unwrap()), "milked");
+    assert_eq!(sounds(&w.clients[0]) - own, 0, "the milker hears nothing from the server");
+    assert_eq!(sounds(&w.clients[1]) - other, 1, "the other player hears the milking");
+}

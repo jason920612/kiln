@@ -9,8 +9,7 @@ use crate::leash;
 use crate::level::{DamageKind, EntityLevel, Event};
 use crate::math::{BlockPos, Vec3};
 use crate::mob::interact::{HeldChange, Interactor, Outcome};
-use crate::persist::{Input, Output};
-use kiln_proto::nbt::Tag;
+use crate::persist::Input;
 
 #[derive(Clone, Debug)]
 pub struct LeashKnot {
@@ -28,8 +27,8 @@ pub fn new(id: i32, pos: BlockPos, seed: i64) -> Entity {
 }
 
 pub fn load(r: &mut Input) -> Option<Box<dyn EntityExt>> {
-    // (`block_pos` is the saved position's block: `Pos` carries the same.)
-    let _ = r.get("block_pos");
+    // (`LeashFenceKnotEntity` saves nothing of its own: `Pos` is the block. An old Kiln save may carry `block_pos`; it is ignored.)
+    let _ = r;
     Some(Box::new(LeashKnot { since_check: 0 }))
 }
 
@@ -67,11 +66,6 @@ impl EntityExt for LeashKnot {
                 drop_item(e, level);
             }
         }
-    }
-
-    fn save(&self, e: &Entity, o: &mut Output) {
-        let b = block_of(e);
-        o.put("block_pos", Tag::IntArray(vec![b.x, b.y, b.z]));
     }
 
     /// A hit (of a player: `skipAttackInteraction`) kills the knot and drops what it was.

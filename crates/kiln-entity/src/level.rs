@@ -280,6 +280,15 @@ pub struct BeehiveView {
     pub fire_nearby: bool,
 }
 
+/// The particles and sound a `ServerLevel.explode` call passes in place of the usual ones
+/// (`ClientboundExplodePacket.explosionParticle`, `explosionSound`): a wind burst's gusts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExplosionFx {
+    pub small_particle: &'static str,
+    pub large_particle: &'static str,
+    pub sound: &'static str,
+}
+
 /// Side effects the simulation carries out or broadcasts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
@@ -319,7 +328,7 @@ pub enum Event {
     /// pearl teleports and potion splashes are the simulation's.
     ProjectileHit { projectile: i32, projectile_type: &'static str, owner: Option<i32>, hit: crate::projectile::Hit },
     /// An explosion at `pos`; `blocks` were destroyed (for the explode packet).
-    Explosion { pos: Vec3, power: f32, blocks: Vec<BlockPos>, source: Option<i32> },
+    Explosion { pos: Vec3, power: f32, blocks: Vec<BlockPos>, source: Option<i32>, fx: Option<ExplosionFx> },
     /// A mob took a full hit (`broadcastDamageEvent`: the hurt animation for viewers).
     MobHurt { entity: i32, kind: DamageKind, attacker: Option<i32>, direct: Option<i32> },
     /// A mob died: the simulation drops its loot table (`LivingEntity.dropFromLootTable`).

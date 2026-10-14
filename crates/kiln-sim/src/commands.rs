@@ -910,7 +910,12 @@ impl Host for Sim {
             left -= n;
             let mut stack = kiln_item::ItemStack::from_parts(id, n, patch.clone());
             p.add_to_inventory(&mut stack);
-            if !stack.is_empty() {
+            if stack.is_empty() {
+                // `GiveCommand`: a stack that went in all at once plays the pickup sound for everyone near.
+                use kiln_javamath::random::RandomSource;
+                let (a, b) = (p.entity_rng.next_float(), p.entity_rng.next_float());
+                p.sound_for_all("minecraft:entity.item.pickup", kiln_proto::packets::world_fx::SoundSource::Players, 0.2, ((a - b) * 0.7 + 1.0) * 2.0);
+            } else {
                 let spawn = p.throw(stack);
                 self.dims[dim].spawns.push(spawn);
             }
@@ -1233,6 +1238,7 @@ impl Host for Sim {
             p.respawn_dim = crate::dim_id(&spawn.dimension).unwrap_or(crate::OVERWORLD_ID);
             p.respawn_forced = true;
             p.respawn_angle = spawn.yaw;
+            p.respawn_pitch = 0.0;
         }
     }
 
@@ -1990,6 +1996,11 @@ impl Sim {
         for (c, level) in levels {
             if let Some(p) = self.players.get_mut(&c) {
                 p.permission = level;
+                // `PlayerList.sendPlayerPermissionLevel`: on join and whenever the level changes.
+                if p.permission_sent != Some(level) {
+                    p.permission_sent = Some(level);
+                    p.send(kiln_proto::packets::entity::entity_event(p.entity_id, 24 + level.min(4)));
+                }
             }
         }
     }

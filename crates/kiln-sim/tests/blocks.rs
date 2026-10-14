@@ -214,3 +214,62 @@ fn powering_by_command_reaches_the_client() {
     assert_eq!(sent(kiln_data::packets::play::clientbound::BLOCK_UPDATE), 1);
     assert_eq!(sent(kiln_data::packets::play::clientbound::SECTION_BLOCKS_UPDATE), 1);
 }
+
+/// wp61 (a real client next to a vanilla server): while a player digs, the server sends a level
+/// event every tick (2019 crack particles, 2020 with the hit sound on every fourth), to the digger
+/// as well; the client no longer makes them itself.
+#[test]
+fn digging_sends_a_level_event_every_tick() {
+    let mut w = World::new("survival");
+    w.client.stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
+    let dirt = w.at(1, 0, 0);
+    let events = |w: &World| w.client.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::LEVEL_EVENT).map_or(0, |a| a.0);
+    let before = events(&w);
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 0, pos: dirt, face: 1, sequence: 1 })]));
+    w.ticks(9);
+    let during = events(&w) - before;
+    assert!((9..=10).contains(&during), "one level event per tick of digging: {during}");
+    // Stopping (aborting) the dig ends them.
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 2, pos: dirt, face: 1, sequence: 2 })]));
+    w.ticks(1);
+    let settled = events(&w);
+    w.ticks(5);
+    assert_eq!(events(&w), settled, "no more once the dig is aborted");
+}
+
+/// wp61 (a real client next to a vanilla server): flint and steel on a TNT block primes it on the
+/// spot (`TntBlock.useItemOn`): no fire is set beside it and the tool wears by one.
+#[test]
+fn flint_and_steel_primes_tnt_without_setting_fire() {
+    let mut w = World::new("creative");
+    let flint = ItemStack { item: kiln_data::builtin_id("minecraft:item", "minecraft:flint_and_steel").unwrap(), count: 1, added: Vec::new(), removed: Vec::new() };
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot: 36, item: Some(flint) })]));
+    let tnt = w.at(2, 1, 0);
+    w.run(&format!("setblock {} {} {} minecraft:tnt", tnt[0], tnt[1], tnt[2]));
+    w.run("gamemode survival Builder");
+    w.use_on_top(w.at(2, 1, 0), 1);
+    w.ticks(2);
+    assert!(state::is(w.block(tnt), d::AIR), "the TNT block is gone");
+    assert!(w.sim.entities().iter().any(|(kind, _)| *kind == "minecraft:tnt"), "a primed TNT: {:?}", w.sim.entities());
+    for (dx, dy, dz) in [(0, 1, 0), (1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1)] {
+        let at = [tnt[0] + dx, tnt[1] + dy, tnt[2] + dz];
+        assert!(!state::is(w.block(at), d::FIRE), "no fire at {at:?}");
+    }
+}
+
+/// wp61 (a real client next to a vanilla server): the F key (`SWAP_ITEM_WITH_OFFHAND`) trades the stacks
+/// of the two hands.
+#[test]
+fn the_swap_key_trades_the_hands() {
+    let mut w = World::new("creative");
+    let item = |n: &str| kiln_data::builtin_id("minecraft:item", n).unwrap();
+    let stack = |n: &str| ItemStack { item: item(n), count: 1, added: Vec::new(), removed: Vec::new() };
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot: 36, item: Some(stack("minecraft:diamond_sword")) })]));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot: 45, item: Some(stack("minecraft:shield")) })]));
+    let slots = |w: &World| (w.sim.inventory(1).unwrap()[36].map(|s| s.0), w.sim.inventory(1).unwrap()[45].map(|s| s.0));
+    assert_eq!(slots(&w), (Some(item("minecraft:diamond_sword")), Some(item("minecraft:shield"))));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 7, pos: [0, 0, 0], face: 0, sequence: 0 })]));
+    assert_eq!(slots(&w), (Some(item("minecraft:shield")), Some(item("minecraft:diamond_sword"))), "the hands traded");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 7, pos: [0, 0, 0], face: 0, sequence: 0 })]));
+    assert_eq!(slots(&w), (Some(item("minecraft:diamond_sword")), Some(item("minecraft:shield"))), "and back");
+}

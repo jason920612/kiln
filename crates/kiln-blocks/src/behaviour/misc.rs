@@ -106,6 +106,8 @@ pub fn powered_open_neighbor_changed<L: Level>(level: &mut L, s: u16, pos: Block
     let new = state::set_bool(state::set_bool(s, "powered", powered), "open", powered);
     set_block(level, pos, new, flags::CLIENTS);
     if state::get_bool(s, "open") != powered {
+        let kind = if trapdoor { crate::interact::Sounds::Trapdoor } else { crate::interact::Sounds::FenceGate };
+        crate::interact::play_powered_sound(level, pos, s, powered, kind);
         level.effect(Effect::GameEvent { pos, event: if powered { "minecraft:block_open" } else { "minecraft:block_close" } });
     }
     if trapdoor && state::get_bool(s, "waterlogged") {

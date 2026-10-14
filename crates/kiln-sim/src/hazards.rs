@@ -261,9 +261,24 @@ impl Player {
 
     /// [`Player::queue_sound`] where the player was when it made the sound.
     pub(crate) fn queue_sound_at(&mut self, at: [f64; 3], sound: &str, volume: f32, pitch: f32) {
+        self.queue_sound_in(at, sound, world_fx::SoundSource::Players, volume, pitch);
+    }
+
+    /// A sound everyone hears, the player too (`level.playSound(null, ...)`, as the finish of a meal
+    /// and the burp do): [`Player::queue_sound_in`] for the viewers, and straight to the player.
+    pub(crate) fn queue_sound_for_all(&mut self, sound: &str, source: world_fx::SoundSource, volume: f32, pitch: f32) {
         let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound) else { return };
         let seed = self.sound_seed.next_long();
-        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), world_fx::SoundSource::Players, at, volume, pitch, seed);
+        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), source, self.pos, volume, pitch, seed);
+        self.pending_sounds.push(pkt.clone());
+        self.send(pkt);
+    }
+
+    /// [`Player::queue_sound_at`] in another sound category (`level.playSound(null, ..., source, ...)`).
+    pub(crate) fn queue_sound_in(&mut self, at: [f64; 3], sound: &str, source: world_fx::SoundSource, volume: f32, pitch: f32) {
+        let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound) else { return };
+        let seed = self.sound_seed.next_long();
+        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), source, at, volume, pitch, seed);
         self.pending_sounds.push(pkt);
     }
 

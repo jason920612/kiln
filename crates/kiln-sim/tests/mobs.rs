@@ -964,3 +964,62 @@ fn curing_a_zombie_villager_makes_its_trades_cheaper() {
     let (_, _, slots) = w.sim.merchant_screen(1).unwrap();
     assert_eq!(slots[0], Some((item("minecraft:wheat"), 50)), "the cure discount");
 }
+
+/// wp61 (real client vs the vanilla server): a villager that levels up from a trade heals for ten
+/// seconds, and the TRADE reputation event is one `+2` per AI step however many trades the tick
+/// held (`lastTradedPlayer`); a villager without AI never gossips about trades.
+#[test]
+fn a_trade_levels_the_villager_up_and_gossips_once_per_tick() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:emerald", 64);
+    w.console("gamemode survival Hunter");
+    let offers = r#"Offers:{Recipes:[{buy:{id:"minecraft:emerald",count:1},sell:{id:"minecraft:bread",count:6},maxUses:12,xp:10,priceMultiplier:0.05f}]}"#;
+    let data = |ai: &str| format!(r#"{{{ai}PersistenceRequired:1b,Xp:1,VillagerData:{{profession:"minecraft:toolsmith",level:1,type:"minecraft:plains"}},{offers}}}"#);
+    let trade_all = |w: &mut World, villager: i32| {
+        w.interact(villager);
+        let Some((id, _, _)) = w.sim.merchant_screen(1) else { panic!("the merchant screen did not open: {:?}", nbt_of(w, "minecraft:villager")) };
+        w.packet(PlayIn::SelectTrade { offer: 0 });
+        w.click(id, 2, true); // shift-click: every use of the offer in one tick
+        w.packet(PlayIn::ContainerClose { container_id: id });
+        w.ticks(3);
+    };
+    let trading_gossip = |w: &World, kind: &str| -> Option<f64> {
+        let nbt = nbt_of(w, kind);
+        let kiln_proto::nbt::Tag::List(list) = nbt.get("Gossips")?.clone() else { return None };
+        list.iter().find(|g| g.get("Type").and_then(|t| t.as_str()) == Some("trading")).and_then(|g| g.get("Value")).and_then(|v| v.as_f64())
+    };
+    w.summon("minecraft:villager", [1.5, 0.0, 0.0], &data(""));
+    let villager = w.mobs("minecraft:villager")[0].0;
+    trade_all(&mut w, villager);
+    let nbt = nbt_of(&w, "minecraft:villager");
+    let level = nbt.get("VillagerData").and_then(|d| d.get("level")).and_then(|l| l.as_f64()).unwrap();
+    assert!(level >= 2.0, "twelve trades of 10 xp level the villager up: {level}");
+    assert!(format!("{:?}", nbt.get("active_effects")).contains("regeneration"), "levelling up gives regeneration: {:?}", nbt.get("active_effects"));
+    assert_eq!(trading_gossip(&w, "minecraft:villager"), Some(2.0), "one TRADE event for the tick's twelve trades");
+    // No AI step, no gossip.
+    w.console("kill @e[type=minecraft:villager]");
+    w.ticks(40);
+    assert!(w.mobs("minecraft:villager").is_empty());
+    w.summon("minecraft:villager", [1.5, 0.0, 0.0], &data("NoAI:1b,"));
+    let villager = w.mobs("minecraft:villager")[0].0;
+    trade_all(&mut w, villager);
+    assert_eq!(trading_gossip(&w, "minecraft:villager"), None, "a villager without AI does not talk about the trade");
+}
+
+/// wp61 (a real client next to a vanilla server): flint and steel (or a fire charge) lights a creeper's
+/// fuse (`Creeper.mobInteract`); it explodes about a second and a half later and the tool wears.
+#[test]
+fn a_creeper_lit_with_flint_and_steel_blows_up() {
+    let mut w = World::new();
+    w.hold("minecraft:flint_and_steel", 1);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:creeper", [1.5, 0.0, 0.0], "{NoAI:1b,PersistenceRequired:1b}");
+    let creeper = w.mobs("minecraft:creeper")[0].0;
+    w.ticks(5);
+    assert_eq!(w.mobs("minecraft:creeper").len(), 1, "it just stands there");
+    w.interact(creeper);
+    assert_eq!(w.sim.item_damage(1, 36), Some(1), "the flint and steel wore");
+    w.ticks(40);
+    assert!(w.mobs("minecraft:creeper").is_empty(), "the lit creeper blew up");
+}

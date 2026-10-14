@@ -138,21 +138,29 @@ impl Player {
     }
 
     /// `LivingEntity.detectEquipmentUpdates`: the slots whose stack changed since the last
-    /// broadcast, as a Set Equipment packet for viewers.
-    fn equipment_changes(&mut self) -> Option<Bytes> {
-        let mut changed = Vec::new();
-        for i in 0..SHOWN_SLOTS {
-            let now = self.inv.equipped(crate::combat::SLOTS[i]);
-            if !kiln_inventory::stack::matches(&self.equipment_sent[i], now) {
-                self.equipment_sent[i] = now.clone();
-                changed.push(i);
+    /// broadcast, as a Set Equipment packet for viewers; two hands that traded stacks are the
+    /// `SWAP_HANDS` entity event instead (`handleHandSwap`).
+    fn equipment_changes(&mut self) -> Vec<Bytes> {
+        let mut out = Vec::new();
+        let mut changed: Vec<usize> = (0..SHOWN_SLOTS).filter(|&i| !kiln_inventory::stack::matches(&self.equipment_sent[i], self.inv.equipped(crate::combat::SLOTS[i]))).collect();
+        // `EntityEvent.SWAP_HANDS`.
+        if changed.contains(&0) && changed.contains(&1) {
+            let (main, off) = (self.inv.equipped(crate::combat::SLOTS[0]).clone(), self.inv.equipped(crate::combat::SLOTS[1]).clone());
+            if kiln_inventory::stack::matches(&main, &self.equipment_sent[1]) && kiln_inventory::stack::matches(&off, &self.equipment_sent[0]) {
+                out.push(entity::entity_event(self.entity_id, 55));
+                self.equipment_sent[0] = main;
+                self.equipment_sent[1] = off;
+                changed.retain(|&i| i > 1);
             }
         }
-        if changed.is_empty() {
-            return None;
+        for &i in &changed {
+            self.equipment_sent[i] = self.inv.equipped(crate::combat::SLOTS[i]).clone();
         }
-        let slots: Vec<(u8, &kiln_item::ItemStack)> = changed.iter().map(|&i| (i as u8, &self.equipment_sent[i])).collect();
-        Some(set_equipment(self.entity_id, &slots))
+        if !changed.is_empty() {
+            let slots: Vec<(u8, &kiln_item::ItemStack)> = changed.iter().map(|&i| (i as u8, &self.equipment_sent[i])).collect();
+            out.push(set_equipment(self.entity_id, &slots));
+        }
+        out
     }
 }
 

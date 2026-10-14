@@ -81,6 +81,8 @@ pub struct BlockRules<'a> {
     pub causing: Option<i32>,
     /// `ExplosionDamageCalculator.getKnockbackMultiplier` (1 when unset): a wind charge's 1.22.
     pub knockback: Option<f32>,
+    /// Particles and sound other than the usual explosion's (a wind burst's gusts).
+    pub fx: Option<crate::level::ExplosionFx>,
 }
 
 /// [`explode`] with the source entity's block resistance override.
@@ -96,7 +98,7 @@ pub fn explode_with(
     damage: bool,
 ) -> Vec<BlockPos> {
     let wrapped = resistance.map(|f| move |state: u16, _above: u16, res: f32| f(state, res));
-    let rules = BlockRules { resistance: wrapped.as_ref().map(|f| f as &dyn Fn(u16, u16, f32) -> f32), should_explode: None, causing: None, knockback: None };
+    let rules = BlockRules { resistance: wrapped.as_ref().map(|f| f as &dyn Fn(u16, u16, f32) -> f32), should_explode: None, causing: None, knockback: None, fx: None };
     explode_ruled(level, source, center, radius, fire, interaction, rules, damage)
 }
 
@@ -139,7 +141,7 @@ pub fn explode_ruled(
             }
         }
     }
-    level.emit(Event::Explosion { pos: center, power: radius, blocks: positions.clone(), source });
+    level.emit(Event::Explosion { pos: center, power: radius, blocks: positions.clone(), source, fx: rules.fx });
     positions
 }
 

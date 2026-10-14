@@ -991,6 +991,9 @@ fn run_case(line: &Value) -> Vec<String> {
         if std::env::var_os("KILN_TRACE_PACKETS").is_some() {
             eprintln!("TRACE {} step {n}: {got_packets:?}", line["name"]);
         }
+        // The recording harness calls `handleBlockBreakAction` without ticking the player's `ServerPlayerGameMode`, so the
+        // crack and hit events (2019/2020) it sends every tick while digging (wp61, seen by a second real client) are not in the vectors.
+        got_packets.retain(|p| !(p.contains("\"t\":\"level_event\"") && (p.contains("\"event\":2019") || p.contains("\"event\":2020"))));
         let mut want_packets: Vec<String> = want["packets"].as_array().unwrap().iter().map(|v| normalize_want(v).to_string()).collect();
         // Vanilla sends two or more changes of one section as a Section Blocks Update, which the
         // vectors do not record (Kiln sends each change on its own).

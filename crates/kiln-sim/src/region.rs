@@ -265,6 +265,11 @@ impl RegionWork<'_> {
                     RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: Some(conn) };
                 if crate::leash::bind(self.entities, &mut level, &mut self.players, i, pos, &mut self.out.spawns, &mut self.out.deaths) {
                     let p = &mut *self.players[i];
+                    // `LeadItem.useOn` succeeds on the server: the arm swings.
+                    let anim = p.in_hand(hand != 0).get(kiln_item::keys::INTERACT_ANIMATION).copied().unwrap_or_default();
+                    if p.swing(anim) {
+                        p.attack_ticker = 0;
+                    }
                     let step = crate::blocks::direction(face).map_or([0; 3], |d| d.step());
                     p.resend_block(&mut level, pos);
                     p.resend_block(&mut level, [pos[0] + step[0], pos[1] + step[1], pos[2] + step[2]]);
@@ -1241,12 +1246,24 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 kiln_inventory::click::handle_container_button_click(menu, env, container_id, button_id, true)
             });
         }
-        PlayIn::PlayerAction { action, pos, sequence, .. } => {
+        PlayIn::PlayerAction { action, pos, face, sequence } => {
             // `ServerboundPlayerActionPacket.Action` ordinals.
             const DROP_ALL_ITEMS: i32 = 4;
             const DROP_ITEM: i32 = 5;
             const RELEASE_USE_ITEM: i32 = 6;
+            const SWAP_ITEM_WITH_OFFHAND: i32 = 7;
             match action {
+                // `handlePlayerAction`: the F key trades the hands' stacks (not for spectators) and stops using the item.
+                SWAP_ITEM_WITH_OFFHAND => {
+                    if p.game_mode != 3 {
+                        let (main, off) = (p.in_hand(false).clone(), p.in_hand(true).clone());
+                        p.set_in_hand(true, main);
+                        p.set_in_hand(false, off);
+                        p.stop_using();
+                        p.with_menu(&env.rules, fx.spawns, |menu, _, e| menu.broadcast_changes(e));
+                    }
+                    return;
+                }
                 RELEASE_USE_ITEM => {
                     let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                     crate::ranged::release_using(p, &mut level, fx.spawns);
@@ -1259,11 +1276,11 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                     }
                     return;
                 }
-                digging::START_DESTROY_BLOCK | digging::STOP_DESTROY_BLOCK | digging::ABORT_DESTROY_BLOCK => {
+                digging::START_DESTROY_BLOCK | digging::CHANGE_DESTROY_DIRECTION | digging::STOP_DESTROY_BLOCK | digging::ABORT_DESTROY_BLOCK => {
                     let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                     // `Level.mayInteract`: nothing outside the world border breaks.
                     if env.border.contains(pos[0] as f64, pos[2] as f64) {
-                        digging::player_action(p, &mut level, action, pos);
+                        digging::player_action(p, &mut level, action, pos, face);
                     } else {
                         p.resend_block(&level, pos);
                     }
@@ -1390,11 +1407,18 @@ fn use_item_on(
     let step = dir.step();
     let next = [pos[0] + step[0], pos[1] + step[1], pos[2] + step[2]];
     let top = level.env.min_y + level.env.height - 1;
+    // `ServerGamePacketListenerImpl.handleUseItemOn`: the interact animation of the stack that was
+    // in the hand, for the swing a successful use makes (the others see the arm move).
+    let interact_animation = p.in_hand(hand != 0).get(kiln_item::keys::INTERACT_ANIMATION).copied().unwrap_or_default();
     // `Level.mayInteract`: blocks outside the world border do not react.
     if pos[1] <= top && p.awaiting_teleport.is_none() && may_interact {
         if p.game_mode == 3 {
             crate::container::open::spectator_use(p, level, BlockPos::new(pos[0], pos[1], pos[2]), spawns);
         } else if use_on_block(p, level, hand, pos, dir, cursor, spawns) {
+            // `swingAndResetAttackStrength`.
+            if p.swing(interact_animation) {
+                p.attack_ticker = 0;
+            }
             // `handleUseItemOn`: an interaction that did something fires `any_block_use` (the stack as it is left in the hand).
             let held = p.in_hand(hand != 0).clone();
             let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);

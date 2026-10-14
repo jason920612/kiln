@@ -62,6 +62,7 @@ pub(crate) struct Joining {
     pub respawn_dim: crate::DimId,
     /// `respawn.yaw` and `respawn.forced`.
     pub respawn_angle: f32,
+    pub respawn_pitch: f32,
     pub respawn_forced: bool,
     /// The saved level (`Dimension`).
     pub dim: crate::DimId,
@@ -177,6 +178,10 @@ impl Sim {
             respawn: saved.respawn,
             respawn_dim,
             respawn_angle: match saved.raw().get("respawn").and_then(|r| r.get("yaw")) {
+                Some(Tag::Float(y)) => *y,
+                _ => 0.0,
+            },
+            respawn_pitch: match saved.raw().get("respawn").and_then(|r| r.get("pitch")) {
                 Some(Tag::Float(y)) => *y,
                 _ => 0.0,
             },
@@ -297,13 +302,17 @@ impl Sim {
         let mut nbt = data.to_nbt(p.uuid);
         // `ServerPlayer.RespawnConfig`: the facing and whether the point is forced.
         if let (Some(pos), Tag::Compound(fields)) = (p.respawn, &mut nbt) {
-            let r = Tag::Compound(vec![
+            let mut r = vec![
                 ("dimension".into(), Tag::String(crate::DIMENSIONS[p.respawn_dim].0.into())),
                 ("pos".into(), Tag::IntArray(pos.to_vec())),
                 ("yaw".into(), Tag::Float(p.respawn_angle)),
-                ("pitch".into(), Tag::Float(0.0)),
-                ("forced".into(), Tag::Byte(p.respawn_forced as i8)),
-            ]);
+                ("pitch".into(), Tag::Float(p.respawn_pitch)),
+            ];
+            // (`forced` is an `optionalFieldOf` that is false: absent unless set.)
+            if p.respawn_forced {
+                r.push(("forced".into(), Tag::Byte(1)));
+            }
+            let r = Tag::Compound(r);
             match fields.iter_mut().find(|(k, _)| k == "respawn") {
                 Some((_, v)) => *v = r,
                 None => fields.push(("respawn".into(), r)),
