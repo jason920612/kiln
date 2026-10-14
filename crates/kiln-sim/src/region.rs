@@ -1389,6 +1389,7 @@ fn use_item_on(
     spawns: &mut Vec<Spawn>,
 ) {
     let Some(dir) = blocks::direction(face) else { return };
+    eprintln!("use_item_on at {pos:?} face {face} reach {} cursor {cursor:?}", p.can_reach_block(pos, 1.0));
     if !p.can_reach_block(pos, 1.0) || cursor.iter().any(|&c| (c as f64 - 0.5).abs() >= 1.0000001) {
         return;
     }
