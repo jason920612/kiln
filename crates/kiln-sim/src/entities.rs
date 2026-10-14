@@ -3008,11 +3008,9 @@ pub(crate) fn interact_mob(
             }
         }
     }
-    if let Some(sound) = out.player_sound
-        && let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound)
-    {
-        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), world_fx::SoundSource::Players, p.pos, 1.0, 1.0, level.env.game_time);
-        p.send(pkt);
+    if let Some(sound) = out.player_sound {
+        // `Player.playSound` (the milking): everyone near but the player, whose client does not play it.
+        p.queue_sound(sound, 1.0, 1.0);
     }
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);

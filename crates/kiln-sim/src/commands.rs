@@ -910,7 +910,12 @@ impl Host for Sim {
             left -= n;
             let mut stack = kiln_item::ItemStack::from_parts(id, n, patch.clone());
             p.add_to_inventory(&mut stack);
-            if !stack.is_empty() {
+            if stack.is_empty() {
+                // `GiveCommand`: a stack that went in all at once plays the pickup sound for everyone near.
+                use kiln_javamath::random::RandomSource;
+                let (a, b) = (p.entity_rng.next_float(), p.entity_rng.next_float());
+                p.sound_for_all("minecraft:entity.item.pickup", kiln_proto::packets::world_fx::SoundSource::Players, 0.2, ((a - b) * 0.7 + 1.0) * 2.0);
+            } else {
                 let spawn = p.throw(stack);
                 self.dims[dim].spawns.push(spawn);
             }
