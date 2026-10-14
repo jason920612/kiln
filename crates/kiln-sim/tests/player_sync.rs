@@ -324,7 +324,7 @@ fn a_dimension_change_sends_the_commands_and_the_abilities() {
     assert!(at(id::PLAYER_POSITION) < at(id::PLAYER_ABILITIES));
     assert_eq!(seen.iter().filter(|i| **i == id::COMMANDS).count(), 1);
     // The same level: only the position.
-    w.run("tp Actor 5 100 5");
+    w.run("execute in minecraft:the_nether run tp Actor 5 100 5");
     w.ticks(3);
     let seen = ids(&w.actor_log());
     assert!(seen.contains(&id::PLAYER_POSITION));
