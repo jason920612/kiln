@@ -757,14 +757,15 @@ fn water_box(b: &PieceBase, r: &mut Region, cb: &BoundingBox, x0: i32, y0: i32, 
 #[allow(clippy::too_many_arguments)]
 /// `OceanMonumentPiece.spawnElder`: an elder guardian at full health at a piece-relative block
 /// of the chunk being built (a wing room's or the penthouse's), with `finalizeSpawn`'s draws
-/// from the region's random.
+/// from the region's random. (`ElderGuardian`'s constructor calls `setPersistenceRequired`, so the saved
+/// entity says so; without it loading cleared the flag and the far ones despawned by chance.)
 fn spawn_elder(b: &PieceBase, r: &mut Region, cb: &BoundingBox, x: i32, y: i32, z: i32) {
     let p = b.world_pos(x, y, z);
     if !cb.is_inside(p) {
         return;
     }
     let (px, py, pz) = (p.x as f64 + 0.5, p.y as f64, p.z as f64 + 0.5);
-    r.add_entity(px, pz, crate::feature::entity_tag("minecraft:elder_guardian", [px, py, pz], 0.0, vec![("Health".into(), Tag::Float(80.0))]));
+    r.add_entity(px, pz, crate::feature::entity_tag("minecraft:elder_guardian", [px, py, pz], 0.0, vec![("Health".into(), Tag::Float(80.0)), ("PersistenceRequired".into(), Tag::Byte(1))]));
     super::mansion::finalize_spawn_draws(r.level_random(), false);
 }
 
