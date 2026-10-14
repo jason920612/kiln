@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn a_wind_burst_carries_its_own_gusts_and_sound() {
         for (player, sound, radius) in [(true, "minecraft:entity.wind_charge.wind_burst", 1.2f32), (false, "minecraft:entity.breeze.wind_burst", 3.0)] {
-            let mut level = MemoryLevel::new();
+            let mut level = MemoryLevel::new(-64, 1);
             burst(&mut level, None, Vec3::new(0.5, 10.0, 0.5), player);
             let blasts: Vec<_> = level.events.iter().filter_map(|e| if let Event::Explosion { power, fx, .. } = e { Some((*power, *fx)) } else { None }).collect();
             assert_eq!(blasts.len(), 1, "{:?}", level.events);
