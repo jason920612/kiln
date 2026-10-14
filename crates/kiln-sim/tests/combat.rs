@@ -455,3 +455,27 @@ fn horse_id(packets: &[bytes::Bytes], me: i32) -> Option<i32> {
         (id != me).then_some(id)
     })
 }
+
+/// wp61 (a real client next to a vanilla server): a successful use of a block (a lever here) moves
+/// the user's arm for the players who watch (`swingAndResetAttackStrength`), and a click on nothing
+/// does not.
+#[test]
+fn using_a_block_makes_the_arm_swing_for_the_others() {
+    let mut w = World::new(&["Actor", "Watcher"]);
+    w.console("gamemode survival Actor");
+    w.clients[1].stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
+    let base = w.clients[0].pos;
+    let at = [base[0].floor() as i32 + 1, base[1].floor() as i32, base[2].floor() as i32];
+    w.console(&format!("setblock {} {} {} minecraft:lever[face=floor,facing=east]", at[0], at[1], at[2]));
+    w.ticks(3);
+    let swings = |w: &World| w.clients[1].stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::SWING_ANIMATION).map_or(0, |a| a.0);
+    let before = swings(&w);
+    w.step(vec![ToSim::Packet(1, PlayIn::UseItemOn { hand: 0, pos: at, face: 1, cursor: [0.5, 0.2, 0.5], inside: false, sequence: 1 })]);
+    w.ticks(2);
+    assert_eq!(swings(&w) - before, 1, "the lever click swung the arm once for the watcher");
+    // A click on air (nothing to use) swings nothing.
+    let air = [at[0] + 3, at[1] + 5, at[2]];
+    w.step(vec![ToSim::Packet(1, PlayIn::UseItemOn { hand: 0, pos: air, face: 1, cursor: [0.5, 0.5, 0.5], inside: false, sequence: 2 })]);
+    w.ticks(10);
+    assert_eq!(swings(&w) - before, 1);
+}

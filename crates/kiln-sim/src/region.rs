@@ -265,6 +265,11 @@ impl RegionWork<'_> {
                     RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: Some(conn) };
                 if crate::leash::bind(self.entities, &mut level, &mut self.players, i, pos, &mut self.out.spawns, &mut self.out.deaths) {
                     let p = &mut *self.players[i];
+                    // `LeadItem.useOn` succeeds on the server: the arm swings.
+                    let anim = p.in_hand(hand != 0).get(kiln_item::keys::INTERACT_ANIMATION).copied().unwrap_or_default();
+                    if p.swing(anim) {
+                        p.attack_ticker = 0;
+                    }
                     let step = crate::blocks::direction(face).map_or([0; 3], |d| d.step());
                     p.resend_block(&mut level, pos);
                     p.resend_block(&mut level, [pos[0] + step[0], pos[1] + step[1], pos[2] + step[2]]);
@@ -1390,11 +1395,18 @@ fn use_item_on(
     let step = dir.step();
     let next = [pos[0] + step[0], pos[1] + step[1], pos[2] + step[2]];
     let top = level.env.min_y + level.env.height - 1;
+    // `ServerGamePacketListenerImpl.handleUseItemOn`: the interact animation of the stack that was
+    // in the hand, for the swing a successful use makes (the others see the arm move).
+    let interact_animation = p.in_hand(hand != 0).get(kiln_item::keys::INTERACT_ANIMATION).copied().unwrap_or_default();
     // `Level.mayInteract`: blocks outside the world border do not react.
     if pos[1] <= top && p.awaiting_teleport.is_none() && may_interact {
         if p.game_mode == 3 {
             crate::container::open::spectator_use(p, level, BlockPos::new(pos[0], pos[1], pos[2]), spawns);
         } else if use_on_block(p, level, hand, pos, dir, cursor, spawns) {
+            // `swingAndResetAttackStrength`.
+            if p.swing(interact_animation) {
+                p.attack_ticker = 0;
+            }
             // `handleUseItemOn`: an interaction that did something fires `any_block_use` (the stack as it is left in the hand).
             let held = p.in_hand(hand != 0).clone();
             let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
