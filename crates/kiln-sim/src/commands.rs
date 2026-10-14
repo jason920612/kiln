@@ -1996,6 +1996,11 @@ impl Sim {
         for (c, level) in levels {
             if let Some(p) = self.players.get_mut(&c) {
                 p.permission = level;
+                // `PlayerList.sendPlayerPermissionLevel`: on join and whenever the level changes.
+                if p.permission_sent != Some(level) {
+                    p.permission_sent = Some(level);
+                    p.send(kiln_proto::packets::entity::entity_event(p.entity_id, 24 + level.min(4)));
+                }
             }
         }
     }

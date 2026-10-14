@@ -256,3 +256,24 @@ fn a_beds_saved_respawn_config_has_the_players_pitch_and_no_forced() {
     let respawn = w.sim.saved_player_nbt(1).unwrap().get("respawn").unwrap().clone();
     assert_eq!(respawn.get("forced"), Some(&kiln_proto::nbt::Tag::Byte(1)), "{respawn:?}");
 }
+
+/// wp61: `PlayerList.sendPlayerPermissionLevel` tells the client its operator level (entity
+/// events 24..=28) on join, when it changes (`/op`, `/deop`) and again after the respawn.
+#[test]
+fn the_client_is_told_its_permission_level() {
+    let mut w = World::new("survival");
+    let events = |w: &World| w.client.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::ENTITY_EVENT).map_or(0, |a| a.0);
+    let joined = events(&w);
+    assert!(joined >= 1, "the level on join");
+    w.run("op Sleeper");
+    w.ticks(2);
+    assert_eq!(events(&w), joined + 1, "/op");
+    w.ticks(5);
+    assert_eq!(events(&w), joined + 1, "no repeat while it stays");
+    w.run("kill Sleeper");
+    w.ticks(3);
+    let died = events(&w);
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::PerformRespawn))]));
+    w.ticks(3);
+    assert!(events(&w) > died, "the respawn tells it again");
+}

@@ -497,6 +497,8 @@ struct Player {
     brush_ticks: Option<i32>,
     /// The operator permission level (`/op`), kept by the server for the regions' sake (game master blocks).
     permission: u8,
+    /// The level the client was last told (`EntityEvent.PERMISSION_LEVEL_*`); `None` until the first notice.
+    permission_sent: Option<u8>,
     /// The plugin instances of the region the player is in, when some plugin hears of player
     /// damage (set when the region works, see `plugins::gate`).
     plugin_gate: Option<kiln_plugin_host::RegionPlugins>,
@@ -3198,6 +3200,9 @@ impl Sim {
         p.center = player_chunk(pos);
         p.send(packets::set_chunk_cache_center(p.center.x, p.center.z));
         p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
+        // `PlayerList.respawn` tells the new player its operator level again.
+        p.permission_sent = Some(p.permission);
+        p.send(packets::entity::entity_event(p.entity_id, 24 + p.permission.min(4)));
         p.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         p.send(time);
         for w in weather {
@@ -3615,6 +3620,7 @@ impl Sim {
             kinetic_ticks: None,
             brush_ticks: None,
             permission: 0,
+            permission_sent: None,
             plugin_gate: None,
             recent_stabs: Vec::new(),
             pending_suggestion: None,

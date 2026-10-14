@@ -680,6 +680,21 @@ public class ClientCtl {
                 d = "block_event " + BuiltInRegistries.BLOCK.getKey(p.getBlock()).getPath() + " " + p.getB0() + " " + p.getB1();
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSwingAnimationPacket || msg instanceof net.minecraft.network.protocol.game.ClientboundAnimatePacket) {
                 d = msg.getClass().getSimpleName().replace("Clientbound", "") + " " + msg.toString();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket p) {
+                Entity en = mc.level == null ? null : mc.level.getEntity(p.id());
+                StringBuilder sb = new StringBuilder("entity_data " + (en == null ? "?" : BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath()));
+                java.util.List<Integer> ids = new java.util.ArrayList<>();
+                for (var v : p.packedItems()) {
+                    ids.add(v.id());
+                }
+                java.util.Collections.sort(ids);
+                d = sb.append(" ids=").append(ids).toString();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket p) {
+                StringBuilder sb = new StringBuilder("equipment");
+                for (var pair : p.getSlots()) {
+                    sb.append(' ').append(pair.getFirst().getName()).append('=').append(BuiltInRegistries.ITEM.getKey(pair.getSecond().getItem()).getPath()).append('x').append(pair.getSecond().getCount());
+                }
+                d = sb.toString();
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundExplodePacket p) {
                 String str = p.toString().replaceAll("-?[0-9]+[.][0-9]+", "#");
                 d = "explode " + str.substring(0, Math.min(str.length(), 300));
