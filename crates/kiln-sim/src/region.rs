@@ -1241,7 +1241,7 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 kiln_inventory::click::handle_container_button_click(menu, env, container_id, button_id, true)
             });
         }
-        PlayIn::PlayerAction { action, pos, sequence, .. } => {
+        PlayIn::PlayerAction { action, pos, face, sequence } => {
             // `ServerboundPlayerActionPacket.Action` ordinals.
             const DROP_ALL_ITEMS: i32 = 4;
             const DROP_ITEM: i32 = 5;
@@ -1263,7 +1263,7 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                     let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                     // `Level.mayInteract`: nothing outside the world border breaks.
                     if env.border.contains(pos[0] as f64, pos[2] as f64) {
-                        digging::player_action(p, &mut level, action, pos);
+                        digging::player_action(p, &mut level, action, pos, face);
                     } else {
                         p.resend_block(&level, pos);
                     }

@@ -28,6 +28,9 @@ pub(crate) struct Dig {
     pub start: i64,
     /// Crack stage last shown to other players.
     pub stage: i32,
+    /// The face the player is digging (`Direction.ordinal`: down, up, north, south, west, east):
+    /// the data of the dig particle events.
+    pub face: i32,
 }
 
 fn block_pos(p: [i32; 3]) -> BlockPos {
@@ -134,7 +137,7 @@ impl Player {
 }
 
 /// `ServerPlayerGameMode.handleBlockBreakAction`.
-pub(crate) fn player_action(p: &mut Player, level: &mut RegionLevel, action: i32, pos: [i32; 3]) {
+pub(crate) fn player_action(p: &mut Player, level: &mut RegionLevel, action: i32, pos: [i32; 3], face: u8) {
     if !p.can_reach_block(pos, 1.0) {
         return;
     }
@@ -169,7 +172,7 @@ pub(crate) fn player_action(p: &mut Player, level: &mut RegionLevel, action: i32
             }
             let stage = (progress * 10.0) as i32;
             level.out.destruction.push((p.entity_id, pos, stage));
-            p.digging = Some(Dig { pos, start: now, stage });
+            p.digging = Some(Dig { pos, start: now, stage, face: face as i32 });
         }
         STOP_DESTROY_BLOCK => {
             let Some(dig) = p.digging.filter(|d| d.pos == pos) else { return };
@@ -230,6 +233,11 @@ pub(crate) fn tick(p: &mut Player, level: &mut RegionLevel) {
             dig.stage = stage;
             level.out.destruction.push((p.entity_id, dig.pos, stage));
         }
+        // `ServerPlayerGameMode.tick`: every tick of digging everyone near (the digger too) gets
+        // the crack particles (2019), every fourth tick with the hit sound as well (2020).
+        let ticks = now - dig.start + 1;
+        let id = if ticks % 4 == 0 { 2020 } else { 2019 };
+        level.effect(kiln_blocks::Effect::LevelEvent { id, pos: block_pos(dig.pos), data: dig.face });
     }
 }
 

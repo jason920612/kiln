@@ -35,7 +35,7 @@ import net.minecraft.world.phys.HitResult;
  * It never touches the operating system's keyboard or mouse, so the game window needs no focus.
  */
 public class ClientCtl {
-    static final int PORT = 25999;
+    static final int PORT = Integer.getInteger("wp61.port", 25999);
 
     public static void premain(String args) {
         Thread t = new Thread(ClientCtl::serve, "wp58-ctl");
@@ -418,7 +418,8 @@ public class ClientCtl {
                         return "ERR no entity";
                     }
                     StringBuilder sb = new StringBuilder();
-                    for (var v : en.getEntityData().getNonDefaultValues()) {
+                    var nonDefault = en.getEntityData().getNonDefaultValues();
+                    for (var v : nonDefault == null ? java.util.List.<net.minecraft.network.syncher.SynchedEntityData.DataValue<?>>of() : nonDefault) {
                         sb.append(v.id()).append('=').append(v.value()).append("; ");
                     }
                     var leash = en instanceof net.minecraft.world.entity.Leashable l ? l.getLeashHolder() : null;
@@ -498,6 +499,8 @@ public class ClientCtl {
                     o.addProperty("gameTime", mc.level.getGameTime());
                     return o.toString();
                 });
+            case "spy": // spy on|clear|dump: count the clientbound packets, with the sounds, particles, level events and entity events
+                return onMain(() -> spy(mc, a.length > 1 ? a[1] : "dump"));
             case "mapdump": // mapdump PATH: the 16384 colour bytes of the map in the main hand, written raw to PATH
                 return onMain(() -> {
                     ItemStack st = mc.player.getMainHandItem();
@@ -652,5 +655,85 @@ public class ClientCtl {
             }
         }
         return o;
+    }
+
+    // ---- packet spy (wp61): what the server tells this client, to compare with a vanilla server's ----
+    static final java.util.Map<String, Integer> SPY = new java.util.TreeMap<>();
+    static boolean spyInstalled;
+
+    static synchronized void spyRecord(Minecraft mc, Object msg) {
+        SPY.merge(msg.getClass().getSimpleName(), 1, Integer::sum);
+        String d = null;
+        try {
+            if (msg instanceof net.minecraft.network.protocol.game.ClientboundSoundPacket p) {
+                d = "sound " + p.getSound().getRegisteredName() + " " + p.getSource() + " vol=" + Math.round(p.getVolume() * 100) / 100.0;
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSoundEntityPacket p) {
+                d = "sound_entity " + p.getSound().getRegisteredName() + " " + p.getSource() + " vol=" + Math.round(p.getVolume() * 100) / 100.0;
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket p) {
+                d = "particle " + BuiltInRegistries.PARTICLE_TYPE.getKey(p.particle().getType()) + " n=" + p.count();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundLevelEventPacket p) {
+                d = "level_event " + p.getType() + " data=" + p.getData();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundEntityEventPacket p) {
+                Entity en = mc.level == null ? null : p.getEntity(mc.level);
+                d = "entity_event " + p.getEventId() + " " + (en == null ? "?" : BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath());
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundGameEventPacket p) {
+                Field idf = p.getEvent().getClass().getDeclaredField("id");
+                idf.setAccessible(true);
+                d = "game_event " + idf.get(p.getEvent()) + " " + p.getParam();
+            }
+        } catch (Throwable t) {
+            d = "spy error " + t;
+        }
+        if (d != null) {
+            SPY.merge("= " + d, 1, Integer::sum);
+        }
+    }
+
+    static String spy(Minecraft mc, String what) {
+        try {
+            if (what.equals("on") && !spyInstalled) {
+                Object conn = mc.getConnection().getConnection();
+                io.netty.channel.Channel ch = null;
+                for (Field f : conn.getClass().getDeclaredFields()) {
+                    if (io.netty.channel.Channel.class.isAssignableFrom(f.getType())) {
+                        f.setAccessible(true);
+                        ch = (io.netty.channel.Channel) f.get(conn);
+                    }
+                }
+                String before = null;
+                for (var e : ch.pipeline()) {
+                    if (e.getValue() == conn) {
+                        before = e.getKey();
+                    }
+                }
+                ch.pipeline().addBefore(before, "wp61spy", new io.netty.channel.ChannelInboundHandlerAdapter() {
+                    @Override
+                    public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) throws Exception {
+                        spyRecord(mc, msg);
+                        ctx.fireChannelRead(msg);
+                    }
+                });
+                spyInstalled = true;
+            }
+            if (what.equals("clear")) {
+                synchronized (ClientCtl.class) {
+                    SPY.clear();
+                }
+            }
+            if (what.equals("off")) {
+                synchronized (ClientCtl.class) {
+                    SPY.clear();
+                }
+            }
+            JsonObject o = new JsonObject();
+            synchronized (ClientCtl.class) {
+                for (var e : SPY.entrySet()) {
+                    o.addProperty(e.getKey(), e.getValue());
+                }
+            }
+            return o.toString();
+        } catch (Throwable t) {
+            return "ERR " + t;
+        }
     }
 }

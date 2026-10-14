@@ -214,3 +214,25 @@ fn powering_by_command_reaches_the_client() {
     assert_eq!(sent(kiln_data::packets::play::clientbound::BLOCK_UPDATE), 1);
     assert_eq!(sent(kiln_data::packets::play::clientbound::SECTION_BLOCKS_UPDATE), 1);
 }
+
+/// wp61 (a real client next to a vanilla server): while a player digs, the server sends a level
+/// event every tick (2019 crack particles, 2020 with the hit sound on every fourth), to the digger
+/// as well; the client no longer makes them itself.
+#[test]
+fn digging_sends_a_level_event_every_tick() {
+    let mut w = World::new("survival");
+    w.client.stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
+    let dirt = w.at(1, 0, 0);
+    let events = |w: &World| w.client.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::LEVEL_EVENT).map_or(0, |a| a.0);
+    let before = events(&w);
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 0, pos: dirt, face: 1, sequence: 1 })]));
+    w.ticks(9);
+    let during = events(&w) - before;
+    assert!((9..=10).contains(&during), "one level event per tick of digging: {during}");
+    // Stopping (aborting) the dig ends them.
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 2, pos: dirt, face: 1, sequence: 2 })]));
+    w.ticks(1);
+    let settled = events(&w);
+    w.ticks(5);
+    assert_eq!(events(&w), settled, "no more once the dig is aborted");
+}

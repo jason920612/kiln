@@ -30,7 +30,7 @@ def server_log(n=40):
 
 
 class C:
-    def __init__(self, port=25999):
+    def __init__(self, port=int(os.environ.get("KILN_AGENT_PORT", "25999"))):
         self.s = socket.create_connection(("127.0.0.1", port), timeout=15)
         self.f = self.s.makefile("rw", encoding="utf-8", newline="\n")
 
