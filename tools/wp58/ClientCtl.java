@@ -465,6 +465,54 @@ public class ClientCtl {
                     o.add("decorations", decs);
                     return o.toString();
                 });
+            case "menuinfo": // menuinfo: what the open menu knows beyond its slots (enchanting costs and clues, the anvil's cost)
+                return onMain(() -> {
+                    var menu = mc.player.containerMenu;
+                    JsonObject o = new JsonObject();
+                    o.addProperty("menu", menu.getClass().getSimpleName());
+                    if (menu instanceof net.minecraft.world.inventory.EnchantmentMenu m) {
+                        JsonArray costs = new JsonArray(), clue = new JsonArray(), lvl = new JsonArray();
+                        for (int i = 0; i < 3; i++) {
+                            costs.add(m.costs[i]);
+                            clue.add(m.enchantClue[i]);
+                            lvl.add(m.levelClue[i]);
+                        }
+                        o.add("costs", costs);
+                        o.add("clue", clue);
+                        o.add("levelClue", lvl);
+                        o.addProperty("seed", m.getEnchantmentSeed());
+                        o.addProperty("lapis", m.getGoldCount());
+                    } else if (menu instanceof net.minecraft.world.inventory.AnvilMenu m) {
+                        o.addProperty("cost", m.getCost());
+                    } else if (menu instanceof net.minecraft.world.inventory.MerchantMenu m) {
+                        o.addProperty("level", m.getTraderLevel());
+                        o.addProperty("xp", m.getTraderXp());
+                    }
+                    return o.toString();
+                });
+            case "weather": // weather: the client's rain and thunder levels and the day time
+                return onMain(() -> {
+                    JsonObject o = new JsonObject();
+                    o.addProperty("rain", mc.level.getRainLevel(1.0f));
+                    o.addProperty("thunder", mc.level.getThunderLevel(1.0f));
+                    o.addProperty("gameTime", mc.level.getGameTime());
+                    return o.toString();
+                });
+            case "mapdump": // mapdump PATH: the 16384 colour bytes of the map in the main hand, written raw to PATH
+                return onMain(() -> {
+                    ItemStack st = mc.player.getMainHandItem();
+                    var mid = st.get(net.minecraft.core.component.DataComponents.MAP_ID);
+                    var md = mid == null ? null : mc.level.getMapData(mid);
+                    if (md == null) {
+                        return "ERR no map data";
+                    }
+                    try {
+                        java.nio.file.Files.write(java.nio.file.Path.of(a[1]), md.colors);
+                    } catch (java.io.IOException ex) {
+                        return "ERR " + ex;
+                    }
+                    return "ok " + md.centerX + "," + md.centerZ;
+                });
             default:
                 return "ERR unknown command " + a[0];
         }

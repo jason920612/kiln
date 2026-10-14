@@ -717,6 +717,7 @@ struct Player {
     /// `RespawnConfig`: the facing at the respawn point and whether it is forced
     /// (`/spawnpoint`; beds and anchors are not).
     respawn_angle: f32,
+    respawn_pitch: f32,
     respawn_forced: bool,
     /// The type of the last mob that hurt the player and when (`getKillCredit`'s fallback).
     last_mob_attacker: Option<(&'static str, i64)>,
@@ -3726,6 +3727,7 @@ impl Sim {
             sleep: sleep::Sleep::default(),
             woke_up: false,
             respawn_angle: joining.respawn_angle,
+            respawn_pitch: joining.respawn_pitch,
             respawn_forced: joining.respawn_forced,
             last_mob_attacker: None,
             stats: self.load_stats(j.uuid),

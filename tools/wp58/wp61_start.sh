@@ -7,6 +7,6 @@ sleep 1
 cp "${1:-$HOME/wt/wp61-playthrough4/target/release/kiln}" ~/wp61/kiln-run
 [ -p console ] || mkfifo console
 (sleep 100000000 > console &)
-export KILN_PORT=25585 KILN_GENERATOR=noise KILN_SEED=${KILN_SEED:-61} KILN_DATAPACK=/home/test/kiln/work/generated KILN_WORLD=$HOME/wp61/world KILN_OPS=KilnTest KILN_WORK=$HOME/kiln/work RUST_LOG=info
+export KILN_PORT=25585 KILN_GENERATOR=noise KILN_SEED=${KILN_SEED:-61} KILN_DATAPACK=/home/test/kiln/work/generated KILN_WORLD=${KILN_WORLD:-$HOME/wp61/world} KILN_OPS=KilnTest KILN_WORK=$HOME/kiln/work RUST_LOG=info
 nohup ./kiln-run < console > server.log 2>&1 &
 echo started $!

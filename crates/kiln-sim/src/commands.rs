@@ -1233,6 +1233,7 @@ impl Host for Sim {
             p.respawn_dim = crate::dim_id(&spawn.dimension).unwrap_or(crate::OVERWORLD_ID);
             p.respawn_forced = true;
             p.respawn_angle = spawn.yaw;
+            p.respawn_pitch = 0.0;
         }
     }
 
