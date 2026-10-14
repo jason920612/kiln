@@ -1944,8 +1944,70 @@ public class MobVectors {
         scenariosAvoid(out);
         // -- wp44: mob spawner blocks
         scenariosSpawners(out);
+        // -- wp63: equine breeding with varied parents, long llama caravans
+        scenariosEq63(out);
 
         return out;
+    }
+
+    // ---------------------------------------------------------- wp63: equine breeding, llama caravans
+    static void scenariosEq63(List<Scenario> out) {
+        // Breeding with parents of different health, speed, jump and coats (the attributes a foal inherits; tools/equine_breed.py checks
+        // the arithmetic on thousands of pairs, these check the whole path: mating, the baby, what it does in the next 300 ticks).
+        String[][] pairs = {
+            {"horse", "horse"}, {"horse", "horse"}, {"donkey", "donkey"}, {"donkey", "donkey"}, {"horse", "donkey"}, {"donkey", "horse"},
+            {"horse", "donkey"}, {"llama", "llama"}, {"llama", "llama"}, {"trader_llama", "llama"}, {"llama", "trader_llama"}, {"mule", "donkey"},
+        };
+        String[] attrs = {
+            "attributes:[{id:\"minecraft:max_health\",base:15.0d},{id:\"minecraft:movement_speed\",base:0.1125d},{id:\"minecraft:jump_strength\",base:0.4d}]",
+            "attributes:[{id:\"minecraft:max_health\",base:30.0d},{id:\"minecraft:movement_speed\",base:0.3375d},{id:\"minecraft:jump_strength\",base:1.0d}]",
+            "attributes:[{id:\"minecraft:max_health\",base:22.5d},{id:\"minecraft:movement_speed\",base:0.2d},{id:\"minecraft:jump_strength\",base:0.7d}]",
+            "attributes:[{id:\"minecraft:max_health\",base:17.0d},{id:\"minecraft:movement_speed\",base:0.3d},{id:\"minecraft:jump_strength\",base:0.55d}]",
+        };
+        for (int i = 0; i < pairs.length; i++) {
+            Scenario s = new Scenario("eq63_breed_" + i + "_" + pairs[i][0] + "_" + pairs[i][1]);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m1 = new MobSpec("minecraft:" + pairs[i][0], 0.5, BY, 0.5, 20f + 10 * i, 63000L + i);
+            MobSpec m2 = new MobSpec("minecraft:" + pairs[i][1], 3.5, BY, 1.5, 200f, 63100L + i);
+            boolean llama = pairs[i][0].endsWith("llama");
+            String a1 = attrs[i % 4], a2 = attrs[(i + 1) % 4];
+            // (Full health: only a parent with all its health breeds.)
+            String[] hp = {"15f", "30f", "22.5f", "17f"};
+            String h1 = hp[i % 4], h2 = hp[(i + 1) % 4];
+            m1.nbt = "{Tame:1b,Variant:" + (llama ? i % 4 : 258 + i) + (llama ? ",Strength:" + (1 + i % 5) : "") + ",Health:" + h1 + "," + a1 + "}";
+            m2.nbt = "{Tame:1b,Variant:" + (llama ? (i + 1) % 4 : 513 + i) + (llama ? ",Strength:" + (1 + (i + 2) % 5) : "") + ",Health:" + h2 + "," + a2 + "}";
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 6300 + i;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Long caravans: the head is led by the player, a dozen llamas (trader llamas among them) take the tail of the chain one after the
+        // other; a caravan stays at most eight links long behind a led head (`LlamaFollowCaravanGoal.firstIsLeashed`).
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario("eq63_caravan_" + i);
+            floor(s, 56, "minecraft:grass_block");
+            for (int k = 0; k < 12; k++) {
+                String kind = (i == 1 && k % 3 == 1) ? "trader_llama" : "llama";
+                MobSpec m = new MobSpec("minecraft:" + kind, 0.5 + 3.0 * k, BY, 0.5 + (k % 3) * 2.0, 90f * k, 63200L + 20 * i + k);
+                m.nbt = k == 0 ? "{Strength:3,NoAI:1b}" : "{Strength:" + (1 + k % 5) + "}";
+                s.mobs.add(m);
+            }
+            s.player = new double[] {-2.5, BY, 0.5};
+            s.playerCreative = true;
+            Action lead = new Action(0, "leash");
+            lead.mob = 0;
+            lead.amp = -2;
+            lead.what = "";
+            s.actions.add(lead);
+            s.levelSeed = 6320 + i;
+            s.ticks = 700;
+            out.add(s);
+        }
     }
 
     // ---------------------------------------------------------- wp44: mob spawner blocks
