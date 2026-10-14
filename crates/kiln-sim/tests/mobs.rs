@@ -999,7 +999,8 @@ fn a_trade_levels_the_villager_up_and_gossips_once_per_tick() {
     assert_eq!(trading_gossip(&w, "minecraft:villager"), Some(2.0), "one TRADE event for the tick's twelve trades");
     // No AI step, no gossip.
     w.console("kill @e[type=minecraft:villager]");
-    w.ticks(2);
+    w.ticks(40);
+    assert!(w.mobs("minecraft:villager").is_empty());
     w.summon("minecraft:villager", [1.5, 0.0, 0.0], &data("NoAI:1b,"));
     let villager = w.mobs("minecraft:villager")[0].0;
     trade_all(&mut w, villager);
