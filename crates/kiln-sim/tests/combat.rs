@@ -496,7 +496,7 @@ fn milking_is_heard_by_the_others_but_not_the_milker() {
     w.give(1, 36, "minecraft:bucket");
     w.console("gamemode survival Milker");
     w.console("gamerule minecraft:spawn_mobs false");
-    w.console("summon minecraft:cow ~1.5 ~ ~ {NoAI:1b,PersistenceRequired:1b}");
+    w.console("execute at Milker run summon minecraft:cow ~1.5 ~ ~ {NoAI:1b,PersistenceRequired:1b}");
     w.ticks(3);
     let cow = w.sim.entities().iter().position(|e| e.0 == "minecraft:cow").expect("the cow");
     let _ = cow;
