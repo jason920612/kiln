@@ -56,14 +56,14 @@ public class EquineBreedVectors {
                 ServerLevel level = server.overworld();
                 level.tickRateManager().setFrozen(true);
                 Object[][] cases = {
-                    {"horse_horse", EntityType.HORSE, EntityType.HORSE},
-                    {"donkey_donkey", EntityType.DONKEY, EntityType.DONKEY},
-                    {"horse_donkey", EntityType.HORSE, EntityType.DONKEY},
-                    {"donkey_horse", EntityType.DONKEY, EntityType.HORSE},
-                    {"llama_llama", EntityType.LLAMA, EntityType.LLAMA},
-                    {"llama_trader", EntityType.LLAMA, EntityType.TRADER_LLAMA},
-                    {"trader_llama", EntityType.TRADER_LLAMA, EntityType.LLAMA},
-                    {"trader_trader", EntityType.TRADER_LLAMA, EntityType.TRADER_LLAMA},
+                    {"horse_horse", type("minecraft:horse"), type("minecraft:horse")},
+                    {"donkey_donkey", type("minecraft:donkey"), type("minecraft:donkey")},
+                    {"horse_donkey", type("minecraft:horse"), type("minecraft:donkey")},
+                    {"donkey_horse", type("minecraft:donkey"), type("minecraft:horse")},
+                    {"llama_llama", type("minecraft:llama"), type("minecraft:llama")},
+                    {"llama_trader", type("minecraft:llama"), type("minecraft:trader_llama")},
+                    {"trader_llama", type("minecraft:trader_llama"), type("minecraft:llama")},
+                    {"trader_trader", type("minecraft:trader_llama"), type("minecraft:trader_llama")},
                 };
                 for (int c = 0; c < cases.length; c++) {
                     for (int i = 0; i < samples; i++) {
@@ -84,6 +84,10 @@ public class EquineBreedVectors {
     }
 
     /** A small deterministic generator for the parents' attributes (not the entity's random). */
+    static EntityType<?> type(String id) {
+        return net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getValue(net.minecraft.resources.Identifier.parse(id));
+    }
+
     static final class Gen {
         long s;
         Gen(long seed) { s = seed * 0x9E3779B97F4A7C15L + 12345; }
@@ -117,7 +121,6 @@ public class EquineBreedVectors {
             }
         }
         a.getRandom().setSeed(seed);
-        String before = parent(a) + "," + parent(b);
         AgeableMob child = a.getBreedOffspring(level, b);
         long next = a.getRandom().nextLong();
         return String.format(Locale.ROOT, "{\"case\":\"%s\",\"seed\":%d,\"a\":%s,\"b\":%s,\"child\":%s,\"next\":%d}", name, seed, parent(a), parent(b), describe(child), next);
