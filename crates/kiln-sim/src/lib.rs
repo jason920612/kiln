@@ -489,6 +489,15 @@ struct Player {
     meta_primed: bool,
     /// `Player.getScore`: the experience points gained (the death screen shows it).
     score: i32,
+    /// `LivingEntity.getArrowCount` / `getStingerCount` (entity data 12 and 13): the arrows and bee stingers stuck in
+    /// the body, and the ticks until the next one of each falls out (`removeArrowTime`, `removeStingerTime`).
+    arrow_count: i32,
+    stinger_count: i32,
+    remove_arrow_time: i32,
+    remove_stinger_time: i32,
+    /// Particle packets this player's tick asks for (`ServerLevel.sendParticles` from the player's own tick, with
+    /// the position): they go to every player within 32 blocks, the player included.
+    pending_particles: Vec<([f64; 3], Bytes)>,
     /// Arm swung this tick.
     swung: bool,
     /// `LivingEntity.swingState`: ticks into the current swing (-1 when it has just begun) and
@@ -3188,6 +3197,10 @@ impl Sim {
             p.combat = health::CombatTracker::default();
             p.attack_ticker = 0;
             p.portal_cooldown = 0;
+            p.arrow_count = 0;
+            p.stinger_count = 0;
+            p.remove_arrow_time = 0;
+            p.remove_stinger_time = 0;
             // Its tick count too (phantoms' insomnia counts from it).
             p.tick_count = 0;
         }
@@ -3640,6 +3653,11 @@ impl Sim {
             meta_sent: players::synched_defaults(),
             meta_primed: false,
             score: joining.score,
+            arrow_count: 0,
+            stinger_count: 0,
+            remove_arrow_time: 0,
+            remove_stinger_time: 0,
+            pending_particles: Vec::new(),
             swung: false,
             swing_ticks: 0,
             swing_duration: 0,

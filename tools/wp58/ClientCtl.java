@@ -744,6 +744,13 @@ public class ClientCtl {
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundExplodePacket p) {
                 String str = p.toString().replaceAll("-?[0-9]+[.][0-9]+", "#");
                 d = "explode " + str.substring(0, Math.min(str.length(), 300));
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket p) {
+                // wp64: the actions and, per entry, the uuid's first characters, the game mode and whether it is listed
+                StringBuilder sb = new StringBuilder("player_info " + p.actions());
+                for (var en : p.entries()) {
+                    sb.append(' ').append(en.profileId().toString(), 0, 4).append(":mode=").append(en.gameMode()).append(",listed=").append(en.listed());
+                }
+                d = sb.toString();
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundGameEventPacket p) {
                 Field idf = p.getEvent().getClass().getDeclaredField("id");
                 idf.setAccessible(true);

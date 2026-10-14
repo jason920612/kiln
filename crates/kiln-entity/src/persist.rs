@@ -392,7 +392,14 @@ fn read_kind(type_name: &'static str, r: &mut Input) -> Result<EntityKind, LoadE
         name => {
             let kind = THROWABLES.into_iter().find(|t| t.type_name() == name).ok_or(LoadError::NotSimulated)?;
             let (left_owner, has_been_shot) = read_projectile(r);
-            EntityKind::Throwable(ThrowableData { kind, owner: None, left_owner, left_owner_checked: false, has_been_shot, item: None })
+            // `ThrowableItemProjectile`'s `Item`: what a potion breaks with (the other throwables
+            // keep it as it was read).
+            let item = if matches!(kind, Throwable::SplashPotion | Throwable::LingeringPotion) {
+                r.get("Item").and_then(|t| ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty())
+            } else {
+                None
+            };
+            EntityKind::Throwable(ThrowableData { kind, owner: None, left_owner, left_owner_checked: false, has_been_shot, item })
         }
     })
 }
@@ -510,7 +517,7 @@ pub fn save_with<'a>(e: &'a Entity, owner_uuid: &dyn Fn(i32) -> Option<u128>, lo
         }
         EntityKind::Throwable(d) => {
             write_projectile(&mut o, owner(d.owner), d.left_owner, d.has_been_shot);
-            o.put("Item", extra("Item").unwrap_or_else(|| item_tag(d.kind.type_name())));
+            o.put("Item", d.item.as_ref().map(ItemStack::to_nbt).or_else(|| extra("Item")).unwrap_or_else(|| item_tag(d.kind.type_name())));
         }
         EntityKind::Arrow(d) => {
             write_projectile(&mut o, owner(d.owner), d.left_owner, d.has_been_shot);

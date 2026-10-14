@@ -350,6 +350,10 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
             e.discard();
         }
     } else if hurt {
+        // `setArrowCount(getArrowCount() + 1)`: the arrow sticks in the body (not a piercing one).
+        if pierce == 0 {
+            level.stick_in_body(id, false);
+        }
         // `doKnockback`: the weapon's knockback along the arrow's horizontal motion.
         let knockback = data(e).knockback;
         if knockback > 0.0 {

@@ -37,6 +37,8 @@ def tidy(lines, drop=DROP, sounds=False, drop_re=None):
             continue
         if not sounds and (name in ("sound", "sound_entity") or text.startswith("Sound")):
             continue
+        if text.startswith("player_info [UPDATE_LATENCY]"):
+            continue
         if drop_re and re.search(drop_re, text):
             continue
         out.append((ms, text))

@@ -825,6 +825,9 @@ impl Host for Sim {
         p.game_mode = mode as u8;
         // (Creative adds the reach modifier.)
         p.attributes_dirty = true;
+        // Spectators are seen by spectators only (`ServerPlayer.broadcastToPlayer`): `ChunkMap.move`
+        // (the client's next movement packet in vanilla) works out who sees whom again.
+        p.section = None;
         // `GameType.updatePlayerAbilities` (a spectator flies, survival and adventure land) and
         // `changeGameModeForPlayer`: flying stops when the player lands in range of the ground
         // (`isInRangeOfGround`, here: standing on it).

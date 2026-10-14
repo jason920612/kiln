@@ -345,6 +345,8 @@ impl Kind for Bee {
         let source = DamageSource { kind: DamageKind::Named("minecraft:sting"), attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
         let hurt = crate::mob::hurt_living(level, t, source, damage);
         if hurt {
+            // `setStingerCount(getStingerCount() + 1)`.
+            level.stick_in_body(t.id, true);
             let seconds = match level.difficulty() {
                 2 => 10,
                 3 => 18,

@@ -974,6 +974,13 @@ pub trait EntityLevel {
         true
     }
 
+    /// `setArrowCount(getArrowCount() + 1)` after an arrow's hit landed (`AbstractArrow.onHitEntity`, not
+    /// for a piercing one) or `setStingerCount(getStingerCount() + 1)` after a bee's sting (`stinger`):
+    /// one more of them in the body of player or entity `id`. Only players keep the count.
+    fn stick_in_body(&mut self, id: i32, stinger: bool) {
+        let _ = (id, stinger);
+    }
+
     /// `LivingEntity.addEffect` on player or entity `id` (`effect`: a `minecraft:mob_effect`
     /// name; `source`: the entity responsible). Returns whether it took. The default reaches
     /// the level's mobs; implementations handle players first.
