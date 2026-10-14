@@ -5,11 +5,13 @@
 import json, os, subprocess, sys, time
 import p61
 from p61 import *
-from p63_meta import spylog, keep, NOISE
+from p63_meta import spylog, keep, NOISE  # (sets p61.VDIR)
 
 port = "25591" if os.environ.get("TARGET") == "V" else "25585"
 o = C(26000)
 o.cmd("spy on")
+sv("gamerule spawn_mobs false", show=False)
+platform(-20, -20, 20, 20, y=199, clear=12)
 sv("gamemode survival KilnTest", show=False)
 sv("tp KilnTest 0 200 0", show=False)
 sv("tp Obs 3 200 3", show=False)
