@@ -180,3 +180,31 @@ fn the_raid_bar_follows_the_raiders_health() {
     let p = w.sim.raids("minecraft:overworld")[0].6;
     assert!((p - (total - 24.0) / total).abs() < 0.002, "{p}");
 }
+
+/// `CelebrateVillagersSurvivedRaid.tick`: after a victory the villagers under the open sky launch firework rockets (one chance in 200 a
+/// tick each, a burst of one colour). Kiln's villagers danced about without launching any.
+#[test]
+fn villagers_launch_fireworks_after_a_victory() {
+    let mut w = World::new();
+    w.village();
+    w.ticks(40);
+    w.console("gamemode survival Hunter");
+    w.console("effect give Hunter minecraft:bad_omen 100 1");
+    w.ticks(2 + 600);
+    w.console("gamemode creative Hunter");
+    w.ticks(305);
+    for _ in 0..8 {
+        w.console("kill @e[type=!minecraft:villager,type=!minecraft:player]");
+        w.ticks(330);
+        if w.sim.raids("minecraft:overworld")[0].1 == "victory" {
+            break;
+        }
+    }
+    assert_eq!(w.sim.raids("minecraft:overworld")[0].1, "victory");
+    let mut seen = 0;
+    for _ in 0..560 {
+        w.ticks(1);
+        seen += w.sim.entities().iter().filter(|e| e.0 == "minecraft:firework_rocket").count().min(1);
+    }
+    assert!(seen > 0, "no firework in the celebration");
+}
