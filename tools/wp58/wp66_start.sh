@@ -9,5 +9,7 @@ rm -f console; mkfifo console
 (sleep 100000000 > console &)
 export KILN_PORT=25588 KILN_SEED=${KILN_SEED:-65} KILN_DATAPACK=/home/test/kiln/work/generated KILN_WORLD=${WORLD:-$HOME/wp66/world} KILN_OPS=KilnTest KILN_WORK=$HOME/kiln/work RUST_LOG=info
 [ -n "$KILN_GENERATOR" ] && export KILN_GENERATOR
+# NOWORLD=1: no world directory = the superflat terrain everywhere (with a world directory and no generator the world is void)
+[ -n "$NOWORLD" ] && unset KILN_WORLD
 nohup ./kiln-run66 < console > server.log 2>&1 &
 echo started $!
