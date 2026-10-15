@@ -72,7 +72,9 @@ def fly(dimn, x0, z0, dx, dz, secs, sy):
     ux, uz = dx / n, dz / n
     yaw = math.degrees(math.atan2(-ux, uz))
     c.look(yaw, 5)
-    c.hotbar(1)
+    c.select("minecraft:firework_rocket")
+    st = c.state(0)
+    print("selected", st.get("selected"), "rockets", [e for e in st.get("inv", []) if "rocket" in e.get("id", "")][:3], flush=True)
     # jump off and open the wings (jump again in the air), then rocket
     c.key("space", "tap"); time.sleep(0.5); c.key("space", "tap"); time.sleep(1.0)
     print("gliding", c.state(0).get("fallFlying"), flush=True)
@@ -80,6 +82,7 @@ def fly(dimn, x0, z0, dx, dz, secs, sy):
     start = c.state(0)
     last, lastp = t0, (start["x"], start["z"])
     rockets = 0
+    next_rocket = t0
     vanilla = os.environ.get("VANILLA") == "1"
     log_from = LOG.stat().st_size
     next_query = t0 + 20
@@ -99,10 +102,12 @@ def fly(dimn, x0, z0, dx, dz, secs, sy):
         elif st["y"] > sy + 40:
             pitch = 15
         c.look(yaw, pitch)
-        if int((time.time() - t0) * 2) % 4 == 0:
-            c.mouse("right", "tap")
+        if time.time() >= next_rocket:
+            # (pressed for a moment: a slow software-rendered client may miss a tap)
+            c.mouse("right", "down"); time.sleep(0.12); c.mouse("right", "up")
             rockets += 1
-        time.sleep(0.5)
+            next_rocket += 2.0
+        time.sleep(0.25)
         if time.time() - last >= 10:
             p = (st["x"], st["z"])
             sp = math.hypot(p[0] - lastp[0], p[1] - lastp[1]) / (time.time() - last)
@@ -110,8 +115,9 @@ def fly(dimn, x0, z0, dx, dz, secs, sy):
             last, lastp = time.time(), p
     t1 = time.time()
     end = c.state(0)
+    left = sum(e["n"] for e in end.get("inv", []) if e.get("id") == "minecraft:firework_rocket")
     dist = math.hypot(end["x"] - start["x"], end["z"] - start["z"])
-    print(f"flew {dist:.0f} blocks in {t1 - t0:.0f} s ({dist / (t1 - t0):.1f} b/s), {rockets} rockets", flush=True)
+    print(f"flew {dist:.0f} blocks in {t1 - t0:.0f} s ({dist / (t1 - t0):.1f} b/s), {rockets} rocket clicks, {128 - left} rockets used", flush=True)
     if vanilla:
         with open(LOG, "rb") as f:
             f.seek(log_from)
@@ -126,7 +132,7 @@ def fly(dimn, x0, z0, dx, dz, secs, sy):
     # MSPT over the flight after 20 s of warmup (the trace is flushed with each 30 s report)
     time.sleep(32)
     print("mspt (flight after 20 s):", stats(trace(int((t0 + 20) * 1000), int(t1 * 1000))), flush=True)
-    lines = [l for l in LOG.read_text(errors="replace").splitlines() if "moved" in l or "chunk totals" in l]
+    lines = [l for l in LOG.read_text(errors="replace").splitlines() if "moved too quickly" in l or "moved wrongly" in l or "chunk totals" in l]
     print("server: moved-wrongly/too-quickly lines:", sum("moved" in l for l in lines), flush=True)
     print("last chunk totals:", (lines[-1].split("chunk totals:")[-1][:300] if lines else ""), flush=True)
 
