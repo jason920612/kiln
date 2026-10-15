@@ -38,13 +38,7 @@ fn distance_at_uncached(s: u16) -> i32 {
 
 /// `LeavesBlock.updateDistance`.
 pub fn leaves_distance<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> u16 {
-    let mut d = 7;
-    for dir in Direction::ALL {
-        d = d.min(distance_at(level.block(pos.relative(dir))) + 1);
-        if d == 1 {
-            break;
-        }
-    }
+    let d = level.neighbours(pos).iter().map(|&n| distance_at(n) + 1).fold(7, i32::min);
     with_distance(s, d)
 }
 
@@ -80,7 +74,10 @@ pub fn leaves_update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, neigh
 
 pub fn leaves_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     let new = leaves_distance(level, s, pos);
-    set_block_and_update(level, pos, new);
+    // (Setting the same state changes nothing: most leaves of a new forest keep theirs.)
+    if new != s {
+        set_block_and_update(level, pos, new);
+    }
 }
 
 /// `LeavesBlock.randomTick`: far from logs and not player-placed, leaves decay.

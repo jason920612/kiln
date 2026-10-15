@@ -142,6 +142,12 @@ pub trait Level {
     /// Block state at `pos`: void air outside the build height (`Level.getBlockState`).
     fn block(&self, pos: BlockPos) -> u16;
 
+    /// The blocks next to `pos`, in [`crate::pos::Direction::ALL`] order ([`Level::block`] six
+    /// times; a level may find them faster).
+    fn neighbours(&self, pos: BlockPos) -> [u16; 6] {
+        crate::pos::Direction::ALL.map(|d| self.block(pos.relative(d)))
+    }
+
     /// The storage half of `LevelChunk.setBlockState`: writes `state`, maintains heightmaps,
     /// light and block entities, and returns the previous state, or `None` when nothing
     /// changed (same state, or air into an empty section) or `pos` cannot be written.
