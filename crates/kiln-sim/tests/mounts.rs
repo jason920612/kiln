@@ -258,3 +258,20 @@ fn a_tame_donkey_keeps_its_chest_across_a_save() {
     summon_tame(&mut w, "minecraft:donkey", ",Items:[{Slot:3b,id:\"minecraft:apple\",count:4}]");
     assert!(mob_nbt(&w, "minecraft:donkey").get("Items").is_none());
 }
+
+#[test]
+fn the_inventory_key_while_riding_opens_the_mounts_screen() {
+    // wp65 (a real client's E key on a ridden horse did nothing): `PlayerCommand.OPEN_INVENTORY` (ordinal 5 in 26.x).
+    let mut w = World::new("survival");
+    let horse = summon_tame(&mut w, "minecraft:horse", ",equipment:{saddle:{id:\"minecraft:saddle\",count:1}}");
+    w.hold("minecraft:stone", 1);
+    w.interact(horse);
+    w.ticks(2);
+    assert!(w.sim.open_menu(1).is_none(), "a plain click mounts, it shows no screen");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 5 })]));
+    let (_, slots) = w.sim.open_menu(1).expect("the horse's screen opened");
+    assert_eq!(slots.len(), 2 + 36, "saddle, armor and the player's 36");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::ContainerClose { container_id: 1 })]));
+    // Not riding: the key shows no mount screen.
+    assert!(w.sim.open_menu(1).is_none());
+}

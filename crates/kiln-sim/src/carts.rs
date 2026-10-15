@@ -128,6 +128,18 @@ pub(crate) fn open(entities: &Entities, level: &mut RegionLevel, p: &mut Player,
     p.with_menu_at(&rules, spawns, None, |menu, _, env| menu.open(env));
 }
 
+/// `handlePlayerCommand(OPEN_INVENTORY)`: the inventory key while riding opens the mount's screen
+/// (`HasCustomInventoryScreen.openCustomInventoryScreen`: the tame animal the player rides).
+pub(crate) fn open_ridden(entities: &Entities, level: &mut RegionLevel, p: &mut Player, vehicle: i32, spawns: &mut Vec<Spawn>) {
+    let Ok(idx) = entities.list.binary_search_by_key(&vehicle, |e| e.id) else { return };
+    let Some(phys) = entities.list[idx].phys.as_deref() else { return };
+    let Some(m) = kiln_entity::mob::data(phys) else { return };
+    if !kiln_entity::mob::kinds::horse::mount_info(phys, m).is_some_and(|(_, usable, _)| usable) {
+        return;
+    }
+    open_mount(entities, level, p, vehicle, spawns);
+}
+
 /// `Player.openHorseInventory`: the screen of the tame animal `target`.
 fn open_mount(entities: &Entities, level: &mut RegionLevel, p: &mut Player, target: i32, spawns: &mut Vec<Spawn>) {
     let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
