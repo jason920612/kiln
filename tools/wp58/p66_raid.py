@@ -224,7 +224,14 @@ def run_raid(a, max_s=3000):
                 F("bell rung:", ring_bell(a))
                 if MODE == "loss":
                     F("villagers before the massacre:", villagers_now())
+                    pois = set()
+                    for l in S(f"execute as @e[type=minecraft:villager,{BOX}] run data get entity @s Brain.memories"):
+                        for m in re.finditer(r"pos: \[I; (-?\d+), (-?\d+), (-?\d+)\]", l):
+                            pois.add(tuple(int(x) for x in m.groups()))
+                    F("points of interest the villagers remember:", sorted(pois))
                     S(f"kill @e[type=minecraft:villager,{BOX}]")
+                    for p in sorted(pois):
+                        S(f"setblock {p[0]} {p[1]} {p[2]} minecraft:air destroy")
                     F("villagers after:", villagers_now())
             key = tuple(sorted(by_wave))
             names = tuple(b.get("name") if isinstance(b, dict) else str(b) for b in sample["bars"])
