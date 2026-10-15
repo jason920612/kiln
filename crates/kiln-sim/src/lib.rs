@@ -1237,8 +1237,17 @@ impl Dim {
                     chunkstats::max_ns(&chunkstats::DISK_MAX_NS, took);
                     self.loaded.insert(pos, chunk);
                 }
+                // Not stored after all (the region has a file, but not this chunk): generated, ahead of
+                // the others only if a player waits for it.
                 None => {
-                    self.generation.as_mut().map(|p| p.request_urgent(pos));
+                    let urgent = self.urgent.contains(&pos);
+                    if let Some(p) = self.generation.as_mut() {
+                        if urgent {
+                            p.request_urgent(pos);
+                        } else {
+                            p.request(pos);
+                        }
+                    }
                 }
             }
         }
