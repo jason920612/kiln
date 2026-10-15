@@ -233,7 +233,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 載具與坐騎 | `horse` `donkey` `mule` `llama` `trader_llama` `skeleton_horse` `zombie_horse` `camel` `camel_husk` `nautilus` `zombie_nautilus` | A | 2–25 | 鸚鵡螺（含殭屍鸚鵡螺）的鞍與護甲在 wp50 補上（`eq50_nautilus*`、`eq50_zombie_nautilus*`）；玩家操控坐騎只有 C；背包畫面未建模；wp63：馬／驢／騾／羊駝繁殖 4,000 次與原版逐位元相同（`EquineBreedVectors`），`eq63_*` 14 個（繁殖路徑、12 隻長商隊），修正 `FollowParentGoal` 子類別與 `checkDespawn` 亂數順序 |
 | 敵對（主世界） | `zombie` `husk` `drowned` `zombie_villager` `skeleton` `stray` `bogged` `parched` `creeper` `spider` `cave_spider` `silverfish` `slime` `enderman` `endermite` `witch` `phantom` `creaking` `warden` `breeze` `guardian` `elder_guardian` `vex` | A | 2–63（不少僅 2–4 個） | **殭屍破門缺（hard 難度）**；`MoveThroughVillage` 不啟動 |
 | 襲擊者 | `pillager` `vindicator` `evoker` `illusioner` `ravager` | A | 4–9＋27 個波次 | 襲擊裝備附魔擲了沒套用、破門缺、鐘不由玩家敲 |
-| 下界 | `zombified_piglin` `piglin` `piglin_brute` `hoglin` `zoglin` `blaze` `ghast` `magma_cube` `wither_skeleton` `strider` | A | 3–27 | 要塞生怪覆寫缺，烈焰人與凋零骷髏在自然世界遇不到；strider 無自然生成規則；strider 的鞍與胡蘿蔔釣竿在 wp50 補上（`eq50_strider*`） |
+| 下界 | `zombified_piglin` `piglin` `piglin_brute` `hoglin` `zoglin` `blaze` `ghast` `magma_cube` `wither_skeleton` `strider` | A | 3–27 | 要塞生怪覆寫缺，烈焰人與凋零骷髏在自然世界遇不到；strider 無自然生成規則（**wp65 已補，見 6.13**）；strider 的鞍與胡蘿蔔釣竿在 wp50 補上（`eq50_strider*`） |
 | 終界與頭目 | `ender_dragon` `shulker` `wither` | A | 12／7／6 | 無世界邊界 |
 | 水生 | `squid` `glow_squid` `cod` `salmon` `tropical_fish` `pufferfish` | A | 3–6 | 神殿生怪覆寫缺 |
 | 村民與 NPC | `villager` `wandering_trader` `iron_golem` `snow_golem` `allay` | A | 3–61 | 交易表擲法與原版不同；鐵傀儡不回村、不保衛村；堆肥不模擬 |
@@ -681,6 +681,22 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 
 `crowd_golden` 的四個封包摘要重錄（四個狀態雜湊不變）。沒做：生物身上的箭／蜂針、中立生物的 `angry_at` 不存檔、配對時的屬性清單（vanilla 只列已建立的 4 個，Kiln 30 個）、
 同一個 tick 生成又死掉的投射物看不到 `AddEntity`、傷害事件與受傷聲音／level event 的先後。
+
+### 6.13 wp65（`wp65-playthrough5`）：兩個真實客戶端 + vanilla 並排（下界、終界、鞘翅、襲擊、多人）
+
+細節與證據見 `docs/playthrough-wp65.md`。同一個種子下兩個伺服器的地形、結構位置、結構箱子的戰利品種子逐項相同（12 個 `locate`、16 座終界城、5+2 個箱子、傳送門連結與新門位置），所以並排比對直接有效。
+
+| 項目 | 原版怎麼做 | Kiln 原本 | 現在 | 證據 |
+|---|---|---|---|---|
+| 自然生怪的 walk target | `LevelReader.getLightLevelDependentMagicValue` 含 `lerp(ambientLight, f, 1)`；`Hoglin` 覆寫：緋紅菌岩 10、否則 0；終界使者／掠奪者／監守者／嘎吱怪 0 | `light_magic` 漏了 ambient light；動物一律用「亮度 − 0.5」，疣豬獸在下界幾乎生不出來（緋紅森林 0 對 70） | `Kind::spawn_walk_target` hook 與 ambient light | `nether_spawn_rules.rs`；實機緋紅森林 0 → 92（vanilla 70） |
+| 熾足獸自然生成 | `IN_LAVA`、`checkStriderSpawnRules`、容許熔岩的 `checkSpawnObstruction` | 沒有（0 對 41~48） | `strider.rs` | `a_strider_spawns_in_lava_under_air`；實機 0 → 49／59（vanilla 48／41） |
+| 終界閘門同時進入 | `entityInside` 只在冷卻中不「開始」行程；已進入的都走 | 第二個玩家被拒絕後卡在閘門裡（傳送冷卻被補滿） | 同一 tick 啟動的冷卻不擋；被拒的玩家冷卻結束後自己走 | `gateway_trips.rs` 2 個 |
+| `START_FALL_FLYING` | `ServerboundPlayerCommandPacket.Action` 序數 6（26.x 沒有蹲下動作） | 8（鞘翅滑翔在伺服器端從沒啟動、火箭無效） | 6 | `items.rs::elytra_glide_wears_the_wings` 改成 6；實機 32.8 格/秒、耐久消耗 |
+| 不祥之瓶 | `OminousBottleAmplifier`（`ConsumableListener`）：壞兆頭 120000 tick、等級＝元件值 | 沒做（客戶端自己預測，伺服器沒有效果） | `consume.rs` | `health.rs::drinking_an_ominous_bottle_gives_bad_omen_of_its_level`；實機喝下 → `raid_omen2` → 整場突襲 |
+| 騎乘時按物品欄鍵 | `PlayerCommand.OPEN_INVENTORY`（序數 5）→ `openCustomInventoryScreen` | 無反應 | `carts::open_ridden` | `mounts.rs::the_inventory_key_while_riding_opens_the_mounts_screen` |
+
+沒做／已知：鐵傀儡農場（`VillagerPanicTrigger`）沒有觸發出結果、自然生怪的刷怪塔兩邊都幾乎不出怪、突襲沒有打到 Hero of the Village、甘蔗隨機刻在 `random_tick_speed 2000` 下 Kiln 快 13%、
+一次未重現的觀察者全不動、閘門方塊實體 `Age`／`ExactTeleport` 與 `components: {}` 的 `data get` 輸出差異。
 
 ## 7. 重跑
 
