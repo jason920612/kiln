@@ -997,7 +997,6 @@ pub(crate) fn initial_mobs(level: &RegionLevel, pending: &[ChunkPos], spawns: &m
 fn zoomed_biome_at(level: &RegionLevel, x: i32, y: i32, z: i32) -> u16 {
     if let Some(p) = &level.env.pipeline {
         let world = p.world().clone();
-        let mut gs: Option<kiln_worldgen::generator::GenScratch> = None;
         // (`ChunkAccess.getNoiseBiome` clamps the height to the chunk's.)
         let (lo, hi) = (level.env.min_y >> 2, ((level.env.min_y + level.env.height) >> 2) - 1);
         return kiln_worldgen::generator::zoomed_biome(world.generator.zoom_seed, x, y, z, &mut |qx, qy, qz| {
@@ -1006,7 +1005,7 @@ fn zoomed_biome_at(level: &RegionLevel, x: i32, y: i32, z: i32) -> u16 {
                 Some(chunk) => stored_quart_biome(chunk, level.env.min_y, qx, qy, qz),
                 // (As `to_chunk` stores it: the network id of the generator's biome.)
                 None => {
-                    let i = gs.get_or_insert_default().noise_biome(&world.generator, qx, qy, qz);
+                    let i = unloaded_noise_biome(&world, qx, qy, qz);
                     kiln_data::synced_id("minecraft:worldgen/biome", &world.generator.biomes[i as usize].name).unwrap_or(0) as u16
                 }
             }
@@ -1014,6 +1013,30 @@ fn zoomed_biome_at(level: &RegionLevel, x: i32, y: i32, z: i32) -> u16 {
     }
     biome_at(level, KBlockPos::new(x, y, z))
 }
+
+/// The biome a chunk that is not loaded stores at a quart, computed as its generation did. The
+/// neighbours of new chunks are asked for again by the next new chunks, so each thread keeps the
+/// last few it computed (up to [`UNLOADED_BIOME_CHUNKS`], then it starts over).
+fn unloaded_noise_biome(world: &std::sync::Arc<kiln_worldgen::Worldgen>, qx: i32, qy: i32, qz: i32) -> u16 {
+    use std::cell::RefCell;
+    thread_local! {
+        static CACHE: RefCell<Option<(usize, usize, kiln_worldgen::generator::GenScratch)>> = const { RefCell::new(None) };
+    }
+    let generator = std::sync::Arc::as_ptr(world) as usize;
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        let fresh = !matches!(&*c, Some((g, n, _)) if *g == generator && *n < UNLOADED_BIOME_CHUNKS);
+        if fresh {
+            *c = Some((generator, 0, kiln_worldgen::generator::GenScratch::default()));
+        }
+        let (_, n, gs) = c.as_mut().unwrap();
+        *n += 1;
+        gs.noise_biome(&world.generator, qx, qy, qz)
+    })
+}
+
+/// Chunks of biomes a thread keeps for [`unloaded_noise_biome`] (3 KB each) before it starts over.
+const UNLOADED_BIOME_CHUNKS: usize = 64;
 
 /// A loaded chunk's stored biome at a quart (`qy` within the chunk).
 fn stored_quart_biome(chunk: &kiln_world::chunk::Chunk, min_y: i32, qx: i32, qy: i32, qz: i32) -> u16 {
