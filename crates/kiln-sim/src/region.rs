@@ -1058,7 +1058,7 @@ pub(crate) fn is_player_packet(pkt: &PlayIn) -> bool {
         | PlayIn::SetCarriedItem { .. }
         | PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::RequestStats)
         | PlayIn::ClientTickEnd => true,
-        PlayIn::PlayerCommand { action } => *action != STOP_SLEEPING,
+        PlayIn::PlayerCommand { action } => *action != STOP_SLEEPING && *action != OPEN_INVENTORY,
         _ => false,
     }
 }
