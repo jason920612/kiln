@@ -3927,16 +3927,19 @@ impl Sim {
             stats.phase(name, now - mark);
             mark = now;
         };
-        // A frozen game (`/tick freeze`) keeps its time, weather and border; functions run.
+        // A frozen game (`/tick freeze`) keeps its time, weather and border, and runs no functions.
         let normal = self.world.tick_rate.runs_normally();
+        // `MinecraftServer.tickChildren`: the tick functions first, while the game time is still last tick's; the scheduled ones are
+        // due as the overworld's game time goes up.
         if normal {
+            self.tick_function_tags();
             self.game_time += 1;
             for d in &mut self.dims {
                 d.game_time = self.game_time;
                 d.difficulty = self.commands.difficulty as u8;
             }
+            self.tick_scheduled_functions();
         }
-        self.tick_functions();
         self.tick_gametests();
         if normal {
             self.tick_clocks();
