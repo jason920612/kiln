@@ -191,8 +191,29 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
         return;
     }
     let mut window = Window::take(w, pos);
-    light_new_in(&mut window, pos);
+    let center = window.chunks[4].as_deref_mut().expect("the chunk being lit");
+    if center.lit_alone() {
+        center.set_lit_alone(false);
+        light_border_in(&mut window, pos);
+    } else {
+        light_new_in(&mut window, pos);
+    }
     window.put_back(w);
+}
+
+/// The part of [`light_new_chunk`] a generated chunk can have before it has neighbours, done
+/// where it is made (a generation thread, off the tick): its light as if none of its neighbours
+/// were loaded. [`light_new_chunk`] then adds only the light that crosses its borders (from
+/// taller columns and lit blocks next door, and its own going out), and the result is the same
+/// as lighting it all at once: light only ever increases here, and every level is the
+/// brightest that some source reaches, whatever order the sources spread in.
+pub fn light_alone(chunk: Chunk, pos: ChunkPos) -> Chunk {
+    let mut window = Window { x0: pos.x - 1, z0: pos.z - 1, chunks: Default::default() };
+    window.chunks[4] = Some(Box::new(chunk));
+    light_new_in(&mut window, pos);
+    let mut chunk = *window.chunks[4].take().expect("the chunk being lit");
+    chunk.set_lit_alone(true);
+    chunk
 }
 
 fn light_new_in(w: &mut Window, pos: ChunkPos) {
@@ -221,20 +242,7 @@ fn light_new_in(w: &mut Window, pos: ChunkPos) {
             }
         }
     }
-    // Column tops (y above the highest non-air block) of the chunk and the ring around it.
-    let mut tops = [[None; 18]; 18];
-    {
-        // The 3×3 chunks the ring touches, each looked up once.
-        let around: [[Option<&crate::chunk::Chunk>; 3]; 3] =
-            std::array::from_fn(|dx| std::array::from_fn(|dz| w.chunk_at(ChunkPos::new(pos.x + dx as i32 - 1, pos.z + dz as i32 - 1))));
-        for (i, row) in tops.iter_mut().enumerate() {
-            for (j, t) in row.iter_mut().enumerate() {
-                let (x, z) = (bx + i as i32 - 1, bz + j as i32 - 1);
-                let chunk = around[((x >> 4) - pos.x + 1) as usize][((z >> 4) - pos.z + 1) as usize];
-                *t = chunk.map(|c| c.surface_y((x & 15) as usize, (z & 15) as usize));
-            }
-        }
-    }
+    let tops = ring_tops(w, pos);
     for &(x, y, z, e) in &block {
         if e > w.light(LightLayer::Block, x, y, z).unwrap_or(15) {
             w.set(LightLayer::Block, x, y, z, e);
@@ -270,27 +278,131 @@ fn light_new_in(w: &mut Window, pos: ChunkPos) {
             }
         }
     }
-    // The neighbours' border columns shine in (each neighbour looked up once).
+    neighbour_seeds(w, pos, chunk_top, &mut block, &mut sky);
+    increase(w, LightLayer::Block, &mut block);
+    increase(w, LightLayer::Sky, &mut sky);
+}
+
+/// Column tops (y above the highest non-air block) of the chunk and the ring around it, by
+/// x then z from the ring's north-west corner; `None` where no chunk is loaded.
+fn ring_tops(w: &Window, pos: ChunkPos) -> [[Option<i32>; 18]; 18] {
+    let (bx, bz) = (pos.x * 16, pos.z * 16);
+    let mut tops = [[None; 18]; 18];
+    // The 3×3 chunks the ring touches, each looked up once.
+    let around: [[Option<&Chunk>; 3]; 3] =
+        std::array::from_fn(|dx| std::array::from_fn(|dz| w.chunk_at(ChunkPos::new(pos.x + dx as i32 - 1, pos.z + dz as i32 - 1))));
+    for (i, row) in tops.iter_mut().enumerate() {
+        for (j, t) in row.iter_mut().enumerate() {
+            let (x, z) = (bx + i as i32 - 1, bz + j as i32 - 1);
+            let chunk = around[((x >> 4) - pos.x + 1) as usize][((z >> 4) - pos.z + 1) as usize];
+            *t = chunk.map(|c| c.surface_y((x & 15) as usize, (z & 15) as usize));
+        }
+    }
+    tops
+}
+
+/// The neighbours' border columns shine in: their lit cells next to the chunk (sky light only
+/// below `chunk_top`: above every column of the chunk, its sky light is full already). Sections
+/// with no light above 1 are skipped whole.
+fn neighbour_seeds(w: &Window, pos: ChunkPos, chunk_top: i32, block: &mut Queue, sky: &mut Queue) {
+    let Some(c) = w.chunk_at(pos) else { return };
+    let (min_y, max_y) = (c.min_y(), c.min_y() + c.height() - 1);
+    let (bx, bz) = (pos.x * 16, pos.z * 16);
     let sides = [ChunkPos::new(pos.x - 1, pos.z), ChunkPos::new(pos.x + 1, pos.z), ChunkPos::new(pos.x, pos.z - 1), ChunkPos::new(pos.x, pos.z + 1)];
     let neighbours = sides.map(|p| w.chunk_at(p));
     for k in 0..16 {
         for (side, (x, z)) in [(bx - 1, bz + k), (bx + 16, bz + k), (bx + k, bz - 1), (bx + k, bz + 16)].into_iter().enumerate() {
             let Some(n) = neighbours[side] else { continue };
             let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
-            for y in min_y..=max_y {
-                if !n.in_light_range(y) {
-                    continue;
-                }
-                let l = n.light(LightLayer::Block, lx, y, lz);
-                if l > 1 {
-                    block.push_back((x, y, z, l));
-                }
-                // Above every column of the chunk, its sky light is full already.
-                if y < chunk_top {
-                    let l = n.light(LightLayer::Sky, lx, y, lz);
-                    if l > 1 {
-                        sky.push_back((x, y, z, l));
+            for (layer, queue, top) in [(LightLayer::Block, &mut *block, max_y + 1), (LightLayer::Sky, &mut *sky, chunk_top.min(max_y + 1))] {
+                let mut y = min_y;
+                while y < top {
+                    if !n.in_light_range(y) {
+                        y += 1;
+                        continue;
                     }
+                    if n.uniform_light(layer, y) == Some(0) {
+                        y = (y - min_y + 16) / 16 * 16 + min_y;
+                        continue;
+                    }
+                    let l = n.light(layer, lx, y, lz);
+                    if l > 1 {
+                        queue.push_back((x, y, z, l));
+                    }
+                    y += 1;
+                }
+            }
+        }
+    }
+}
+
+/// [`light_new_in`] for a chunk lit on its own already ([`light_alone`]): the sky light that
+/// comes sideways from taller columns across its borders, the neighbours' light shining in,
+/// and its own light going out where it is brighter than what is next door.
+fn light_border_in(w: &mut Window, pos: ChunkPos) {
+    let Some(c) = w.chunk_at(pos) else { return };
+    let (min_y, max_y) = (c.min_y(), c.min_y() + c.height() - 1);
+    let (bx, bz) = (pos.x * 16, pos.z * 16);
+    let mut block = Queue::new();
+    let mut sky = Queue::new();
+    let tops = ring_tops(w, pos);
+    let chunk_top = tops[1..17].iter().flat_map(|row| row[1..17].iter().flatten()).copied().max().unwrap_or(min_y);
+    // Full sky light next to columns across the border that are taller than every column
+    // next to it inside (those were done alone).
+    let inside = |a: usize, b: usize| (1..17).contains(&a) && (1..17).contains(&b);
+    for i in 1..17 {
+        for j in 1..17 {
+            if !(i == 1 || i == 16 || j == 1 || j == 16) {
+                continue;
+            }
+            let Some(own) = tops[i][j] else { continue };
+            let adjacent = [(i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)];
+            let highest = adjacent.iter().filter_map(|&(a, b)| tops[a][b]).max().unwrap_or(own);
+            let alone = adjacent.iter().filter(|&&(a, b)| inside(a, b)).filter_map(|&(a, b)| tops[a][b]).max().unwrap_or(own);
+            let (x, z) = (bx + i as i32 - 1, bz + j as i32 - 1);
+            for y in own.max(alone)..highest.min(max_y + 1) {
+                sky.push_back((x, y, z, 15));
+            }
+        }
+    }
+    neighbour_seeds(w, pos, chunk_top, &mut block, &mut sky);
+    // The chunk's border cells whose light would brighten the cell across the border.
+    let sides = [(ChunkPos::new(pos.x - 1, pos.z), 4usize), (ChunkPos::new(pos.x + 1, pos.z), 5), (ChunkPos::new(pos.x, pos.z - 1), 2), (ChunkPos::new(pos.x, pos.z + 1), 3)];
+    let (lo, hi) = (min_y - 16, max_y + 16);
+    for (np, dir) in sides {
+        let Some(n) = w.chunk_at(np) else { continue };
+        let (dx, _, dz) = DIRS[dir];
+        for k in 0..16 {
+            let (x, z) = match dir {
+                4 => (bx, bz + k),
+                5 => (bx + 15, bz + k),
+                2 => (bx + k, bz),
+                _ => (bx + k, bz + 15),
+            };
+            let (ox, oz) = (x + dx, z + dz);
+            let (lx, lz, nx, nz) = ((x & 15) as usize, (z & 15) as usize, (ox & 15) as usize, (oz & 15) as usize);
+            for (layer, queue) in [(LightLayer::Block, &mut block), (LightLayer::Sky, &mut sky)] {
+                let mut y = lo;
+                while y <= hi {
+                    if !c.in_light_range(y) || !n.in_light_range(y) {
+                        y += 1;
+                        continue;
+                    }
+                    // Nothing to give (all 0 here) or nothing to take (all 15 there): the
+                    // section's rows go at once.
+                    let mine = c.uniform_light(layer, y);
+                    if mine == Some(0) || n.uniform_light(layer, y) == Some(15) {
+                        y = (y - min_y + 16).div_euclid(16) * 16 + min_y;
+                        continue;
+                    }
+                    let l = c.light(layer, lx, y, lz);
+                    if l > 1 {
+                        let (from, to) = (c.get(lx, y, lz), n.get(nx, y, nz));
+                        if !occludes(from, to, dir) && transmitted(layer, l, to, dir) > n.light(layer, nx, y, nz) {
+                            queue.push_back((x, y, z, l));
+                        }
+                    }
+                    y += 1;
                 }
             }
         }
@@ -439,6 +551,78 @@ mod tests {
                 for z in -8..24 {
                     for yy in y - 2..y + 8 {
                         assert_eq!(w.light_at(layer, x, yy, z), reference.light_at(layer, x, yy, z), "{layer:?} at {x},{yy},{z}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Random terrain-like chunks: stone up to a column height with caves, water, leaves
+    /// above, glass, and light sources.
+    fn random_chunk(seed: &mut u64, sections: usize, min_y: i32) -> crate::chunk::Chunk {
+        let mut next = |n: u64| {
+            *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (*seed >> 33) % n
+        };
+        let height = sections as i32 * 16;
+        let mut c = crate::chunk::Chunk::new((0..sections).map(|_| crate::section::Section::filled(b::AIR, 0)).collect(), min_y);
+        let base = 8 + next(20) as i32;
+        for x in 0..16 {
+            for z in 0..16 {
+                let h = (base + next(12) as i32 - 6).clamp(1, height - 12);
+                for y in 0..h {
+                    let s = match next(40) {
+                        0..=3 => b::AIR,
+                        4 => b::WATER,
+                        5 => b::GLASS,
+                        6 if next(4) == 0 => b::GLOWSTONE,
+                        _ => b::STONE,
+                    };
+                    c.set(x, min_y + y, z, s);
+                }
+                match next(10) {
+                    0..=2 => {
+                        for y in h + 3..h + 3 + next(4) as i32 {
+                            c.set(x, min_y + y, z, b::OAK_LEAVES);
+                        }
+                    }
+                    3 => c.set(x, min_y + h, z, b::TORCH),
+                    4 => c.set(x, min_y + h, z, b::WATER),
+                    _ => {}
+                }
+            }
+        }
+        // Rebuilt so its sky light comes from its column tops, as a generated chunk's does.
+        crate::chunk::Chunk::new(c.sections.clone(), min_y)
+    }
+
+    #[test]
+    fn a_chunk_lit_alone_then_at_its_borders_gets_the_same_light() {
+        use crate::ChunkPos;
+        let (sections, min_y) = (4, 0);
+        for round in 0..6u64 {
+            let mut seed = 0x9e37 + round;
+            let mut order: Vec<ChunkPos> = (-2..=2).flat_map(|x| (-2..=2).map(move |z| ChunkPos::new(x, z))).collect();
+            for i in (1..order.len()).rev() {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                order.swap(i, (seed >> 33) as usize % (i + 1));
+            }
+            let mut whole = World::with_source(OVERWORLD, Box::new(NoChunks), crate::Terrain::Void, 0, 67);
+            let mut split = World::with_source(OVERWORLD, Box::new(NoChunks), crate::Terrain::Void, 0, 67);
+            for &pos in &order {
+                let chunk = random_chunk(&mut seed, sections, min_y);
+                let alone = super::light_alone(crate::chunk::Chunk::new(chunk.sections.clone(), min_y), pos);
+                whole.cells.entry(pos.cell()).or_default().insert(pos, chunk);
+                split.cells.entry(pos.cell()).or_default().insert(pos, alone);
+                super::light_new_chunk(&mut whole, pos);
+                super::light_new_chunk(&mut split, pos);
+                for layer in [Block, Sky] {
+                    for x in -32..48 {
+                        for z in -32..48 {
+                            for y in min_y - 16..min_y + 16 * sections as i32 + 16 {
+                                assert_eq!(whole.light_at(layer, x, y, z), split.light_at(layer, x, y, z), "round {round}, {layer:?} at {x},{y},{z} after {pos:?}");
+                            }
+                        }
                     }
                 }
             }

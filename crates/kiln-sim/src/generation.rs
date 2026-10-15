@@ -111,6 +111,9 @@ impl GenPool {
                         }
                         let started = Instant::now();
                         let mut chunk = generator.generate(pos, dimension);
+                        // Its own light here, off the tick: its region adds what crosses the
+                        // borders when it takes the chunk in.
+                        chunk = kiln_world::light::light_alone(chunk, pos);
                         chunkstats::count(&chunkstats::GEN_DONE);
                         chunkstats::add_ns(&chunkstats::GEN_BUSY_NS, started.elapsed());
                         chunk.mark_new();

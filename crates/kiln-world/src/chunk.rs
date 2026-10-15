@@ -103,6 +103,9 @@ pub struct Chunk {
     inhabited_time: i64,
     /// What `inhabited_time` was when the chunk was loaded or last saved.
     inhabited_saved: i64,
+    /// Generated and lit on its own already ([`crate::light::light_alone`]): placing it next
+    /// to its neighbours only adds the light that crosses its borders.
+    lit_alone: bool,
 }
 
 /// A chunk is written again for its inhabited time alone once it grew this much (a minute of
@@ -170,6 +173,7 @@ impl Chunk {
             pois: self.pois.clone(),
             inhabited_time: self.inhabited_time,
             inhabited_saved: self.inhabited_saved,
+            lit_alone: self.lit_alone,
         }
     }
 
@@ -199,6 +203,7 @@ impl Chunk {
             pois: None,
             inhabited_time: 0,
             inhabited_saved: 0,
+            lit_alone: false,
         };
         for x in 0..16 {
             for z in 0..16 {
@@ -300,6 +305,15 @@ impl Chunk {
     /// Generated here and never saved (not read from a save).
     pub fn is_new(&self) -> bool {
         self.saved_version == u32::MAX
+    }
+
+    /// See [`crate::light::light_alone`].
+    pub fn lit_alone(&self) -> bool {
+        self.lit_alone
+    }
+
+    pub fn set_lit_alone(&mut self, on: bool) {
+        self.lit_alone = on;
     }
 
     /// Sky light of light section `li` (0 = below the world) from the surface heights.
@@ -609,6 +623,20 @@ impl Chunk {
             LightLayer::Block => &self.block[li],
         };
         l.get((((y - self.min_y) & 15) as usize) << 8 | (z << 4) | x)
+    }
+
+    /// The light of the whole section holding `y`, when it is uniform (all 0 or all 15).
+    pub fn uniform_light(&self, layer: LightLayer, y: i32) -> Option<u8> {
+        let li = self.light_section(y)?;
+        let l = match layer {
+            LightLayer::Sky => &self.sky[li],
+            LightLayer::Block => &self.block[li],
+        };
+        match l {
+            Light::Zero => Some(0),
+            Light::Full => Some(15),
+            Light::Nibbles(_) => None,
+        }
     }
 
     /// Sets a light level; returns whether it changed.
