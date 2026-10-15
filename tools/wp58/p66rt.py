@@ -110,3 +110,12 @@ def advance(n, timeout=7200):
     if not any("frozen" in l for l in out):
         run(["tick freeze"])
     return gametime() - g0
+
+
+def day_time():
+    """The overworld day timeline's tick (`time query day`)."""
+    for l in run(["time query day"]):
+        m = re.search(r"at (\d+) tick|commands\.time\.query\.[a-z_.]*\[[^\]]*?(\d+)\]", l)
+        if m:
+            return int(m.group(1) or m.group(2))
+    raise RuntimeError("no day time")
