@@ -41,24 +41,10 @@ pub fn affects_light(old: u16, new: u16) -> bool {
         || uses_shape_for_light_occlusion(new)
 }
 
-/// Block state if its chunk is loaded and `y` is within the chunk's stored light. Positions
-/// outside take no part in propagation (full sky light would otherwise keep travelling down
-/// through void air forever).
-fn state_at<S: CellStore + ?Sized>(w: &S, x: i32, y: i32, z: i32) -> Option<u16> {
-    let c = w.chunk(ChunkPos::of_block(x, z))?;
-    c.in_light_range(y).then(|| c.get((x & 15) as usize, y, (z & 15) as usize))
-}
-
 /// Light level at a position, if its chunk is loaded and light is stored there.
 pub fn light_at<S: CellStore + ?Sized>(w: &S, layer: LightLayer, x: i32, y: i32, z: i32) -> Option<u8> {
     let c = w.chunk(ChunkPos::of_block(x, z))?;
     c.in_light_range(y).then(|| c.light(layer, (x & 15) as usize, y, (z & 15) as usize))
-}
-
-fn set_light_at<S: CellStore + ?Sized>(w: &mut S, layer: LightLayer, x: i32, y: i32, z: i32, v: u8) {
-    if let Some(c) = w.chunk_mut(ChunkPos::of_block(x, z)) {
-        c.set_light(layer, (x & 15) as usize, y, (z & 15) as usize, v);
-    }
 }
 
 /// What light propagation reads and writes: blocks and light of loaded chunks.
@@ -66,7 +52,9 @@ trait Access {
     fn chunk_at(&self, pos: ChunkPos) -> Option<&Chunk>;
     fn chunk_at_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk>;
 
-    /// Block state if its chunk is loaded and `y` is within the chunk's stored light ([`state_at`]).
+    /// Block state if its chunk is loaded and `y` is within the chunk's stored light. Positions
+    /// outside take no part in propagation (full sky light would otherwise keep travelling down
+    /// through void air forever).
     fn state(&self, x: i32, y: i32, z: i32) -> Option<u16> {
         let c = self.chunk_at(ChunkPos::of_block(x, z))?;
         c.in_light_range(y).then(|| c.get((x & 15) as usize, y, (z & 15) as usize))
@@ -92,40 +80,41 @@ trait Access {
     }
 }
 
-impl<S: CellStore + ?Sized> Access for S {
-    fn chunk_at(&self, pos: ChunkPos) -> Option<&Chunk> {
-        self.chunk(pos)
-    }
-    fn chunk_at_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
-        self.chunk_mut(pos)
-    }
-}
-
-/// The 3×3 chunks around a chunk being lit, taken out of their cells for the time it takes:
-/// light from the new chunk, or coming into it from the border of a neighbour, fades within 15
-/// blocks, so it never leaves them, and each step reads its chunk without a cell lookup.
+/// The chunks around a light change (3×3 around a new chunk, 5×5 around a changed block),
+/// taken out of their cells for the time it takes, so each step reads its chunk without a cell
+/// lookup. Light never leaves them: a level fades by at least one a block sideways, so from a
+/// new chunk, or from the border of a neighbour shining into it, it travels at most 15 blocks;
+/// a block change clears at most 15 blocks around it and light spreads back from at most one
+/// block beyond, fading within 15 more.
 struct Window {
     /// Chunk coordinates of the north-west corner chunk.
     x0: i32,
     z0: i32,
-    chunks: [Option<Box<Chunk>>; 9],
+    /// Chunks on a side (3 or 5).
+    side: i32,
+    /// By `dz * side + dx`.
+    chunks: [Option<Box<Chunk>>; 25],
 }
 
 impl Window {
-    fn take<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) -> Window {
-        let (x0, z0) = (pos.x - 1, pos.z - 1);
+    fn take<S: CellStore + ?Sized>(w: &mut S, center: ChunkPos, side: i32) -> Window {
+        let (x0, z0) = (center.x - side / 2, center.z - side / 2);
         let chunks = std::array::from_fn(|i| {
-            let p = ChunkPos::new(x0 + (i % 3) as i32, z0 + (i / 3) as i32);
+            let i = i as i32;
+            if i >= side * side {
+                return None;
+            }
+            let p = ChunkPos::new(x0 + i % side, z0 + i / side);
             w.cell_mut(p.cell())?.remove(p)
         });
-        Window { x0, z0, chunks }
+        Window { x0, z0, side, chunks }
     }
 
     /// Puts the chunks back where they were.
     fn put_back<S: CellStore + ?Sized>(self, w: &mut S) {
         for (i, c) in self.chunks.into_iter().enumerate() {
             if let Some(c) = c {
-                let p = ChunkPos::new(self.x0 + (i % 3) as i32, self.z0 + (i / 3) as i32);
+                let p = ChunkPos::new(self.x0 + i as i32 % self.side, self.z0 + i as i32 / self.side);
                 w.cell_mut(p.cell()).expect("the cell a chunk was taken from").put_back(p, c);
             }
         }
@@ -133,9 +122,9 @@ impl Window {
 
     fn index(&self, pos: ChunkPos) -> Option<usize> {
         let (dx, dz) = (pos.x - self.x0, pos.z - self.z0);
-        let inside = (0..3).contains(&dx) && (0..3).contains(&dz);
-        debug_assert!(inside, "light left the window around a new chunk at {pos:?}");
-        inside.then(|| (dz * 3 + dx) as usize)
+        let inside = (0..self.side).contains(&dx) && (0..self.side).contains(&dz);
+        debug_assert!(inside, "light left the window around {:?} at {pos:?}", (self.x0 + self.side / 2, self.z0 + self.side / 2));
+        inside.then(|| (dz * self.side + dx) as usize)
     }
 }
 
@@ -154,27 +143,33 @@ pub fn update_light<S: CellStore + ?Sized>(w: &mut S, x: i32, y: i32, z: i32, ol
     if !affects_light(old, new) {
         return;
     }
+    let mut window = Window::take(w, ChunkPos::of_block(x, z), 5);
+    update_light_in(&mut window, x, y, z, new);
+    window.put_back(w);
+}
+
+fn update_light_in<A: Access + ?Sized>(w: &mut A, x: i32, y: i32, z: i32, new: u16) {
     for layer in [LightLayer::Block, LightLayer::Sky] {
         let mut relight = Queue::new();
-        let current = light_at(w, layer, x, y, z).unwrap_or(0);
+        let current = w.light(layer, x, y, z).unwrap_or(0);
         if current > 0 {
-            set_light_at(w, layer, x, y, z, 0);
+            w.set(layer, x, y, z, 0);
             let mut removal = Queue::from([(x, y, z, current)]);
             decrease(w, layer, &mut removal, &mut relight);
         }
         if layer == LightLayer::Block && light_emission(new) > 0 {
             let e = light_emission(new);
-            set_light_at(w, layer, x, y, z, e);
+            w.set(layer, x, y, z, e);
             relight.push_back((x, y, z, e));
         }
         // Neighbors may now shine into (or through) the changed block.
         for (dx, dy, dz) in DIRS {
             let (nx, ny, nz) = (x + dx, y + dy, z + dz);
-            if let Some(l) = light_at(w, layer, nx, ny, nz).filter(|&l| l > 0) {
+            if let Some(l) = w.light(layer, nx, ny, nz).filter(|&l| l > 0) {
                 relight.push_back((nx, ny, nz, l));
             }
         }
-        if layer == LightLayer::Sky && light_at(w, layer, x, y + 1, z).is_none_or(|l| l == 15) {
+        if layer == LightLayer::Sky && w.light(layer, x, y + 1, z).is_none_or(|l| l == 15) {
             relight.push_back((x, y + 1, z, 15));
         }
         increase(w, layer, &mut relight);
@@ -190,7 +185,7 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
     if w.chunk(pos).is_none() {
         return;
     }
-    let mut window = Window::take(w, pos);
+    let mut window = Window::take(w, pos, 3);
     let center = window.chunks[4].as_deref_mut().expect("the chunk being lit");
     if center.lit_alone() {
         center.set_lit_alone(false);
@@ -208,7 +203,7 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
 /// as lighting it all at once: light only ever increases here, and every level is the
 /// brightest that some source reaches, whatever order the sources spread in.
 pub fn light_alone(chunk: Chunk, pos: ChunkPos) -> Chunk {
-    let mut window = Window { x0: pos.x - 1, z0: pos.z - 1, chunks: Default::default() };
+    let mut window = Window { x0: pos.x - 1, z0: pos.z - 1, side: 3, chunks: Default::default() };
     window.chunks[4] = Some(Box::new(chunk));
     light_new_in(&mut window, pos);
     let mut chunk = *window.chunks[4].take().expect("the chunk being lit");
@@ -432,23 +427,22 @@ fn increase<A: Access + ?Sized>(w: &mut A, layer: LightLayer, queue: &mut Queue)
     }
 }
 
-fn decrease<S: CellStore + ?Sized>(w: &mut S, layer: LightLayer, removal: &mut Queue, relight: &mut Queue) {
+fn decrease<A: Access + ?Sized>(w: &mut A, layer: LightLayer, removal: &mut Queue, relight: &mut Queue) {
     while let Some((x, y, z, level)) = removal.pop_front() {
         for (dir, (dx, dy, dz)) in DIRS.iter().enumerate() {
             let (nx, ny, nz) = (x + dx, y + dy, z + dz);
-            let Some(to) = state_at(w, nx, ny, nz) else { continue };
-            let cur = light_at(w, layer, nx, ny, nz).unwrap_or(0);
+            let Some((to, cur)) = w.state_and_light(layer, nx, ny, nz) else { continue };
             if cur == 0 {
                 continue;
             }
             // Full sky light directly below full sky light came from above.
             let dependent_sky = layer == LightLayer::Sky && dir == DOWN && level == 15 && cur == 15;
             if cur < level || dependent_sky {
-                set_light_at(w, layer, nx, ny, nz, 0);
+                w.set(layer, nx, ny, nz, 0);
                 removal.push_back((nx, ny, nz, cur));
                 if layer == LightLayer::Block && light_emission(to) > 0 {
                     let e = light_emission(to);
-                    set_light_at(w, layer, nx, ny, nz, e);
+                    w.set(layer, nx, ny, nz, e);
                     relight.push_back((nx, ny, nz, e));
                 }
             } else {
@@ -626,6 +620,61 @@ mod tests {
                             for y in min_y - 16..min_y + 16 * sections as i32 + 16 {
                                 assert_eq!(whole.light_at(layer, x, y, z), split.light_at(layer, x, y, z), "round {round}, {layer:?} at {x},{y},{z} after {pos:?}");
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Light propagation over the whole world, without a window (the reference).
+    struct Whole<'a>(&'a mut World);
+
+    impl super::Access for Whole<'_> {
+        fn chunk_at(&self, pos: crate::ChunkPos) -> Option<&crate::chunk::Chunk> {
+            self.0.chunk(pos)
+        }
+        fn chunk_at_mut(&mut self, pos: crate::ChunkPos) -> Option<&mut crate::chunk::Chunk> {
+            Blocks::chunk_mut(self.0, pos)
+        }
+    }
+
+    #[test]
+    fn block_changes_relight_within_the_window_as_over_the_whole_world() {
+        use crate::ChunkPos;
+        let (sections, min_y) = (4, 0);
+        let mut seed = 0x51u64;
+        let mut whole = World::with_source(OVERWORLD, Box::new(NoChunks), crate::Terrain::Void, 0, 67);
+        let mut windowed = World::with_source(OVERWORLD, Box::new(NoChunks), crate::Terrain::Void, 0, 67);
+        for x in -3..=3 {
+            for z in -3..=3 {
+                let pos = ChunkPos::new(x, z);
+                let chunk = random_chunk(&mut seed, sections, min_y);
+                let copy = crate::chunk::Chunk::new(chunk.sections.clone(), min_y);
+                whole.cells.entry(pos.cell()).or_default().insert(pos, chunk);
+                windowed.cells.entry(pos.cell()).or_default().insert(pos, copy);
+                super::light_new_chunk(&mut whole, pos);
+                super::light_new_chunk(&mut windowed, pos);
+            }
+        }
+        let states = [b::AIR, b::STONE, b::GLOWSTONE, b::TORCH, b::WATER, b::OAK_LEAVES, b::GLASS];
+        for step in 0..120 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let (x, y, z) = (((seed >> 33) % 48) as i32 - 24, ((seed >> 20) % 50) as i32, ((seed >> 40) % 48) as i32 - 24);
+            let new = states[((seed >> 8) % states.len() as u64) as usize];
+            let pos = ChunkPos::of_block(x, z);
+            let old = whole.chunk(pos).unwrap().get((x & 15) as usize, y, (z & 15) as usize);
+            Blocks::chunk_mut(&mut whole, pos).unwrap().set((x & 15) as usize, y, (z & 15) as usize, new);
+            Blocks::chunk_mut(&mut windowed, pos).unwrap().set((x & 15) as usize, y, (z & 15) as usize, new);
+            if super::affects_light(old, new) {
+                super::update_light_in(&mut Whole(&mut whole), x, y, z, new);
+            }
+            super::update_light(&mut windowed, x, y, z, old, new);
+            for layer in [Block, Sky] {
+                for cx in x - 34..x + 34 {
+                    for cz in z - 34..z + 34 {
+                        for cy in min_y - 16..min_y + 16 * sections as i32 + 16 {
+                            assert_eq!(whole.light_at(layer, cx, cy, cz), windowed.light_at(layer, cx, cy, cz), "step {step}, {layer:?} at {cx},{cy},{cz}");
                         }
                     }
                 }
