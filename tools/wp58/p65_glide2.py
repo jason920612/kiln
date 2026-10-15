@@ -53,7 +53,7 @@ def run():
     for l in lines:
         ms, _, text = l.partition(" ")
         if "entity_data" in text or "game_event" in text or "player_abilities" in text:
-            F("pkt +%sms" % ms, text[:150])
+            F("pkt +%sms" % ms, text[:150]) if "1=" not in text else None
     s = a.state(0)
     F("final client fallFlying", s["fallFlying"], "onGround", s["onGround"], pos(a))
     F("elytra", a.cmd("comps inv 38")[:200])
