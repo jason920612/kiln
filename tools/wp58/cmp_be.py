@@ -11,9 +11,11 @@ piston_head conduit sculk_sensor calibrated_sculk_sensor sculk_shrieker sculk_ca
 suspicious_sand suspicious_gravel command_block chain_command_block repeating_command_block structure_block jigsaw
 creaking_heart white_shulker_box shulker_box bee_nest beehive flower_pot potted_oak_sapling cherry_shelf end_portal_frame sculk
 test_block copper_chest copper_golem_statue""".split()
-base_x, base_z, y = 1100, 1100, -50
+import os
+base_x, base_z, y = int(os.environ.get("BASE", "1100")), int(os.environ.get("BASE", "1100")), -50
 run([f"forceload add {base_x} {base_z} {base_x+40} {base_z+40}"])
 assert ready(base_x, base_z)
+run(["tick freeze"])
 res = {}
 for n, b in enumerate(BLOCKS):
     x, z = base_x + 2 * (n % 20), base_z + 2 * (n // 20)
