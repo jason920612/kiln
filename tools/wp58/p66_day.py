@@ -10,7 +10,9 @@ if __name__ == "__main__":
     try:
         S("gamerule advance_time false", "tick rate 20", "time set 1000", f"effect give {NAME} minecraft:hero_of_the_village 48000 1 true")
         vs = sorted([e for e in a.state(60)["entities"] if e["t"] == "villager"], key=lambda e: e["y"])
-        if vs:
+        if os.environ.get("AT") == "bell":
+            S(f"tp {NAME} 1463.5 112 -1040.5")
+        elif vs:
             S(f"tp {NAME} {vs[0]['x']-2:.2f} {vs[0]['y']:.2f} {vs[0]['z']:.2f}")
         else:
             S(f"tp {NAME} {VX}.5 112 {VZ+3}.5")
@@ -24,7 +26,8 @@ if __name__ == "__main__":
             ch = {k: cur.get(k, 0) - inv0.get(k, 0) for k in set(inv0) | set(cur) if cur.get(k, 0) != inv0.get(k, 0)}
             out = S(f"execute as @e[type=minecraft:item,{BOX}] run data get entity @s Item")
             items = [m.group(1) for l in out for m in [re.search(r'id: "minecraft:([a-z_]+)"', l)] if m]
-            F("day", round(time.time() - t0), "s: inventory changes", ch, "items on the ground", items)
+            near = S(f"execute as {NAME} at @s as @e[type=minecraft:villager,distance=..16] run data get entity @s Health")
+            F("day", round(time.time() - t0), "s: inventory changes", ch, "items on the ground", items, "villagers near", len([l for l in near if "query[" in l or "entity data" in l]))
             if ch:
                 LOG["gifts"] = ch
         try:
