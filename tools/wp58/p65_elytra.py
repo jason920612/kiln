@@ -2,6 +2,9 @@
 are logged; usage: p65_elytra.py DIM X Z DX DZ SECONDS  (start at (X, 120, Z), fly in direction (DX, DZ))"""
 from p65_b2 import *
 
+SY = int(os.environ.get("SY") or "120")
+
+
 def fly(dimn, x0, z0, dx, dz, secs):
     prep()
     E = "minecraft:" + dimn
@@ -16,12 +19,12 @@ def fly(dimn, x0, z0, dx, dz, secs):
     sv(f"execute in {E} run forceload add {x0-8} {z0-8} {x0+8} {z0+8}", show=False)
     time.sleep(2)
     for i in range(20):
-        out = sv(f"execute in {E} run setblock {x0} 119 {z0} minecraft:stone", show=False, wait=0.8)
+        out = sv(f"execute in {E} run setblock {x0} {SY-1} {z0} minecraft:stone", show=False, wait=0.8)
         if "unloaded" not in out and "not loaded" not in out: break
         time.sleep(1.5)
-    sv(f"execute in {E} run fill {x0-3} 119 {z0-3} {x0+3} 119 {z0+3} minecraft:stone", show=False)
+    sv(f"execute in {E} run fill {x0-3} {SY-1} {z0-3} {x0+3} {SY-1} {z0+3} minecraft:stone", show=False)
     for i, nm in enumerate(("KilnTest", "Obs")):
-        sv(f"execute in {E} run tp {nm} {x0 + 0.5 + i} 120 {z0 + 0.5}", show=False)
+        sv(f"execute in {E} run tp {nm} {x0 + 0.5 + i} {SY} {z0 + 0.5}", show=False)
     time.sleep(6)
     n = math.hypot(dx, dz); ux, uz = dx / n, dz / n
     yaw = math.degrees(math.atan2(-ux, uz))
@@ -45,8 +48,8 @@ def fly(dimn, x0, z0, dx, dz, secs):
                 # re-open the wings
                 c.key("space", "tap"); time.sleep(0.3); c.key("space", "tap")
             pitch = -12
-            if st["y"] < 90: pitch = -35
-            elif st["y"] > 170: pitch = 15
+            if st["y"] < SY - 30: pitch = -35
+            elif st["y"] > SY + 40: pitch = 15
             c.look(yaw, pitch)
         if int((time.time() - t0) * 2) % 4 == 0:
             for c in (a, b):
