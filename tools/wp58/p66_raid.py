@@ -249,11 +249,35 @@ def run_raid(a, max_s=3000):
     return LOG.get("hero", False)
 
 
+def talk(a, vid, tries=6):
+    """Looks at the villager (the client is slow: waits for the crosshair) and uses it until the trading screen opens."""
+    for _ in range(tries):
+        cur = next((x for x in a.state(30)["entities"] if x["id"] == vid), None)
+        if cur is None:
+            return False
+        st = a.state(0)
+        if math.dist((cur["x"], cur["y"], cur["z"]), (st["x"], st["y"], st["z"])) > 3.0:
+            S(f"tp {NAME} {cur['x']-1.4:.2f} {cur['y']:.2f} {cur['z']:.2f}")
+            time.sleep(0.8)
+        a.lookat(cur["x"], cur["y"] + 1.0, cur["z"])
+        time.sleep(1.0)
+        a.mouse("right", "tap")
+        time.sleep(1.2)
+        if a.screen() == "MerchantScreen":
+            return True
+    return False
+
+
 def trade_prices(a):
     """The prices the client shows at a profession villager: with the hero effect, and again without it."""
-    out = S(f"execute as @e[type=minecraft:villager,{BOX}] run data get entity @s VillagerData")
-    pros = [m.group(1) for l in out for m in [re.search(r'profession: "minecraft:([a-z_]+)"', l)] if m and m.group(1) not in ("none", "nitwit")]
-    F("professions in the village:", pros)
+    prof_pos = []
+    for prof in ("librarian", "farmer", "cleric", "fisherman", "shepherd", "butcher", "toolsmith", "armorer", "weaponsmith", "mason", "cartographer", "leatherworker", "fletcher"):
+        out = S(f'execute as @e[type=minecraft:villager,{BOX},nbt={{VillagerData:{{profession:"minecraft:{prof}"}}}}] run data get entity @s Pos')
+        for l in out:
+            m = re.findall(r"(-?\d+\.?\d*)d", l)
+            if len(m) == 3 and "entity data" in l:
+                prof_pos.append((prof, [float(x) for x in m]))
+    F("professions in the village:", [p for p, _ in prof_pos])
     res = {}
     chosen = None
     for label in ("with the hero effect", "without it"):
@@ -261,16 +285,18 @@ def trade_prices(a):
             S(f"effect clear {NAME} minecraft:hero_of_the_village")
             time.sleep(1.0)
         got = None
-        for e in sorted([x for x in a.state(60)["entities"] if x["t"] == "villager" and x.get("prof") not in ("none", "nitwit", None)], key=lambda e: (e["x"] - a.state(0)["x"]) ** 2 + (e["z"] - a.state(0)["z"]) ** 2):
-            if chosen is not None and e["id"] != chosen:
+        for prof, pos in prof_pos:
+            if chosen is not None and prof != chosen[0]:
                 continue
-            cur = next((x for x in a.state(100)["entities"] if x["id"] == e["id"]), e)
-            S(f"tp {NAME} {cur['x']-1.4:.2f} {cur['y']:.2f} {cur['z']:.2f}")
-            time.sleep(0.5)
-            if not interact_ent(a, e["id"], tries=10):
+            S(f"tp {NAME} {pos[0]-1.4:.2f} {pos[1]:.2f} {pos[2]:.2f}")
+            time.sleep(2.0)
+            near = [e for e in a.state(12)["entities"] if e["t"] == "villager" and e.get("prof") == prof]
+            if not near:
                 continue
-            time.sleep(1.0)
-            if a.screen() == "MerchantScreen":
+            vid = near[0]["id"]
+            if chosen is not None and vid != chosen[1]:
+                continue
+            if talk(a, vid):
                 try:
                     got = json.loads(a.cmd("offers"))
                 except Exception as ex:
@@ -278,12 +304,12 @@ def trade_prices(a):
                 a.cmd("key escape tap")
                 time.sleep(0.6)
                 if got and got != []:
-                    chosen = e["id"]
+                    chosen = (prof, vid)
                     break
             if a.screen() is not None:
                 a.cmd("key escape tap")
         res[label] = got
-        F("offers", label, str(got)[:600])
+        F("offers", label, "villager", chosen, str(got)[:900])
     LOG["trades"] = res
 
 
