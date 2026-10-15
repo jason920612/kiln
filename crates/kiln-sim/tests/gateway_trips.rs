@@ -95,13 +95,13 @@ fn a_gateway_counts_its_age_and_cools_down_by_itself_every_2400_ticks() {
     let (mut w, g) = gateway_world();
     // The dragon fight's gateway: no exit yet, nothing exact; it was placed a few ticks ago.
     let end = |c: String| format!("execute in minecraft:the_end run {c}");
-    w.run(&[end(format!("data merge block {} {} {} {{Age:2395L}}", g[0], g[1], g[2]))]);
+    w.run(&[end(format!("data merge block {} {} {} {{Age:2405L}}", g[0], g[1], g[2]))]);
     w.ticks(1);
     let tag = w.sim.block_entity_data("minecraft:the_end", g[0], g[1], g[2]).expect("the gateway's block entity");
-    assert!(tag.get("Age").and_then(|a| a.as_i64()).is_some_and(|a| a >= 2395), "{tag:?}");
+    assert!(tag.get("Age").and_then(|a| a.as_i64()).is_some_and(|a| a >= 2405), "{tag:?}");
     assert!(tag.get("ExactTeleport").is_none(), "{tag:?}");
     assert!(tag.get("components").is_some(), "{tag:?}");
-    // A player walking in at about age 2400 is held until the cooldown the gateway started has run out, then goes.
+    // A player walking in during the cooldown that starts at age 2400 is held until the cooldown the gateway started has run out, then goes.
     let at = format!("execute in minecraft:the_end run tp Alpha {} {} {}", g[0] as f64 + 0.5, g[1] as f64, g[2] as f64 + 0.5);
     w.run(&[at]);
     w.ticks(20);
