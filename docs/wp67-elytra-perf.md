@@ -16,7 +16,11 @@
   每個區塊從進入視野到收到的時間、被伺服器拉回(teleport)的次數。
 - **`survival_bench` 可以加飛行者**:`--flyers N --fly-dim … --fly-center x,z --fly-heading x,z --fly-spacing … --fly-altitude …`,`--count 0` 時只有飛行者;
   也可以和 wp47 的生存機器人一起跑。結果多了 MSPT 直方圖、量測窗內慢 tick(`KILN_SLOW_PRINT`)的各階段平均、飛行者的報告;Linux 上也讀伺服器與機器人的 CPU。
-- 伺服器多了幾個 `KILN_PHASE_DETAIL` 計時:`e.initial_mobs`、`e.block_entities`、`c.packets`、`ch.unload_chunks/entities/forget`。
+- 伺服器多了幾個 `KILN_PHASE_DETAIL` 計時:`e.initial_mobs`、`e.block_entities`、`c.packets`、`ch.unload_chunks/entities/forget`;
+  B0 與區塊維護的細項(`b0.*`、`ch.*`)在**沒開** `KILN_PHASE_DETAIL` 時也會出現在慢 tick 的那一行(`KILN_SLOW_PRINT`),偶發的卡頓才抓得到。
+- 真實客戶端:`tools/wp58/wp67_start.sh <binary>`(port 25597、種子 65、新世界、tick trace)、`vm_client67.sh`(`~/mc-client67` 在 Xvfb `:67`、agent 26067)、
+  `p67_elytra.py DIM X Z DX DZ SECONDS [SY]`(傳到起點上方、下落中開翼、每 2 秒一支火箭,印出飛行與伺服器 MSPT)、`wp67_vanilla.sh`
+  (vanilla 26.3 參考伺服器,同 port,`VANILLA=1 KILN_PLAY_DIR=wp67/rc-v` 時腳本改用 `/tick query`)。
 
 重跑(VM 上,先 `~/kt wp67-elytra-spikes cargo build --release -p kiln-server -p kiln-bot --bins --example survival_bench`):
 
