@@ -47,7 +47,7 @@ def prep(mode="survival"):
         sv("op KilnTest", show=False)
         sv("op Obs", show=False)
     alive(a)
-    alive(b)
+    alive_b(b)
     sv("gamerule spawn_mobs false", show=False)
     sv("difficulty normal", show=False)
     sv("time set day", show=False)

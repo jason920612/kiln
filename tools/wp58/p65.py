@@ -81,3 +81,13 @@ def go(c, tx, tz, timeout=120, sprint=True, tol=2.0, log=None, dig=True):
         c.key("w", "up")
         if sprint:
             c.key("ctrl", "up")
+
+
+def alive_b(c):
+    """`alive` for the second client (480x270 window: its Respawn button is at (240, 149))."""
+    for _ in range(4):
+        if c.screen() != "DeathScreen":
+            break
+        c.cmd("mousepos 240 149"); time.sleep(1.5)
+        c.mouse("left", "tap"); time.sleep(2.5)
+    return c.state(0)["health"]
