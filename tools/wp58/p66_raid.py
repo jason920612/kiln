@@ -109,7 +109,7 @@ def melee(a, deadline):
         # raiders the client does not see (far, or down a hole): the server says where they are
         for t in RAIDER_T:
             for l in S(f"execute as @e[type=minecraft:{t},{BOX}] unless data entity @s {{Wave:-1}} run data get entity @s Pos"):
-                m = re.findall(r"(-?d+.?d*)d", l)
+                m = re.findall(r"(-?\d+\.?\d*)d", l)
                 if len(m) == 3 and "entity data" in l:
                     S(f"tp {NAME} {float(m[0])-1.5:.2f} {float(m[1]):.2f} {float(m[2]):.2f}")
                     time.sleep(1.0)
