@@ -64,7 +64,7 @@ enum Stage {
 }
 
 /// A flying bot's state.
-pub struct Flight {
+pub(crate) struct Flight {
     plan: FlightPlan,
     stage: Stage,
     entity_id: i32,
@@ -87,7 +87,7 @@ pub struct Flight {
 }
 
 impl Flight {
-    pub fn new(plan: FlightPlan, entity_id: i32, radius: i32) -> Self {
+    pub(crate) fn new(plan: FlightPlan, entity_id: i32, radius: i32) -> Self {
         let yaw = (-plan.heading[0]).atan2(plan.heading[1]).to_degrees() as f32;
         let terrain_follow = plan.dim == "minecraft:overworld";
         Flight {
@@ -109,16 +109,12 @@ impl Flight {
         }
     }
 
-    pub fn flying(&self) -> bool {
-        self.stage == Stage::Flying
-    }
-
     fn measuring(&self) -> bool {
         self.flying_since.is_some_and(|t| t.elapsed() >= self.plan.warmup)
     }
 
     /// The first position the server gave: the bot asks to be taken to its start.
-    pub fn spawned(&mut self, out: &mut Out, counts: &mut Traffic, pos: [f64; 3]) {
+    pub(crate) fn spawned(&mut self, out: &mut Out, counts: &mut Traffic, pos: [f64; 3]) {
         self.pos = pos;
         let [x, z] = self.plan.start;
         let y = self.plan.altitude;
@@ -134,7 +130,7 @@ impl Flight {
     }
 
     /// Respawn (a dimension change): the old level's chunks are gone.
-    pub fn respawned(&mut self) {
+    pub(crate) fn respawned(&mut self) {
         self.needs_loaded = true;
         self.chunks.clear();
         self.want.clear();
@@ -142,7 +138,7 @@ impl Flight {
     }
 
     /// A position from the server: the start, or a correction.
-    pub fn teleported(&mut self, pos: [f64; 3], counts: &mut Traffic) {
+    pub(crate) fn teleported(&mut self, pos: [f64; 3], counts: &mut Traffic) {
         if self.stage == Stage::Flying {
             counts.fly_corrections += 1;
         }
@@ -151,7 +147,7 @@ impl Flight {
     }
 
     /// A Level Chunk With Light packet body.
-    pub fn on_chunk(&mut self, body: &[u8], shared: &Shared) -> Result<(), DecodeError> {
+    pub(crate) fn on_chunk(&mut self, body: &[u8], shared: &Shared) -> Result<(), DecodeError> {
         let mut r = Reader::new(body);
         let (x, z) = (r.i32()?, r.i32()?);
         let mut top = i32::MIN;
@@ -179,7 +175,7 @@ impl Flight {
         Ok(())
     }
 
-    pub fn on_forget_chunk(&mut self, x: i32, z: i32) {
+    pub(crate) fn on_forget_chunk(&mut self, x: i32, z: i32) {
         self.chunks.remove(&(x, z));
     }
 
@@ -203,7 +199,7 @@ impl Flight {
     }
 
     /// One client tick.
-    pub fn tick(&mut self, out: &mut Out, counts: &mut Traffic, shared: &Shared) {
+    pub(crate) fn tick(&mut self, out: &mut Out, counts: &mut Traffic, shared: &Shared) {
         self.ticks += 1;
         match self.stage {
             Stage::Setup => {

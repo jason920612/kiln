@@ -688,7 +688,9 @@ impl RegionWork<'_> {
             let pending = std::mem::take(&mut self.blocks.initial_mobs);
             let mut out = BlockOut::default();
             let level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &[], actor: None };
+            let dt = Instant::now();
             crate::spawner::initial_mobs(&level, &pending, &mut self.out.spawns);
+            crate::diag::lap("e.initial_mobs", dt);
         }
         // `TickRateManager.isEntityFrozen`: nothing but players ticks while frozen.
         if env.frozen {
@@ -735,10 +737,12 @@ impl RegionWork<'_> {
             entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player, ctx);
             crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
         }
+        let dt = Instant::now();
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
         self.tick_pistons(env, ticking_now);
         self.tick_lids(env, ticking_now);
         self.tick_block_entities(env, ticking_now);
+        crate::diag::lap("e.block_entities", dt);
     }
 
     /// `Level.tickBlockEntities` for the moving pistons, after the entities: each one that

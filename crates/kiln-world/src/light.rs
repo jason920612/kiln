@@ -6,6 +6,7 @@
 //! light, then re-spread from the brighter levels found at the edge of the cleared area.
 
 use crate::chunk::LightLayer;
+use crate::chunk::Chunk;
 use crate::{Blocks, CellStore, ChunkPos};
 use kiln_data::block_props::{face_full, light_dampening, light_emission, propagates_skylight_down, uses_shape_for_light_occlusion};
 use std::collections::VecDeque;
@@ -60,6 +61,94 @@ fn set_light_at<S: CellStore + ?Sized>(w: &mut S, layer: LightLayer, x: i32, y: 
     }
 }
 
+/// What light propagation reads and writes: blocks and light of loaded chunks.
+trait Access {
+    fn chunk_at(&self, pos: ChunkPos) -> Option<&Chunk>;
+    fn chunk_at_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk>;
+
+    /// Block state if its chunk is loaded and `y` is within the chunk's stored light ([`state_at`]).
+    fn state(&self, x: i32, y: i32, z: i32) -> Option<u16> {
+        let c = self.chunk_at(ChunkPos::of_block(x, z))?;
+        c.in_light_range(y).then(|| c.get((x & 15) as usize, y, (z & 15) as usize))
+    }
+
+    /// [`light_at`].
+    fn light(&self, layer: LightLayer, x: i32, y: i32, z: i32) -> Option<u8> {
+        let c = self.chunk_at(ChunkPos::of_block(x, z))?;
+        c.in_light_range(y).then(|| c.light(layer, (x & 15) as usize, y, (z & 15) as usize))
+    }
+
+    /// Block state and light together (one chunk lookup).
+    fn state_and_light(&self, layer: LightLayer, x: i32, y: i32, z: i32) -> Option<(u16, u8)> {
+        let c = self.chunk_at(ChunkPos::of_block(x, z))?;
+        let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
+        c.in_light_range(y).then(|| (c.get(lx, y, lz), c.light(layer, lx, y, lz)))
+    }
+
+    fn set(&mut self, layer: LightLayer, x: i32, y: i32, z: i32, v: u8) {
+        if let Some(c) = self.chunk_at_mut(ChunkPos::of_block(x, z)) {
+            c.set_light(layer, (x & 15) as usize, y, (z & 15) as usize, v);
+        }
+    }
+}
+
+impl<S: CellStore + ?Sized> Access for S {
+    fn chunk_at(&self, pos: ChunkPos) -> Option<&Chunk> {
+        self.chunk(pos)
+    }
+    fn chunk_at_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
+        self.chunk_mut(pos)
+    }
+}
+
+/// The 3×3 chunks around a chunk being lit, taken out of their cells for the time it takes:
+/// light from the new chunk, or coming into it from the border of a neighbour, fades within 15
+/// blocks, so it never leaves them, and each step reads its chunk without a cell lookup.
+struct Window {
+    /// Chunk coordinates of the north-west corner chunk.
+    x0: i32,
+    z0: i32,
+    chunks: [Option<Box<Chunk>>; 9],
+}
+
+impl Window {
+    fn take<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) -> Window {
+        let (x0, z0) = (pos.x - 1, pos.z - 1);
+        let chunks = std::array::from_fn(|i| {
+            let p = ChunkPos::new(x0 + (i % 3) as i32, z0 + (i / 3) as i32);
+            w.cell_mut(p.cell())?.remove(p)
+        });
+        Window { x0, z0, chunks }
+    }
+
+    /// Puts the chunks back where they were.
+    fn put_back<S: CellStore + ?Sized>(self, w: &mut S) {
+        for (i, c) in self.chunks.into_iter().enumerate() {
+            if let Some(c) = c {
+                let p = ChunkPos::new(self.x0 + (i % 3) as i32, self.z0 + (i / 3) as i32);
+                w.cell_mut(p.cell()).expect("the cell a chunk was taken from").put_back(p, c);
+            }
+        }
+    }
+
+    fn index(&self, pos: ChunkPos) -> Option<usize> {
+        let (dx, dz) = (pos.x - self.x0, pos.z - self.z0);
+        let inside = (0..3).contains(&dx) && (0..3).contains(&dz);
+        debug_assert!(inside, "light left the window around a new chunk at {pos:?}");
+        inside.then(|| (dz * 3 + dx) as usize)
+    }
+}
+
+impl Access for Window {
+    fn chunk_at(&self, pos: ChunkPos) -> Option<&Chunk> {
+        self.chunks[self.index(pos)?].as_deref()
+    }
+    fn chunk_at_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
+        let i = self.index(pos)?;
+        self.chunks[i].as_deref_mut()
+    }
+}
+
 /// Re-lights around a block that changed from `old` to `new`.
 pub fn update_light<S: CellStore + ?Sized>(w: &mut S, x: i32, y: i32, z: i32, old: u16, new: u16) {
     if !affects_light(old, new) {
@@ -98,7 +187,16 @@ pub fn update_light<S: CellStore + ?Sized>(w: &mut S, x: i32, y: i32, z: i32, ol
 /// shaded columns; and light from the neighbours' borders spreading in, and back out.
 /// Vanilla does this in the `INITIALIZE_LIGHT` and `LIGHT` statuses (`LightEngine`).
 pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
-    let Some(c) = w.chunk(pos) else { return };
+    if w.chunk(pos).is_none() {
+        return;
+    }
+    let mut window = Window::take(w, pos);
+    light_new_in(&mut window, pos);
+    window.put_back(w);
+}
+
+fn light_new_in(w: &mut Window, pos: ChunkPos) {
+    let Some(c) = w.chunk_at(pos) else { return };
     let (min_y, max_y) = (c.min_y(), c.min_y() + c.height() - 1);
     let (bx, bz) = (pos.x * 16, pos.z * 16);
     let mut block = Queue::new();
@@ -128,7 +226,7 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
     {
         // The 3×3 chunks the ring touches, each looked up once.
         let around: [[Option<&crate::chunk::Chunk>; 3]; 3] =
-            std::array::from_fn(|dx| std::array::from_fn(|dz| w.chunk(ChunkPos::new(pos.x + dx as i32 - 1, pos.z + dz as i32 - 1))));
+            std::array::from_fn(|dx| std::array::from_fn(|dz| w.chunk_at(ChunkPos::new(pos.x + dx as i32 - 1, pos.z + dz as i32 - 1))));
         for (i, row) in tops.iter_mut().enumerate() {
             for (j, t) in row.iter_mut().enumerate() {
                 let (x, z) = (bx + i as i32 - 1, bz + j as i32 - 1);
@@ -138,8 +236,8 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
         }
     }
     for &(x, y, z, e) in &block {
-        if e > light_at(w, LightLayer::Block, x, y, z).unwrap_or(15) {
-            set_light_at(w, LightLayer::Block, x, y, z, e);
+        if e > w.light(LightLayer::Block, x, y, z).unwrap_or(15) {
+            w.set(LightLayer::Block, x, y, z, e);
         }
     }
     let chunk_top = tops[1..17].iter().flat_map(|row| row[1..17].iter().flatten()).copied().max().unwrap_or(min_y);
@@ -156,7 +254,7 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
             let mut level = 15;
             let mut above = kiln_data::blocks::default_state::AIR;
             for y in (min_y..own).rev() {
-                let Some(to) = state_at(w, x, y, z) else { break };
+                let Some((to, current)) = w.state_and_light(LightLayer::Sky, x, y, z) else { break };
                 if occludes(above, to, DOWN) {
                     break;
                 }
@@ -164,8 +262,8 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
                 if level == 0 {
                     break;
                 }
-                if level > light_at(w, LightLayer::Sky, x, y, z).unwrap_or(15) {
-                    set_light_at(w, LightLayer::Sky, x, y, z, level);
+                if level > current {
+                    w.set(LightLayer::Sky, x, y, z, level);
                     sky.push_back((x, y, z, level));
                 }
                 above = to;
@@ -174,7 +272,7 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
     }
     // The neighbours' border columns shine in (each neighbour looked up once).
     let sides = [ChunkPos::new(pos.x - 1, pos.z), ChunkPos::new(pos.x + 1, pos.z), ChunkPos::new(pos.x, pos.z - 1), ChunkPos::new(pos.x, pos.z + 1)];
-    let neighbours = sides.map(|p| w.chunk(p));
+    let neighbours = sides.map(|p| w.chunk_at(p));
     for k in 0..16 {
         for (side, (x, z)) in [(bx - 1, bz + k), (bx + 16, bz + k), (bx + k, bz - 1), (bx + k, bz + 16)].into_iter().enumerate() {
             let Some(n) = neighbours[side] else { continue };
@@ -201,21 +299,21 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
     increase(w, LightLayer::Sky, &mut sky);
 }
 
-fn increase<S: CellStore + ?Sized>(w: &mut S, layer: LightLayer, queue: &mut Queue) {
+fn increase<A: Access + ?Sized>(w: &mut A, layer: LightLayer, queue: &mut Queue) {
     while let Some((x, y, z, level)) = queue.pop_front() {
         if level <= 1 {
             continue;
         }
-        let from = state_at(w, x, y, z).unwrap_or(kiln_data::blocks::default_state::AIR);
+        let from = w.state(x, y, z).unwrap_or(kiln_data::blocks::default_state::AIR);
         for (dir, (dx, dy, dz)) in DIRS.iter().enumerate() {
             let (nx, ny, nz) = (x + dx, y + dy, z + dz);
-            let Some(to) = state_at(w, nx, ny, nz) else { continue };
+            let Some((to, current)) = w.state_and_light(layer, nx, ny, nz) else { continue };
             if occludes(from, to, dir) {
                 continue;
             }
             let v = transmitted(layer, level, to, dir);
-            if v > light_at(w, layer, nx, ny, nz).unwrap_or(15) {
-                set_light_at(w, layer, nx, ny, nz, v);
+            if v > current {
+                w.set(layer, nx, ny, nz, v);
                 queue.push_back((nx, ny, nz, v));
             }
         }
