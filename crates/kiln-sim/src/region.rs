@@ -547,7 +547,7 @@ impl RegionWork<'_> {
             to_make.sort_unstable();
             to_make.dedup();
             let cells = &*self.cells;
-            crate::diag::add("c.n_made_x1000", Duration::from_micros(to_make.len() as u64));
+            crate::diag::add("c.n_made", Duration::from_millis(to_make.len() as u64));
             let made = ctx.map_indexed_with(CHUNK_PACKET_WINDOW, &to_make, |_, &c| cells.chunk(c).and_then(|ch| ch.make_packet(c.x, c.z, env.biome_count)));
             for (c, packet) in to_make.into_iter().zip(made) {
                 if let (Some(chunk), Some(packet)) = (self.cells.chunk_mut(c), packet) {

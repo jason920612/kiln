@@ -924,7 +924,7 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
     let dt = crate::diag::lap("tb.generated", dt);
     let can_tick = |k: ChunkKey| ticking.contains(ChunkPos::new(k.0, k.1));
     let ran = kiln_blocks::tick::run_block_ticks(level, can_tick);
-    crate::diag::add("tb.n_block_ticks_x1000", std::time::Duration::from_micros(ran as u64));
+    crate::diag::add("tb.n_block_ticks", std::time::Duration::from_millis(ran as u64));
     let dt = crate::diag::lap("tb.block_ticks", dt);
     kiln_blocks::tick::run_fluid_ticks(level, can_tick);
     let dt = crate::diag::lap("tb.fluid_ticks", dt);
