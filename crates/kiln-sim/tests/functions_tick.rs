@@ -53,17 +53,17 @@ fn a_frozen_game_runs_no_tick_functions_but_a_step_does() {
         assert!(sim.step([]));
     }
     assert!(!stone_at(&sim));
-    // Stepping 3 ticks counts 3.
+    // Stepping 3 ticks counts 3 (the first tick before the freeze counted 1).
     assert!(sim.step([ToSim::Console("tick step 3".into())]));
     for _ in 0..10 {
         assert!(sim.step([]));
     }
-    assert!(sim.step([ToSim::Console("scoreboard players add #n t 4".into())]));
+    assert!(sim.step([ToSim::Console("scoreboard players add #n t 3".into())]));
     assert!(sim.step([ToSim::Console("tick step 1".into())]));
     for _ in 0..5 {
         assert!(sim.step([]));
     }
-    assert!(stone_at(&sim), "3 stepped ticks + 4 + 1 stepped tick reach 8");
+    assert!(stone_at(&sim), "the first tick (1), 3 stepped ticks, 3 more and 1 stepped tick reach 8");
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
 }
