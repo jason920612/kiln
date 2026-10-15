@@ -208,3 +208,35 @@ fn villagers_launch_fireworks_after_a_victory() {
     }
     assert!(seen > 0, "no firework in the celebration");
 }
+
+/// `BellBlockEntity`: a bell that is rung shakes for 50 ticks; with a raider within 32 blocks it resonates 5 ticks in and 40 ticks later every
+/// raider within 48 blocks glows for 60 ticks. (Vanilla measured: a pillager 8 blocks from a bell glows from about 2.3 s after the ring.)
+#[test]
+fn a_rung_bell_makes_the_raiders_around_it_glow() {
+    let mut w = World::new();
+    let [x, y, z] = w.pos();
+    w.console(&format!("setblock {} {y} {z} minecraft:bell[attachment=floor,facing=east]", x + 3));
+    w.console(&format!("summon minecraft:pillager {}.5 {y} {z}.5 {{NoAI:1b,PersistenceRequired:1b}}", x + 11));
+    w.console(&format!("summon minecraft:pillager {}.5 {y} {z}.5 {{NoAI:1b,PersistenceRequired:1b}}", x + 3 + 47));
+    w.console(&format!("summon minecraft:pillager {}.5 {y} {z}.5 {{NoAI:1b,PersistenceRequired:1b}}", x + 3 + 60));
+    w.ticks(5);
+    let pillagers = w.mobs("minecraft:pillager");
+    assert_eq!(pillagers.len(), 3);
+    let glows = |w: &World, id: i32| w.sim.mob_state(id).unwrap().effects.iter().any(|e| e.0.contains("glowing"));
+    assert!(pillagers.iter().all(|&id| !glows(&w, id)));
+    // Power from beside the bell rings it.
+    w.console(&format!("setblock {} {y} {} minecraft:redstone_block", x + 3, z + 1));
+    let mut first = [None; 3];
+    for t in 0..140 {
+        w.ticks(1);
+        for (i, &id) in pillagers.iter().enumerate() {
+            if first[i].is_none() && glows(&w, id) {
+                first[i] = Some(t);
+            }
+        }
+    }
+    // Resonation 5 + 40 ticks after the ring; the one 60 blocks away (beyond 48) never glows.
+    assert!(first[0].is_some_and(|t| (40..=55).contains(&t)), "the near one glows about 45 ticks after the ring: {first:?}");
+    assert!(first[1].is_some(), "47 blocks away glows: {first:?}");
+    assert!(first[2].is_none(), "60 blocks away does not: {first:?}");
+}
