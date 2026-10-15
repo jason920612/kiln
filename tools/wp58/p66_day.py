@@ -10,7 +10,15 @@ if __name__ == "__main__":
     try:
         S("gamerule advance_time false", "tick rate 20", "time set 1000", f"effect give {NAME} minecraft:hero_of_the_village 48000 1 true")
         vs = sorted([e for e in a.state(60)["entities"] if e["t"] == "villager"], key=lambda e: e["y"])
-        if os.environ.get("AT") == "bell":
+        if os.environ.get("AT", "").startswith("prof:"):
+            prof = os.environ["AT"][5:]
+            out = S(f'execute as @e[type=minecraft:villager,{BOX},nbt={{VillagerData:{{profession:"minecraft:{prof}"}}}}] run data get entity @s Pos')
+            for l in out:
+                m = re.findall(r"(-?\d+\.?\d*)d", l)
+                if len(m) == 3 and ("entity data" in l or "query[" in l):
+                    S(f"tp {NAME} {float(m[0])-2:.2f} {float(m[1]):.2f} {float(m[2]):.2f}")
+                    break
+        elif os.environ.get("AT") == "bell":
             S(f"tp {NAME} 1463.5 112 -1040.5")
         elif vs:
             S(f"tp {NAME} {vs[0]['x']-2:.2f} {vs[0]['y']:.2f} {vs[0]['z']:.2f}")
