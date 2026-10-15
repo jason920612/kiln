@@ -902,8 +902,8 @@ impl RegionWork<'_> {
 const MENU_WINDOW: Window = Window::new().item_ns(700);
 const PLAYER_TICK_WINDOW: Window = Window::new().item_ns(2_000);
 const CHUNK_VIEW_WINDOW: Window = Window::new().item_ns(150);
-/// Making one chunk's packet (sections, light): a few hundred microseconds.
-const CHUNK_PACKET_WINDOW: Window = Window::new().item_ns(300_000).chunk(1).strategy(kiln_sched::Strategy::Parallel);
+/// Making one chunk's packet (sections, light): about a hundred microseconds.
+const CHUNK_PACKET_WINDOW: Window = Window::new().item_ns(100_000).chunk(1);
 const FLUSH_WINDOW: Window = Window::new().item_ns(400);
 /// A player's packets of one run (mostly a move and a tick end).
 const PACKET_WINDOW: Window = Window::new().item_ns(600);
