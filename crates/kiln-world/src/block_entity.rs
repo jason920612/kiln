@@ -46,6 +46,71 @@ fn update_rule(type_name: &str) -> UpdateTag {
     }
 }
 
+/// The fields a vanilla block entity of this type saves from the start (26.3: `data get block` of one placed with
+/// `/setblock`), which a block entity that nothing has touched leaves out of its stored form here. `Items` is
+/// left out where a loot table stands in for it.
+fn always_saved(type_name: &str) -> Vec<(&'static str, Tag)> {
+    let int = |v: i32| Tag::Int(v);
+    let items = || ("Items", Tag::List(Vec::new()));
+    let listener = || {
+        Tag::Compound(vec![
+            ("selector".to_owned(), Tag::Compound(vec![("tick".to_owned(), Tag::Long(-1))])),
+            ("event_delay".to_owned(), Tag::Int(0)),
+        ])
+    };
+    match type_name.strip_prefix("minecraft:").unwrap_or(type_name) {
+        "chest" | "trapped_chest" | "barrel" | "dropper" | "dispenser" | "copper_chest" => vec![items()],
+        "hopper" => vec![items(), ("TransferCooldown", int(-1))],
+        "furnace" | "blast_furnace" | "smoker" => vec![
+            items(),
+            ("RecipesUsed", Tag::Compound(Vec::new())),
+            ("lit_time_remaining", int(0)),
+            ("lit_total_time", int(0)),
+            ("cooking_time_spent", int(0)),
+            ("cooking_total_time", int(0)),
+            ("speed_multiplier", Tag::Float(1.0)),
+        ],
+        "brewing_stand" => vec![
+            items(),
+            ("BrewTime", int(0)),
+            ("Fuel", int(0)),
+            ("speed_multiplier", Tag::Float(1.0)),
+            ("total_brew_time", int(0)),
+            ("total_fuel", int(0)),
+        ],
+        "campfire" | "soul_campfire" => vec![items(), ("CookingTimes", Tag::IntArray(vec![0; 4])), ("CookingTotalTimes", Tag::IntArray(vec![0; 4]))],
+        "chiseled_bookshelf" => vec![items(), ("last_interacted_slot", int(-1))],
+        "end_gateway" => vec![("Age", Tag::Long(0))],
+        "vault" => vec![
+            (
+                "config",
+                Tag::Compound(vec![(
+                    "key_item".to_owned(),
+                    Tag::Compound(vec![("count".to_owned(), Tag::Int(1)), ("id".to_owned(), Tag::String("minecraft:trial_key".into()))]),
+                )]),
+            ),
+            ("server_data", Tag::Compound(Vec::new())),
+            ("shared_data", Tag::Compound(Vec::new())),
+        ],
+        "sculk_sensor" | "calibrated_sculk_sensor" => vec![("last_vibration_frequency", int(0)), ("listener", listener())],
+        "sculk_shrieker" => vec![("warning_level", int(0)), ("listener", listener())],
+        "sculk_catalyst" => vec![("cursors", Tag::List(Vec::new()))],
+        "bee_nest" | "beehive" => vec![("bees", Tag::List(Vec::new()))],
+        // `CommandBlockEntity.saveAdditional` .
+        "command_block" | "chain_command_block" | "repeating_command_block" => vec![
+            ("Command", Tag::String(String::new())),
+            ("SuccessCount", int(0)),
+            ("TrackOutput", Tag::Byte(1)),
+            ("UpdateLastExecution", Tag::Byte(1)),
+            ("powered", Tag::Byte(0)),
+            ("conditionMet", Tag::Byte(0)),
+            // (`auto` of a chain block, which starts automatic, is set where the block is placed.)
+            ("auto", Tag::Byte(0)),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 /// Protocol id of a block entity type by name.
 pub fn type_id(name: &str) -> Option<u16> {
     kiln_data::builtin_id("minecraft:block_entity_type", name).map(|i| i as u16)
@@ -163,6 +228,17 @@ impl BlockEntity {
         if type_name(self.kind) == "minecraft:brushable_block" {
             fields.retain(|(k, _)| k != "hit_direction");
         }
+        // What `saveAdditional` writes however little has happened to the block entity, and the components every
+        // block entity saves (`saveWithoutMetadata`), even when it has none: `components: {}`.
+        let loot = fields.iter().any(|(k, _)| k == "LootTable");
+        for (key, value) in always_saved(type_name(self.kind)) {
+            if !fields.iter().any(|(k, _)| k == key) && !(key == "Items" && loot) {
+                fields.push((key.to_owned(), value));
+            }
+        }
+        if !fields.iter().any(|(k, _)| k == "components") {
+            fields.push(("components".to_owned(), Tag::Compound(Vec::new())));
+        }
         let mut out = Vec::with_capacity(fields.len() + 4);
         out.push(("id".to_owned(), Tag::String(type_name(self.kind).to_owned())));
         out.push(("x".to_owned(), Tag::Int(pos[0])));
@@ -272,6 +348,99 @@ mod tests {
         let active = info.with_property(info.default, "trial_spawner_state", "active").unwrap();
         assert_eq!(be.update_tag(info.default), None);
         assert_eq!(be.update_tag(active), Some(compound(&[("next_mob_spawns_at", Tag::Long(99))])));
+    }
+
+    /// What a block entity placed with `/setblock` saves in 26.3 (`data get block`, read off a vanilla server), by block:
+    /// the fields of its type that `saveAdditional` always writes, and `components`, even when empty.
+    #[test]
+    fn a_new_block_entity_saves_what_vanilla_saves() {
+        let table: &[(&str, &[&str])] = &[
+        ("chest", &["Items", "components"]),
+        ("trapped_chest", &["Items", "components"]),
+        ("ender_chest", &["components"]),
+        ("barrel", &["Items", "components"]),
+        ("furnace", &["Items", "RecipesUsed", "components", "cooking_time_spent", "cooking_total_time", "lit_time_remaining", "lit_total_time", "speed_multiplier"]),
+        ("blast_furnace", &["Items", "RecipesUsed", "components", "cooking_time_spent", "cooking_total_time", "lit_time_remaining", "lit_total_time", "speed_multiplier"]),
+        ("smoker", &["Items", "RecipesUsed", "components", "cooking_time_spent", "cooking_total_time", "lit_time_remaining", "lit_total_time", "speed_multiplier"]),
+        ("hopper", &["Items", "TransferCooldown", "components"]),
+        ("dropper", &["Items", "components"]),
+        ("dispenser", &["Items", "components"]),
+        ("brewing_stand", &["BrewTime", "Fuel", "Items", "components", "speed_multiplier", "total_brew_time", "total_fuel"]),
+        ("jukebox", &["components"]),
+        ("enchanting_table", &["components"]),
+        ("lectern", &["components"]),
+        ("bell", &["components"]),
+        ("campfire", &["CookingTimes", "CookingTotalTimes", "Items", "components"]),
+        ("soul_campfire", &["CookingTimes", "CookingTotalTimes", "Items", "components"]),
+        ("beacon", &["Levels", "components"]),
+        ("comparator", &["OutputSignal", "components"]),
+        ("daylight_detector", &["components"]),
+        ("end_portal", &["components"]),
+        ("end_gateway", &["Age", "components"]),
+        ("trial_spawner", &["components"]),
+        ("vault", &["components", "config", "server_data", "shared_data"]),
+        ("oak_sign", &["back_text", "components", "front_text", "is_waxed"]),
+        ("oak_wall_sign", &["back_text", "components", "front_text", "is_waxed"]),
+        ("oak_hanging_sign", &["back_text", "components", "front_text", "is_waxed"]),
+        ("red_banner", &["components"]),
+        ("white_wall_banner", &["components"]),
+        ("player_head", &["components"]),
+        ("skeleton_skull", &["components"]),
+        ("conduit", &["components"]),
+        ("sculk_sensor", &["components", "last_vibration_frequency", "listener"]),
+        ("calibrated_sculk_sensor", &["components", "last_vibration_frequency", "listener"]),
+        ("sculk_shrieker", &["components", "listener", "warning_level"]),
+        ("sculk_catalyst", &["components", "cursors"]),
+        ("decorated_pot", &["components"]),
+        ("chiseled_bookshelf", &["Items", "components", "last_interacted_slot"]),
+        ("suspicious_sand", &["components"]),
+        ("suspicious_gravel", &["components"]),
+        ("command_block", &["Command", "SuccessCount", "TrackOutput", "UpdateLastExecution", "auto", "components", "conditionMet", "powered"]),
+        ("chain_command_block", &["Command", "SuccessCount", "TrackOutput", "UpdateLastExecution", "auto", "components", "conditionMet", "powered"]),
+        ("repeating_command_block", &["Command", "SuccessCount", "TrackOutput", "UpdateLastExecution", "auto", "components", "conditionMet", "powered"]),
+        ("creaking_heart", &["components"]),
+        ("white_shulker_box", &["components"]),
+        ("shulker_box", &["components"]),
+        ("bee_nest", &["bees", "components"]),
+        ("beehive", &["bees", "components"]),
+        ("cherry_shelf", &["Items", "align_items_to_bottom", "components"]),
+        ("copper_chest", &["Items", "components"]),
+        ("copper_golem_statue", &["components"]),
+        ];
+        // (A structure block, a jigsaw and a test block start from fields their own modules fill in.)
+        for (name, want) in table {
+            let info = kiln_data::blocks_types::block_by_name(&format!("minecraft:{name}")).unwrap_or_else(|| panic!("block {name}"));
+            let kind = kiln_data::block_props::block_entity_type(info.default).unwrap_or_else(|| panic!("{name} has no block entity"));
+            let saved = BlockEntity::new(kind).saved([1, 2, 3]);
+            let Tag::Compound(fields) = &saved else { panic!() };
+            let mut keys: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).filter(|k| !matches!(*k, "id" | "x" | "y" | "z")).collect();
+            keys.sort_unstable();
+            let mut want = want.to_vec();
+            want.sort_unstable();
+            assert_eq!(keys, want, "{name}");
+        }
+        let chest = BlockEntity::new(type_id("minecraft:chest").unwrap());
+        let tag = chest.saved([0, 0, 0]);
+        assert_eq!(tag.get("Items"), Some(&Tag::List(Vec::new())));
+        assert_eq!(tag.get("components"), Some(&Tag::Compound(Vec::new())));
+        // A loot table stands in for the items (`trySaveLootTable`).
+        let mut loot = BlockEntity::new(type_id("minecraft:chest").unwrap());
+        loot.merge_fields(vec![("LootTable".into(), Tag::String("minecraft:chests/simple_dungeon".into()))]);
+        assert!(loot.saved([0, 0, 0]).get("Items").is_none());
+        let hopper = BlockEntity::new(type_id("minecraft:hopper").unwrap()).saved([0, 0, 0]);
+        assert_eq!(hopper.get("TransferCooldown"), Some(&Tag::Int(-1)));
+        let furnace = BlockEntity::new(type_id("minecraft:furnace").unwrap()).saved([0, 0, 0]);
+        assert_eq!(furnace.get("speed_multiplier"), Some(&Tag::Float(1.0)));
+        assert_eq!(furnace.get("RecipesUsed"), Some(&Tag::Compound(Vec::new())));
+        let gateway = BlockEntity::new(type_id("minecraft:end_gateway").unwrap()).saved([0, 0, 0]);
+        assert_eq!(gateway.get("Age"), Some(&Tag::Long(0)));
+        assert!(gateway.get("ExactTeleport").is_none(), "only written when exact");
+        // What the block entity holds stays as it is.
+        let mut full = BlockEntity::new(type_id("minecraft:chest").unwrap());
+        full.merge_fields(vec![("Items".into(), Tag::List(vec![Tag::Int(7)])), ("components".into(), Tag::Compound(vec![("minecraft:custom_name".into(), Tag::String("x".into()))]))]);
+        let saved = full.saved([0, 0, 0]);
+        assert_eq!(saved.get("Items"), Some(&Tag::List(vec![Tag::Int(7)])));
+        assert!(matches!(saved.get("components"), Some(Tag::Compound(c)) if c.len() == 1));
     }
 
     #[test]

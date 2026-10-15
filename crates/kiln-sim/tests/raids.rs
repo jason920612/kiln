@@ -146,3 +146,126 @@ fn bad_omen_in_a_village_starts_a_raid_with_waves_until_victory() {
     w.ticks(620);
     assert!(w.sim.raids("minecraft:overworld").is_empty());
 }
+
+/// `Raider.hurtServer` updates the raid's boss bar before the blow lands and `Raid.removeFromRaid` after a death: the bar shows the
+/// living raiders' health over the wave's total, one blow behind while they are only hurt, exact once one of them dies. (It stayed
+/// full until the wave was dead.)
+#[test]
+fn the_raid_bar_follows_the_raiders_health() {
+    let mut w = World::new();
+    w.village();
+    w.ticks(40);
+    w.console("gamemode survival Hunter");
+    w.console("effect give Hunter minecraft:bad_omen 100 1");
+    w.ticks(2 + 600);
+    w.console("gamemode creative Hunter");
+    w.ticks(305);
+    let raids = w.sim.raids("minecraft:overworld");
+    assert_eq!(raids[0].2, 1, "first wave: {raids:?}");
+    let bar = || w.sim.raids("minecraft:overworld")[0].6;
+    assert_eq!(bar(), 1.0);
+    let total = w.mobs("minecraft:pillager").len() as f32 * 24.0 + w.mobs("minecraft:vindicator").len() as f32 * 24.0;
+    w.console("damage @e[type=minecraft:pillager,limit=1] 8 minecraft:generic");
+    w.ticks(2);
+
+    assert_eq!(w.sim.raids("minecraft:overworld")[0].6, 1.0, "the bar was told before the blow");
+    w.ticks(15);
+    w.console("damage @e[type=minecraft:pillager,limit=1] 4 minecraft:generic");
+    w.ticks(2);
+    let p = w.sim.raids("minecraft:overworld")[0].6;
+    assert!((p - (total - 8.0) / total).abs() < 0.002, "the first blow shows with the second: {p} of {total}");
+    // A raider dying updates it with everything as it is.
+    w.console("kill @e[type=minecraft:pillager,limit=1]");
+    w.ticks(2);
+    let p = w.sim.raids("minecraft:overworld")[0].6;
+    assert!((p - (total - 24.0) / total).abs() < 0.002, "{p}");
+}
+
+/// `CelebrateVillagersSurvivedRaid.tick`: after a victory the villagers under the open sky launch firework rockets (one chance in 200 a
+/// tick each, a burst of one colour). Kiln's villagers danced about without launching any.
+#[test]
+fn villagers_launch_fireworks_after_a_victory() {
+    let mut w = World::new();
+    w.village();
+    w.ticks(40);
+    w.console("gamemode survival Hunter");
+    w.console("effect give Hunter minecraft:bad_omen 100 1");
+    w.ticks(2 + 600);
+    w.console("gamemode creative Hunter");
+    w.ticks(305);
+    for _ in 0..8 {
+        w.console("kill @e[type=!minecraft:villager,type=!minecraft:player]");
+        w.ticks(330);
+        if w.sim.raids("minecraft:overworld")[0].1 == "victory" {
+            break;
+        }
+    }
+    assert_eq!(w.sim.raids("minecraft:overworld")[0].1, "victory");
+    let mut seen = 0;
+    for _ in 0..560 {
+        w.ticks(1);
+        seen += w.sim.entities().iter().filter(|e| e.0 == "minecraft:firework_rocket").count().min(1);
+    }
+    assert!(seen > 0, "no firework in the celebration");
+}
+
+/// `BellBlockEntity`: a bell that is rung shakes for 50 ticks; with a raider within 32 blocks it resonates 5 ticks in and 40 ticks later every
+/// raider within 48 blocks glows for 60 ticks. (Vanilla measured: a pillager 8 blocks from a bell glows from about 2.3 s after the ring.)
+#[test]
+fn a_rung_bell_makes_the_raiders_around_it_glow() {
+    let mut w = World::new();
+    let [x, y, z] = w.pos();
+    w.console(&format!("setblock {} {y} {z} minecraft:bell[attachment=floor,facing=east]", x + 3));
+    w.console(&format!("summon minecraft:pillager {}.5 {y} {z}.5 {{NoAI:1b,PersistenceRequired:1b}}", x + 11));
+    w.console(&format!("summon minecraft:pillager {}.5 {y} {z}.5 {{NoAI:1b,PersistenceRequired:1b}}", x + 3 + 47));
+    w.console(&format!("summon minecraft:pillager {}.5 {y} {z}.5 {{NoAI:1b,PersistenceRequired:1b}}", x + 3 + 60));
+    w.ticks(5);
+    let pillagers = w.mobs("minecraft:pillager");
+    assert_eq!(pillagers.len(), 3);
+    let glows = |w: &World, id: i32| w.sim.mob_state(id).unwrap().effects.iter().any(|e| e.0.contains("glowing"));
+    assert!(pillagers.iter().all(|&id| !glows(&w, id)));
+    // Power from beside the bell rings it.
+    w.console(&format!("setblock {} {y} {} minecraft:redstone_block", x + 3, z + 1));
+    let mut first = [None; 3];
+    for t in 0..140 {
+        w.ticks(1);
+        for (i, &id) in pillagers.iter().enumerate() {
+            if first[i].is_none() && glows(&w, id) {
+                first[i] = Some(t);
+            }
+        }
+    }
+    // Resonation 5 + 40 ticks after the ring; the one 60 blocks away (beyond 48) never glows.
+    assert!(first[0].is_some_and(|t| (40..=55).contains(&t)), "the near one glows about 45 ticks after the ring: {first:?}");
+    assert!(first[1].is_some(), "47 blocks away glows: {first:?}");
+    assert!(first[2].is_none(), "60 blocks away does not: {first:?}");
+}
+
+/// `Raid.tick`: when the raid's center is no longer a village (every bed and the bell broken) and a wave has come, the raid is lost: the bar says
+/// so (`Raid - Defeat`), and after the 600 ticks of celebration the raid is over. (Vanilla measured on the reference server: "Raid - Defeat" two
+/// seconds after the last point of interest of the village was broken, gone 29 s later.)
+#[test]
+fn a_raid_is_lost_when_the_village_is_gone() {
+    let mut w = World::new();
+    w.village();
+    w.ticks(40);
+    w.console("gamemode survival Hunter");
+    w.console("effect give Hunter minecraft:bad_omen 100 1");
+    w.ticks(2 + 600);
+    w.console("gamemode creative Hunter");
+    w.ticks(305);
+    let raids = w.sim.raids("minecraft:overworld");
+    assert_eq!(raids[0].1, "ongoing");
+    assert_eq!(raids[0].2, 1, "first wave: {raids:?}");
+    let [x, y, z] = w.pos();
+    for i in 0..3 {
+        w.console(&format!("setblock {} {y} {} minecraft:air", x + 3 + 2 * i, z + 4));
+    }
+    w.console(&format!("setblock {} {y} {} minecraft:air", x - 3, z + 4));
+    w.console("kill @e[type=minecraft:villager]");
+    w.ticks(60);
+    let raids = w.sim.raids("minecraft:overworld");
+    assert_eq!(raids[0].1, "loss", "{raids:?}");
+    w.ticks(620);
+    assert!(w.sim.raids("minecraft:overworld").is_empty(), "the celebration is over");
+}

@@ -697,6 +697,28 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 
 沒做／已知：鐵傀儡農場（`VillagerPanicTrigger`）沒有觸發出結果、自然生怪的刷怪塔兩邊都幾乎不出怪、突襲沒有打到 Hero of the Village、甘蔗隨機刻在 `random_tick_speed 2000` 下 Kiln 快 13%、
 一次未重現的觀察者全不動、閘門方塊實體 `Age`／`ExactTeleport` 與 `components: {}` 的 `data get` 輸出差異。
+**wp66 補記**:上面「沒做／已知」的項目在 6.14 處理(鐵傀儡農場在 vanilla 上做出來了、突襲真的打贏、隨機刻、觀察者、輸出差異)。
+
+### 6.14 wp66（`wp66-wp65-gaps`）：wp65 留下的缺口
+
+細節與證據見 `docs/wp66.md`。vanilla 26.3 的條件用 `javap` 讀,兩邊用同一個種子、同一座村莊、同一套控制腳本(`tools/wp58/p66*.py`)。
+
+| 項目 | 原版怎麼做 | Kiln 原本 | 現在 | 證據 |
+|---|---|---|---|---|
+| 隨機刻的取樣起點 | `Level.randValue`:整個維度一條 LCG 鏈,所有 ticking 區塊/區段依序接力 | 每個區塊每刻用雜湊重新種一個起點(平均相同、離散度不同:農場輸出的組間 sd 是 vanilla 的 2.6 倍) | 每個 8×8 區塊格一條持續的鏈(格子不會被切開,所以與區域無關,仍有決定性) | `blocks.rs::random_tick_positions_continue_one_generator_from_tick_to_tick`;16 組甘蔗農場 3000 刻 sd 11→5.1(vanilla 4.3),平均 1039 / 1039 |
+| tick 函數的順序 | `ServerFunctionManager.tick` 是 `tickChildren` 的第一件事(遊戲時間 +1 之前),凍結時不跑 | 在遊戲時間 +1 之後、凍結時也跑 | 如 vanilla;`/schedule` 計時在 `tickTime` 內 | `functions_tick.rs`(2 個測試) |
+| `/forceload add` | `setChunkForced` → 阻塞的 `getChunk` | 只登記,區塊之後幾刻才裝進區域(負載高時 setblock 落在未載入的區塊) | 立刻載入、`urgent`、重算拓撲 | `forceload.rs` |
+| 生成後處理的預算 | 與負載無關 | 每刻以牆鐘預算決定處理多少(負載高時結果不同) | 每刻固定 16 個 | 設計修正(`GENERATED_PER_TICK`) |
+| 方塊實體剛放下的存檔形式 | `saveWithoutMetadata` 永遠寫 `components`,各型別有 `saveAdditional` 的預設欄位 | 省略 `components: {}` 與預設欄位 | `always_saved` + `components: {}`;連鎖命令方塊 `auto: 1b` | `block_entity.rs::a_new_block_entity_saves_what_vanilla_saves`(62 種逐一比對) |
+| 終界閘門 | `portalTick`:`age++`、`age % 2400 == 0` 冷卻 40;`ExactTeleport` 只在 true 時寫 | `Age` 永遠 0、永遠寫 `ExactTeleport: 0b` | `gateway.rs`;只在精確時寫 | `gateway_trips.rs::a_gateway_counts_its_age_and_cools_down_by_itself_every_2400_ticks` |
+| 突襲 boss 條進度 | `Raider.hurtServer` 傷害前 `updateBossbar()`、`removeFromRaid` 後更新 | 到整波死光前一直是 1.0 | 如 vanilla | `raids.rs::the_raid_bar_follows_the_raiders_health` |
+| 突襲勝利慶祝的煙火 | `CelebrateVillagersSurvivedRaid.tick`:每刻 1/200 發射 | `launch_firework` 是空函式 | `FireworkRocketEntity`(burst、隨機色、飛行 0~2) | `raids.rs::villagers_launch_fireworks_after_a_victory`;實機 13 / 16 次取樣 |
+| 敲鐘 | 搖 50 刻、有突襲者在 32 格內共鳴、40 刻後 48 格內發光;村民聽到(`HEARD_BELL_TIME`) | 方塊事件放進用完即丟的 `BlockOut`,鐘從不知道附近有誰——不共鳴、不發光、村民也聽不到 | `RegionBlocks.bell_events`(合併/分裂時帶著走) | `raids.rs::a_rung_bell_makes_the_raiders_around_it_glow`;實機 8/30/47 格 2.6~5.2 s 發光、60 格不發光(vanilla 2.2~4.9 s) |
+| 勝利/失敗/英雄 | 英雄效果放大 = 不祥等級 − 1、48000 刻;全部村民死 → `Raid - Defeat` | 相同(一整場實機並排) | — | 實機兩邊:英雄 (1, ≈48000)、`Raid - Victory` 600 刻、失敗 `Defeat` 1~2 s;`raids.rs::a_raid_is_lost_when_the_village_is_gone` |
+| 英雄折扣與贈禮 | 價格折扣;白天 `IDLE` 時村民把職業贈禮丟給英雄 | 相同 | — | 同一位圖書管理員書架 6 / 9 綠寶石兩邊相同;贈禮 Kiln `cookie`、vanilla `pumpkin_pie` |
+
+沒做／已知:鐵傀儡農場 Kiln 比 vanilla 少 11%(10 次 6 日實測,原因沒找到,村民恐慌的行為包逐行相符,只見到逃離後半段多走 0.7 格);突襲逾時(48000 刻)沒有實機並排;`INSTALL_BUDGET` 仍以牆鐘計;Kiln 的大範圍 `/fill` 慢。
+
 
 ## 7. 重跑
 
@@ -778,6 +800,11 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 # wp64：玩家同步的五個小差異（箭／蜂針、旁觀者隱藏、粉雪、蹲下、瞬間效果）的即時並排
 #   VM：bash tools/wp58/wp64_start.sh / wp64_vanilla.sh、vm_client64.sh、vm_observer64.sh（KILN_CLIENT_PORT=25586|25592），然後
 #   KILN_PLAY_DIR=wp64 [TARGET=V] PYTHONPATH=tools/wp58 python3 tools/wp58/p64.py arrows|sting|spectator|powder|sneak|instant
+# wp66：隨機刻取樣、鐵傀儡農場、完整突襲的並排（VM；Kiln 25588、vanilla 25594，見 docs/wp66.md）
+#   bash tools/wp58/wp66_start.sh / wp66_vanilla.sh（或 fresh.sh）、vm_client66.sh、vm_observer66.sh，然後
+#   TARGET=K|V python3 tools/wp58/rt_cane.py … / rt_crops.py … / rt_machine.py … / rt_golem.py run 6 4 OUT.json
+#   TARGET=K|V [MODE=victory|loss] python3 tools/wp58/p66_raid.py OUT.json ; p66_day.py ; p66_trade.py ; p66_bell.py
+#   負向檢查（拿掉修正，測試要失敗）：tools/wp66_negative.sh
 # 登入等封包的 golden 由原版驗證後寫入
 python tools/packet_vectors.py --bless
 ```

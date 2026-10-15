@@ -1533,8 +1533,30 @@ pub fn ring_bell(cx: &mut Cx, pos: BlockPos) {
     cx.b.mem.set(Mem::HeardBellTime, brain::Val::Long(now));
 }
 
-/// `CelebrateVillagersSurvivedRaid`'s firework (not launched).
-pub fn launch_firework(_cx: &mut Cx, _color: i32, _flight: i32) {}
+/// `DyeColor.getFireworkColor` by `DyeColor` id.
+const FIREWORK_COLORS: [i32; 16] = [
+    15790320, 15435844, 12801229, 6719955, 14602026, 4312372, 14188952, 4408131, 11250603, 2651799, 8073150, 2437522, 5320730, 3887386, 11743532, 1973019,
+];
+
+/// `CelebrateVillagersSurvivedRaid.getFirework` + `Projectile.spawnProjectile(FireworkRocketEntity(level, villager, x, eyeY, z, stack))`:
+/// a burst of one colour, flight duration `flight`, owned by the villager.
+pub fn launch_firework(cx: &mut Cx, color: i32, flight: i32) {
+    use kiln_item::component::{FireworkExplosion, FireworkShape, Fireworks};
+    use kiln_item::{ItemStack, keys};
+    let Some(mut stack) = ItemStack::of("minecraft:firework_rocket", 1) else { return };
+    let explosion = FireworkExplosion {
+        shape: FireworkShape::Burst,
+        colors: vec![FIREWORK_COLORS[color.rem_euclid(16) as usize]],
+        fade_colors: Vec::new(),
+        has_trail: false,
+        has_twinkle: false,
+    };
+    stack.insert(keys::FIREWORKS, Fireworks { flight_duration: flight, explosions: vec![explosion] });
+    let seed = cx.level.fresh_seed();
+    let at = Vec3::new(cx.e.x(), cx.e.eye_y(), cx.e.z());
+    let rocket = crate::ext_entity::firework::new(at, stack, Some(cx.e.id), None, false, seed);
+    cx.level.add_entity(rocket);
+}
 
 /// `VillagerMakeLove.tryToGiveBirth`: with a free bed, a baby.
 pub fn try_to_give_birth(cx: &mut Cx, other: i32) {

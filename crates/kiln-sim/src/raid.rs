@@ -440,8 +440,38 @@ impl Sim {
             for r in self.dims[dim].regions.iter_mut() {
                 events.append(&mut r.part_mut().1.raid_events);
             }
+            // `Raider.hurtServer` updates the bar before the blow and `Raid.removeFromRaid` after a death: a tick's blows leave the
+            // bar at the health the raiders had before the last of them, unless a raider died (then at the health they have).
+            let mut before: BTreeMap<i32, BTreeMap<i32, f32>> = BTreeMap::new();
+            let mut died: BTreeSet<i32> = BTreeSet::new();
             for ev in events {
+                match &ev {
+                    RaidEvent::Hurt { raid, entity, health } => {
+                        before.entry(*raid).or_default().insert(*entity, *health);
+                    }
+                    RaidEvent::Died { raid, .. } => {
+                        died.insert(*raid);
+                    }
+                    _ => {}
+                }
                 self.raid_event(dim, ev);
+            }
+            for (id, hurt) in before {
+                if !self.dims[dim].raids.raids.contains_key(&id) {
+                    continue;
+                }
+                let alive = raiders_of(&self.dims[dim], id);
+                let mut health: f32 = alive.iter().map(|r| r.health).sum();
+                if !died.contains(&id) {
+                    health += alive.iter().filter_map(|r| hurt.get(&r.id).map(|b| (b - r.health).max(0.0))).sum::<f32>();
+                }
+                let total = self.dims[dim].raids.raids[&id].total_health;
+                self.set_bar_progress(dim, id, (health / total).clamp(0.0, 1.0));
+            }
+            for id in died {
+                if self.dims[dim].raids.raids.contains_key(&id) {
+                    self.update_bar_progress(dim, id);
+                }
             }
             self.raid_omen_triggers(dim);
             let d = &mut self.dims[dim];
@@ -497,6 +527,8 @@ impl Sim {
                     r.leaders.insert(wave, entity);
                 }
             }
+            // (The bar is updated with the whole tick's news, in `tick_raids`.)
+            RaidEvent::Hurt { .. } => {}
         }
     }
 
