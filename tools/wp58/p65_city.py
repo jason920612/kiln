@@ -30,7 +30,6 @@ def city(cx, cz):
     time.sleep(8)
     frames = sv(f"execute in {END} as @e[type=minecraft:item_frame,x={hx - 20},y={hy - 20},z={hz - 20},dx=40,dy=40,dz=40] run data get entity @s Item", show=False, wait=1.5)
     F("item frames near the ship", re.findall(r'id: "minecraft:([a-z_]+)"', frames))
-    shot("end_city_ship")
     chests = a.findbox("chest", hx - 20, hy - 20, hz - 20, hx + 20, hy + 20, hz + 20, 8)
     F("chests near the ship", chests)
     seen = {}
