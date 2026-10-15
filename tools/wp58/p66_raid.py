@@ -14,6 +14,7 @@ OMEN = int(os.environ.get("OMEN", "2"))
 VX, VZ = int(os.environ.get("VX", "1463")), int(os.environ.get("VZ", "-1043"))
 BOX = f"x={VX-150},y=-64,z={VZ-150},dx=300,dy=400,dz=300"
 RAIDER_T = ["pillager", "vindicator", "ravager", "evoker", "witch", "vex", "illusioner"]
+MODE = os.environ.get("MODE", "victory")   # victory: villagers protected, the player kills every wave; loss: all villagers killed once the first wave is there; timeout: a long sprint
 NAME = os.environ.get("ACTOR", "KilnTest")
 PORT = int(os.environ.get("AGENT_PORT", "25999"))
 LOG = {"target": T, "difficulty": DIFFICULTY, "omen": OMEN, "events": [], "samples": []}
@@ -70,7 +71,7 @@ def bars(a):
 
 
 def effects(a):
-    return {e["id"].split(":")[-1]: (e["amp"], e.get("dur")) for e in a.state(0)["effects"]}
+    return {e["id"].split(":")[-1]: (e["amp"], e.get("ticks")) for e in a.state(0)["effects"]}
 
 
 def prep(a):
@@ -188,8 +189,11 @@ def run_raid(a, max_s=3000):
     t0 = time.time()
     first = None
     last_wave_key = None
+    last_bar_names = None
     kills = 0
     last_sample = 0
+    quiet = 0
+    protected_at = 0
     S("gamerule advance_time true", "tick rate 20")
     while time.time() - t0 < max_s:
         ef = effects(a)
@@ -197,6 +201,10 @@ def run_raid(a, max_s=3000):
             F("hero of the village:", ef["hero_of_the_village"], "after", round(time.time() - t0), "s; kills", kills)
             LOG["hero"] = True
             break
+        if MODE == "victory" and time.time() - protected_at > 45:
+            # the village's own people take the blows of 40 raiders (the player is away fighting): resistance 5 makes them immune
+            protected_at = time.time()
+            S(f"effect give @e[type=minecraft:villager,{BOX}] minecraft:resistance infinite 4 true")
         if time.time() - last_sample >= 1.5:
             last_sample = time.time()
             rs = raiders_now()
@@ -214,13 +222,26 @@ def run_raid(a, max_s=3000):
                 F("first raiders after", round(first), "s:", sample["waves"], "bar", sample["bars"])
                 # the bell: raiders within 48 blocks glow
                 F("bell rung:", ring_bell(a))
+                if MODE == "loss":
+                    F("villagers before the massacre:", villagers_now())
+                    S(f"kill @e[type=minecraft:villager,{BOX}]")
+                    F("villagers after:", villagers_now())
             key = tuple(sorted(by_wave))
-            if key != last_wave_key:
-                last_wave_key = key
+            names = tuple(b.get("name") if isinstance(b, dict) else str(b) for b in sample["bars"])
+            if key != last_wave_key or names != last_bar_names:
+                last_wave_key, last_bar_names = key, names
                 F("raiders by wave:", sample["waves"], "| bars:", sample["bars"], "| kills", kills)
+            # the raid is over (bar gone, nobody left) for a while: stop watching
+            quiet = quiet + 1 if first is not None and not sample["bars"] and not any(w >= 1 for w in by_wave) else 0
+            if quiet >= 25:
+                F("the raid is over (no bar, no raiders) after", round(time.time() - t0), "s; kills", kills, "villagers", villagers_now())
+                break
         if a.state(0)["health"] <= 0:
             alive(a)
-        kills += melee(a, t0 + max_s)
+        if MODE == "loss" and first is not None:
+            time.sleep(1.0)   # (the player only watches)
+        else:
+            kills += melee(a, t0 + max_s)
         if first is None and time.time() - t0 > 240:
             F("no raid after 240 s; effects", effects(a))
             break
@@ -259,14 +280,41 @@ def trade_prices(a):
     LOG["trades"] = res
 
 
+def inventory(a):
+    inv = {}
+    for s in a.state(0)["inv"]:
+        inv[s["id"].split(":")[-1]] = inv.get(s["id"].split(":")[-1], 0) + s["n"]
+    return inv
+
+
+def after_victory(a, secs=160):
+    """Stays with the villagers: the hero effect, the gifts that arrive in the inventory (what the villagers throw to the hero in the day), the fireworks and
+    what the villagers do (celebrating) as the client sees them."""
+    inv0 = inventory(a)
+    t0 = time.time()
+    seen_fw = 0
+    while time.time() - t0 < secs:
+        m = misc_around(a)
+        if m.get("firework_rocket"):
+            seen_fw += 1
+        time.sleep(1.0)
+        if int(time.time() - t0) % 20 == 0:
+            F("after victory:", round(time.time() - t0), "s bars", bars(a), "effects", effects(a), "firework samples", seen_fw)
+    inv1 = inventory(a)
+    gifts = {k: inv1.get(k, 0) - inv0.get(k, 0) for k in set(inv0) | set(inv1) if inv1.get(k, 0) != inv0.get(k, 0)}
+    F("inventory changes while waiting (the villagers' gifts):", gifts)
+    LOG["gifts"] = gifts
+    LOG["firework_samples"] = seen_fw
+
+
 if __name__ == "__main__":
     outp = sys.argv[1]
     a = client(PORT)
     try:
         ok = run_raid(a)
+        F("end: effects", effects(a), "bars", bars(a), "villagers", villagers_now())
         if ok:
-            F("effects", effects(a), "bars", bars(a))
-            time.sleep(60)   # the gifts and the celebration are watched by the other processes; stay with the villagers
+            after_victory(a)
             try:
                 trade_prices(a)
             except Exception as ex:
