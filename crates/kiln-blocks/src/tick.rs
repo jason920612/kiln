@@ -17,37 +17,17 @@ pub const MAX_TICKS: usize = 65536;
 /// `LevelTicks.tick` for block ticks with `ServerLevel.tickBlock`: runs the block ticks due
 /// at the current game time in chunks `can_tick` accepts.
 /// Starts `ServerLevel.handlingTick`.
-pub fn run_block_ticks<L: Level>(level: &mut L, can_tick: impl FnMut(ChunkKey) -> bool) -> usize {
+pub fn run_block_ticks<L: Level>(level: &mut L, can_tick: impl FnMut(ChunkKey) -> bool) {
     level.data().handling_tick = true;
     let time = level.game_time();
     level.block_ticks().collect(time, MAX_TICKS, can_tick);
-    let mut ran = 0;
     while let Some(t) = level.block_ticks().next_to_run() {
         let s = level.block(t.pos);
-        let started = std::time::Instant::now();
         if BlockId::of(s) == t.kind {
             behaviour::tick(level, s, t.pos);
         }
-        TICK_KINDS.with(|k| {
-            let mut k = k.borrow_mut();
-            let name = t.kind.name();
-            match k.iter_mut().find(|(n, _, _)| *n == name) {
-                Some(e) => {
-                    e.1 += 1;
-                    e.2 += started.elapsed();
-                }
-                None => k.push((name, 1, started.elapsed())),
-            }
-        });
-        ran += 1;
     }
     level.block_ticks().finish_tick();
-    ran
-}
-
-thread_local! {
-    /// (temporary, wp67) block ticks run by kind: count and time.
-    pub static TICK_KINDS: std::cell::RefCell<Vec<(&'static str, u64, std::time::Duration)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// `LevelTicks.tick` for fluid ticks with `ServerLevel.tickFluid`.

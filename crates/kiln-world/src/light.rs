@@ -390,10 +390,13 @@ fn light_border_in(w: &mut Window, pos: ChunkPos) {
                         y = (y - min_y + 16).div_euclid(16) * 16 + min_y;
                         continue;
                     }
+                    // Sideways a level loses at least one: only a level two above the cell across can
+                    // brighten it (the blocks are read only then).
                     let l = c.light(layer, lx, y, lz);
-                    if l > 1 {
+                    let there = n.light(layer, nx, y, nz);
+                    if l > there + 1 {
                         let (from, to) = (c.get(lx, y, lz), n.get(nx, y, nz));
-                        if !occludes(from, to, dir) && transmitted(layer, l, to, dir) > n.light(layer, nx, y, nz) {
+                        if !occludes(from, to, dir) && transmitted(layer, l, to, dir) > there {
                             queue.push_back((x, y, z, l));
                         }
                     }

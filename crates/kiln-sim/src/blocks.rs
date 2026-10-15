@@ -937,25 +937,7 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
     apply_generated(level);
     let dt = crate::diag::lap("tb.generated", dt);
     let can_tick = |k: ChunkKey| ticking.contains(ChunkPos::new(k.0, k.1));
-    let ran = kiln_blocks::tick::run_block_ticks(level, can_tick);
-    crate::diag::add("tb.n_block_ticks", std::time::Duration::from_millis(ran as u64));
-    kiln_blocks::tick::TICK_KINDS.with(|k| {
-        for (name, n, d) in k.borrow_mut().drain(..) {
-            let full = format!("bt.{name}");
-            let mut names = BT_NAMES.lock().unwrap();
-            let name: &'static str = match names.iter().copied().find(|x| *x == full) {
-                Some(n) => n,
-                None => {
-                    let n: &'static str = Box::leak(full.into_boxed_str());
-                    names.push(n);
-                    n
-                }
-            };
-            drop(names);
-            crate::diag::add(name, d);
-            let _ = n;
-        }
-    });
+    kiln_blocks::tick::run_block_ticks(level, can_tick);
     let dt = crate::diag::lap("tb.block_ticks", dt);
     kiln_blocks::tick::run_fluid_ticks(level, can_tick);
     let dt = crate::diag::lap("tb.fluid_ticks", dt);
@@ -1143,8 +1125,6 @@ fn find_lightning_rod(level: &RegionLevel, center: BlockPos) -> Option<BlockPos>
 /// blocks marked for post-processing take their shape from their neighbours, and the
 /// scheduled block and fluid ticks start. Vanilla sets them with flags 20 before any player
 /// has the chunk; Kiln may have sent it already, so clients hear about the change.
-static BT_NAMES: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
-
 /// Region tick time spent on generation leftovers per tick at most (the rest wait a tick).
 const GENERATED_BUDGET: std::time::Duration = std::time::Duration::from_millis(1);
 
