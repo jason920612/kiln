@@ -459,12 +459,12 @@ fn elytra_glide_wears_the_wings() {
         }
     };
     // On the ground the command does nothing: no wear.
-    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 8 })]));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 6 })]));
     air(&mut w, true, 25);
     assert_eq!(w.sim.item_damage(1, 6), Some(0));
     // In the air: one durability every 20 ticks of gliding.
     air(&mut w, false, 1);
-    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 8 })]));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 6 })]));
     air(&mut w, false, 60);
     assert_eq!(w.sim.item_damage(1, 6), Some(3));
     // Landing ends the flight.

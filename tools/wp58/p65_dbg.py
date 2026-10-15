@@ -1,5 +1,6 @@
 from p65 import *
-for pos in ["274 57 218", "267 57 220", "275 64 198", "282 72 190", "232 50 210"]:
-    sv("execute in minecraft:the_nether run forceload add 232 190 290 230", show=False)
-    out = sv(f"execute in minecraft:the_nether run data get block {pos}", wait=1.0, show=False)
-    print(pos, "=>", out.strip()[:300])
+a, b = clients()
+print(sv("tp KilnTest 0.5 235 0.5", show=False))
+time.sleep(1.5)
+print(a.state(0)["y"], a.screen(), a.state(0)["health"])
+print(sv("data get entity KilnTest Pos", show=False), sv("data get entity KilnTest Health", show=False))

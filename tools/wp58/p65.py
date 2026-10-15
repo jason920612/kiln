@@ -20,7 +20,7 @@ def ent(c, eid):
     return json.loads(c.cmd(f"ent {eid}"))
 
 def eid_of(c, t="player", near=None):
-    es = [e for e in c.state(30)["entities"] if e["t"] == t]
+    es = [e for e in c.state(400)["entities"] if e["t"] == t]
     return es[0]["id"] if es else None
 
 def say(*a):
