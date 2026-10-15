@@ -2879,13 +2879,16 @@ impl Sim {
             let dt = Instant::now();
             let unloads = std::mem::take(&mut self.dims[dim].unloads);
             let unloaded = if unloads.is_empty() { Vec::new() } else { self.dims[dim].unload(unloads, &keep.iter().copied().collect()) };
+            let dt = diag::lap("ch.unload_chunks", dt);
             if !unloaded.is_empty() {
                 debug!("unloaded {} chunks of {}", unloaded.len(), self.dims[dim].key);
                 let owners = self.owner_uuids();
                 let gone = self.dims[dim].store_entities(&unloaded, false, &owners);
+                let dt = diag::lap("ch.unload_entities", dt);
                 self.forget_entities(gone);
+                diag::lap("ch.unload_forget", dt);
             }
-            let dt = diag::lap("ch.unload", dt);
+            let dt = Instant::now();
             let d = &mut self.dims[dim];
             d.install_spent = Duration::ZERO;
             d.generated_now.clear();
