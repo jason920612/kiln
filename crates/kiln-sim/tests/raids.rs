@@ -165,18 +165,18 @@ fn the_raid_bar_follows_the_raiders_health() {
     let bar = || w.sim.raids("minecraft:overworld")[0].6;
     assert_eq!(bar(), 1.0);
     let total = w.mobs("minecraft:pillager").len() as f32 * 24.0 + w.mobs("minecraft:vindicator").len() as f32 * 24.0;
-    w.console("tag @e[type=minecraft:pillager,limit=1] add wp66");
     w.console("damage @e[type=minecraft:pillager,limit=1] 8 minecraft:generic");
     w.ticks(2);
-    eprintln!("mobs {:?}", w.sim.mobs().into_iter().filter(|m| m.1 == "minecraft:pillager").collect::<Vec<_>>());
+
     assert_eq!(w.sim.raids("minecraft:overworld")[0].6, 1.0, "the bar was told before the blow");
     w.ticks(15);
-    w.console("damage @e[tag=wp66] 4 minecraft:generic");
+    w.console("damage @e[type=minecraft:pillager,limit=1] 4 minecraft:generic");
     w.ticks(2);
+    eprintln!("mobs {:?}", w.sim.mobs().into_iter().filter(|m| m.1 == "minecraft:pillager").map(|m| (m.0, m.3)).collect::<Vec<_>>());
     let p = w.sim.raids("minecraft:overworld")[0].6;
     assert!((p - (total - 8.0) / total).abs() < 0.002, "the first blow shows with the second: {p} of {total}");
     // A raider dying updates it with everything as it is.
-    w.console("kill @e[tag=wp66]");
+    w.console("kill @e[type=minecraft:pillager,limit=1]");
     w.ticks(2);
     let p = w.sim.raids("minecraft:overworld")[0].6;
     assert!((p - (total - 24.0) / total).abs() < 0.002, "{p}");
