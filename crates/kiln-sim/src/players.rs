@@ -199,8 +199,10 @@ impl Player {
         self.meta_primed = true;
         let now = self.synched();
         let mut d = EntityData::new();
-        for (field, (value, sent)) in SYNCHED.iter().zip(now.iter().zip(&self.meta_sent)) {
-            if value != sent {
+        // (The shared flags come first.)
+        let resend = std::mem::take(&mut self.flags_resend);
+        for (i, (field, (value, sent))) in SYNCHED.iter().zip(now.iter().zip(&self.meta_sent)).enumerate() {
+            if value != sent || (i == 0 && resend) {
                 d.set(*field, value);
             }
         }

@@ -158,6 +158,27 @@ fn only_the_dirty_entries_are_sent() {
     assert!(data.iter().any(|d| contains(d, &[17, 3, 0x41, 0, 0, 0])), "absorption: {data:?}");
 }
 
+/// wp67: a start-gliding command the server refuses (on the ground, no elytra) still sends the shared flags
+/// (`stopFallFlying` sets the gliding flag and clears it): the client started gliding when it sent the command, and
+/// without them it keeps gliding on its own (and later refuses to send the command again).
+#[test]
+fn a_refused_glide_start_sends_the_flags_again() {
+    let mut w = World::new();
+    let e = w.entity();
+    w.watcher_log();
+    w.actor_log();
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 6 })]));
+    w.ticks(2);
+    let mut flags = EntityData::new();
+    flags.set(data::entity::SHARED_FLAGS, &DataValue::Byte(0));
+    for (who, log) in [("watcher", w.watcher_log()), ("player", w.actor_log())] {
+        assert_eq!(data_of(&log, e), [entries(&flags)], "{who}: the flags, not gliding");
+    }
+    // Once: nothing more while nothing changes.
+    w.ticks(20);
+    assert!(data_of(&w.actor_log(), e).is_empty());
+}
+
 /// The air supply goes to the viewers too, not only to the player.
 #[test]
 fn air_is_seen_by_the_viewers() {

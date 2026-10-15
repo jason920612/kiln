@@ -489,6 +489,9 @@ struct Player {
     /// Whether the first pack went out: until then a viewer is paired with the data as it stands (`ServerEntity`
     /// starts with the non-default values of the new entity), and the first pack repeats them to everyone.
     meta_primed: bool,
+    /// The shared flags go out with the next pack even if they did not change (`stopFallFlying` sets the gliding flag
+    /// and clears it again, which marks it dirty: a client that started gliding on its own is told it is not).
+    flags_resend: bool,
     /// `Player.getScore`: the experience points gained (the death screen shows it).
     score: i32,
     /// `LivingEntity.getArrowCount` / `getStingerCount` (entity data 12 and 13): the arrows and bee stingers stuck in
@@ -3692,6 +3695,7 @@ impl Sim {
             spin_pose: false,
             meta_sent: players::synched_defaults(),
             meta_primed: false,
+            flags_resend: false,
             score: joining.score,
             arrow_count: 0,
             stinger_count: 0,
