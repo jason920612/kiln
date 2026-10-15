@@ -209,9 +209,7 @@ fn max_rectangle(columns: &[i32]) -> (i32, i32, i32) {
     let mut stack: Vec<usize> = vec![0];
     for i in 1..=columns.len() {
         let h = if i == columns.len() { 0 } else { columns[i] };
-        while let Some(        // (Entities that were inside before the first one left all go: they were past `entityInside` already; only
-        // the cooldown started in an earlier tick holds a trip back.)
-        if self.dims[dim].gateway_cooldowns.get(&key).is_some_and(|&t| t > self.game_time && t - GATEWAY_COOLDOWN as i64 != self.game_time) {op) = stack.last() {
+        while let Some(&top) = stack.last() {
             let top_height = columns[top];
             if h >= top_height {
                 stack.push(i);
@@ -919,7 +917,10 @@ impl Sim {
         let be = self.dims[dim].regions.chunk(chunk_pos)?.block_entity(lx, entry.y, lz)?.clone();
         let int = |k: &str| be.nbt.get(k).and_then(Tag::as_i64);
         let key = [entry.x, entry.y, entry.z];
-        if self.dims[dim].gateway_cooldowns.get(&key).is_some_and(|&t| t > self.game_time) {
+        // (Players that were inside before the first one left all go: they were past `entityInside` already; only a
+        // cooldown started in an earlier tick holds a trip back.)
+        let now = self.game_time;
+        if self.dims[dim].gateway_cooldowns.get(&key).is_some_and(|&t| t > now && t - GATEWAY_COOLDOWN as i64 != now) {
             return None;
         }
         let exit = match be.nbt.get("exit_portal") {
