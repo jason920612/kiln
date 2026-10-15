@@ -728,6 +728,7 @@ mod tests {
     /// `CommandBlock.newBlockEntity`: a chain command block starts automatic (the other two do not).
     #[test]
     fn a_chain_command_block_starts_automatic() {
+        use kiln_proto::nbt::Tag;
         let mut w = World::flat(OVERWORLD, 0, 67);
         w.set_block(2, 0, 2, block::CHAIN_COMMAND_BLOCK);
         w.set_block(4, 0, 2, block::COMMAND_BLOCK);
