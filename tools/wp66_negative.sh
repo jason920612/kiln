@@ -34,7 +34,7 @@ if sel forceload; then
   git show 33ed974e -- crates/kiln-sim/src | git apply -R && run forceload cargo test --release -p kiln-sim --test forceload
 fi
 if sel raid_bar; then
-  git show 2b28efce -- crates | git apply -R && run raid_bar cargo test --release -p kiln-sim --test raids the_raid_bar
+  git show 2b28efce -- crates/kiln-entity/src crates/kiln-sim/src | git apply -R && run raid_bar cargo test --release -p kiln-sim --test raids the_raid_bar
 fi
 if sel fireworks; then
   sed -i '/^pub fn launch_firework/a\    if true { return; }' crates/kiln-entity/src/mob/kinds/villager.rs
