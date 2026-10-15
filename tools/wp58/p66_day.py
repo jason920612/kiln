@@ -9,7 +9,11 @@ if __name__ == "__main__":
     a = client(PORT)
     try:
         S("gamerule advance_time false", "tick rate 20", "time set 1000", f"effect give {NAME} minecraft:hero_of_the_village 48000 1 true")
-        S(f"tp {NAME} {VX}.5 112 {VZ+3}.5")
+        vs = sorted([e for e in a.state(60)["entities"] if e["t"] == "villager"], key=lambda e: e["y"])
+        if vs:
+            S(f"tp {NAME} {vs[0]['x']-2:.2f} {vs[0]['y']:.2f} {vs[0]['z']:.2f}")
+        else:
+            S(f"tp {NAME} {VX}.5 112 {VZ+3}.5")
         time.sleep(4)
         F("effects", effects(a), "villagers the client sees:", [(round(e["x"]), round(e["y"]), round(e["z"])) for e in a.state(60)["entities"] if e["t"] == "villager"])
         inv0 = inventory(a)
