@@ -383,10 +383,12 @@ const CHUNK_LOADS_PER_TICK: usize = 256;
 /// Tick time spent installing generated chunks per level at most (the chunks players stand in
 /// do not wait); the rest are installed in the next ticks.
 const INSTALL_BUDGET: Duration = Duration::from_micros(1500);
-/// Generated chunks installed per level per tick at most (players' own chunks aside): each
-/// costs its region the light of a new chunk and, once its neighbours are in, its generation
-/// leftovers (160 a second, more than the generation threads make).
-const GENERATED_PER_TICK: usize = 8;
+/// Generated chunks installed per region per tick at most (players' own chunks aside): each
+/// costs its region the light of a new chunk, its first mobs and, once its neighbours are in,
+/// its generation leftovers, so a burst (a player crossing into a new column of chunks) spreads
+/// over a few ticks of that region (80 a second per region, more than a player flying with
+/// elytra needs; regions take theirs side by side).
+const GENERATED_PER_TICK: usize = 4;
 
 struct Player {
     conn: ConnId,
@@ -920,6 +922,8 @@ struct Dim {
     urgent: HashSet<ChunkPos>,
     /// Tick time spent installing chunks this tick (with background generation only).
     install_spent: Duration,
+    /// Generated chunks installed this tick, by the region that took them ([`GENERATED_PER_TICK`]).
+    generated_now: smallvec::SmallVec<[(RegionId, usize); 8]>,
     /// A save handed its chunks to the encoders: they go to the writer once all are encoded.
     flush_when_encoded: bool,
     /// Generated chunks installed and not lit yet (with background generation): their regions
@@ -1034,6 +1038,7 @@ impl Dim {
             loaded: BTreeMap::new(),
             urgent: HashSet::new(),
             install_spent: Duration::ZERO,
+            generated_now: smallvec::SmallVec::new(),
             flush_when_encoded: false,
             unlit: Vec::new(),
             game_time,
@@ -1240,20 +1245,17 @@ impl Dim {
         ready.sort_unstable();
         let started = Instant::now();
         let (now, later): (Vec<ChunkPos>, Vec<ChunkPos>) = ready.into_iter().partition(|p| first.binary_search(p).is_ok());
-        let mut generated = 0;
         for pos in now.into_iter().chain(later) {
             let own = first.binary_search(&pos).is_ok();
             if !own && self.install_spent + started.elapsed() >= INSTALL_BUDGET {
                 break;
             }
-            // Generated chunks are lit by their region's next run: a few a tick, so that a burst
-            // (players arriving somewhere new) spreads over ticks instead of one region's tick.
+            // Generated chunks are lit by their region's next run: a few a tick per region, so
+            // that a burst (players arriving somewhere new) spreads over ticks instead of one
+            // region's tick.
             let from_disk = self.loaded.contains_key(&pos);
-            if !own && !from_disk && generated >= GENERATED_PER_TICK {
+            if !from_disk && !self.generated_slot(pos, own) {
                 continue;
-            }
-            if !from_disk {
-                generated += 1;
             }
             let chunk = match self.loaded.remove(&pos) {
                 Some(c) => Some(c),
@@ -1266,6 +1268,25 @@ impl Dim {
             }
         }
         self.install_spent += started.elapsed();
+    }
+
+    /// Whether a generated chunk at `pos` may go into its region this tick ([`GENERATED_PER_TICK`]
+    /// per region; chunks players stand in always may); counts it if so.
+    fn generated_slot(&mut self, pos: ChunkPos, own: bool) -> bool {
+        // (A cell without a region yet keeps its chunks pending: counted when they leave.)
+        let Some(region) = self.regions.owner(pos.cell()) else { return true };
+        let i = match self.generated_now.iter().position(|(r, _)| *r == region) {
+            Some(i) => i,
+            None => {
+                self.generated_now.push((region, 0));
+                self.generated_now.len() - 1
+            }
+        };
+        if !own && self.generated_now[i].1 >= GENERATED_PER_TICK {
+            return false;
+        }
+        self.generated_now[i].1 += 1;
+        true
     }
 
     /// Saves and drops chunks the regions released; cells left empty are vacated. Returns
@@ -1332,6 +1353,10 @@ impl Dim {
                 let urgent = self.urgent.contains(&pos);
                 if !urgent && self.install_spent + started.elapsed() >= INSTALL_BUDGET {
                     break;
+                }
+                // A new cell's generated chunks join its region a few a tick, like the others.
+                if self.pending[&pos].is_new() && !self.generated_slot(pos, urgent) {
+                    continue;
                 }
                 let chunk = self.pending.remove(&pos).unwrap();
                 match self.put(pos, chunk) {
@@ -2861,6 +2886,7 @@ impl Sim {
             let dt = diag::lap("ch.unload", dt);
             let d = &mut self.dims[dim];
             d.install_spent = Duration::ZERO;
+            d.generated_now.clear();
             // Encoded saves go to the writer every 30 s (a background writer: no tick time), and
             // a save's chunks once they are all encoded.
             if self.game_time % 600 == 0 {

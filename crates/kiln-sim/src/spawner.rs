@@ -992,16 +992,37 @@ pub(crate) fn initial_mobs(level: &RegionLevel, pending: &[ChunkPos], spawns: &m
     }
 }
 
-/// The biome `WorldGenRegion.getBiome` finds at a block: the zoomed lookup over the noise biomes.
+/// The biome `WorldGenRegion.getBiome` finds at a block: the zoomed lookup over the noise biomes,
+/// read from the chunks that have them (`ChunkAccess.getNoiseBiome`), computed for the others.
 fn zoomed_biome_at(level: &RegionLevel, x: i32, y: i32, z: i32) -> u16 {
     if let Some(p) = &level.env.pipeline {
         let world = p.world().clone();
-        let mut gs = kiln_worldgen::generator::GenScratch::default();
+        let mut gs: Option<kiln_worldgen::generator::GenScratch> = None;
         // (`ChunkAccess.getNoiseBiome` clamps the height to the chunk's.)
         let (lo, hi) = (level.env.min_y >> 2, ((level.env.min_y + level.env.height) >> 2) - 1);
-        return kiln_worldgen::generator::zoomed_biome(world.generator.zoom_seed, x, y, z, &mut |qx, qy, qz| gs.noise_biome(&world.generator, qx, qy.clamp(lo, hi), qz));
+        return kiln_worldgen::generator::zoomed_biome(world.generator.zoom_seed, x, y, z, &mut |qx, qy, qz| {
+            let qy = qy.clamp(lo, hi);
+            match level.cells.chunk(ChunkPos::new(qx >> 2, qz >> 2)) {
+                Some(chunk) => stored_quart_biome(chunk, level.env.min_y, qx, qy, qz),
+                // (As `to_chunk` stores it: the network id of the generator's biome.)
+                None => {
+                    let i = gs.get_or_insert_default().noise_biome(&world.generator, qx, qy, qz);
+                    kiln_data::synced_id("minecraft:worldgen/biome", &world.generator.biomes[i as usize].name).unwrap_or(0) as u16
+                }
+            }
+        });
     }
     biome_at(level, KBlockPos::new(x, y, z))
+}
+
+/// A loaded chunk's stored biome at a quart (`qy` within the chunk).
+fn stored_quart_biome(chunk: &kiln_world::chunk::Chunk, min_y: i32, qx: i32, qy: i32, qz: i32) -> u16 {
+    let ry = qy - (min_y >> 2);
+    match chunk.sections.get((ry >> 2) as usize).map(|s| &s.biomes) {
+        Some(kiln_world::section::Biomes::Single(b)) => *b,
+        Some(kiln_world::section::Biomes::Cells(cells)) => cells[(((ry & 3) << 4) | ((qz & 3) << 2) | (qx & 3)) as usize],
+        None => 0,
+    }
 }
 
 /// `NaturalSpawner.getTopNonCollidingPos`.
