@@ -25,8 +25,10 @@ impl BlockId {
     pub fn by_name(name: &str) -> Option<Self> {
         static INDEX: OnceLock<HashMap<&'static str, u16>> = OnceLock::new();
         let index = INDEX.get_or_init(|| BLOCKS.iter().enumerate().map(|(i, b)| (b.name, i as u16)).collect());
-        let name = name.strip_prefix("minecraft:").map_or_else(|| format!("minecraft:{name}"), |_| name.to_string());
-        index.get(name.as_str()).map(|&i| BlockId(i))
+        if name.starts_with("minecraft:") {
+            return index.get(name).map(|&i| BlockId(i));
+        }
+        index.get(format!("minecraft:{name}").as_str()).map(|&i| BlockId(i))
     }
 
     pub fn info(self) -> &'static BlockInfo {

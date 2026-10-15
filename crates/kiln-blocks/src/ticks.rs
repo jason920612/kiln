@@ -11,8 +11,48 @@
 use crate::pos::BlockPos;
 use kiln_proto::nbt::Tag;
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
-use std::hash::Hash;
+use std::collections::{BinaryHeap, VecDeque};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
+
+/// A fast hash for the tick sets and maps (positions and chunk keys; nothing iterates them in a
+/// way that shows).
+#[derive(Default)]
+struct FastHasher(u64);
+
+impl Hasher for FastHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+    fn write_u8(&mut self, v: u8) {
+        self.write_u64(v as u64);
+    }
+    fn write_u16(&mut self, v: u16) {
+        self.write_u64(v as u64);
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.write_u64(v as u64);
+    }
+    fn write_i32(&mut self, v: i32) {
+        self.write_u64(v as u32 as u64);
+    }
+    fn write_isize(&mut self, v: isize) {
+        self.write_u64(v as u64);
+    }
+    fn write_usize(&mut self, v: usize) {
+        self.write_u64(v as u64);
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+type HashMap<K, V> = std::collections::HashMap<K, V, BuildHasherDefault<FastHasher>>;
+type HashSet<K> = std::collections::HashSet<K, BuildHasherDefault<FastHasher>>;
 
 /// `TickPriority`, ordered from most to least urgent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -110,7 +150,7 @@ impl<T: Copy + Eq + Hash> Default for ChunkTicks<T> {
 
 impl<T: Copy + Eq + Hash> ChunkTicks<T> {
     pub fn new() -> Self {
-        Self { queue: BinaryHeap::new(), pending: None, scheduled: HashSet::new() }
+        Self { queue: BinaryHeap::new(), pending: None, scheduled: HashSet::default() }
     }
 
     /// A container holding ticks loaded from chunk NBT; they get trigger times on `unpack`.
@@ -247,7 +287,7 @@ impl<T: Copy + Eq + Hash> Default for LevelTicks<T> {
 
 impl<T: Copy + Eq + Hash> LevelTicks<T> {
     pub fn new() -> Self {
-        Self { containers: HashMap::new(), next_tick: HashMap::new(), to_run: VecDeque::new(), to_run_set: HashSet::new() }
+        Self { containers: HashMap::default(), next_tick: HashMap::default(), to_run: VecDeque::new(), to_run_set: HashSet::default() }
     }
 
     pub fn add_container(&mut self, chunk: ChunkKey, ticks: ChunkTicks<T>) {
