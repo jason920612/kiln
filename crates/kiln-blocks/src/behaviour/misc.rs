@@ -45,7 +45,28 @@ pub fn leaves_distance<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> u
             break;
         }
     }
-    state::set_int(s, "distance", d)
+    with_distance(s, d)
+}
+
+/// `s` with its leaves' `distance` set to `d` (1..=7): from the state with distance 1 and the
+/// property's stride, looked up in a table made once.
+fn with_distance(s: u16, d: i32) -> u16 {
+    static TABLE: std::sync::OnceLock<Box<[(u16, u16)]>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        (0..kiln_data::blocks::STATE_COUNT as u16)
+            .map(|s| {
+                if !has_leaf_distance(s) {
+                    return (0, 0);
+                }
+                let one = state::set_int(s, "distance", 1);
+                (one, state::set_int(s, "distance", 2) - one)
+            })
+            .collect()
+    });
+    match table.get(s as usize) {
+        Some(&(one, stride)) if stride != 0 && (1..=7).contains(&d) => one + (d as u16 - 1) * stride,
+        _ => state::set_int(s, "distance", d),
+    }
 }
 
 /// `LeavesBlock.updateShape`: re-check distance next tick when a neighbour could change it.
@@ -263,5 +284,15 @@ mod frogspawn_tests {
         frogspawn_tick(&mut level, spawn);
         assert!(is_air(level.block(spawn)));
         assert!(!level.effects.iter().any(|e| matches!(e, Effect::HatchFrogspawn { .. })));
+    }
+
+    #[test]
+    fn leaf_distance_tables_match_the_properties() {
+        for s in 0..kiln_data::blocks::STATE_COUNT as u16 {
+            assert_eq!(super::distance_at(s), super::distance_at_uncached(s), "state {s}");
+            for d in 0..=8 {
+                assert_eq!(super::with_distance(s, d), state::set_int(s, "distance", d), "state {s}, distance {d}");
+            }
+        }
     }
 }
