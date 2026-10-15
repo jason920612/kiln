@@ -1934,13 +1934,13 @@ fn chunk_view(p: &mut Player) -> Vec<ChunkPos> {
     missing
 }
 
-/// Streams the missing chunks that are loaded, nearest first; missing chunks that are not
-/// loaded yet are requested.
 /// Chunks a player is sent per tick at most (`PlayerChunkSender`: what the client asked for).
 fn chunk_budget(p: &Player) -> usize {
     (p.chunks_per_tick.ceil() as usize).max(1)
 }
 
+/// Streams the missing chunks that are loaded, nearest first; missing chunks that are not
+/// loaded yet are requested.
 fn send_chunks(p: &mut Player, missing: Vec<ChunkPos>, cells: &mut CellSet<Cell>, env: &Env, wanted: &mut Vec<(u32, ConnId, ChunkPos)>) {
     let budget = chunk_budget(p);
     let mut batch = Vec::new();
