@@ -267,7 +267,8 @@ fn the_inventory_key_while_riding_opens_the_mounts_screen() {
     w.hold("minecraft:stone", 1);
     w.interact(horse);
     w.ticks(2);
-    assert!(w.sim.open_menu(1).is_none(), "a plain click mounts, it shows no screen");
+    assert_eq!(w.sim.vehicle_of(1), Some(horse), "a plain click mounts");
+    assert!(w.sim.open_menu(1).is_none(), "and shows no screen");
     assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 5 })]));
     let (_, slots) = w.sim.open_menu(1).expect("the horse's screen opened");
     assert_eq!(slots.len(), 2 + 36, "saddle, armor and the player's 36");
