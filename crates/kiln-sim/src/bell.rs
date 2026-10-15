@@ -65,6 +65,7 @@ fn at(e: &crate::entities::Entity) -> kiln_entity::math::Vec3 {
 
 /// `BellBlockEntity.updateEntities`: for the rings the block events just ran.
 pub(crate) fn requests(level: &mut RegionLevel, entities: &mut Entities) {
+    if !level.out.bell_events.is_empty() { eprintln!("DBG requests {} events", level.out.bell_events.len()); }
     if level.out.bell_events.is_empty() {
         return;
     }
@@ -134,6 +135,7 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &mut Entities, ticking: &c
             let e = &entities.list[i];
             !e.removed && e.phys.as_deref().is_some_and(|p| p.is_alive()) && closer_to_center_than(center, at(e), range) && in_tag(e.kind.name, "minecraft:raiders")
         };
+        if b.shaking || b.resonating { eprintln!("DBG tick pos={:?} ticks={} shaking={} nearby={:?} res_ticks={}", pos, b.ticks, b.shaking, nearby, b.resonation_ticks); }
         let mut resonate = false;
         if b.ticks >= 5 && b.resonation_ticks == 0 && nearby.iter().any(|&id| live(entities, id, 32.0)) {
             b.resonating = true;
