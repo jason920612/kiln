@@ -193,6 +193,10 @@ fn a_grown_trees_bee_nest_has_living_bees() {
             _ => Vec::new(),
         }
     };
+    // (The feature gives each bee 0..598 ticks of time in the hive and a bee leaves in the day once it has 600: at night they all stay, so the
+    // count below does not depend on which tree the random ticks happened to grow.)
+    w.run("gamerule minecraft:advance_time false");
+    w.run("time set 18000");
     let before = ticks_in_hive(&w);
     assert!((2..=3).contains(&before.len()), "the feature put 2-3 bees in the nest: {before:?}");
     w.ticks(30);
