@@ -58,12 +58,13 @@ def fly(dimn, x0, z0, dx, dz, secs, sy):
     sv("clear KilnTest")
     sv("gamemode survival KilnTest")
     sv("item replace entity KilnTest armor.chest with minecraft:elytra")
-    sv("give KilnTest minecraft:firework_rocket[fireworks={flight_duration:3}] 64")
-    sv("give KilnTest minecraft:firework_rocket[fireworks={flight_duration:3}] 64")
+    for _ in range(3):
+        sv("give KilnTest minecraft:firework_rocket[fireworks={flight_duration:3}] 64")
     sv("effect give KilnTest minecraft:resistance 3000 4 true")
     sv("effect give KilnTest minecraft:fire_resistance 3000 0 true")
     sv("time set day")
-    # the start platform
+    # A short platform to load the start, then into the air above it: the wings open while falling (pressed on the
+    # ground or just after a jump, the server may still hold the player on the ground and refuse the start).
     sv(f"execute in {e} run forceload add {x0 - 8} {z0 - 8} {x0 + 8} {z0 + 8}", 3)
     sv(f"execute in {e} run fill {x0 - 3} {sy - 1} {z0 - 3} {x0 + 3} {sy - 1} {z0 + 3} minecraft:stone", 1)
     sv(f"execute in {e} run tp KilnTest {x0 + 0.5} {sy} {z0 + 0.5}", 8)
@@ -72,11 +73,12 @@ def fly(dimn, x0, z0, dx, dz, secs, sy):
     ux, uz = dx / n, dz / n
     yaw = math.degrees(math.atan2(-ux, uz))
     c.look(yaw, 5)
+    sv(f"execute in {e} run tp KilnTest {x0 + 0.5} {sy + 30} {z0 + 0.5} {yaw:.1f} 5", 1.5)
     c.select("minecraft:firework_rocket")
     st = c.state(0)
     print("selected", st.get("selected"), "rockets", [e for e in st.get("inv", []) if "rocket" in e.get("id", "")][:3], flush=True)
-    # jump off and open the wings (jump again in the air), then rocket
-    c.key("space", "tap"); time.sleep(0.5); c.key("space", "tap"); time.sleep(1.0)
+    # falling: open the wings, then rocket
+    c.key("space", "tap"); time.sleep(1.0)
     print("gliding", c.state(0).get("fallFlying"), flush=True)
     t0 = time.time()
     start = c.state(0)
@@ -103,6 +105,9 @@ def fly(dimn, x0, z0, dx, dz, secs, sy):
             pitch = 15
         c.look(yaw, pitch)
         if time.time() >= next_rocket:
+            held = [i for i in st.get("inv", []) if i.get("slot") == st.get("selected")]
+            if not held or held[0].get("id") != "minecraft:firework_rocket":
+                c.select("minecraft:firework_rocket")
             # (pressed for a moment: a slow software-rendered client may miss a tap)
             c.mouse("right", "down"); time.sleep(0.12); c.mouse("right", "up")
             rockets += 1
@@ -116,6 +121,7 @@ def fly(dimn, x0, z0, dx, dz, secs, sy):
     t1 = time.time()
     end = c.state(0)
     left = sum(e["n"] for e in end.get("inv", []) if e.get("id") == "minecraft:firework_rocket")
+    left -= 64  # (three stacks were given)
     dist = math.hypot(end["x"] - start["x"], end["z"] - start["z"])
     print(f"flew {dist:.0f} blocks in {t1 - t0:.0f} s ({dist / (t1 - t0):.1f} b/s), {rockets} rocket clicks, {128 - left} rockets used", flush=True)
     if vanilla:

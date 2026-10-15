@@ -853,8 +853,9 @@ impl crate::Dim {
         let lists: Vec<&[entities::Entity]> = self.regions.iter().map(|r| &r.part().0.list[..]).collect();
         let jobs: Vec<(usize, ChunkPos, usize)> = to_save.iter().enumerate().flat_map(|(r, v)| v.iter().map(move |&(c, i)| (r, c, i))).collect();
         let encode = |part: &[(usize, ChunkPos, usize)]| part.iter().map(|&(r, c, i)| (c, entities::save_in(lists[r], i, &owner))).collect::<Vec<_>>();
-        let encoded: Vec<(ChunkPos, Tag)> = if jobs.len() >= 512 {
-            let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+        // (More than a few dozen: the batch a fast player leaves behind every second.)
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+        let encoded: Vec<(ChunkPos, Tag)> = if jobs.len() >= 32 {
             let per = jobs.len().div_ceil(threads);
             std::thread::scope(|scope| {
                 let workers: Vec<_> = jobs.chunks(per).map(|part| scope.spawn(move || encode(part))).collect();
@@ -891,6 +892,9 @@ impl crate::Dim {
         }
         chunks.sort_unstable_by_key(|c| (c.x, c.z));
         chunks.dedup();
+        // What each chunk stores, then stored together: the chunks' NBT is written and compressed side by side.
+        let mut stores: Vec<(ChunkPos, Vec<Tag>)> = Vec::new();
+        let mut left: Vec<ChunkPos> = Vec::new();
         for c in chunks {
             let mut list = groups.remove(&c).unwrap_or_default();
             let was_unloaded = unloaded.contains(&c);
@@ -904,11 +908,16 @@ impl crate::Dim {
                 self.stash_entities(c, list);
                 continue;
             }
-            let store = self.entity_store.as_mut().expect("checked above");
-            store.store(c, list);
+            stores.push((c, list));
             if was_unloaded {
-                store.unloaded(c);
+                left.push(c);
             }
+        }
+        let store = self.entity_store.as_mut().expect("checked above");
+        let threads = if stores.len() >= 32 { threads } else { 1 };
+        store.store_many(stores, threads);
+        for c in left {
+            store.unloaded(c);
         }
         gone
     }

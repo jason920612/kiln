@@ -119,22 +119,61 @@ impl EntityStore {
     /// `EntityStorage.storeEntities`: queues a chunk's entities for the next `flush`. An empty
     /// list deletes the chunk's data unless it is already known to be empty.
     pub fn store(&mut self, pos: ChunkPos, entities: Vec<Tag>) {
-        let nbt = if entities.is_empty() {
+        let nbt = (!entities.is_empty()).then(|| Self::nbt(pos, entities));
+        let payload = (self.native.is_none()).then(|| nbt.as_deref().map(crate::region::compress_chunk)).flatten();
+        self.store_encoded(pos, nbt, payload);
+    }
+
+    /// [`EntityStore::store`] for many chunks, in order: the chunks' NBT is written and compressed side by side
+    /// (up to `threads` threads), then queued one after the other as `store` would have.
+    pub fn store_many(&mut self, chunks: Vec<(ChunkPos, Vec<Tag>)>, threads: usize) {
+        let native = self.native.is_some();
+        let encode = |(pos, entities): (ChunkPos, Vec<Tag>)| {
+            let nbt = (!entities.is_empty()).then(|| Self::nbt(pos, entities));
+            let payload = (!native).then(|| nbt.as_deref().map(crate::region::compress_chunk)).flatten();
+            (pos, nbt, payload)
+        };
+        let encoded: Vec<(ChunkPos, Option<bytes::BytesMut>, Option<Vec<u8>>)> = if threads > 1 && chunks.len() > 1 {
+            let per = chunks.len().div_ceil(threads);
+            let mut parts: Vec<Vec<(ChunkPos, Vec<Tag>)>> = Vec::new();
+            let mut it = chunks.into_iter().peekable();
+            while it.peek().is_some() {
+                parts.push(it.by_ref().take(per).collect());
+            }
+            std::thread::scope(|scope| {
+                let workers: Vec<_> = parts.into_iter().map(|part| scope.spawn(move || part.into_iter().map(encode).collect::<Vec<_>>())).collect();
+                workers.into_iter().flat_map(|w| w.join().expect("encoding entity chunks")).collect()
+            })
+        } else {
+            chunks.into_iter().map(encode).collect()
+        };
+        for (pos, nbt, payload) in encoded {
+            self.store_encoded(pos, nbt, payload);
+        }
+    }
+
+    /// The entity chunk's NBT (`DataVersion`, `Entities`, `Position`).
+    fn nbt(pos: ChunkPos, entities: Vec<Tag>) -> bytes::BytesMut {
+        let root = Tag::Compound(vec![
+            ("DataVersion".into(), Tag::Int(DATA_VERSION as i32)),
+            ("Entities".into(), Tag::List(entities)),
+            ("Position".into(), Tag::IntArray(vec![pos.x, pos.z])),
+        ]);
+        let mut buf = bytes::BytesMut::new();
+        root.write_named("", &mut buf);
+        buf
+    }
+
+    /// Queues what [`EntityStore::store`] made of a chunk's entities: `nbt` (none for an empty list) and, for region
+    /// files, its compressed `payload`.
+    fn store_encoded(&mut self, pos: ChunkPos, nbt: Option<bytes::BytesMut>, payload: Option<Vec<u8>>) {
+        if nbt.is_none() {
             if !self.empty.insert(pos) {
                 return;
             }
-            None
         } else {
-            let root = Tag::Compound(vec![
-                ("DataVersion".into(), Tag::Int(DATA_VERSION as i32)),
-                ("Entities".into(), Tag::List(entities)),
-                ("Position".into(), Tag::IntArray(vec![pos.x, pos.z])),
-            ]);
-            let mut buf = bytes::BytesMut::new();
-            root.write_named("", &mut buf);
             self.empty.remove(&pos);
-            Some(buf)
-        };
+        }
         if let Some(store) = &self.native {
             let mut store = store.lock().unwrap();
             // Deleting what is not stored changes nothing.
@@ -143,7 +182,6 @@ impl EntityStore {
             }
             return;
         }
-        let payload = nbt.map(|b| crate::region::compress_chunk(&b));
         let (key, (lx, lz)) = Self::local(pos);
         let entry = self.pending.entry(key).or_default();
         entry.retain(|(x, z, _)| (*x, *z) != (lx, lz));
