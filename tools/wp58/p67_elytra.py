@@ -3,7 +3,11 @@ p65_elytra.py), on the wp67 server (tools/wp58/wp67_start.sh: console ~/wp67/rc/
 Prints the flight (position and speed every 10 s) and the server's MSPT over the flight from the per-tick trace.
 
 usage: KILN_PLAY_DIR=wp67/rc KILN_AGENT_PORT=26067 python3 p67_elytra.py DIM X Z DX DZ SECONDS [SY]
-(start at (X, SY, Z), SY 120 by default, fly in direction (DX, DZ); DIM overworld or the_nether)"""
+(start at (X, SY, Z), SY 120 by default, fly in direction (DX, DZ); DIM overworld or the_nether)
+Against the vanilla reference server (tools/wp58/wp67_vanilla.sh) set VANILLA=1 and KILN_PLAY_DIR=wp67/rc-v: there is no tick
+trace, so the script asks `tick query` every 5 s and prints what vanilla answered."""
+import os
+import re
 import math
 import sys
 import time
@@ -76,7 +80,13 @@ def fly(dimn, x0, z0, dx, dz, secs, sy):
     start = c.state(0)
     last, lastp = t0, (start["x"], start["z"])
     rockets = 0
+    vanilla = os.environ.get("VANILLA") == "1"
+    log_from = LOG.stat().st_size
+    next_query = t0 + 20
     while time.time() - t0 < secs:
+        if vanilla and time.time() >= next_query:
+            server("tick query")
+            next_query += 5
         st = c.state(0)
         if st["health"] <= 0:
             print("died", flush=True)
@@ -102,6 +112,17 @@ def fly(dimn, x0, z0, dx, dz, secs, sy):
     end = c.state(0)
     dist = math.hypot(end["x"] - start["x"], end["z"] - start["z"])
     print(f"flew {dist:.0f} blocks in {t1 - t0:.0f} s ({dist / (t1 - t0):.1f} b/s), {rockets} rockets", flush=True)
+    if vanilla:
+        with open(LOG, "rb") as f:
+            f.seek(log_from)
+            txt = f.read().decode(errors="replace")
+        avg = [float(m) for m in re.findall(r"Average time per tick: ([0-9.]+)", txt)]
+        print("vanilla tick query: ", len(avg), "answers; average time per tick: mean of answers", round(sum(avg) / max(1, len(avg)), 2),
+              "max", max(avg or [0]), flush=True)
+        for l in txt.splitlines():
+            if "Percentile" in l or "P50" in l or "Average time per tick" in l:
+                print("  ", l.strip()[-160:], flush=True)
+        return
     # MSPT over the flight after 20 s of warmup (the trace is flushed with each 30 s report)
     time.sleep(32)
     print("mspt (flight after 20 s):", stats(trace(int((t0 + 20) * 1000), int(t1 * 1000))), flush=True)
