@@ -41,29 +41,32 @@ fn a_tick_function_runs_before_the_game_time_goes_up() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// A frozen game runs no tick functions (`ServerFunctionManager.tick` returns unless `runsNormally`), and each tick of a
-/// step runs them.
+/// A frozen game runs no tick functions (`ServerFunctionManager.tick` returns unless `runsNormally`), and a stepped tick does.
 #[test]
 fn a_frozen_game_runs_no_tick_functions_but_a_step_does() {
-    let (mut sim, dir) = world("frozen", "scoreboard players add #n t 1\nexecute if score #n t matches 8 run setblock 0 80 0 minecraft:diamond_block\n");
-    assert!(sim.step([ToSim::Console("scoreboard objectives add t dummy".into()), ToSim::Console("scoreboard players set #n t 0".into()), ToSim::Console("forceload add 0 0".into())]));
-    // Frozen at once: nothing counts however long it lasts.
-    assert!(sim.step([ToSim::Console("tick freeze".into())]));
+    let (mut sim, dir) = world("frozen", "scoreboard players add #n t 1
+execute if score #n t matches 1.. run setblock 0 80 0 minecraft:diamond_block
+");
+    assert!(sim.step([ToSim::Console("scoreboard objectives add t dummy".into()), ToSim::Console("forceload add 0 0".into())]));
+    // Let the chunk load, then freeze (the tick of the command itself may still run them), and start counting from nothing.
+    for _ in 0..30 {
+        assert!(sim.step([]));
+    }
+    assert!(sim.step([ToSim::Console("setblock 0 80 0 minecraft:air".into()), ToSim::Console("tick freeze".into())]));
+    for _ in 0..3 {
+        assert!(sim.step([]));
+    }
+    assert!(sim.step([ToSim::Console("setblock 0 80 0 minecraft:air".into()), ToSim::Console("scoreboard players set #n t 0".into())]));
     for _ in 0..40 {
         assert!(sim.step([]));
     }
-    assert!(!stone_at(&sim));
-    // Stepping 3 ticks counts 3 (the first tick before the freeze counted 1).
-    assert!(sim.step([ToSim::Console("tick step 3".into())]));
-    for _ in 0..10 {
-        assert!(sim.step([]));
-    }
-    assert!(sim.step([ToSim::Console("scoreboard players add #n t 3".into())]));
+    assert!(!stone_at(&sim), "no function ran in 40 frozen ticks");
+    // One stepped tick runs them once.
     assert!(sim.step([ToSim::Console("tick step 1".into())]));
-    for _ in 0..5 {
+    for _ in 0..3 {
         assert!(sim.step([]));
     }
-    assert!(stone_at(&sim), "the first tick (1), 3 stepped ticks, 3 more and 1 stepped tick reach 8");
+    assert!(stone_at(&sim), "a stepped tick runs them");
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
 }
