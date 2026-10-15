@@ -111,7 +111,7 @@ def melee(a, deadline):
         for t in RAIDER_T:
             for l in S(f"execute as @e[type=minecraft:{t},{BOX}] unless data entity @s {{Wave:-1}} run data get entity @s Pos"):
                 m = re.findall(r"(-?\d+\.?\d*)d", l)
-                if len(m) == 3 and "entity data" in l:
+                if len(m) == 3 and ("entity data" in l or "query[" in l):
                     S(f"tp {NAME} {float(m[0])-1.5:.2f} {float(m[1]):.2f} {float(m[2]):.2f}")
                     time.sleep(1.0)
                     return 0
@@ -275,7 +275,7 @@ def trade_prices(a):
         out = S(f'execute as @e[type=minecraft:villager,{BOX},nbt={{VillagerData:{{profession:"minecraft:{prof}"}}}}] run data get entity @s Pos')
         for l in out:
             m = re.findall(r"(-?\d+\.?\d*)d", l)
-            if len(m) == 3 and "entity data" in l:
+            if len(m) == 3 and ("entity data" in l or "query[" in l):
                 prof_pos.append((prof, [float(x) for x in m]))
     F("professions in the village:", [p for p, _ in prof_pos])
     res = {}
