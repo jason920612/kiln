@@ -184,17 +184,19 @@ B0 檔案查找(已修)之外都在 11~25 ms。
 
 ## 驗證
 
-VM 上,release:
+VM 上,release,**最後的建置**(全部改動之後重跑):
 
 - `cargo test --workspace --release --no-fail-fast`:**不帶 `KILN_DATAPACK`** 與 **帶 `KILN_DATAPACK=/home/test/kiln/work/generated`** 都是 166 個測試目標、**1,280 個測試全綠**
   (含新的 `a_chunk_lit_alone_then_at_its_borders_gets_the_same_light`、`block_changes_relight_within_the_window_as_over_the_whole_world`、
   `leaf_distance_tables_match_the_properties`、`a_refused_glide_start_sends_the_flags_again`)。`crowd_golden` 4/4(封包摘要與狀態雜湊**沒有重錄**)、
-  `kiln-sim --test determinism` 6/6。(第一次全跑時 `kiln-plugin-host --test examples` 的 `spawn_protection_denies_near_spawn…` 在 VM 負載 13 時失敗一次,
-  單獨重跑 3 次都過,第二次全跑也過——已知的負載敏感測試,與本次改動無關。)
+  `kiln-sim --test determinism` 6/6。(開發中有一次全跑時 `kiln-plugin-host --test examples` 的 `spawn_protection_denies_near_spawn…` 在 VM 負載 13 時失敗,
+  單獨重跑 3 次都過,之後三次全跑也都過——已知的負載敏感測試,與本次改動無關。)
 - `kiln-entity --test mob_parity`:**1451 個情境、594,683 個 mob 狀態逐項相同**(`work/m6-mobs2/vectors.jsonl`,1480 行,沒有新增)。
-- `tools/parity_suites.py --skip-workspace`:**102 次執行全部 exit 0**(改動 glide 之後只重跑了 mob_parity,也通過)。
+- `tools/parity_suites.py --skip-workspace`:**102 次執行全部 exit 0**。
+- 生存 50 人基準(wp47):沒有比 main 慢(見上表:平均 13.4~13.6 → 12.6~12.8 ms,p99 27 → 21~22 ms,視野完成時間相同)。
 - 負向檢查(在 VM 的工作樹上暫時改壞,新測試都會失敗,之後 `git checkout` 還原):拿掉邊界光的種子、把方塊改變的光照窗口縮成 1×1、
   不重送旗標。
+- 重新載入同一個世界(`survival_bench --phase both`,飛同一條線):區塊從磁碟讀(69 個/秒),沒有被重新生成;讀取不在 tick 執行緒上。
 
 ### 驗證時找到的 vanilla 差異(已修正)
 
