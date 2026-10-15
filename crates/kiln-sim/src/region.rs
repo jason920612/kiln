@@ -908,6 +908,9 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     }
     p.tick_damage(env.game_time);
     let mut ctx = damage_ctx(env, &mut t.spawns, &mut t.deaths);
+    if !p.effects.is_empty() && env.game_time % 40 == 0 {
+        tracing::info!("DEBUG effects of {}: {:?} has bad_omen {} entity_ticking {}", p.name, p.effects.keys().collect::<Vec<_>>(), p.has_effect("minecraft:bad_omen"), entity_ticking);
+    }
     // What bad omen asks of the level (only looked up while the player has it).
     if p.has_effect("minecraft:bad_omen") {
         let at = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
