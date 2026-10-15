@@ -26,7 +26,7 @@ def raid():
         sv(f"give {nm} minecraft:diamond_chestplate 1", show=False)
         sv(f"give {nm} minecraft:golden_apple 16", show=False)
         sv(f"give {nm} minecraft:ominous_bottle[minecraft:ominous_bottle_amplifier=2] 1", show=False)
-        sv(f"effect give {nm} minecraft:resistance 3000 3 true", show=False)
+        sv(f"effect give {nm} minecraft:resistance 3000 4 true", show=False)
     sv("gamerule spawn_mobs true", show=False)
     sv("difficulty normal", show=False)
     sv("gamerule raids true", show=False)
@@ -53,47 +53,41 @@ def raid():
         c.mouse("right", "down"); time.sleep(2.2); c.mouse("right", "up"); time.sleep(0.5)
     F("effects after drinking: A", [e["id"].split(":")[-1] + str(e["amp"]) for e in a.state(0)["effects"]], "B", [e["id"].split(":")[-1] + str(e["amp"]) for e in b.state(0)["effects"]])
     sv("tick rate 60", show=False)
-    t0 = time.time(); wave = 0; seen = {}
-    log = []
-    last = None
-    started = None
-    while time.time() - t0 < 600 and not (started is None and time.time() - t0 > 100):
+    t0 = time.time(); log = []; last = None; started = None; since_wave = None
+    while time.time() - t0 < 900:
         alive(a); alive(b)
-        time.sleep(4)
+        time.sleep(3)
         c = counts()
         tot = sum(c.values())
         if tot and started is None:
             started = time.time() - t0
             F("first raiders after", round(started), "s", c)
             shot("raid_wave1")
-        if c != last and tot:
-            log.append((round(time.time() - t0), c))
+        if tot and c != last:
+            log.append((round(time.time() - t0), dict(c)))
             last = c
-        # fight a bit for real: the nearest raider
+            since_wave = time.time()
         for cl in (a, b):
             cl.select("minecraft:diamond_sword")
             es = [e for e in cl.state(40)["entities"] if e["t"] in RAIDERS]
             if es and cl.state(0)["health"] > 8:
-                kill_nearest(cl, es[0]["t"], rng=40, timeout=8, dy=0.9)
-            if cl.state(0)["health"] < 9:
-                sv("effect give %s minecraft:instant_health 1 3 true" % ("KilnTest" if cl is a else "Obs"), show=False)
-        # when the same group of raiders has stayed 60 s, clean them (the real fighting is slow)
-        if started is not None and tot == 0 and time.time() - t0 - started > 20:
-            r = sv("execute if entity @e[type=minecraft:pillager,x=1300,y=0,z=-1200,dx=300,dy=320,dz=300]", show=False)
-            eff = [e["id"].split(":")[-1] for e in a.state(0)["effects"]]
-            F("raiders gone; A effects", eff)
-            if "hero_of_the_village" in eff:
-                break
-        if int(time.time() - t0) % 60 < 5:
-            F("t+%d" % (time.time() - t0), c, "bossbar", sv("bossbar list", show=False)[-90:])
-        # clean raiders that stay too long so the raid can end
-        if time.time() - t0 > 150 and int(time.time() - t0) % 45 < 5 and tot:
+                kill_nearest(cl, es[0]["t"], rng=40, timeout=6, dy=0.9)
+        # real fighting for 25 s of a wave, then the rest is cleaned so the next wave comes
+        if tot and since_wave and time.time() - since_wave > 25:
             sv("kill @e[type=#minecraft:raiders,x=1300,y=0,z=-1200,dx=300,dy=320,dz=300]", show=False)
+            since_wave = time.time()
+        eff = [e["id"].split(":")[-1] for e in a.state(0)["effects"]]
+        if "hero_of_the_village" in eff:
+            F("hero of the village after", round(time.time() - t0), "s")
+            break
+        if started is None and time.time() - t0 > 200:
+            F("no raid started; effects", eff)
+            break
     sv("tick rate 20", show=False)
     F("wave log", log)
-    F("hero", [e["id"].split(":")[-1] + str(e["amp"]) for e in a.state(0)["effects"]], [e["id"].split(":")[-1] for e in b.state(0)["effects"]])
+    F("effects A", [e["id"].split(":")[-1] + str(e["amp"]) for e in a.state(0)["effects"]], "B", [e["id"].split(":")[-1] + str(e["amp"]) for e in b.state(0)["effects"]])
     adv = chat()
-    F("chat", [l for l in adv if "advancement" in l or "Raid" in l or "raid" in l][:12])
+    F("chat", [l for l in adv if "advancement" in l or "aid" in l or "Hero" in l][:12])
     shot("raid_end")
 
 
