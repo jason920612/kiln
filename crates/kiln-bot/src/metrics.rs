@@ -80,6 +80,13 @@ traffic!(
     walked_dm,
     teleport_resends,
     blocks_seen_changed,
+    // Flyers (measured after their warmup).
+    rockets,
+    fly_ticks,
+    fly_dm,
+    fly_short_ticks,
+    fly_missing_ticks,
+    fly_corrections,
 );
 
 #[derive(Debug, Default)]
@@ -106,6 +113,11 @@ pub(crate) struct Shared {
     pub area_ready_teleport: Hist,
     /// From the first Chunk Batch Start after joining until the whole first view had arrived.
     pub area_ready_join: Hist,
+    /// Flyers: from a chunk coming into view until it arrived.
+    pub fly_chunk_latency: Hist,
+    /// Flyers, every tick: blocks along the flight line to the first chunk not there yet (the
+    /// histogram's milliseconds are blocks).
+    pub fly_ahead: Hist,
     /// Distinct decode problems seen, by text, with how often.
     pub problems: Mutex<BTreeMap<String, u64>>,
 }
@@ -310,6 +322,10 @@ pub struct Report {
     pub area_ready_walk: Latency,
     pub area_ready_teleport: Latency,
     pub area_ready_join: Latency,
+    /// Flyers: chunk arrival after coming into view, and blocks of terrain ready ahead (the
+    /// `_ms` fields are blocks).
+    pub fly_chunk_latency: Latency,
+    pub fly_ahead_blocks: Latency,
     pub problems: Vec<(String, u64)>,
 }
 
@@ -343,6 +359,8 @@ impl Report {
             area_ready_walk: shared.area_ready_walk.summary(),
             area_ready_teleport: shared.area_ready_teleport.summary(),
             area_ready_join: shared.area_ready_join.summary(),
+            fly_chunk_latency: shared.fly_chunk_latency.summary(),
+            fly_ahead_blocks: shared.fly_ahead.summary(),
             problems: shared.problems.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect(),
         }
     }
@@ -444,6 +462,15 @@ impl fmt::Display for Report {
             for (p, n) in &self.problems {
                 writeln!(f, "  problem    {n:>6}  {p}")?;
             }
+        }
+        if t.fly_ticks > 0 {
+            let (l, a) = (&self.fly_chunk_latency, &self.fly_ahead_blocks);
+            writeln!(
+                f,
+                "  flight     {} ticks, {:.0} blocks, {} rockets, {} corrections; ahead (blocks) mean {:.0} p50 {:.0}, {} ticks under 32, {} ticks over a missing chunk; chunk arrival n {} mean {:.0} p50 {:.0} p99 {:.0} max {:.0} ms",
+                t.fly_ticks, t.fly_dm as f64 / 10.0, t.rockets, t.fly_corrections, a.mean_ms, a.p50_ms, t.fly_short_ticks,
+                t.fly_missing_ticks, l.n, l.mean_ms, l.p50_ms, l.p99_ms, l.max_ms
+            )?;
         }
         writeln!(
             f,

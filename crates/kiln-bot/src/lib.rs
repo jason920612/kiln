@@ -11,6 +11,7 @@
 
 pub mod behavior;
 mod bot;
+pub mod flight;
 mod metrics;
 mod physics;
 pub mod proto;
@@ -74,6 +75,25 @@ pub struct Config {
     /// Survival: bots `[k * group_size, (k + 1) * group_size)` share a site; `None` deals
     /// the bots round-robin into `groups`.
     pub group_size: Option<usize>,
+    /// Flyers: dimension, heading, altitude and warmup of the flights.
+    pub fly: FlyConfig,
+}
+
+/// Where flyers go: bot `i` starts at the centre moved `i * group_spacing` blocks sideways
+/// (to the right of the heading) and flies along the heading.
+#[derive(Debug, Clone)]
+pub struct FlyConfig {
+    pub dim: String,
+    /// Direction (x, z), any length.
+    pub heading: [f64; 2],
+    pub altitude: f64,
+    pub warmup: Duration,
+}
+
+impl Default for FlyConfig {
+    fn default() -> Self {
+        Self { dim: "minecraft:overworld".into(), heading: [1.0, 0.0], altitude: 150.0, warmup: Duration::from_secs(20) }
+    }
 }
 
 impl Default for Config {
@@ -99,6 +119,7 @@ impl Default for Config {
             teleport_to_group: false,
             roles: vec![Role::Explorer, Role::Miner, Role::Builder, Role::Redstone],
             group_size: None,
+            fly: FlyConfig::default(),
         }
     }
 }
@@ -118,6 +139,23 @@ impl Config {
         let rows = self.groups.div_ceil(cols);
         let at = |i: usize, n: usize| (i as f64 - (n - 1) as f64 / 2.0) * self.group_spacing;
         [at(g % cols, cols), at(g / cols, rows)]
+    }
+
+    /// Bot `i`'s flight.
+    pub fn flight(&self, i: usize) -> flight::FlightPlan {
+        let [hx, hz] = self.fly.heading;
+        let n = hx.hypot(hz).max(1e-9);
+        let (hx, hz) = (hx / n, hz / n);
+        let [cx, cz] = self.center.unwrap_or([0.0, 0.0]);
+        let side = i as f64 * self.group_spacing;
+        flight::FlightPlan {
+            dim: self.fly.dim.clone(),
+            start: [(cx - hz * side).floor() + 0.5, (cz + hx * side).floor() + 0.5],
+            heading: [hx, hz],
+            speed: self.speed,
+            altitude: self.fly.altitude,
+            warmup: self.fly.warmup,
+        }
     }
 
     /// Like [`Config::group_offset`] for a given number of groups.

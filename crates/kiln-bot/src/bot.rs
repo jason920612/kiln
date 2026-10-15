@@ -3,6 +3,7 @@
 
 use crate::Config;
 use crate::behavior::{Behavior, Mover, Rng};
+use crate::flight::Flight;
 use crate::metrics::{Shared, Traffic};
 use crate::proto::{self, Teleport};
 use crate::survival::{Agent, Settings};
@@ -69,7 +70,7 @@ impl State {
 }
 
 /// Whether the bot reads the body of a clientbound packet; everything else is only counted.
-fn needs_body(state: State, id: i32, survival: bool) -> bool {
+fn needs_body(state: State, id: i32, survival: bool, fly: bool) -> bool {
     match state {
         State::Login => true,
         State::Configuration => {
@@ -79,6 +80,7 @@ fn needs_body(state: State, id: i32, survival: bool) -> bool {
         State::Play => {
             use ids::play::clientbound as cb;
             matches!(id, cb::PLAYER_POSITION | cb::KEEP_ALIVE | cb::PING | cb::DISCONNECT | cb::COOKIE_REQUEST)
+                || (fly && matches!(id, cb::LOGIN | cb::LEVEL_CHUNK_WITH_LIGHT | cb::FORGET_LEVEL_CHUNK | cb::RESPAWN))
                 || (survival
                     && matches!(
                         id,
@@ -158,6 +160,10 @@ struct Bot {
     mover: Option<Mover>,
     /// Survival bots: the player (created at Play Login).
     agent: Option<Agent>,
+    /// Flyers: the flight (created at Play Login).
+    flight: Option<Flight>,
+    /// Flyers: the setup commands went out.
+    flight_set_up: bool,
     joined: bool,
     play_ticks: u64,
     next_chat_tick: u64,
@@ -191,6 +197,8 @@ pub(crate) async fn run(
         terrain: false,
         mover: None,
         agent: None,
+        flight: None,
+        flight_set_up: false,
         joined: false,
         play_ticks: 0,
         next_chat_tick: 0,
@@ -256,9 +264,10 @@ impl Bot {
                     loop {
                         let state = self.state;
                         let survival = self.cfg.behavior == Behavior::Survival;
+                        let fly = self.cfg.behavior == Behavior::Fly;
                         let frame = self
                             .inbound
-                            .decode(&mut rbuf, |id| needs_body(state, id, survival))
+                            .decode(&mut rbuf, |id| needs_body(state, id, survival, fly))
                             .map_err(|e| format!("bad frame: {e}"))?;
                         let Some(frame) = frame else { break };
                         self.traffic.rx_packets += 1;
@@ -355,7 +364,19 @@ impl Bot {
                 if let Some(a) = &mut self.agent {
                     a.on_chunk(r.rest());
                 }
+                if let Some(f) = &mut self.flight
+                    && let Err(e) = f.on_chunk(r.rest(), &self.shared)
+                {
+                    self.traffic.decode_errors += 1;
+                    self.shared.problem(format!("level chunk: {e}"));
+                }
             }
+            cb::FORGET_LEVEL_CHUNK if self.flight.is_some() => {
+                let v = r.i64()?;
+                self.flight.as_mut().unwrap().on_forget_chunk(v as i32, (v >> 32) as i32);
+            }
+            // A dimension change: the client reports its new level loaded with the next batch.
+            cb::RESPAWN if self.flight.is_some() => self.flight.as_mut().unwrap().respawned(),
             cb::BLOCK_UPDATE if self.agent.is_some() => {
                 let pos = kiln_proto::packets::read_position(r)?;
                 let state = r.varint()?;
@@ -419,6 +440,16 @@ impl Bot {
                     let view = r.varint()?;
                     self.agent = Some(self.make_agent(entity_id, view));
                 }
+                if self.cfg.behavior == Behavior::Fly && self.flight.is_none() {
+                    let entity_id = r.i32()?;
+                    let _hardcore = r.bool()?;
+                    for _ in 0..r.varint()? {
+                        r.string(256)?;
+                    }
+                    let _max_players = r.varint()?;
+                    let view = r.varint()?.min(self.cfg.view_distance as i32);
+                    self.flight = Some(Flight::new(self.cfg.flight(self.index), entity_id, view));
+                }
             }
             // A real client needs a while to set up its level after Login, so its first
             // confirmation reaches the server after the connection's first tick. Vanilla relies
@@ -442,6 +473,9 @@ impl Bot {
                     self.out.send(proto::player_loaded);
                     self.joined = true;
                     self.shared.record_join(self.started.elapsed());
+                } else if let Some(f) = self.flight.as_mut().filter(|f| f.needs_loaded) {
+                    f.needs_loaded = false;
+                    self.out.send(proto::player_loaded);
                 }
             }
             cb::KEEP_ALIVE => {
@@ -512,7 +546,13 @@ impl Bot {
         if let Some(m) = &mut self.mover {
             self.traffic.teleports += 1;
             m.teleported(pos, yaw, pitch);
+            if let Some(f) = &mut self.flight {
+                f.teleported(pos, &mut self.traffic);
+            }
             return;
+        }
+        if let Some(f) = &mut self.flight {
+            f.pos = pos;
         }
         let [cx, cz] = *self.shared.origin.get_or_init(|| [pos[0], pos[2]]);
         let [dx, dz] = self.cfg.group_offset(self.index % self.cfg.groups);
@@ -556,6 +596,15 @@ impl Bot {
                 agent.tick(&mut self.out);
                 let counts = std::mem::take(&mut agent.counts);
                 self.traffic.merge(&counts);
+            } else if self.joined
+                && let Some(f) = &mut self.flight
+            {
+                if !self.flight_set_up {
+                    self.flight_set_up = true;
+                    let pos = f.pos;
+                    f.spawned(&mut self.out, &mut self.traffic, pos);
+                }
+                f.tick(&mut self.out, &mut self.traffic, &self.shared);
             } else if self.joined
                 && let Some(m) = &mut self.mover
             {
