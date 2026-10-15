@@ -373,6 +373,7 @@ impl Sim {
             part.1.containers.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.sculk.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.hearts.reload(kiln_blocks::BlockPos::new(x, y, z), be);
+            part.1.gateways.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.spawners.reload(kiln_blocks::BlockPos::new(x, y, z), be);
         }
         // Vanilla parses the data and saves it again: the chunk's copy is what the live block entity saves (a furnace drops the
@@ -1371,6 +1372,7 @@ impl Host for Sim {
             if let Some(chunk) = cells.chunk_mut(ChunkPos::of_block(x, z)) {
                 part.1.containers.store(ChunkPos::of_block(x, z), chunk);
                 part.1.spawners.store(ChunkPos::of_block(x, z), chunk);
+                part.1.gateways.store(ChunkPos::of_block(x, z), chunk);
             }
         }
         let chunk = self.dims[dim].regions.chunk(ChunkPos::of_block(x, z))?;

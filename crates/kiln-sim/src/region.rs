@@ -800,7 +800,7 @@ impl RegionWork<'_> {
     /// `Level.tickBlockEntities`: hoppers and furnaces in ticking chunks. Hoppers take item
     /// entities; their viewers see the new counts.
     fn tick_block_entities(&mut self, env: &Env, ticking: &Ticking) {
-        if self.blocks.containers.len() == 0 && self.blocks.sculk.len() == 0 {
+        if self.blocks.containers.len() == 0 && self.blocks.sculk.len() == 0 && self.blocks.gateways.len() == 0 {
             return;
         }
         let spots = self.blocks.containers.dispensers();
@@ -828,6 +828,7 @@ impl RegionWork<'_> {
             crate::beehive::anger_requests(&mut level, items.entities_mut(), &self.players);
             crate::bell::tick(&mut level, items.entities_mut(), &ticking);
             crate::sculk::tick_block_entities(&mut level, &ticking);
+            crate::gateway::tick(&mut level, &ticking);
             crate::sculk::requests(&mut level, &mut self.players, items.entities(), &mut self.out.spawns);
         }
         let touched = items.touched();

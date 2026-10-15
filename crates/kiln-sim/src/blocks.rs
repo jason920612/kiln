@@ -60,6 +60,8 @@ pub(crate) struct RegionBlocks {
     pub sculk: crate::sculk::Sculk,
     /// Creaking heart block entities.
     pub hearts: crate::heart::Hearts,
+    /// End gateways' ages.
+    pub gateways: crate::gateway::Gateways,
     /// Who may edit which sign (`SignBlockEntity.playerWhoMayEdit`).
     pub sign_editors: crate::signs::SignEditors,
     /// Mob spawner block entities.
@@ -87,6 +89,7 @@ impl Default for RegionBlocks {
             bee_anger: Vec::new(),
             sculk: Default::default(),
             hearts: Default::default(),
+            gateways: Default::default(),
             sign_editors: Default::default(),
             spawners: Default::default(),
             initial_mobs: Vec::new(),
@@ -123,6 +126,7 @@ impl RegionBlocks {
         self.containers.chunk_loaded(pos, chunk);
         self.sculk.chunk_loaded(pos, chunk);
         self.hearts.chunk_loaded(pos, chunk);
+        self.gateways.chunk_loaded(pos, chunk);
         self.spawners.chunk_loaded(pos, chunk);
         if std::mem::take(&mut chunk.original_mobs) {
             self.initial_mobs.push(pos);
@@ -158,6 +162,7 @@ impl RegionBlocks {
         self.containers.chunk_unloaded(pos);
         self.sculk.chunk_unloaded(pos);
         self.hearts.chunk_unloaded(pos);
+        self.gateways.chunk_unloaded(pos);
         self.initial_mobs.retain(|p| *p != pos);
         self.spawners.chunk_unloaded(pos);
     }
@@ -167,6 +172,7 @@ impl RegionBlocks {
         self.containers.store(pos, chunk);
         self.sculk.store(pos, chunk);
         self.hearts.store(pos, chunk);
+        self.gateways.store(pos, chunk);
         self.spawners.store(pos, chunk);
         let k = key(pos);
         let block = self.block_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
@@ -222,6 +228,7 @@ impl RegionPart for RegionBlocks {
         into.bee_anger.append(&mut from.bee_anger);
         into.sculk.merge(std::mem::take(&mut from.sculk));
         into.hearts.merge(std::mem::take(&mut from.hearts));
+        into.gateways.merge(std::mem::take(&mut from.gateways));
         into.sign_editors.merge(std::mem::take(&mut from.sign_editors));
         into.spawners.merge(std::mem::take(&mut from.spawners));
         into.initial_mobs.append(&mut from.initial_mobs);
@@ -278,6 +285,10 @@ impl RegionPart for RegionBlocks {
             self.hearts.split_into(&mut hearts, |c| owner((c.x, c.z)));
         }
         {
+            let mut gateways: SmallVec<[&mut crate::gateway::Gateways; 4]> = parts.iter_mut().map(|p| &mut p.gateways).collect();
+            self.gateways.split_into(&mut gateways, |c| owner((c.x, c.z)));
+        }
+        {
             let mut editors: SmallVec<[&mut crate::signs::SignEditors; 4]> = parts.iter_mut().map(|p| &mut p.sign_editors).collect();
             self.sign_editors.split_into(&mut editors, |p| owner(p.chunk()));
         }
@@ -300,7 +311,7 @@ impl RegionPart for RegionBlocks {
     }
 
     fn count(&self) -> usize {
-        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.sign_editors.len() + self.spawners.len() + self.initial_mobs.len()
+        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.gateways.len() + self.sign_editors.len() + self.spawners.len() + self.initial_mobs.len()
     }
 
     fn for_each_cell(&self, f: &mut dyn FnMut(CellPos)) {
@@ -578,6 +589,7 @@ impl Level for RegionLevel<'_> {
             crate::container::block_set(self, pos, flags, old);
             crate::sculk::block_set(self, pos);
             crate::heart::block_set(self, pos);
+            crate::gateway::block_set(self, pos);
             crate::mob_spawner::block_set(self, pos);
         }
         Some(old)

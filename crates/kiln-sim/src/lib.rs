@@ -52,6 +52,7 @@ mod trident;
 mod shield;
 mod tools;
 mod jukebox;
+mod gateway;
 mod golems;
 mod glide;
 mod slide;
@@ -2029,6 +2030,19 @@ impl Sim {
     /// that holds chunk `cx`, `cz`, once a chunk of it has had random ticks (for tests).
     pub fn random_tick_state(&self, cx: i32, cz: i32) -> Option<i32> {
         self.dims[OVERWORLD_ID].regions.cell(ChunkPos::new(cx, cz).cell())?.rand_value()
+    }
+
+    /// What `data get block` shows for the block entity at a position of a level (live state written into the chunk first;
+    /// for tests and tools).
+    pub fn block_entity_data(&mut self, dimension: &str, x: i32, y: i32, z: i32) -> Option<kiln_proto::nbt::Tag> {
+        use kiln_command::Host;
+        Host::block_entity(self, dimension, [x, y, z])
+    }
+
+    /// The live `Age` of the end gateway at an overworld position (for tests): what `portalTick` has counted.
+    pub fn gateway_age(&self, x: i32, y: i32, z: i32) -> Option<i64> {
+        let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;
+        region.part().1.gateways.map.get(&kiln_blocks::BlockPos::new(x, y, z)).copied()
     }
 
     /// The block at a position of a level, if its chunk is loaded.

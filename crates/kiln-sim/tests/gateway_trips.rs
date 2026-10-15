@@ -86,3 +86,26 @@ fn a_player_inside_a_cooling_gateway_goes_when_it_has_cooled() {
     w.ticks(60);
     assert!(far_from(&w.clients[1], g), "Beta went when the gateway had cooled: {:?}", w.clients[1].pos);
 }
+
+/// `TheEndGatewayBlockEntity.portalTick`: every tick adds one to `Age` (a client counts its own beam from it), every
+/// 2400 ticks of age the gateway starts the same 40 tick cooldown an entering entity does, and the saved form has
+/// `Age` but no `ExactTeleport` unless the teleport is exact.
+#[test]
+fn a_gateway_counts_its_age_and_cools_down_by_itself_every_2400_ticks() {
+    let (mut w, g) = gateway_world();
+    // The dragon fight's gateway: no exit yet, nothing exact; it was placed a few ticks ago.
+    let end = |c: String| format!("execute in minecraft:the_end run {c}");
+    w.run(&[end(format!("data merge block {} {} {} {{Age:2395L}}", g[0], g[1], g[2]))]);
+    w.ticks(1);
+    let tag = w.sim.block_entity_data("minecraft:the_end", g[0], g[1], g[2]).expect("the gateway's block entity");
+    assert!(tag.get("Age").and_then(|a| a.as_i64()).is_some_and(|a| a >= 2395), "{tag:?}");
+    assert!(tag.get("ExactTeleport").is_none(), "{tag:?}");
+    assert!(tag.get("components").is_some(), "{tag:?}");
+    // A player walking in at about age 2400 is held until the cooldown the gateway started has run out, then goes.
+    let at = format!("execute in minecraft:the_end run tp Alpha {} {} {}", g[0] as f64 + 0.5, g[1] as f64, g[2] as f64 + 0.5);
+    w.run(&[at]);
+    w.ticks(20);
+    assert!(!far_from(&w.clients[0], g), "held back by the gateway's own cooldown: {:?}", w.clients[0].pos);
+    w.ticks(60);
+    assert!(far_from(&w.clients[0], g), "went when it was over: {:?}", w.clients[0].pos);
+}

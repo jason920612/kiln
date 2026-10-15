@@ -46,6 +46,71 @@ fn update_rule(type_name: &str) -> UpdateTag {
     }
 }
 
+/// The fields a vanilla block entity of this type saves from the start (26.3: `data get block` of one placed with
+/// `/setblock`), which a block entity that nothing has touched leaves out of its stored form here. `Items` is
+/// left out where a loot table stands in for it.
+fn always_saved(type_name: &str) -> Vec<(&'static str, Tag)> {
+    let int = |v: i32| Tag::Int(v);
+    let items = || ("Items", Tag::List(Vec::new()));
+    let listener = || {
+        Tag::Compound(vec![
+            ("selector".to_owned(), Tag::Compound(vec![("tick".to_owned(), Tag::Long(-1))])),
+            ("event_delay".to_owned(), Tag::Int(0)),
+        ])
+    };
+    match type_name.strip_prefix("minecraft:").unwrap_or(type_name) {
+        "chest" | "trapped_chest" | "barrel" | "dropper" | "dispenser" | "copper_chest" => vec![items()],
+        "hopper" => vec![items(), ("TransferCooldown", int(-1))],
+        "furnace" | "blast_furnace" | "smoker" => vec![
+            items(),
+            ("RecipesUsed", Tag::Compound(Vec::new())),
+            ("lit_time_remaining", int(0)),
+            ("lit_total_time", int(0)),
+            ("cooking_time_spent", int(0)),
+            ("cooking_total_time", int(0)),
+            ("speed_multiplier", Tag::Float(1.0)),
+        ],
+        "brewing_stand" => vec![
+            items(),
+            ("BrewTime", int(0)),
+            ("Fuel", int(0)),
+            ("speed_multiplier", Tag::Float(1.0)),
+            ("total_brew_time", int(0)),
+            ("total_fuel", int(0)),
+        ],
+        "campfire" | "soul_campfire" => vec![items(), ("CookingTimes", Tag::IntArray(vec![0; 4])), ("CookingTotalTimes", Tag::IntArray(vec![0; 4]))],
+        "chiseled_bookshelf" => vec![items(), ("last_interacted_slot", int(-1))],
+        "end_gateway" => vec![("Age", Tag::Long(0))],
+        "vault" => vec![
+            (
+                "config",
+                Tag::Compound(vec![(
+                    "key_item".to_owned(),
+                    Tag::Compound(vec![("count".to_owned(), Tag::Int(1)), ("id".to_owned(), Tag::String("minecraft:trial_key".into()))]),
+                )]),
+            ),
+            ("server_data", Tag::Compound(Vec::new())),
+            ("shared_data", Tag::Compound(Vec::new())),
+        ],
+        "sculk_sensor" | "calibrated_sculk_sensor" => vec![("last_vibration_frequency", int(0)), ("listener", listener())],
+        "sculk_shrieker" => vec![("warning_level", int(0)), ("listener", listener())],
+        "sculk_catalyst" => vec![("cursors", Tag::List(Vec::new()))],
+        "bee_nest" | "beehive" => vec![("bees", Tag::List(Vec::new()))],
+        // `CommandBlockEntity.saveAdditional` .
+        "command_block" | "chain_command_block" | "repeating_command_block" => vec![
+            ("Command", Tag::String(String::new())),
+            ("SuccessCount", int(0)),
+            ("TrackOutput", Tag::Byte(1)),
+            ("UpdateLastExecution", Tag::Byte(1)),
+            ("powered", Tag::Byte(0)),
+            ("conditionMet", Tag::Byte(0)),
+            // (`auto` of a chain block, which starts automatic, is set where the block is placed.)
+            ("auto", Tag::Byte(0)),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 /// Protocol id of a block entity type by name.
 pub fn type_id(name: &str) -> Option<u16> {
     kiln_data::builtin_id("minecraft:block_entity_type", name).map(|i| i as u16)
@@ -162,6 +227,17 @@ impl BlockEntity {
         // (A suspicious block's `hit_direction` is for the clients' update tag only.)
         if type_name(self.kind) == "minecraft:brushable_block" {
             fields.retain(|(k, _)| k != "hit_direction");
+        }
+        // What `saveAdditional` writes however little has happened to the block entity, and the components every
+        // block entity saves (`saveWithoutMetadata`), even when it has none: `components: {}`.
+        let loot = fields.iter().any(|(k, _)| k == "LootTable");
+        for (key, value) in always_saved(type_name(self.kind)) {
+            if !fields.iter().any(|(k, _)| k == key) && !(key == "Items" && loot) {
+                fields.push((key.to_owned(), value));
+            }
+        }
+        if !fields.iter().any(|(k, _)| k == "components") {
+            fields.push(("components".to_owned(), Tag::Compound(Vec::new())));
         }
         let mut out = Vec::with_capacity(fields.len() + 4);
         out.push(("id".to_owned(), Tag::String(type_name(self.kind).to_owned())));
