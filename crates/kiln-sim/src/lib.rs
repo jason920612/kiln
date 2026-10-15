@@ -1765,9 +1765,9 @@ impl Sim {
         let dt = Instant::now();
         let packets = self.independent_b0(packets, !joins.is_empty() || !leaves.is_empty() || !console.is_empty());
         self.track_idle(&packets);
-        let dt = diag::lap("b0.idle", dt);
+        let dt = diag::lap_slow("b0.idle", dt);
         self.maintain_chunks();
-        let dt = diag::lap("b0.chunks", dt);
+        let dt = diag::lap_slow("b0.chunks", dt);
         self.rendezvous_for_topology();
         // A join enters the level at once, as in vanilla; the chunk it stands in is loaded now or,
         // if it has to be generated, ahead of everything else while the player waits for it
@@ -1777,16 +1777,16 @@ impl Sim {
             self.dims[jn.dim].request_urgent(player_chunk(jn.pos));
         }
         let changed = self.apply_topology();
-        let dt = diag::lap("b0.topology", dt);
+        let dt = diag::lap_slow("b0.topology", dt);
         self.plugins_b0();
         for (jn, j) in joining {
             let conn = j.conn;
             self.join(j, jn);
             self.plugins_joined(conn);
         }
-        let dt = diag::lap("b0.joins", dt);
+        let dt = diag::lap_slow("b0.joins", dt);
         self.update_membership(changed);
-        diag::lap("b0.membership", dt);
+        diag::lap_slow("b0.membership", dt);
         lap(&mut self.stats, "b0");
 
         // P: region-local packets in parallel.
@@ -1909,6 +1909,9 @@ impl Sim {
 
         for (name, d) in diag::take() {
             self.stats.phase(name, d);
+        }
+        for (name, d) in diag::take_slow() {
+            self.stats.tick_part(name, d);
         }
         self.record_tick_time(start.elapsed().as_nanos() as i64);
         if let Some(ms) = stats::slow_print_ms() {
@@ -2882,14 +2885,14 @@ impl Sim {
             let dt = Instant::now();
             let unloads = std::mem::take(&mut self.dims[dim].unloads);
             let unloaded = if unloads.is_empty() { Vec::new() } else { self.dims[dim].unload(unloads, &keep.iter().copied().collect()) };
-            let dt = diag::lap("ch.unload_chunks", dt);
+            let dt = diag::lap_slow("ch.unload_chunks", dt);
             if !unloaded.is_empty() {
                 debug!("unloaded {} chunks of {}", unloaded.len(), self.dims[dim].key);
                 let owners = self.owner_uuids();
                 let gone = self.dims[dim].store_entities(&unloaded, false, &owners);
-                let dt = diag::lap("ch.unload_entities", dt);
+                let dt = diag::lap_slow("ch.unload_entities", dt);
                 self.forget_entities(gone);
-                diag::lap("ch.unload_forget", dt);
+                diag::lap_slow("ch.unload_forget", dt);
             }
             let dt = Instant::now();
             let d = &mut self.dims[dim];
@@ -2906,13 +2909,13 @@ impl Sim {
                 info!("chunks of the save of {} handed to the writer", d.key);
             }
             d.install_generated(&keep);
-            let dt = diag::lap("ch.install_generated", dt);
+            let dt = diag::lap_slow("ch.install_generated", dt);
             // Every player's own chunk, uncapped: each player must stand in an owned cell (or
             // waits for it while it is generated).
             for pos in keep {
                 d.request_urgent(pos);
             }
-            let dt = diag::lap("ch.own", dt);
+            let dt = diag::lap_slow("ch.own", dt);
             // Then the requests, players interleaved (everyone's nearest chunk first), in an
             // order that does not depend on how regions split them.
             let mut wanted = std::mem::take(&mut d.requests);
@@ -2941,7 +2944,7 @@ impl Sim {
                 }
                 loads += 1;
             }
-            diag::lap("ch.requests", dt);
+            diag::lap_slow("ch.requests", dt);
         }
     }
 

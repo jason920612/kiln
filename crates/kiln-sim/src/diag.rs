@@ -39,6 +39,26 @@ pub(crate) fn lap(name: &'static str, start: Instant) -> Instant {
     now
 }
 
+/// Parts of the serial phases that a slow tick's line (`KILN_SLOW_PRINT`) shows even without
+/// `KILN_PHASE_DETAIL`: rare stalls there are otherwise hard to catch with the detail on.
+static SLOW: Mutex<Vec<(&'static str, Duration)>> = Mutex::new(Vec::new());
+
+/// [`lap`], kept for the slow-tick line too.
+pub(crate) fn lap_slow(name: &'static str, start: Instant) -> Instant {
+    let now = Instant::now();
+    let d = now - start;
+    add(name, d);
+    if !on() && crate::stats::slow_print_ms().is_some() {
+        SLOW.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((name, d));
+    }
+    now
+}
+
+/// What [`lap_slow`] kept since the last call (without `KILN_PHASE_DETAIL`).
+pub(crate) fn take_slow() -> Vec<(&'static str, Duration)> {
+    std::mem::take(&mut *SLOW.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+}
+
 /// The parts timed since the last call.
 pub(crate) fn take() -> Vec<(&'static str, Duration)> {
     if !on() {
