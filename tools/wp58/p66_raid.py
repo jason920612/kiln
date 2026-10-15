@@ -260,7 +260,7 @@ def trade_prices(a):
             S(f"effect clear {NAME} minecraft:hero_of_the_village")
             time.sleep(1.0)
         got = None
-        for e in sorted([x for x in a.state(40)["entities"] if x["t"] == "villager"], key=lambda e: (e["x"] - a.state(0)["x"]) ** 2 + (e["z"] - a.state(0)["z"]) ** 2):
+        for e in sorted([x for x in a.state(60)["entities"] if x["t"] == "villager" and x.get("prof") not in ("none", "nitwit", None)], key=lambda e: (e["x"] - a.state(0)["x"]) ** 2 + (e["z"] - a.state(0)["z"]) ** 2):
             S(f"tp {NAME} {e['x']-1.6:.2f} {e['y']:.2f} {e['z']:.2f}")
             time.sleep(0.8)
             if not interact_ent(a, e["id"]):
