@@ -5,7 +5,9 @@
 //!
 //! Partition independence: scheduled ticks, block events and moving pistons belong to the
 //! chunk they are in and follow merges and splits; random ticks draw from a random seeded
-//! per chunk and game tick, so they do not depend on which region a chunk is in. The level
+//! per chunk and game tick, and pick their positions with the level's `randValue` generator,
+//! which each cell of chunks continues from tick to tick (cells never split between regions),
+//! so neither depends on which region a chunk is in. The level
 //! random that scheduled behaviour reads (lava spread delays, piston sound pitch) is kept per
 //! region, an approximation (I class).
 //!
@@ -948,13 +950,20 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
             let min_section = chunk.min_y() >> 4;
             sections.clear();
             sections.extend(chunk.sections.iter().enumerate().map(|(i, s)| (min_section + i as i32, s.is_randomly_ticking())));
-            let (random, rand_value) = chunk_random(level.env.seed, level.env.game_time, c);
+            let (random, first_value) = chunk_random(level.env.seed, level.env.game_time, c);
+            // `Level.randValue`: the position generator the chunks of a level share and
+            // continue one after another, game tick after game tick. Here the chunks of a cell
+            // do (in position order), and each cell starts from its first chunk's hash.
+            let rand_value = level.cells.cell(c.cell()).and_then(|cell| cell.rand_value()).unwrap_or(first_value);
             let saved = std::mem::replace(&mut level.blocks.random, random);
             let saved_value = std::mem::replace(&mut level.blocks.data.rand_value, rand_value);
             tick_thunder(level, c);
             tick_chunk_blocks(level, c, &sections, speed);
+            let left = std::mem::replace(&mut level.blocks.data.rand_value, saved_value);
+            if let Some(cell) = level.cells.cell_mut(c.cell()) {
+                cell.set_rand_value(left);
+            }
             level.blocks.random = saved;
-            level.blocks.data.rand_value = saved_value;
         }
     }
     let dt = crate::diag::lap("tb.random", dt);
