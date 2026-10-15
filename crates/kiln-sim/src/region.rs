@@ -912,6 +912,9 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     if p.has_effect("minecraft:bad_omen") {
         let at = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
         p.omen_village = crate::poi::sections_to_village(cells, at) <= 1;
+        if env.game_time % 100 == 0 {
+            tracing::info!("DEBUG bad omen at {at:?}: sections_to_village {} centers near {:?}", crate::poi::sections_to_village(cells, at), crate::poi::village_centers(cells, [at[0] >> 4, at[1] >> 4, at[2] >> 4], 6));
+        }
         let bp = kiln_entity::math::BlockPos::new(at[0], at[1], at[2]);
         p.omen_raid_full = crate::raid::raid_at_view(&env.blocks.raids, bp).is_some_and(|r| r.omen_level >= 5);
     }
