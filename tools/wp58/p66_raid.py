@@ -106,6 +106,14 @@ def melee(a, deadline):
     a.select("minecraft:netherite_sword")
     es = [e for e in a.state(100)["entities"] if e["t"] in RAIDER_T]
     if not es:
+        # raiders the client does not see (far, or down a hole): the server says where they are
+        for t in RAIDER_T:
+            for l in S(f"execute as @e[type=minecraft:{t},{BOX}] unless data entity @s {{Wave:-1}} run data get entity @s Pos"):
+                m = re.findall(r"(-?d+.?d*)d", l)
+                if len(m) == 3 and "entity data" in l:
+                    S(f"tp {NAME} {float(m[0])-1.5:.2f} {float(m[1]):.2f} {float(m[2]):.2f}")
+                    time.sleep(1.0)
+                    return 0
         return 0
     e = min(es, key=lambda e: (e["x"] - st["x"]) ** 2 + (e["z"] - st["z"]) ** 2 + (e["y"] - st["y"]) ** 2)
     d = math.dist((e["x"], e["y"], e["z"]), (st["x"], st["y"], st["z"]))
@@ -127,6 +135,9 @@ def melee(a, deadline):
         time.sleep(0.12)
         a.mouse("left", "tap")
         time.sleep(0.55)
+    # no progress: a pit of powder snow (the village was in a snowy place) lets the swings hit the snow, not the raider
+    st = a.state(0)
+    S(f"fill {int(st['x'])-5} {int(st['y'])-2} {int(st['z'])-5} {int(st['x'])+5} {int(st['y'])+3} {int(st['z'])+5} minecraft:air replace minecraft:powder_snow")
     return 0
 
 
@@ -151,6 +162,7 @@ def ring_bell(a):
     a.mouse("right", "tap")
     time.sleep(1.2)
     rows = raiders_now()
+    rows = [r for r in rows if r[1] >= 1]
     return {"raiders": len(rows), "glowing": sum(1 for r in rows if r[3])}
 
 
@@ -197,7 +209,7 @@ def run_raid(a, max_s=3000):
             sample = {"t": round(time.time() - t0, 1), "waves": {str(w): {t: [v[0], v[1], round(v[2])] for t, v in d.items()} for w, d in by_wave.items()}, "bars": bars(a), "misc": misc_around(a),
                       "villagers": villagers_now() if len(LOG["samples"]) % 10 == 0 else None}
             LOG["samples"].append(sample)
-            if rs and first is None:
+            if any(r[1] >= 1 for r in rs) and first is None:
                 first = time.time() - t0
                 F("first raiders after", round(first), "s:", sample["waves"], "bar", sample["bars"])
                 # the bell: raiders within 48 blocks glow
