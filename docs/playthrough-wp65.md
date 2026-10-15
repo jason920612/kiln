@@ -139,6 +139,12 @@
 - 下界走路(穿洞穴)和傳送門被怪物打斷沒有測;下界頂上的飛行是在下界天花板上方。
 - 這次沒做:磚塊/基岩的下界要塞整合測試(wp59 做過)、骷髏/凋零骷髏頭的掉落、鞘翅的耐久與修補。
 
-## 最後驗證
+## 最終驗證(VM,release,提交 `5f42c0f` 之後只有文件與遊玩腳本的變動;程式碼沒有再動)
 
-見下方「最終驗證」(跑完才寫入)。
+- `cargo test --workspace --release --no-fail-fast`:**不帶 `KILN_DATAPACK`** 與 **帶 `KILN_DATAPACK=/home/test/kiln/work/generated`** 都是 **166 個測試目標、1,276 個測試全綠**(含新的 `nether_spawn_rules` 3、`gateway_trips` 2、`mounts` 1、`health` 1,以及改了編號的 `elytra_glide_wears_the_wings`)。`crowd_golden` 的四個封包摘要沒有變(沒有重錄)。
+- `kiln-sim --test determinism`:6/6。`kiln-entity --test mob_parity`:**1451 個情境、594,683 個 mob 狀態逐項相同**(`work/m6-mobs2/vectors.jsonl`,先備份為 `~/wp65/vectors.jsonl.bak`,沒有新增向量,1480 行不變)。
+- `tools/parity_suites.py --skip-workspace`:**102 次執行全部 exit 0**。
+- 負向檢查(在 VM 的工作樹上逐項把修正拿掉,新測試都會失敗,之後 `git checkout` 還原):閘門冷卻檢查退回原樣(`gateway_trips` 2 個失敗)、熾足獸放置規則與疣豬獸 walk target 退回(`nether_spawn_rules` 2 個失敗)、
+  `START_FALL_FLYING` 退回 8(`elytra_glide_wears_the_wings` 失敗)、不處理 `OPEN_INVENTORY`(`the_inventory_key_while_riding_opens_the_mounts_screen` 失敗)、不給不祥之瓶效果(`drinking_an_ominous_bottle_gives_bad_omen_of_its_level` 失敗)。
+- 伺服器效能(`sim_load` 沒有重跑:這次的改動只在生怪規則的 walk target、玩家封包的兩個動作與消耗品 listener,沒有碰 tick 的熱路徑);實機 mspt 見上面的鞘翅表(4450 格飛行平均 2.9~4.1 ms)。
+- 收尾:Kiln 與 vanilla 伺服器、兩個客戶端都已停掉,`~/wt/wp65-playthrough5/target` 已刪。

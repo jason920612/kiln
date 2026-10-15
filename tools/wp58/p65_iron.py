@@ -56,7 +56,9 @@ def iron():
     sv("tick rate 100", show=False)
     t0 = time.time()
     while time.time() - t0 < secs:
-        time.sleep(20)
+        for _ in range(7):
+            time.sleep(3)
+            sv(f"damage @e[type=minecraft:villager,x={X0-5},y={Y},z={Z0-5},dx=10,dy=5,dz=10] 0.1 minecraft:player_attack by KilnTest", show=False, wait=0.2)
         F("t+%d golems %d" % (time.time() - t0, golems()))
     sv("tick rate 20", show=False)
     mem = sv(f"execute as @e[type=minecraft:villager,x={X0-5},y={Y},z={Z0-5},dx=10,dy=5,dz=10,limit=1] run data get entity @s Brain.memories", show=False, wait=1.5)
