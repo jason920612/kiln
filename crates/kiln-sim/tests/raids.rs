@@ -240,3 +240,32 @@ fn a_rung_bell_makes_the_raiders_around_it_glow() {
     assert!(first[1].is_some(), "47 blocks away glows: {first:?}");
     assert!(first[2].is_none(), "60 blocks away does not: {first:?}");
 }
+
+/// `Raid.tick`: when the raid's center is no longer a village (every bed and the bell broken) and a wave has come, the raid is lost: the bar says
+/// so (`Raid - Defeat`), and after the 600 ticks of celebration the raid is over. (Vanilla measured on the reference server: "Raid - Defeat" two
+/// seconds after the last point of interest of the village was broken, gone 29 s later.)
+#[test]
+fn a_raid_is_lost_when_the_village_is_gone() {
+    let mut w = World::new();
+    w.village();
+    w.ticks(40);
+    w.console("gamemode survival Hunter");
+    w.console("effect give Hunter minecraft:bad_omen 100 1");
+    w.ticks(2 + 600);
+    w.console("gamemode creative Hunter");
+    w.ticks(305);
+    let raids = w.sim.raids("minecraft:overworld");
+    assert_eq!(raids[0].1, "ongoing");
+    assert_eq!(raids[0].2, 1, "first wave: {raids:?}");
+    let [x, y, z] = w.pos();
+    for i in 0..3 {
+        w.console(&format!("setblock {} {y} {} minecraft:air", x + 3 + 2 * i, z + 4));
+    }
+    w.console(&format!("setblock {} {y} {} minecraft:air", x - 3, z + 4));
+    w.console("kill @e[type=minecraft:villager]");
+    w.ticks(60);
+    let raids = w.sim.raids("minecraft:overworld");
+    assert_eq!(raids[0].1, "loss", "{raids:?}");
+    w.ticks(620);
+    assert!(w.sim.raids("minecraft:overworld").is_empty(), "the celebration is over");
+}
