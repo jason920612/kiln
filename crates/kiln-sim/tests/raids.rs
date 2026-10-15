@@ -146,3 +146,37 @@ fn bad_omen_in_a_village_starts_a_raid_with_waves_until_victory() {
     w.ticks(620);
     assert!(w.sim.raids("minecraft:overworld").is_empty());
 }
+
+/// `Raider.hurtServer` updates the raid's boss bar before the blow lands and `Raid.removeFromRaid` after a death: the bar shows the
+/// living raiders' health over the wave's total, one blow behind while they are only hurt, exact once one of them dies. (It stayed
+/// full until the wave was dead.)
+#[test]
+fn the_raid_bar_follows_the_raiders_health() {
+    let mut w = World::new();
+    w.village();
+    w.ticks(40);
+    w.console("gamemode survival Hunter");
+    w.console("effect give Hunter minecraft:bad_omen 100 1");
+    w.ticks(2 + 600);
+    w.console("gamemode creative Hunter");
+    w.ticks(305);
+    let raids = w.sim.raids("minecraft:overworld");
+    assert_eq!(raids[0].2, 1, "first wave: {raids:?}");
+    let bar = || w.sim.raids("minecraft:overworld")[0].6;
+    assert_eq!(bar(), 1.0);
+    let total = w.mobs("minecraft:pillager").len() as f32 * 24.0 + w.mobs("minecraft:vindicator").len() as f32 * 24.0;
+    w.console("tag @e[type=minecraft:pillager,limit=1] add wp66");
+    w.console("damage @e[tag=wp66] 8 minecraft:generic");
+    w.ticks(2);
+    assert_eq!(w.sim.raids("minecraft:overworld")[0].6, 1.0, "the bar was told before the blow");
+    w.ticks(15);
+    w.console("damage @e[tag=wp66] 4 minecraft:generic");
+    w.ticks(2);
+    let p = w.sim.raids("minecraft:overworld")[0].6;
+    assert!((p - (total - 8.0) / total).abs() < 0.002, "the first blow shows with the second: {p} of {total}");
+    // A raider dying updates it with everything as it is.
+    w.console("kill @e[tag=wp66]");
+    w.ticks(2);
+    let p = w.sim.raids("minecraft:overworld")[0].6;
+    assert!((p - (total - 24.0) / total).abs() < 0.002, "{p}");
+}

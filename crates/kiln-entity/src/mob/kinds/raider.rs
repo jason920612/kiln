@@ -202,6 +202,14 @@ pub fn ai_step_before(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLev
     }
 }
 
+/// `Raider.hurtServer`, before the damage: with an active raid the raid updates its boss bar first (so the bar shows the health as it
+/// was before this blow).
+pub fn before_hurt(e: &Entity, m: &MobData, level: &mut dyn EntityLevel) {
+    let Some(r) = raider(m) else { return };
+    let Some(raid) = r.raid else { return };
+    level.emit(Event::Raid(RaidEvent::Hurt { raid, entity: e.id, health: m.health }));
+}
+
 /// `Raider.die`: the raid loses the raider (and its wave's leader); a player killer becomes a
 /// hero of the village.
 pub fn die(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, source: &DamageSource) {

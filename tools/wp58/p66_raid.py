@@ -33,17 +33,17 @@ def counts():
 
 
 def raiders_now():
-    """[(type, wave, hp, glowing)] from `data get entity` of every raider."""
-    out = S(f"execute as @e[type=#minecraft:raiders,{BOX}] run data get entity @s")
+    """[(type, wave, hp, glowing)] of every raider of the level (one query per raider type)."""
     rows = []
-    for l in out:
-        t = re.search(r'id: "minecraft:([a-z_]+)"', l)
-        if not t:
-            continue
-        w = re.search(r"Wave: (-?\d+)", l)
-        hp = re.search(r"Health: ([\d.]+)f", l)
-        g = re.search(r"Glowing: (\d)b", l) or re.search(r"Glowing: (true|1b)", l)
-        rows.append((t.group(1), int(w.group(1)) if w else -1, float(hp.group(1)) if hp else 0.0, bool(g)))
+    for t in RAIDER_T:
+        out = S(f"execute as @e[type=minecraft:{t},{BOX}] run data get entity @s")
+        for l in out:
+            if "entity data" not in l and "query[" not in l:
+                continue
+            w = re.search(r"Wave: (-?\d+)", l)
+            hp = re.search(r"Health: ([\d.]+)f", l)
+            g = re.search(r"Glowing: (\d)b", l) or re.search(r"Glowing: (true|1b)", l)
+            rows.append((t, int(w.group(1)) if w else -1, float(hp.group(1)) if hp else 0.0, bool(g)))
     return rows
 
 
@@ -66,6 +66,7 @@ def effects(a):
 def prep(a):
     alive(a)
     S("gamerule raids true", "gamerule spawn_mobs false", "gamerule advance_time false", "gamerule advance_weather false", f"difficulty {DIFFICULTY}", "time set 6000", "weather clear 1000000", "gamerule mob_griefing true")
+    S('datapack disable "file/wp66"')   # (its tick function removes iron golems)
     if T == "V":
         S("op KilnTest")
     S(f"forceload add {VX-32} {VZ-32} {VX+32} {VZ+32}")
