@@ -725,6 +725,19 @@ mod tests {
         assert_eq!(w.block_entity_data(2, 0, 2), None, "chests send no block entity data");
     }
 
+    /// `CommandBlock.newBlockEntity`: a chain command block starts automatic (the other two do not).
+    #[test]
+    fn a_chain_command_block_starts_automatic() {
+        let mut w = World::flat(OVERWORLD, 0, 67);
+        w.set_block(2, 0, 2, block::CHAIN_COMMAND_BLOCK);
+        w.set_block(4, 0, 2, block::COMMAND_BLOCK);
+        let auto = |x| {
+            let be = w.chunk(ChunkPos::new(0, 0)).unwrap().block_entity(x, 0, 2).unwrap().saved([x as i32, 0, 2]);
+            be.get("auto").and_then(Tag::as_i64)
+        };
+        assert_eq!((auto(2), auto(4)), (Some(1), Some(0)));
+    }
+
     #[test]
     fn unloaded_chunks_are_not_edited_through_blocks() {
         let mut w = World::flat(OVERWORLD, 0, 67);
