@@ -1160,7 +1160,9 @@ pub(crate) fn player_packet(
         }
         PlayIn::PlayerCommand { action } if action == crate::glide::START_FALL_FLYING => {
             let fluids = p.fluids(&|pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0));
+            let before = (p.on_ground, p.fall_flying);
             p.try_start_fall_flying(fluids.in_water || fluids.in_lava);
+            tracing::info!("DEBUG START_FALL_FLYING {}: on_ground {} flying before {} after {} fluids {:?}", p.name, before.0, before.1, p.fall_flying, (fluids.in_water, fluids.in_lava));
         }
         PlayIn::PlayerCommand { action } if action != STOP_SLEEPING => {
             const START_SPRINTING: i32 = 1;

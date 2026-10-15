@@ -1,6 +1,18 @@
 from p65_b2 import *
-X0, Y, Z0 = 6500, 200, 6500
-for z in (Z0, Z0 + 4):
-    print("unit z", z)
-    for dy in range(5, -1, -1):
-        print(Y + dy, [a.block(X0 + dx, Y + dy, z).replace("Block{minecraft:", "")[:34] for dx in (-1, 0, 1)])
+sv("effect clear KilnTest minecraft:slow_falling", show=False)
+sv("clear KilnTest", show=False)
+sv("item replace entity KilnTest armor.chest with minecraft:elytra", show=False)
+sv("give KilnTest minecraft:firework_rocket[fireworks={flight_duration:3}] 64", show=False)
+for delay in (1.5, 3.0):
+    alive(a)
+    sv("item replace entity KilnTest armor.chest with minecraft:elytra", show=False)
+    sv("tp KilnTest 16000.5 330 12000.5", show=False)
+    time.sleep(delay)
+    a.select("minecraft:firework_rocket")
+    a.look(-90, 10)
+    n0 = a.inv().get("minecraft:firework_rocket", 0)
+    a.key("space", "tap"); time.sleep(0.4); a.key("space", "tap"); time.sleep(0.6)
+    a.mouse("right", "tap"); time.sleep(1.5)
+    n1 = a.inv().get("minecraft:firework_rocket", 0)
+    s = a.state(0)
+    print("delay", delay, "client glide", s["fallFlying"], "rockets", n0, "->", n1, "y", round(s["y"], 1), flush=True)

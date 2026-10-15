@@ -61,6 +61,9 @@ def fly(dimn, x0, z0, dx, dz, secs):
             sp = math.hypot(p[0] - lastp[0], p[2] - lastp[2]) / (time.time() - last)
             log.append((round(time.time() - t0), p, round(sp, 1)))
             F("t+%d A" % (time.time() - t0), p, "speed %.1f b/s" % sp, "B", pos(b), "|", mspt()[:95])
+            if time.time() - t0 > 20 and not os.path.exists("/tmp/_shot_taken"):
+                shot("elytra_flight_" + dimn)
+                open("/tmp/_shot_taken", "w").close()
             last = time.time(); lastp = p
     F("rockets", rockets, "final A", pos(a), "B", pos(b))
     F("chunks before", ch0[:200])
