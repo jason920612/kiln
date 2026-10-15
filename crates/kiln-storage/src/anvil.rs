@@ -441,8 +441,12 @@ impl ChunkSource for AnvilSource {
         if self.background.is_none() || (dim.min_y, dim.height) != (self.dimension.min_y, self.dimension.height) {
             return StartLoad::Unsupported;
         }
-        // A copy still with the encoder is waited for (it is newer than anything stored).
-        self.collect(Some(pos), false);
+        // A copy still with the encoder is newer than anything stored: asked for again once it
+        // is back (the tick does not wait for the encoders' queue).
+        self.collect(None, false);
+        if self.background.as_ref().is_some_and(|bg| bg.encoding.contains(&pos)) {
+            return StartLoad::Busy;
+        }
         let key = (pos.x >> 5, pos.z >> 5);
         let local = ((pos.x & 31) as usize, (pos.z & 31) as usize);
         let bg = self.background.as_ref().unwrap();
@@ -454,7 +458,7 @@ impl ChunkSource for AnvilSource {
         }
         if bg.writer.writing(key) {
             // The region file is being replaced: read it once it is.
-            return StartLoad::Unsupported;
+            return StartLoad::Busy;
         }
         let dir = &self.region_dir;
         let region = self.regions.entry(key).or_insert_with(|| {

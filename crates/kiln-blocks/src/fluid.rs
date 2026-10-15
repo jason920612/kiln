@@ -235,6 +235,31 @@ fn can_pass_through_wall(dir: Direction, from_state: u16, to_state: u16) -> bool
     !merged_face_occludes(from, to, dir)
 }
 
+/// The blocks `getSpread` reads on its way out from a fluid (`FlowingFluid.SpreadContext`):
+/// each position at the fluid's height and the one below it, read once (the search walks the
+/// same few blocks along many paths).
+struct SpreadCache<'a, L: ?Sized> {
+    level: &'a L,
+    origin: BlockPos,
+    /// (block, block below) by offset from the origin, -5..=5 on each axis.
+    blocks: [[Option<(u16, u16)>; 11]; 11],
+}
+
+impl<'a, L: Level + ?Sized> SpreadCache<'a, L> {
+    fn new(level: &'a L, origin: BlockPos) -> Self {
+        Self { level, origin, blocks: [[None; 11]; 11] }
+    }
+
+    fn at(&mut self, pos: BlockPos) -> (u16, u16) {
+        let (dx, dz) = (pos.x - self.origin.x + 5, pos.z - self.origin.z + 5);
+        if pos.y != self.origin.y || !(0..11).contains(&dx) || !(0..11).contains(&dz) {
+            return (self.level.block(pos), self.level.block(pos.below()));
+        }
+        let level = self.level;
+        *self.blocks[dx as usize][dz as usize].get_or_insert_with(|| (level.block(pos), level.block(pos.below())))
+    }
+}
+
 /// The fluid behaviour of one kind of flowing fluid.
 struct Flow {
     kind: FluidKind,
@@ -378,9 +403,10 @@ impl Flow {
     fn get_spread<L: Level + ?Sized>(&self, level: &L, pos: BlockPos, state: u16) -> Vec<(Direction, Fluid)> {
         let mut best = 1000;
         let mut out: Vec<(Direction, Fluid)> = Vec::new();
+        let mut cache = SpreadCache::new(level, pos);
         for dir in Direction::HORIZONTAL {
             let n = pos.relative(dir);
-            let ns = level.block(n);
+            let (ns, below) = cache.at(n);
             let nf = logic::fluid(ns);
             if !self.can_maybe_pass(state, dir, ns, nf) {
                 continue;
@@ -389,10 +415,10 @@ impl Flow {
             if !can_hold_specific(ns, FluidType::of(new)) {
                 continue;
             }
-            let dist = if self.is_hole(ns, level.block(n.below())) {
+            let dist = if self.is_hole(ns, below) {
                 0
             } else {
-                self.slope_distance(level, n, 1, dir.opposite(), ns)
+                self.slope_distance(&mut cache, n, 1, dir.opposite(), ns)
             };
             if dist < best {
                 out.clear();
@@ -409,20 +435,20 @@ impl Flow {
     }
 
     /// `getSlopeDistance`.
-    fn slope_distance<L: Level + ?Sized>(&self, level: &L, pos: BlockPos, depth: i32, from: Direction, state: u16) -> i32 {
+    fn slope_distance<L: Level + ?Sized>(&self, cache: &mut SpreadCache<'_, L>, pos: BlockPos, depth: i32, from: Direction, state: u16) -> i32 {
         let mut best = 1000;
         for dir in Direction::HORIZONTAL {
             if dir == from {
                 continue;
             }
             let n = pos.relative(dir);
-            let ns = level.block(n);
+            let (ns, below) = cache.at(n);
             if self.can_pass(self.flowing_type(), state, dir, ns, logic::fluid(ns)) {
-                if self.is_hole(ns, level.block(n.below())) {
+                if self.is_hole(ns, below) {
                     return depth;
                 }
-                if depth < slope_find_distance(level, self.kind) {
-                    best = best.min(self.slope_distance(level, n, depth + 1, dir.opposite(), ns));
+                if depth < slope_find_distance(cache.level, self.kind) {
+                    best = best.min(self.slope_distance(cache, n, depth + 1, dir.opposite(), ns));
                 }
             }
         }

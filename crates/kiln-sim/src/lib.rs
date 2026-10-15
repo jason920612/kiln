@@ -384,11 +384,11 @@ const CHUNK_LOADS_PER_TICK: usize = 256;
 /// do not wait); the rest are installed in the next ticks.
 const INSTALL_BUDGET: Duration = Duration::from_micros(1500);
 /// Generated chunks installed per region per tick at most (players' own chunks aside): each
-/// costs its region the light of a new chunk, its first mobs and, once its neighbours are in,
-/// its generation leftovers, so a burst (a player crossing into a new column of chunks) spreads
-/// over a few ticks of that region (80 a second per region, more than a player flying with
-/// elytra needs; regions take theirs side by side).
-const GENERATED_PER_TICK: usize = 4;
+/// costs its region the light across its borders, its first mobs and, once its neighbours are
+/// in, its generation leftovers, so a burst (players arriving somewhere new) spreads over a few
+/// ticks of that region (160 a second per region, more than the generation threads make;
+/// regions take theirs side by side).
+const GENERATED_PER_TICK: usize = 8;
 
 struct Player {
     conn: ConnId,
@@ -1142,6 +1142,8 @@ impl Dim {
                 return self.generation.as_mut().is_some_and(|p| p.request(pos));
             }
             kiln_world::StartLoad::Unsupported => {}
+            // Asked for again next tick (it is still a request: not loaded, not loading).
+            kiln_world::StartLoad::Busy => return true,
         }
         match self.provider.load(pos) {
             Some(chunk) => {

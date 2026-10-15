@@ -534,6 +534,27 @@ impl RegionWork<'_> {
         // Which chunks each player lacks is its own business (a window); sending them needs
         // the chunks' packet caches, so that part runs in connection order here.
         let missing = ctx.map_mut_with(CHUNK_VIEW_WINDOW, &mut self.players, |_, p| if p.disconnected { Vec::new() } else { chunk_view(p) });
+        // Making a chunk's packet is the costly part of sending it: the packets this tick sends
+        // that are not made yet are made side by side first (the same packets, in the same order
+        // afterwards).
+        let dt = std::time::Instant::now();
+        let mut to_make: Vec<ChunkPos> = Vec::new();
+        for (p, missing) in self.players.iter().zip(&missing) {
+            let loaded = missing.iter().filter(|&&c| self.cells.chunk(c).is_some());
+            to_make.extend(loaded.take(chunk_budget(p)).filter(|&&c| self.cells.chunk(c).is_some_and(|ch| !ch.has_packet())));
+        }
+        if to_make.len() > 1 {
+            to_make.sort_unstable();
+            to_make.dedup();
+            let cells = &*self.cells;
+            let made = ctx.map_indexed_with(CHUNK_PACKET_WINDOW, &to_make, |_, &c| cells.chunk(c).and_then(|ch| ch.make_packet(c.x, c.z, env.biome_count)));
+            for (c, packet) in to_make.into_iter().zip(made) {
+                if let (Some(chunk), Some(packet)) = (self.cells.chunk_mut(c), packet) {
+                    chunk.keep_packet(packet);
+                }
+            }
+        }
+        crate::diag::lap("c.packets", dt);
         for (p, missing) in self.players.iter_mut().zip(missing).filter(|(_, m)| !m.is_empty()) {
             send_chunks(p, missing, &mut *self.cells, env, &mut self.out.wanted);
         }
@@ -880,6 +901,8 @@ impl RegionWork<'_> {
 const MENU_WINDOW: Window = Window::new().item_ns(700);
 const PLAYER_TICK_WINDOW: Window = Window::new().item_ns(2_000);
 const CHUNK_VIEW_WINDOW: Window = Window::new().item_ns(150);
+/// Making one chunk's packet (sections, light): a few hundred microseconds.
+const CHUNK_PACKET_WINDOW: Window = Window::new().item_ns(300_000).chunk(1);
 const FLUSH_WINDOW: Window = Window::new().item_ns(400);
 /// A player's packets of one run (mostly a move and a tick end).
 const PACKET_WINDOW: Window = Window::new().item_ns(600);
@@ -1913,8 +1936,13 @@ fn chunk_view(p: &mut Player) -> Vec<ChunkPos> {
 
 /// Streams the missing chunks that are loaded, nearest first; missing chunks that are not
 /// loaded yet are requested.
+/// Chunks a player is sent per tick at most (`PlayerChunkSender`: what the client asked for).
+fn chunk_budget(p: &Player) -> usize {
+    (p.chunks_per_tick.ceil() as usize).max(1)
+}
+
 fn send_chunks(p: &mut Player, missing: Vec<ChunkPos>, cells: &mut CellSet<Cell>, env: &Env, wanted: &mut Vec<(u32, ConnId, ChunkPos)>) {
-    let budget = (p.chunks_per_tick.ceil() as usize).max(1);
+    let budget = chunk_budget(p);
     let mut batch = Vec::new();
     // Ask for about what the client takes in the next tick or two, nearest first.
     let mut asked = 0;

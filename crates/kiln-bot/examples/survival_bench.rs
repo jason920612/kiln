@@ -1057,7 +1057,7 @@ fn print_summary(r: &Value) {
         let t = &fl["traffic"];
         let (l, ah) = (&fl["fly_chunk_latency"], &fl["fly_ahead_blocks"]);
         println!(
-            "flyers {:.0} in the air; {:.0} ticks, {:.0} blocks, {:.0} rockets, {:.0} corrections; ready ahead mean {:.0} p50 {:.0} blocks, {:.0} ticks under 32 blocks, {:.0} over a missing chunk; arrival after entering the view n {:.0} mean {:.0} p50 {:.0} p99 {:.0} max {:.0} ms",
+            "flyers {:.0} in the air; {:.0} ticks, {:.0} blocks, {:.0} rockets, {:.0} corrections; ready ahead mean {:.0} p50 {:.0} blocks, {:.0} ticks under 32 blocks, {:.0} held at the edge of the terrain; arrival after entering the view n {:.0} mean {:.0} p50 {:.0} p99 {:.0} max {:.0} ms",
             f(fl, "arrived"), f(t, "fly_ticks"), f(t, "fly_dm") / 10.0, f(t, "rockets"), f(t, "fly_corrections"), f(ah, "mean_ms"), f(ah, "p50_ms"),
             f(t, "fly_short_ticks"), f(t, "fly_missing_ticks"), f(l, "n"), f(l, "mean_ms"), f(l, "p50_ms"), f(l, "p99_ms"), f(l, "max_ms")
         );

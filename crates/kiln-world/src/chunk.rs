@@ -704,6 +704,31 @@ impl Chunk {
         p
     }
 
+    /// The packet [`Chunk::packet`] would make now, when it has none for the chunk as it is:
+    /// made through a shared reference, so several chunks' packets can be made side by side;
+    /// [`Chunk::keep_packet`] then stores it, and [`Chunk::packet`] hands it out.
+    pub fn make_packet(&self, x: i32, z: i32, biome_count: usize) -> Option<Bytes> {
+        if matches!(&self.cached_packet, Some((v, _)) if *v == self.version) {
+            return None;
+        }
+        let body = match &self.cached {
+            Some((v, body)) if *v == self.version => body.clone(),
+            _ => self.encode(biome_count),
+        };
+        Some(kiln_proto::packets::level_chunk_with_light(x, z, &body))
+    }
+
+    /// Whether [`Chunk::packet`] has the packet for the chunk as it is now.
+    pub fn has_packet(&self) -> bool {
+        matches!(&self.cached_packet, Some((v, _)) if *v == self.version)
+    }
+
+    /// Stores a packet [`Chunk::make_packet`] made for the chunk as it is now.
+    pub fn keep_packet(&mut self, packet: Bytes) {
+        self.cached = None;
+        self.cached_packet = Some((self.version, packet));
+    }
+
     fn encode(&self, biome_count: usize) -> Bytes {
         let mut b = BytesMut::with_capacity(16 * 1024);
 

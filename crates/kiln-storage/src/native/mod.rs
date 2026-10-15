@@ -914,8 +914,12 @@ impl ChunkSource for NativeSource {
         if self.background.is_none() || (dim.min_y, dim.height) != (self.dimension.min_y, self.dimension.height) {
             return StartLoad::Unsupported;
         }
-        // A copy still being encoded is in the store's queue once it is back.
-        self.collect(Some(pos), false);
+        // A copy still being encoded is in the store's queue once it is back: asked for again
+        // then (the tick does not wait for the encoders' queue).
+        self.collect(None, false);
+        if self.background.as_ref().is_some_and(|bg| bg.encoding.contains(&pos)) {
+            return StartLoad::Busy;
+        }
         if !self.store.lock().unwrap().contains(CHUNK, pos) {
             return StartLoad::Missing;
         }

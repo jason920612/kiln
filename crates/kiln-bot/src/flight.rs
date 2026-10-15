@@ -10,8 +10,9 @@
 //! seconds, which the server spawns as a firework attached to the player.
 //!
 //! Measured while flying (after `warmup`): for every tick, the distance along the flight line to
-//! the first chunk that has not arrived yet (capped at the view), and for every chunk that came
-//! into view, how long it took to arrive.
+//! the first chunk that has not arrived yet (capped at the view), the ticks it hung at the edge
+//! of the terrain (like the client, it does not move in a chunk it has not received), and for
+//! every chunk that came into view, how long it took to arrive.
 
 use crate::metrics::{Shared, Traffic};
 use crate::proto::{self, Move};
@@ -230,6 +231,17 @@ impl Flight {
     }
 
     fn fly(&mut self, out: &mut Out, counts: &mut Traffic, shared: &Shared) {
+        // The 26.3 client does not move its player in a chunk it has not received: it hangs in
+        // the air at the edge of the terrain it has until more arrives.
+        if !self.chunks.contains_key(&chunk_of(self.pos)) {
+            if self.measuring() {
+                counts.fly_ticks += 1;
+                counts.fly_missing_ticks += 1;
+                counts.fly_short_ticks += 1;
+                shared.fly_ahead.add(Duration::ZERO);
+            }
+            return;
+        }
         let step = self.plan.speed / 20.0;
         let [hx, hz] = self.plan.heading;
         self.pos[0] += hx * step;
@@ -272,9 +284,6 @@ impl Flight {
             counts.fly_dm += (step * 10.0) as u64;
             if ahead < 32 {
                 counts.fly_short_ticks += 1;
-            }
-            if !self.chunks.contains_key(&chunk_of(self.pos)) {
-                counts.fly_missing_ticks += 1;
             }
             shared.fly_ahead.add(Duration::from_millis(ahead as u64));
         }

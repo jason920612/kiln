@@ -467,7 +467,7 @@ impl fmt::Display for Report {
             let (l, a) = (&self.fly_chunk_latency, &self.fly_ahead_blocks);
             writeln!(
                 f,
-                "  flight     {} ticks, {:.0} blocks, {} rockets, {} corrections; ahead (blocks) mean {:.0} p50 {:.0}, {} ticks under 32, {} ticks over a missing chunk; chunk arrival n {} mean {:.0} p50 {:.0} p99 {:.0} max {:.0} ms",
+                "  flight     {} ticks, {:.0} blocks, {} rockets, {} corrections; ahead (blocks) mean {:.0} p50 {:.0}, {} ticks under 32, {} ticks held at the edge of the terrain; chunk arrival n {} mean {:.0} p50 {:.0} p99 {:.0} max {:.0} ms",
                 t.fly_ticks, t.fly_dm as f64 / 10.0, t.rockets, t.fly_corrections, a.mean_ms, a.p50_ms, t.fly_short_ticks,
                 t.fly_missing_ticks, l.n, l.mean_ms, l.p50_ms, l.p99_ms, l.max_ms
             )?;
