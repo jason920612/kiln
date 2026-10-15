@@ -333,11 +333,21 @@ mod cpu {
 #[cfg(not(windows))]
 mod cpu {
     use std::process::Child;
-    pub fn process(_: &Child) -> Option<f64> {
-        None
+
+    /// CPU seconds (user + system) the process has used (Linux `/proc`, clock ticks of 10 ms).
+    pub fn process(child: &Child) -> Option<f64> {
+        let stat = std::fs::read_to_string(format!("/proc/{}/stat", child.id())).ok()?;
+        let rest: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
+        Some((rest.get(11)?.parse::<f64>().ok()? + rest.get(12)?.parse::<f64>().ok()?) / 100.0)
     }
+
+    /// (busy, total) CPU seconds of all cores since boot.
     pub fn system() -> Option<(f64, f64)> {
-        None
+        let stat = std::fs::read_to_string("/proc/stat").ok()?;
+        let v: Vec<f64> = stat.lines().next()?.split_whitespace().skip(1).filter_map(|w| w.parse().ok()).collect();
+        let total: f64 = v.iter().take(8).sum();
+        let idle = v.get(3)? + v.get(4)?;
+        Some(((total - idle) / 100.0, total / 100.0))
     }
 }
 
