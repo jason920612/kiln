@@ -255,15 +255,19 @@ def trade_prices(a):
     pros = [m.group(1) for l in out for m in [re.search(r'profession: "minecraft:([a-z_]+)"', l)] if m and m.group(1) not in ("none", "nitwit")]
     F("professions in the village:", pros)
     res = {}
+    chosen = None
     for label in ("with the hero effect", "without it"):
         if label == "without it":
             S(f"effect clear {NAME} minecraft:hero_of_the_village")
             time.sleep(1.0)
         got = None
         for e in sorted([x for x in a.state(60)["entities"] if x["t"] == "villager" and x.get("prof") not in ("none", "nitwit", None)], key=lambda e: (e["x"] - a.state(0)["x"]) ** 2 + (e["z"] - a.state(0)["z"]) ** 2):
-            S(f"tp {NAME} {e['x']-1.6:.2f} {e['y']:.2f} {e['z']:.2f}")
-            time.sleep(0.8)
-            if not interact_ent(a, e["id"]):
+            if chosen is not None and e["id"] != chosen:
+                continue
+            cur = next((x for x in a.state(100)["entities"] if x["id"] == e["id"]), e)
+            S(f"tp {NAME} {cur['x']-1.4:.2f} {cur['y']:.2f} {cur['z']:.2f}")
+            time.sleep(0.5)
+            if not interact_ent(a, e["id"], tries=10):
                 continue
             time.sleep(1.0)
             if a.screen() == "MerchantScreen":
@@ -274,6 +278,7 @@ def trade_prices(a):
                 a.cmd("key escape tap")
                 time.sleep(0.6)
                 if got and got != []:
+                    chosen = e["id"]
                     break
             if a.screen() is not None:
                 a.cmd("key escape tap")
