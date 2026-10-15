@@ -2,12 +2,12 @@
 the server runs fast (tick rate 100) for N seconds, then the entities of each type are counted with /kill ("Killed N entities").
 usage: p65_spawn.py NAME DIM X Y Z [SAMPLES [SECONDS]]   (types listed in TYPES)"""
 from p65 import *
-import sys
+import sys, os
 
 name, dim_, X, Y, Z = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 samples = int(sys.argv[6]) if len(sys.argv) > 6 else 4
 secs = int(sys.argv[7]) if len(sys.argv) > 7 else 30
-TYPES = ["blaze", "wither_skeleton", "zombified_piglin", "magma_cube", "ghast", "piglin", "piglin_brute", "hoglin", "strider", "skeleton", "enderman", "zoglin"]
+TYPES = os.environ.get("TYPES", "blaze,wither_skeleton,zombified_piglin,magma_cube,ghast,piglin,piglin_brute,hoglin,strider,skeleton,enderman,zoglin").split(",")
 a, b = clients()
 if T == "V":
     sv("op KilnTest", show=False)
@@ -17,6 +17,9 @@ alive(b)
 sv("gamerule spawn_mobs true", show=False)
 sv("difficulty normal", show=False)
 sv("kill @e[type=!player]", show=False)
+if os.environ.get("TIME"):
+    sv("time set " + os.environ["TIME"], show=False)
+    sv("gamerule advance_time false", show=False)
 for p in ("KilnTest", "Obs"):
     sv(f"gamemode creative {p}", show=False)
     sv(f"execute in minecraft:{dim_} run tp {p} {X} {Y} {Z}", show=False)

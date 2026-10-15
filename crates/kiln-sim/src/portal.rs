@@ -209,7 +209,9 @@ fn max_rectangle(columns: &[i32]) -> (i32, i32, i32) {
     let mut stack: Vec<usize> = vec![0];
     for i in 1..=columns.len() {
         let h = if i == columns.len() { 0 } else { columns[i] };
-        while let Some(&top) = stack.last() {
+        while let Some(        // (Entities that were inside before the first one left all go: they were past `entityInside` already; only
+        // the cooldown started in an earlier tick holds a trip back.)
+        if self.dims[dim].gateway_cooldowns.get(&key).is_some_and(|&t| t > self.game_time && t - GATEWAY_COOLDOWN as i64 != self.game_time) {op) = stack.last() {
             let top_height = columns[top];
             if h >= top_height {
                 stack.push(i);
@@ -411,6 +413,12 @@ impl Sim {
                 if let Some(pos) = self.gateway_destination(from, entry) {
                     let rot = self.players[&t.conn].rot;
                     self.change_dimension(t.conn, from, pos, rot);
+                } else if let Some(p) = self.players.get_mut(&t.conn) {
+                    // `TheEndGatewayBlock.entityInside` does not start a trip while the gateway cools down: the
+                    // player stays inside without a portal process and goes as soon as it has cooled (not after
+                    // waiting out an entity portal cooldown that standing inside keeps full).
+                    p.portal = None;
+                    p.portal_cooldown = 0;
                 }
             }
         }
