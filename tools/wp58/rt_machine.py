@@ -14,6 +14,8 @@ def build():
     run([f"forceload add {X0-4} {Z0-4} {X0+8} {Z0+nz}"])
     assert ready(X0, Z0) and ready(X0 + 8, Z0 + nz)
     run(["tick freeze", "gamerule random_tick_speed 0", "gamerule spawn_mobs false", "gamerule advance_weather false", "gamerule advance_time false", "time set day", "weather clear 1000000", "kill @e[type=item]"])
+    # (a Kiln server with a world directory and no generator is a void world: lay the ground)
+    run([f"fill {X0-4} {Y-1} {Z0-4} {X0+8} {Y-1} {Z0+nz} minecraft:grass_block"], timeout=3600)
     cmds = []
     for i in range(units):
         z = Z0 + 4 * i

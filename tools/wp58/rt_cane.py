@@ -15,12 +15,11 @@ def save():
     t0 = time.time() - 0.2
     run(["save-all flush"], timeout=600)
     files = {WORLD / "dimensions" / "minecraft" / "overworld" / "region" / f"r.{(BX//16+i)>>5}.{(BZ//16+j)>>5}.mca" for i in range(NCX) for j in range(NCZ)}
-    for _ in range(600):
+    for _ in range(100):
         if all(f.exists() and f.stat().st_mtime >= t0 for f in files):
-            time.sleep(0.15)
-            return
+            break
         time.sleep(0.1)
-    raise RuntimeError("region files not written")
+    time.sleep(0.15)   # (a server only rewrites the chunks that changed)
 
 
 def build():

@@ -2025,6 +2025,12 @@ impl Sim {
         self.dims[OVERWORLD_ID].regions.get_block(x, y, z)
     }
 
+    /// The state of the random tick position generator (`Level.randValue`) of the overworld cell
+    /// that holds chunk `cx`, `cz`, once a chunk of it has had random ticks (for tests).
+    pub fn random_tick_state(&self, cx: i32, cz: i32) -> Option<i32> {
+        self.dims[OVERWORLD_ID].regions.cell(ChunkPos::new(cx, cz).cell())?.rand_value()
+    }
+
     /// The block at a position of a level, if its chunk is loaded.
     pub(crate) fn block_at_in(&self, dim: DimId, pos: [i32; 3]) -> Option<u16> {
         self.dims[dim].regions.get_block(pos[0], pos[1], pos[2])
