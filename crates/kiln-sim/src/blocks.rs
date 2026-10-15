@@ -1132,8 +1132,9 @@ fn find_lightning_rod(level: &RegionLevel, center: BlockPos) -> Option<BlockPos>
 /// blocks marked for post-processing take their shape from their neighbours, and the
 /// scheduled block and fluid ticks start. Vanilla sets them with flags 20 before any player
 /// has the chunk; Kiln may have sent it already, so clients hear about the change.
-/// Region tick time spent on generation leftovers per tick at most (the rest wait a tick).
-const GENERATED_BUDGET: std::time::Duration = std::time::Duration::from_millis(1);
+/// Chunks whose generation leftovers run per tick at most (the rest wait a tick). A count, not a time: how many tick
+/// later a chunk's leftovers apply must not depend on how loaded the machine is.
+const GENERATED_PER_TICK: usize = 16;
 
 fn apply_generated(level: &mut RegionLevel) {
     if level.blocks.generated.is_empty() {
@@ -1144,13 +1145,14 @@ fn apply_generated(level: &mut RegionLevel) {
     let mut later = Vec::new();
     // A burst of chunks becoming full (players arriving somewhere new) spreads over a few ticks:
     // in vanilla too a chunk's leftovers run whenever the chunk pipeline promotes it.
-    let started = std::time::Instant::now();
+    let mut applied = 0;
     for (c, updates) in pending {
         let ready = (-1..=1).all(|dx| (-1..=1).all(|dz| level.cells.chunk(ChunkPos::new(c.x + dx, c.z + dz)).is_some()));
-        if !ready || started.elapsed() >= GENERATED_BUDGET {
+        if !ready || applied >= GENERATED_PER_TICK {
             later.push((c, updates));
             continue;
         }
+        applied += 1;
         for p in updates.post_process {
             let pos = BlockPos::new(p[0], p[1], p[2]);
             let s = level.block(pos);
