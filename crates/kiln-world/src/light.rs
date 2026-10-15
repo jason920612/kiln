@@ -586,8 +586,12 @@ mod tests {
                             c.set(x, min_y + y, z, b::OAK_LEAVES);
                         }
                     }
-                    3 => c.set(x, min_y + h, z, b::TORCH),
-                    4 => c.set(x, min_y + h, z, b::WATER),
+                    3 => {
+                        c.set(x, min_y + h, z, b::TORCH);
+                    }
+                    4 => {
+                        c.set(x, min_y + h, z, b::WATER);
+                    }
                     _ => {}
                 }
             }
