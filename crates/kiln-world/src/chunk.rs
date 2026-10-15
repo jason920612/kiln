@@ -106,6 +106,9 @@ pub struct Chunk {
     /// Generated and lit on its own already ([`crate::light::light_alone`]): placing it next
     /// to its neighbours only adds the light that crosses its borders.
     lit_alone: bool,
+    /// The piece boxes of the structure starts in `structures`, read from it once
+    /// ([`Chunk::structure_start_boxes`]).
+    start_boxes: std::sync::OnceLock<Vec<(String, Box<[[i32; 6]]>)>>,
 }
 
 /// A chunk is written again for its inhabited time alone once it grew this much (a minute of
@@ -174,6 +177,7 @@ impl Chunk {
             inhabited_time: self.inhabited_time,
             inhabited_saved: self.inhabited_saved,
             lit_alone: self.lit_alone,
+            start_boxes: std::sync::OnceLock::new(),
         }
     }
 
@@ -204,6 +208,7 @@ impl Chunk {
             inhabited_time: 0,
             inhabited_saved: 0,
             lit_alone: false,
+            start_boxes: std::sync::OnceLock::new(),
         };
         for x in 0..16 {
             for z in 0..16 {
@@ -305,6 +310,33 @@ impl Chunk {
     /// Generated here and never saved (not read from a save).
     pub fn is_new(&self) -> bool {
         self.saved_version == u32::MAX
+    }
+
+    /// The bounding boxes (`BB`) of the pieces of structure `id`'s start in this chunk (`structures`:
+    /// `starts.<id>.Children`), none without a start or without pieces. Read from the NBT the first time anything
+    /// asks (a fortress has hundreds of pieces, and the natural spawner asks for every position it tries);
+    /// `structures` is set when the chunk is made or loaded and does not change afterwards.
+    pub fn structure_start_boxes(&self, id: &str) -> Option<&[[i32; 6]]> {
+        let all = self.start_boxes.get_or_init(|| {
+            let Some(kiln_proto::nbt::Tag::Compound(starts)) = self.structures.as_deref().and_then(|s| s.get("starts")) else {
+                return Vec::new();
+            };
+            starts
+                .iter()
+                .filter_map(|(id, start)| {
+                    let Some(kiln_proto::nbt::Tag::List(children)) = start.get("Children") else { return None };
+                    let boxes: Box<[[i32; 6]]> = children
+                        .iter()
+                        .filter_map(|piece| match piece.get("BB") {
+                            Some(kiln_proto::nbt::Tag::IntArray(bb)) if bb.len() == 6 => Some([bb[0], bb[1], bb[2], bb[3], bb[4], bb[5]]),
+                            _ => None,
+                        })
+                        .collect();
+                    (!boxes.is_empty()).then(|| (id.clone(), boxes))
+                })
+                .collect()
+        });
+        all.iter().find(|(i, _)| i == id).map(|(_, b)| &b[..])
     }
 
     /// See [`crate::light::light_alone`].

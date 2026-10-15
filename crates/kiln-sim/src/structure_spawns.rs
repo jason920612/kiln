@@ -18,7 +18,37 @@
 use crate::spawner::{SpawnerData, parse_spawner_list};
 use kiln_proto::nbt::Tag;
 use kiln_world::ChunkPos;
+use std::borrow::Cow;
 use std::collections::HashMap;
+
+/// The structure data of loaded chunks the lookups read: a chunk's `structures` NBT, and the piece boxes of a start
+/// in it (parsed from the NBT here, unless the source keeps them).
+pub(crate) trait Structures<'c> {
+    fn tag(&self, c: ChunkPos) -> Option<&'c Tag>;
+
+    fn start_boxes(&self, c: ChunkPos, id: &str) -> Option<Cow<'c, [[i32; 6]]>> {
+        start_of(self.tag(c)?, id).map(Cow::Owned)
+    }
+}
+
+impl<'c, F: Fn(ChunkPos) -> Option<&'c Tag>> Structures<'c> for F {
+    fn tag(&self, c: ChunkPos) -> Option<&'c Tag> {
+        self(c)
+    }
+}
+
+/// Loaded chunks, whose starts' piece boxes are read from their NBT once ([`kiln_world::chunk::Chunk::structure_start_boxes`]).
+pub(crate) struct ChunkStructures<F>(pub F);
+
+impl<'c, F: Fn(ChunkPos) -> Option<&'c kiln_world::chunk::Chunk>> Structures<'c> for ChunkStructures<F> {
+    fn tag(&self, c: ChunkPos) -> Option<&'c Tag> {
+        (self.0)(c)?.structures.as_deref()
+    }
+
+    fn start_boxes(&self, c: ChunkPos, id: &str) -> Option<Cow<'c, [[i32; 6]]>> {
+        (self.0)(c)?.structure_start_boxes(id).map(Cow::Borrowed)
+    }
+}
 
 /// `StructureSpawnOverride.BoundingBoxType`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,14 +125,14 @@ impl StructureSpawns {
     /// `ChunkGenerator.getMobsAt` for the structures at block `pos`: the list of the first
     /// structure whose override for `category` applies there, if any. `structures` gives a loaded
     /// chunk's `structures` NBT.
-    pub fn mobs_at<'c, F>(&self, structures: &F, pos: [i32; 3], category: &str) -> Option<&[SpawnerData]>
+    pub fn mobs_at<'c, S>(&self, structures: &S, pos: [i32; 3], category: &str) -> Option<&[SpawnerData]>
     where
-        F: Fn(ChunkPos) -> Option<&'c Tag>,
+        S: Structures<'c> + ?Sized,
     {
         if self.by_structure.is_empty() {
             return None;
         }
-        let here = structures(ChunkPos::of_block(pos[0], pos[2]))?;
+        let here = structures.tag(ChunkPos::of_block(pos[0], pos[2]))?;
         let Some(Tag::Compound(refs)) = here.get("References") else { return None };
         for (id, chunks) in refs {
             let Some(o) = self.by_structure.get(id.as_str()) else { continue };
@@ -110,7 +140,7 @@ impl StructureSpawns {
             let Tag::LongArray(starts) = chunks else { continue };
             let found = starts.iter().any(|&packed| {
                 let c = ChunkPos::new(packed as i32, (packed >> 32) as i32);
-                start_of(structures, c, id).is_some_and(|pieces| match boxed {
+                structures.start_boxes(c, id).is_some_and(|pieces| match boxed {
                     BoxType::Piece => pieces.iter().any(|b| inside(b, pos)),
                     BoxType::Full => inside(&start_box(&pieces, o.inflated), pos),
                 })
@@ -124,28 +154,28 @@ impl StructureSpawns {
 
     /// `StructureManager.getStructureAt(pos, fortress).isValid()`: a fortress start in the
     /// chunk's references whose bounding box holds `pos`.
-    pub fn in_fortress<'c, F>(&self, structures: &F, pos: [i32; 3]) -> bool
+    pub fn in_fortress<'c, S>(&self, structures: &S, pos: [i32; 3]) -> bool
     where
-        F: Fn(ChunkPos) -> Option<&'c Tag>,
+        S: Structures<'c> + ?Sized,
     {
         const FORTRESS: &str = "minecraft:fortress";
         let inflated = self.by_structure.get(FORTRESS).is_some_and(|o| o.inflated);
-        let Some(here) = structures(ChunkPos::of_block(pos[0], pos[2])) else { return false };
+        let Some(here) = structures.tag(ChunkPos::of_block(pos[0], pos[2])) else { return false };
         let Some(Tag::LongArray(starts)) = here.get("References").and_then(|r| r.get(FORTRESS)) else { return false };
         starts.iter().any(|&packed| {
             let c = ChunkPos::new(packed as i32, (packed >> 32) as i32);
-            start_of(structures, c, FORTRESS).is_some_and(|pieces| inside(&start_box(&pieces, inflated), pos))
+            structures.start_boxes(c, FORTRESS).is_some_and(|pieces| inside(&start_box(&pieces, inflated), pos))
         })
     }
 }
 
 /// `StructureManager.getStructureWithPieceAt(pos, structures).isValid()`: a start of one of the structures
 /// `ids` has a piece whose box holds `pos`. `structures` gives a loaded chunk's `structures` NBT.
-pub(crate) fn piece_at<'c, F>(structures: &F, pos: [i32; 3], ids: &[String]) -> bool
+pub(crate) fn piece_at<'c, S>(structures: &S, pos: [i32; 3], ids: &[String]) -> bool
 where
-    F: Fn(ChunkPos) -> Option<&'c Tag>,
+    S: Structures<'c> + ?Sized,
 {
-    let Some(here) = structures(ChunkPos::of_block(pos[0], pos[2])) else { return false };
+    let Some(here) = structures.tag(ChunkPos::of_block(pos[0], pos[2])) else { return false };
     let Some(Tag::Compound(refs)) = here.get("References") else { return false };
     for (id, chunks) in refs {
         if !ids.iter().any(|i| i == id) {
@@ -154,7 +184,7 @@ where
         let Tag::LongArray(starts) = chunks else { continue };
         let found = starts.iter().any(|&packed| {
             let c = ChunkPos::new(packed as i32, (packed >> 32) as i32);
-            start_of(structures, c, id).is_some_and(|pieces| pieces.iter().any(|b| inside(b, pos)))
+            structures.start_boxes(c, id).is_some_and(|pieces| pieces.iter().any(|b| inside(b, pos)))
         });
         if found {
             return true;
@@ -164,11 +194,8 @@ where
 }
 
 /// The bounding boxes of the pieces of structure `id`'s start in chunk `c` (none: no valid start).
-fn start_of<'c, F>(structures: &F, c: ChunkPos, id: &str) -> Option<Vec<[i32; 6]>>
-where
-    F: Fn(ChunkPos) -> Option<&'c Tag>,
-{
-    let start = structures(c)?.get("starts")?.get(id)?;
+fn start_of(structures: &Tag, id: &str) -> Option<Vec<[i32; 6]>> {
+    let start = structures.get("starts")?.get(id)?;
     let Some(Tag::List(children)) = start.get("Children") else { return None };
     let boxes: Vec<[i32; 6]> = children
         .iter()

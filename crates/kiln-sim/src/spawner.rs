@@ -121,15 +121,15 @@ impl SpawnTable {
     /// nether bricks inside a fortress, else the list of a structure the position is in
     /// (`ChunkGenerator.getMobsAt`), else the biome's.
     pub(crate) fn mobs_at<'a>(&'a self, level: &RegionLevel, biome: u16, category: Category, pos: KBlockPos) -> &'a [SpawnerData] {
-        let structures = |c: ChunkPos| level.cells.chunk(c).and_then(|ch| ch.structures.as_deref());
+        let structures = crate::structure_spawns::ChunkStructures(|c: ChunkPos| level.cells.chunk(c));
         let bricks = || kiln_data::blocks_types::block_of(level.block(pos.below())).name == "minecraft:nether_bricks";
         self.mobs_in(&structures, bricks, biome, category, [pos.x, pos.y, pos.z])
     }
 
     /// [`SpawnTable::mobs_at`] over the loaded chunks' `structures` data.
-    pub(crate) fn mobs_in<'a, 'c, F>(&'a self, structures: &F, nether_bricks_below: impl FnOnce() -> bool, biome: u16, category: Category, at: [i32; 3]) -> &'a [SpawnerData]
+    pub(crate) fn mobs_in<'a, 'c, S>(&'a self, structures: &S, nether_bricks_below: impl FnOnce() -> bool, biome: u16, category: Category, at: [i32; 3]) -> &'a [SpawnerData]
     where
-        F: Fn(ChunkPos) -> Option<&'c kiln_proto::nbt::Tag>,
+        S: crate::structure_spawns::Structures<'c> + ?Sized,
     {
         if self.structures.is_empty() {
             return self.list(biome, category);
@@ -898,7 +898,7 @@ pub(crate) fn monster_light_rules(dim: usize) -> (i32, i32, i32) {
 /// Whether `at` is inside a piece of a `#minecraft:cats_spawn_as_black` structure (a swamp hut).
 pub(crate) fn black_cat_structure(level: &RegionLevel, at: [i32; 3]) -> bool {
     let Some(ids) = crate::world_state::worldgen_tag("worldgen/structure", "minecraft:cats_spawn_as_black") else { return false };
-    let structures = |c: ChunkPos| level.cells.chunk(c).and_then(|ch| ch.structures.as_deref());
+    let structures = crate::structure_spawns::ChunkStructures(|c: ChunkPos| level.cells.chunk(c));
     crate::structure_spawns::piece_at(&structures, at, &ids)
 }
 
