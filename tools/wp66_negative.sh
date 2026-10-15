@@ -25,7 +25,7 @@ if sel be_defaults; then
 fi
 if sel gateway_age; then
   sed -i 's/^            crate::gateway::tick(&mut level, &ticking);/            \/\/ gateway tick off/' crates/kiln-sim/src/region.rs
-  run gateway_age cargo test --release -p kiln-sim --test gateway_trips age
+  run gateway_age cargo test --release -p kiln-sim --test gateway_trips a_gateway_counts_its_age
 fi
 if sel tick_function_order; then
   git show b460163f -- crates | git apply -R && run tick_function_order cargo test --release -p kiln-sim --test functions_tick
@@ -41,6 +41,5 @@ if sel fireworks; then
   run fireworks cargo test --release -p kiln-sim --test raids villagers_launch
 fi
 if sel bell; then
-  sed -i 's/level\.blocks\.bell_events\.push(pos);/level.out.bell_events_unused();/' crates/kiln-sim/src/bell.rs
-  git show 909d0c1d -- crates | git apply -R && run bell cargo test --release -p kiln-sim --test raids a_rung_bell
+  git show 909d0c1d -- crates/kiln-sim/src | git apply -R && run bell cargo test --release -p kiln-sim --test raids a_rung_bell
 fi
