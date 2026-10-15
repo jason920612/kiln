@@ -172,7 +172,6 @@ fn the_raid_bar_follows_the_raiders_health() {
     w.ticks(15);
     w.console("damage @e[type=minecraft:pillager,limit=1] 4 minecraft:generic");
     w.ticks(2);
-    eprintln!("mobs {:?}", w.sim.mobs().into_iter().filter(|m| m.1 == "minecraft:pillager").map(|m| (m.0, m.3)).collect::<Vec<_>>());
     let p = w.sim.raids("minecraft:overworld")[0].6;
     assert!((p - (total - 8.0) / total).abs() < 0.002, "the first blow shows with the second: {p} of {total}");
     // A raider dying updates it with everything as it is.
