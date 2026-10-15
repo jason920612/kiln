@@ -56,6 +56,9 @@ pub(crate) struct RegionBlocks {
     /// Hives whose nearby bees take a player as their target (`BeehiveBlock.angerNearbyBees`),
     /// for the region, which has the entities.
     pub bee_anger: Vec<BlockPos>,
+    /// Bells that rang this tick (their block events ran in `tick_blocks`): the region lists what hears them (`bell::requests`) in the block
+    /// entity phase that follows.
+    pub bell_events: Vec<BlockPos>,
     /// Game event listeners: sculk block entities and wardens.
     pub sculk: crate::sculk::Sculk,
     /// Creaking heart block entities.
@@ -87,6 +90,7 @@ impl Default for RegionBlocks {
             raid_events: Vec::new(),
             text_requests: Vec::new(),
             bee_anger: Vec::new(),
+            bell_events: Vec::new(),
             sculk: Default::default(),
             hearts: Default::default(),
             gateways: Default::default(),
@@ -226,6 +230,7 @@ impl RegionPart for RegionBlocks {
         into.raid_events.append(&mut from.raid_events);
         into.text_requests.append(&mut from.text_requests);
         into.bee_anger.append(&mut from.bee_anger);
+        into.bell_events.append(&mut from.bell_events);
         into.sculk.merge(std::mem::take(&mut from.sculk));
         into.hearts.merge(std::mem::take(&mut from.hearts));
         into.gateways.merge(std::mem::take(&mut from.gateways));
@@ -276,6 +281,7 @@ impl RegionPart for RegionBlocks {
         parts[0].raid_events = std::mem::take(&mut self.raid_events);
         parts[0].text_requests = std::mem::take(&mut self.text_requests);
         parts[0].bee_anger = std::mem::take(&mut self.bee_anger);
+        parts[0].bell_events = std::mem::take(&mut self.bell_events);
         {
             let mut sculk: SmallVec<[&mut crate::sculk::Sculk; 4]> = parts.iter_mut().map(|p| &mut p.sculk).collect();
             self.sculk.split_into(&mut sculk, |c| owner((c.x, c.z)));
@@ -532,8 +538,6 @@ pub(crate) struct BlockOut {
     /// Sculk shriekers whose shriek ended (`tryRespond`) and their warning level: the region
     /// answers with darkness and maybe a warden.
     pub responds: Vec<(BlockPos, i32)>,
-    /// Bells that rang this phase (their block events ran): the region lists what hears them.
-    pub bell_events: Vec<BlockPos>,
     /// Block states changed so far (whatever the flags).
     pub edits: u64,
     /// What dispensers did to living things in front of them.
