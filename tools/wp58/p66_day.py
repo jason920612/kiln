@@ -8,13 +8,13 @@ if __name__ == "__main__":
     outp = sys.argv[1]
     a = client(PORT)
     try:
-        S("gamerule advance_time true", "tick rate 20", "time set 2500", f"effect give {NAME} minecraft:hero_of_the_village 48000 1 true")
+        S("gamerule advance_time false", "tick rate 20", "time set 1000", f"effect give {NAME} minecraft:hero_of_the_village 48000 1 true")
         S(f"tp {NAME} {VX}.5 112 {VZ+3}.5")
         time.sleep(4)
-        F("effects", effects(a))
+        F("effects", effects(a), "villagers the client sees:", [(round(e["x"]), round(e["y"]), round(e["z"])) for e in a.state(60)["entities"] if e["t"] == "villager"])
         inv0 = inventory(a)
         t0 = time.time()
-        while time.time() - t0 < 240:
+        while time.time() - t0 < 150:
             time.sleep(10)
             cur = inventory(a)
             ch = {k: cur.get(k, 0) - inv0.get(k, 0) for k in set(inv0) | set(cur) if cur.get(k, 0) != inv0.get(k, 0)}
