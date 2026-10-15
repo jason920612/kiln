@@ -154,3 +154,23 @@ fn a_farm_in_a_forced_chunk_runs_without_players_near() {
     f.ticks(30);
     assert!(f.pulses(400) >= 16, "the forced farm works");
 }
+
+/// Nobody online: a forced farm still runs (vanilla keeps ticking force-loaded chunks without players), and it is still
+/// there when somebody joins again.
+#[test]
+fn a_forced_farm_runs_while_nobody_is_online() {
+    let mut f = Farm::new(None, &[("Alpha", 0), ("Beta", 0)]);
+    let p = f.clients[0].pos.map(|c| c.floor() as i32);
+    f.build(p[0] + 10, p[1] - 1, p[2] + 6, 4);
+    assert!(f.pulses(100) >= 4, "it works at first");
+    // Both leave.
+    assert!(f.sim.step([ToSim::Leave(1), ToSim::Leave(2)]));
+    f.clients.clear();
+    assert_eq!(f.sim.player_count(), 0);
+    let mut empty = 0;
+    for _ in 0..400 {
+        assert!(f.sim.step([]));
+        empty += f.observers.clone().iter().filter(|&&q| observer_powered(&f.sim, q) == Some(true)).count();
+    }
+    assert!(empty >= 16, "{empty} observer pulses in 400 ticks with nobody online");
+}
