@@ -259,9 +259,6 @@ pub fn village_bound_random_stroll(speed: f32, max_xz: i32, max_y: i32) -> Box<d
                 random_pos::default_pos_towards(cx.e, cx.m, &*cx.level, max_xz, max_y, target, 1.5707963705062866)
             }
         };
-        if crate::mob::brain::debug_on() {
-            eprintln!("DBG t={} stroll from {:?} -> {:?}", cx.time, cx.e.position(), v);
-        }
         match v {
             Some(v) => cx.b.mem.set(Mem::WalkTarget, Val::Walk(WalkTarget::vec(v, speed, 0))),
             None => cx.b.mem.erase(Mem::WalkTarget),
