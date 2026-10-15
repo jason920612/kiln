@@ -15,9 +15,19 @@ if __name__ == "__main__":
         S(f"summon minecraft:pillager {BX + d}.5 {BY} {BZ}.5 {{NoAI:1b,PersistenceRequired:1b,Tags:[\"bell{d}\"]}}")
     S(f"forceload add {BX} {BZ} {BX+70} {BZ}")
     time.sleep(3)
-    S(f"tp {NAME} {BX}.5 {BY} {BZ+2}.5")
+    # a floor bell is only rung by a hit on a side face along its facing axis: stand 4 blocks away on that axis, the eye a little above the bell's body
+    axis = "z"
+    for f in ("north", "south", "east", "west"):
+        out = S(f"execute if block {BX} {BY} {BZ} minecraft:bell[facing={f}]")
+        if any("pass" in l for l in out):
+            axis = "z" if f in ("north", "south") else "x"
+    F("bell facing axis", axis)
+    if axis == "z":
+        S(f"tp {NAME} {BX}.5 {BY} {BZ+4}.5")
+    else:
+        S(f"tp {NAME} {BX+4}.5 {BY} {BZ}.5")
     time.sleep(2)
-    a.lookat(BX + 0.5, BY + 0.5, BZ + 0.5)
+    a.lookat(BX + 0.5, BY + 0.45, BZ + 0.5)
     time.sleep(1.5)
     h = a.state(0).get("hit")
     F("actor looks at", h)
