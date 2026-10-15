@@ -115,6 +115,43 @@ public class ClientCtl {
         mc.mouseHandler.onButton(mc.getWindow().handle(), new MouseButtonInfo(button, 0), down ? 1 : 0);
     }
 
+    /** The client's `BossHealthOverlay`, wherever the GUI keeps it (fields searched down to `depth`). */
+    static Object findOverlay(Object o, int depth, java.util.IdentityHashMap<Object, Boolean> seen) {
+        if (o == null || depth < 0 || seen.put(o, true) != null) {
+            return null;
+        }
+        if (o instanceof net.minecraft.client.gui.components.BossHealthOverlay) {
+            return o;
+        }
+        for (Class<?> c = o.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Field f : c.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) || f.getType().isPrimitive() || f.getType().getName().startsWith("java.lang")) {
+                    continue;
+                }
+                try {
+                    f.setAccessible(true);
+                    Object v = f.get(o);
+                    if (v instanceof java.util.Collection<?> col) {
+                        for (Object e : col) {
+                            Object r = findOverlay(e, depth - 1, seen);
+                            if (r != null) {
+                                return r;
+                            }
+                        }
+                    } else if (v != null && v.getClass().getName().startsWith("net.minecraft.client")) {
+                        Object r = findOverlay(v, depth - 1, seen);
+                        if (r != null) {
+                            return r;
+                        }
+                    }
+                } catch (Exception ex) {
+                    // skip
+                }
+            }
+        }
+        return null;
+    }
+
     static String handle(String line) throws Exception {
         String[] a = line.split("\\s+");
         Minecraft mc = Minecraft.getInstance();
@@ -427,6 +464,37 @@ public class ClientCtl {
                     sb.append(" scale=").append(en instanceof net.minecraft.world.entity.LivingEntity le ? le.getScale() : 1.0);
                     sb.append(" passengers=").append(en.getPassengers().size());
                     return sb.toString();
+                });
+            case "bossbars": // bossbars: the boss bars the client shows (wp66): name, progress, colour, overlay, darken/music/fog flags
+                return onMain(() -> {
+                    JsonArray arr = new JsonArray();
+                    Object overlay = findOverlay(mc.gui, 3, new java.util.IdentityHashMap<>());
+                    if (overlay == null) {
+                        return "ERR no boss overlay";
+                    }
+                    for (Field f : overlay.getClass().getDeclaredFields()) {
+                        f.setAccessible(true);
+                        Object v;
+                        try {
+                            v = f.get(overlay);
+                        } catch (Exception ex) {
+                            continue;
+                        }
+                        if (v instanceof java.util.Map<?, ?> m) {
+                            for (Object e : m.values()) {
+                                if (e instanceof net.minecraft.client.gui.components.LerpingBossEvent b) {
+                                    JsonObject o = new JsonObject();
+                                    o.addProperty("name", b.getName().getString());
+                                    o.addProperty("progress", b.getProgress());
+                                    o.addProperty("color", b.getColor().name());
+                                    o.addProperty("overlay", b.getOverlay().name());
+                                    o.addProperty("darken", b.shouldDarkenScreen());
+                                    arr.add(o);
+                                }
+                            }
+                        }
+                    }
+                    return arr.toString();
                 });
             case "ent": // ent EID: how the client shows entity EID (wp65): position, pose, equipment, swing/use state, vehicle, passengers
                 return onMain(() -> {
