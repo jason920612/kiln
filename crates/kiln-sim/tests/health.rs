@@ -294,3 +294,18 @@ fn a_finished_meal_makes_its_sound_and_a_burp() {
     let done = sounds(&client);
     assert!(done >= chewing + 2, "the finish sound and the burp followed the chewing: {chewing} -> {done}");
 }
+
+#[test]
+fn drinking_an_ominous_bottle_gives_bad_omen_of_its_level() {
+    // wp65: found with a real client in a village: the bottle changed nothing on the server (the client predicted the
+    // effect itself), so no raid ever started. `OminousBottleAmplifier.onConsume`: Bad Omen, 100 minutes, level = amplifier.
+    let (mut sim, _client) = joined();
+    assert!(sim.step([ToSim::Console("give Faller minecraft:ominous_bottle[minecraft:ominous_bottle_amplifier=2] 1".into())]));
+    eat(&mut sim, 34);
+    let effects = sim.effects(1).unwrap();
+    assert_eq!(effects.len(), 1, "{effects:?}");
+    assert_eq!((effects[0].0, effects[0].1), ("minecraft:bad_omen", 2));
+    assert!(effects[0].2 > 119_000 && effects[0].2 <= 120_000, "{effects:?}");
+    // The bottle is used up.
+    assert_eq!(sim.inventory(1).unwrap()[36], None);
+}
