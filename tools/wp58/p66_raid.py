@@ -167,6 +167,23 @@ def ring_bell(a):
     return {"raiders": len(rows), "glowing": sum(1 for r in rows if r[3])}
 
 
+def break_all_pois():
+    """Breaks every point of interest of the village's kinds that `/locate poi` finds around the bell (looping), so that the village is gone."""
+    kinds = ["home", "meeting_point", "farmer", "librarian", "cleric", "armorer", "butcher", "cartographer", "fisherman", "fletcher", "leatherworker", "mason", "shepherd", "toolsmith", "weaponsmith"]
+    broken = []
+    for kind in kinds:
+        for _ in range(60):
+            out = S(f"execute positioned {VX} 111 {VZ} run locate poi minecraft:{kind}")
+            line = next((l for l in out if "[" in l and ("success" in l or "nearest" in l.lower())), None)
+            m = re.search(r"\[(-?\d+), (-?\d+), (-?\d+)\]", line or "")
+            if not m:
+                break
+            p = tuple(int(x) for x in m.groups())
+            S(f"setblock {p[0]} {p[1]} {p[2]} minecraft:air destroy")
+            broken.append((kind, p))
+    return broken
+
+
 def run_raid(a, max_s=3000):
     prep(a)
     gear()
@@ -224,14 +241,8 @@ def run_raid(a, max_s=3000):
                 F("bell rung:", ring_bell(a))
                 if MODE == "loss":
                     F("villagers before the massacre:", villagers_now())
-                    pois = set()
-                    for l in S(f"execute as @e[type=minecraft:villager,{BOX}] run data get entity @s Brain.memories"):
-                        for m in re.finditer(r"pos: \[I; (-?\d+), (-?\d+), (-?\d+)\]", l):
-                            pois.add(tuple(int(x) for x in m.groups()))
-                    F("points of interest the villagers remember:", sorted(pois))
                     S(f"kill @e[type=minecraft:villager,{BOX}]")
-                    for p in sorted(pois):
-                        S(f"setblock {p[0]} {p[1]} {p[2]} minecraft:air destroy")
+                    F("points of interest broken:", break_all_pois())
                     F("villagers after:", villagers_now())
             key = tuple(sorted(by_wave))
             names = tuple(b.get("name") if isinstance(b, dict) else str(b) for b in sample["bars"])
@@ -245,7 +256,7 @@ def run_raid(a, max_s=3000):
                 break
         if a.state(0)["health"] <= 0:
             alive(a)
-        if MODE == "loss" and first is not None:
+        if MODE == "loss":
             time.sleep(1.0)   # (the player only watches)
         else:
             kills += melee(a, t0 + max_s)
