@@ -350,7 +350,9 @@ impl Sim {
             if kiln_world::block_entity::type_name(old.kind) == "minecraft:command_block"
                 && let Tag::Compound(kept) = &old.nbt
             {
-                out.extend(kept.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z")).cloned());
+                // (`auto` is not kept: `loadWithComponents` reads the given data, and a missing `auto` is false even for a chain block, which
+                // starts automatic only when it has no data at all.)
+                out.extend(kept.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z" | "auto")).cloned());
             }
             // The new contents replace the defaults a block entity starts with (a sign's empty sides).
             for (k, v) in fields.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z")) {
