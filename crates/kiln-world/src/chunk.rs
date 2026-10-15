@@ -506,7 +506,12 @@ impl Chunk {
             if let Some(kind) = block_entity_type(state)
                 && self.block_entities.get(&key).is_none_or(|be| be.kind != kind)
             {
-                self.block_entities.insert(key, BlockEntity::new(kind));
+                let mut be = BlockEntity::new(kind);
+                // `CommandBlock.newBlockEntity`: a chain command block starts automatic.
+                if kiln_data::blocks_types::block_by_name("minecraft:chain_command_block").is_some_and(|b| b.first == block_of(state).first) {
+                    be.merge_fields(vec![("auto".into(), kiln_proto::nbt::Tag::Byte(1))]);
+                }
+                self.block_entities.insert(key, be);
             }
             // `ServerLevel.updatePOIOnBlockStateChange`.
             if let Some(p) = self.pois.as_mut() {

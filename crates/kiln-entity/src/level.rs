@@ -1453,6 +1453,9 @@ pub enum RaidEvent {
     Died { raid: i32, entity: i32, wave: i32, leader: bool, hero: Option<i32> },
     /// `Raid.setLeader`: the raider picked up the ominous banner and leads its wave.
     Leader { raid: i32, wave: i32, entity: i32 },
+    /// `Raider.hurtServer` starts: the raid updates its boss bar (from the health the raiders have before this blow lands) and then
+    /// the blow does what it does. `health` is the raider's before it.
+    Hurt { raid: i32, entity: i32, health: f32 },
 }
 
 /// The merchant a trade set is rolled for (the loot context's `this` entity and origin).

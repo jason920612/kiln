@@ -577,6 +577,155 @@ mod tests {
         assert!(!t.will_tick_this_tick(BlockPos::new(1, 0, 0), 2));
     }
 
+    /// A model check of the whole life of scheduled ticks: scheduling, running when due in ticking chunks, chunks that
+    /// do not tick for a while, chunks leaving (packed, relative delays) and coming back (unpacked), containers moving
+    /// between two levels' tick sets (region splits and merges). A tick a chunk holds must report as scheduled until it
+    /// runs, and must run once its chunk ticks at or after its time; a tick must never run early or twice.
+    #[test]
+    fn scheduled_ticks_are_never_lost_or_run_twice() {
+        use std::collections::BTreeMap;
+        // A small deterministic generator (xorshift).
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self, n: u64) -> u64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                self.0 % n
+            }
+        }
+        for seed in 1..=40u64 {
+            let mut rng = Rng(seed * 0x9E37_79B9_7F4A_7C15);
+            let mut sets = [LevelTicks::<u16>::new(), LevelTicks::<u16>::new()];
+            // Which set holds each chunk (None: unloaded), the model of ticks by (chunk, kind, x): trigger time, and the
+            // saved (relative) ticks of unloaded chunks.
+            let mut home: [Option<usize>; 5] = [None; 5];
+            let mut model: BTreeMap<(usize, u16, i32), i64> = BTreeMap::new();
+            let mut saved: [Vec<SavedTick<u16>>; 5] = Default::default();
+            let mut time = 100i64;
+            let mut sub = 0i64;
+            for c in 0..5usize {
+                let s = rng.next(2) as usize;
+                sets[s].add_container((c as i32, 0), ChunkTicks::from_saved(Vec::new()));
+                sets[s].unpack((c as i32, 0), time);
+                home[c] = Some(s);
+            }
+            for step in 0..400 {
+                match rng.next(10) {
+                    0..=3 => {
+                        // Schedule.
+                        let c = rng.next(5) as usize;
+                        let (kind, x) = (rng.next(3) as u16, rng.next(4) as i32);
+                        let delay = rng.next(8) as i64;
+                        sub += 1;
+                        let t = ScheduledTick {
+                            kind,
+                            pos: BlockPos::new(c as i32 * 16 + x, 0, 0),
+                            trigger: time + delay,
+                            priority: TickPriority::from_value(rng.next(5) as i32 - 2),
+                            sub,
+                        };
+                        match home[c] {
+                            Some(s) => {
+                                let had = model.contains_key(&(c, kind, x));
+                                assert_eq!(sets[s].has_scheduled_tick(t.pos, kind), had, "seed {seed} step {step}");
+                                let added = sets[s].schedule(t);
+                                assert_eq!(added, !had, "seed {seed} step {step}: schedule");
+                                if added {
+                                    model.insert((c, kind, x), t.trigger);
+                                }
+                            }
+                            None => assert!(!sets[0].schedule(t) && !sets[1].schedule(t)),
+                        }
+                    }
+                    4..=6 => {
+                        // A game tick: the chunks that tick this time are those whose bit is set.
+                        time += 1;
+                        let mask = rng.next(32);
+                        let ticks_now = |k: ChunkKey| mask & (1 << k.0) != 0;
+                        let mut ran = Vec::new();
+                        for s in 0..2 {
+                            sets[s].collect(time, 65536, ticks_now);
+                            while let Some(t) = sets[s].next_to_run() {
+                                ran.push(((t.pos.x >> 4) as usize, t.kind, t.pos.x & 15, t.trigger));
+                            }
+                            sets[s].finish_tick();
+                        }
+                        for (c, kind, x, trigger) in ran {
+                            assert!(trigger <= time, "seed {seed} step {step}: ran early");
+                            assert!(mask & (1 << c) != 0, "seed {seed} step {step}: ran in a chunk that does not tick");
+                            assert_eq!(model.remove(&(c, kind, x)), Some(trigger), "seed {seed} step {step}: ran twice or never scheduled");
+                        }
+                        // Everything due in a ticking chunk has run.
+                        for (&(c, _, _), &trigger) in &model {
+                            if home[c].is_some() && mask & (1 << c) != 0 {
+                                assert!(trigger > time, "seed {seed} step {step}: a due tick was left");
+                            }
+                        }
+                    }
+                    7 => {
+                        // A chunk leaves: its ticks are packed relative to now.
+                        let c = rng.next(5) as usize;
+                        if let Some(s) = home[c].take() {
+                            let container = sets[s].remove_container((c as i32, 0)).unwrap();
+                            saved[c] = container.pack(time);
+                            let mine: Vec<_> = model.keys().filter(|k| k.0 == c).copied().collect();
+                            assert_eq!(saved[c].len(), mine.len(), "seed {seed} step {step}");
+                            for k in mine {
+                                model.remove(&k);
+                            }
+                        }
+                    }
+                    8 => {
+                        // A chunk comes back, into either set.
+                        let c = rng.next(5) as usize;
+                        if home[c].is_none() {
+                            let s = rng.next(2) as usize;
+                            let ticks = std::mem::take(&mut saved[c]);
+                            // The model keeps absolute times: now plus the delay it was saved with.
+                            let by_pos: BTreeMap<(u16, i32), i64> = ticks.iter().map(|t| ((t.kind, t.pos.x & 15), time + t.delay as i64)).collect();
+                            sets[s].add_container((c as i32, 0), ChunkTicks::from_saved(ticks));
+                            sets[s].unpack((c as i32, 0), time);
+                            for ((kind, x), trigger) in by_pos {
+                                model.insert((c, kind, x), trigger);
+                            }
+                            home[c] = Some(s);
+                        }
+                    }
+                    _ => {
+                        // A region split or merge moves a container to the other set.
+                        let c = rng.next(5) as usize;
+                        if let Some(s) = home[c] {
+                            let container = sets[s].remove_container((c as i32, 0)).unwrap();
+                            sets[1 - s].add_container((c as i32, 0), container);
+                            home[c] = Some(1 - s);
+                        }
+                    }
+                }
+                // What the sets report is what the model holds.
+                for ((c, kind, x), _) in model.iter() {
+                    let s = home[*c].expect("a model tick of an unloaded chunk");
+                    assert!(sets[s].has_scheduled_tick(BlockPos::new(*c as i32 * 16 + x, 0, 0), *kind), "seed {seed} step {step}: lost");
+                }
+            }
+            // Finally every chunk loaded and ticking: everything left runs.
+            for c in 0..5usize {
+                if home[c].is_none() {
+                    sets[0].add_container((c as i32, 0), ChunkTicks::from_saved(std::mem::take(&mut saved[c])));
+                    sets[0].unpack((c as i32, 0), time);
+                    home[c] = Some(0);
+                }
+            }
+            time += 100;
+            for s in 0..2 {
+                sets[s].collect(time, 65536, |_| true);
+                while sets[s].next_to_run().is_some() {}
+                sets[s].finish_tick();
+                assert_eq!(sets[s].count(), 0, "seed {seed}: ticks stuck in a set");
+            }
+        }
+    }
+
     #[test]
     fn pack_unpack_roundtrip_keeps_order() {
         let mut c = ChunkTicks::new();

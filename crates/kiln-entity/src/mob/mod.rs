@@ -2557,6 +2557,7 @@ pub fn player_touch(e: &mut Entity, level: &mut dyn EntityLevel, player: i32) {
 
 /// `LivingEntity.hurtServer` for a mob, with the type's overrides around it.
 pub fn hurt(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: DamageSource, amount: f32) -> bool {
+    kinds::raider::before_hurt(e, m, level);
     let Some(k) = m.kind.ext() else { return hurt_base(e, m, level, source, amount) };
     if k.is_invulnerable_to(m, source.kind) && !source.kind.is_tag("minecraft:bypasses_invulnerability") {
         return false;

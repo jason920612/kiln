@@ -711,7 +711,13 @@ impl Sim {
         if changed {
             self.world.forced_dirty = true;
             if forced {
-                self.dims[dim].load_chunk(kiln_world::ChunkPos::new(chunk[0], chunk[1]));
+                // Vanilla's `getChunk` blocks until the chunk is full: the commands that follow in the same tick can edit it. Here
+                // the chunk is put in its region at once too (a chunk without a region waits in `pending` until the next tick, and
+                // then installs within a time budget unless it is urgent).
+                let pos = kiln_world::ChunkPos::new(chunk[0], chunk[1]);
+                self.dims[dim].load_chunk(pos);
+                self.dims[dim].urgent.insert(pos);
+                self.apply_topology();
             }
         }
         changed

@@ -599,7 +599,9 @@ impl Sim {
             || self.commands.packs.timers.next_trigger().is_some_and(|t| t <= time)
     }
 
-    pub(crate) fn tick_functions(&mut self) {
+    /// `ServerFunctionManager.tick`, the first work of a server tick (before the levels': the game time has not gone up yet):
+    /// `#minecraft:load` after a reload, then `#minecraft:tick`. Only while the game runs (not frozen, unless it steps).
+    pub(crate) fn tick_function_tags(&mut self) {
         if std::mem::take(&mut self.commands.packs.load_pending) {
             for f in self.commands.packs.library.tag(&Identifier::parse(LOAD_TAG).expect("tag")) {
                 self.run_server_function(&f);
@@ -608,6 +610,10 @@ impl Sim {
         for f in self.commands.packs.library.tag(&Identifier::parse(TICK_TAG).expect("tag")) {
             self.run_server_function(&f);
         }
+    }
+
+    /// The scheduled functions that are due (`TimerQueue.tick`, `ServerLevel.tickTime` right after the game time went up).
+    pub(crate) fn tick_scheduled_functions(&mut self) {
         for callback in self.commands.packs.timers.due(self.game_time) {
             let lib = &self.commands.packs.library;
             let functions = match callback {

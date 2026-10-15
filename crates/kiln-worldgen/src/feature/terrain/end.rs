@@ -100,9 +100,10 @@ pub fn end_gateway_entity(exit: Option<(BlockPos, bool)>) -> Tag {
     let mut fields = vec![("id".into(), Tag::String("minecraft:end_gateway".into())), ("Age".into(), Tag::Long(0))];
     if let Some((exit, exact)) = exit {
         fields.push(("exit_portal".into(), Tag::IntArray(vec![exit.x, exit.y, exit.z])));
-        fields.push(("ExactTeleport".into(), Tag::Byte(exact as i8)));
-    } else {
-        fields.push(("ExactTeleport".into(), Tag::Byte(0)));
+        // (`saveAdditional` writes the flag only when it is set.)
+        if exact {
+            fields.push(("ExactTeleport".into(), Tag::Byte(1)));
+        }
     }
     Tag::Compound(fields)
 }

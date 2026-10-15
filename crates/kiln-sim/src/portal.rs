@@ -923,6 +923,11 @@ impl Sim {
         if self.dims[dim].gateway_cooldowns.get(&key).is_some_and(|&t| t > now && t - GATEWAY_COOLDOWN as i64 != now) {
             return None;
         }
+        // The cooldown the gateway's own clock starts every 2400 ticks of age (`portalTick`).
+        let age = self.dims[dim].regions.at(chunk_pos.cell()).and_then(|r| r.part().1.gateways.map.get(&entry).copied());
+        if age.is_some_and(crate::gateway::periodic_cooldown) {
+            return None;
+        }
         let exit = match be.nbt.get("exit_portal") {
             Some(Tag::IntArray(v)) if v.len() == 3 => Some(BlockPos::new(v[0], v[1], v[2])),
             _ => None,

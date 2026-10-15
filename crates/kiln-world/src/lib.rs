@@ -60,15 +60,32 @@ pub struct Cell {
     /// Chunks handed out mutably since the last [`Cell::take_touched`] (one bit per chunk),
     /// so per-tick scans such as light changes skip chunks nothing touched.
     touched: u64,
+    /// The cell's share of the level's random tick position generator, once it has been used
+    /// (see [`Cell::rand_value`]).
+    rand_value: Option<i32>,
 }
 
 impl Default for Cell {
     fn default() -> Self {
-        Self { chunks: std::array::from_fn(|_| None), touched: 0 }
+        Self { chunks: std::array::from_fn(|_| None), touched: 0, rand_value: None }
     }
 }
 
 impl Cell {
+    /// The state of the cell's random tick position generator (`Level.randValue`, the
+    /// `randValue * 3 + 1013904223` generator of `getBlockRandomPos`) as the cell's last ticking
+    /// chunk left it, or `None` before its first random tick. Vanilla has one such value for the
+    /// whole level and every chunk's picks continue it; a region cannot share one, so each cell
+    /// (a fixed block of chunks that always stays in one region) carries its own, which its
+    /// chunks continue in position order.
+    pub fn rand_value(&self) -> Option<i32> {
+        self.rand_value
+    }
+
+    pub fn set_rand_value(&mut self, value: i32) {
+        self.rand_value = Some(value);
+    }
+
     pub fn chunk(&self, pos: ChunkPos) -> Option<&Chunk> {
         self.chunks[pos.cell_index()].as_deref()
     }
@@ -717,6 +734,20 @@ mod tests {
         let want = Tag::Compound(vec![("front_text".into(), side()), ("back_text".into(), side()), ("is_waxed".into(), Tag::Byte(0))]);
         assert_eq!((block_entity::type_name(sign), tag), ("minecraft:sign", want));
         assert_eq!(w.block_entity_data(2, 0, 2), None, "chests send no block entity data");
+    }
+
+    /// `CommandBlock.newBlockEntity`: a chain command block starts automatic (the other two do not).
+    #[test]
+    fn a_chain_command_block_starts_automatic() {
+        use kiln_proto::nbt::Tag;
+        let mut w = World::flat(OVERWORLD, 0, 67);
+        w.set_block(2, 0, 2, block::CHAIN_COMMAND_BLOCK);
+        w.set_block(4, 0, 2, block::COMMAND_BLOCK);
+        let auto = |x| {
+            let be = w.chunk(ChunkPos::new(0, 0)).unwrap().block_entity(x, 0, 2).unwrap().saved([x as i32, 0, 2]);
+            be.get("auto").and_then(Tag::as_i64)
+        };
+        assert_eq!((auto(2), auto(4)), (Some(1), Some(0)));
     }
 
     #[test]

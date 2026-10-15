@@ -350,7 +350,9 @@ impl Sim {
             if kiln_world::block_entity::type_name(old.kind) == "minecraft:command_block"
                 && let Tag::Compound(kept) = &old.nbt
             {
-                out.extend(kept.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z")).cloned());
+                // (`auto` is not kept: `loadWithComponents` reads the given data, and a missing `auto` is false even for a chain block, which
+                // starts automatic only when it has no data at all.)
+                out.extend(kept.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z" | "auto")).cloned());
             }
             // The new contents replace the defaults a block entity starts with (a sign's empty sides).
             for (k, v) in fields.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z")) {
@@ -373,6 +375,7 @@ impl Sim {
             part.1.containers.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.sculk.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.hearts.reload(kiln_blocks::BlockPos::new(x, y, z), be);
+            part.1.gateways.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.spawners.reload(kiln_blocks::BlockPos::new(x, y, z), be);
         }
         // Vanilla parses the data and saves it again: the chunk's copy is what the live block entity saves (a furnace drops the
@@ -1371,6 +1374,7 @@ impl Host for Sim {
             if let Some(chunk) = cells.chunk_mut(ChunkPos::of_block(x, z)) {
                 part.1.containers.store(ChunkPos::of_block(x, z), chunk);
                 part.1.spawners.store(ChunkPos::of_block(x, z), chunk);
+                part.1.gateways.store(ChunkPos::of_block(x, z), chunk);
             }
         }
         let chunk = self.dims[dim].regions.chunk(ChunkPos::of_block(x, z))?;

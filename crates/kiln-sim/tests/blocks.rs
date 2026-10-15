@@ -273,3 +273,34 @@ fn the_swap_key_trades_the_hands() {
     assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 7, pos: [0, 0, 0], face: 0, sequence: 0 })]));
     assert_eq!(slots(&w), (Some(item("minecraft:diamond_sword")), Some(item("minecraft:shield"))), "and back");
 }
+
+/// `Level.randValue`: the generator that picks random tick positions is one sequence that the
+/// level's chunks continue one after another, tick after tick (here: the chunks of a cell). Each
+/// game tick the cell's state is the previous one stepped a few draws further (one draw per
+/// randomly ticking section at speed 1, and the rare precipitation roll); it was a fresh hash of
+/// chunk and game tick every time, which never continues anything.
+#[test]
+fn random_tick_positions_continue_one_generator_from_tick_to_tick() {
+    let mut w = World::new("creative");
+    w.run("gamerule minecraft:random_tick_speed 1");
+    let chunk = [(w.ground[0] >> 4), (w.ground[2] >> 4)];
+    let step = |s: i32| s.wrapping_mul(3).wrapping_add(1013904223);
+    w.ticks(2);
+    let mut prev = w.sim.random_tick_state(chunk[0], chunk[1]).expect("the cell had random ticks");
+    let mut gaps = Vec::new();
+    for _ in 0..30 {
+        w.ticks(1);
+        let now = w.sim.random_tick_state(chunk[0], chunk[1]).unwrap();
+        // How many draws apart: the chunks of the cell that tick, one draw each, plus precipitation rolls.
+        let (mut s, mut k) = (prev, 0);
+        while s != now && k < 400 {
+            s = step(s);
+            k += 1;
+        }
+        gaps.push((s == now).then_some(k));
+        prev = now;
+    }
+    assert!(gaps.iter().all(Option::is_some), "the states do not continue each other: {gaps:?}");
+    let max = gaps.iter().flatten().max().unwrap();
+    assert!(*max <= 150, "{gaps:?}");
+}

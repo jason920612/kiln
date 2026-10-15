@@ -5,7 +5,9 @@
 //!
 //! Partition independence: scheduled ticks, block events and moving pistons belong to the
 //! chunk they are in and follow merges and splits; random ticks draw from a random seeded
-//! per chunk and game tick, so they do not depend on which region a chunk is in. The level
+//! per chunk and game tick, and pick their positions with the level's `randValue` generator,
+//! which each cell of chunks continues from tick to tick (cells never split between regions),
+//! so neither depends on which region a chunk is in. The level
 //! random that scheduled behaviour reads (lava spread delays, piston sound pitch) is kept per
 //! region, an approximation (I class).
 //!
@@ -54,10 +56,15 @@ pub(crate) struct RegionBlocks {
     /// Hives whose nearby bees take a player as their target (`BeehiveBlock.angerNearbyBees`),
     /// for the region, which has the entities.
     pub bee_anger: Vec<BlockPos>,
+    /// Bells that rang this tick (their block events ran in `tick_blocks`): the region lists what hears them (`bell::requests`) in the block
+    /// entity phase that follows.
+    pub bell_events: Vec<BlockPos>,
     /// Game event listeners: sculk block entities and wardens.
     pub sculk: crate::sculk::Sculk,
     /// Creaking heart block entities.
     pub hearts: crate::heart::Hearts,
+    /// End gateways' ages.
+    pub gateways: crate::gateway::Gateways,
     /// Who may edit which sign (`SignBlockEntity.playerWhoMayEdit`).
     pub sign_editors: crate::signs::SignEditors,
     /// Mob spawner block entities.
@@ -83,8 +90,10 @@ impl Default for RegionBlocks {
             raid_events: Vec::new(),
             text_requests: Vec::new(),
             bee_anger: Vec::new(),
+            bell_events: Vec::new(),
             sculk: Default::default(),
             hearts: Default::default(),
+            gateways: Default::default(),
             sign_editors: Default::default(),
             spawners: Default::default(),
             initial_mobs: Vec::new(),
@@ -121,6 +130,7 @@ impl RegionBlocks {
         self.containers.chunk_loaded(pos, chunk);
         self.sculk.chunk_loaded(pos, chunk);
         self.hearts.chunk_loaded(pos, chunk);
+        self.gateways.chunk_loaded(pos, chunk);
         self.spawners.chunk_loaded(pos, chunk);
         if std::mem::take(&mut chunk.original_mobs) {
             self.initial_mobs.push(pos);
@@ -156,6 +166,7 @@ impl RegionBlocks {
         self.containers.chunk_unloaded(pos);
         self.sculk.chunk_unloaded(pos);
         self.hearts.chunk_unloaded(pos);
+        self.gateways.chunk_unloaded(pos);
         self.initial_mobs.retain(|p| *p != pos);
         self.spawners.chunk_unloaded(pos);
     }
@@ -165,6 +176,7 @@ impl RegionBlocks {
         self.containers.store(pos, chunk);
         self.sculk.store(pos, chunk);
         self.hearts.store(pos, chunk);
+        self.gateways.store(pos, chunk);
         self.spawners.store(pos, chunk);
         let k = key(pos);
         let block = self.block_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
@@ -218,8 +230,10 @@ impl RegionPart for RegionBlocks {
         into.raid_events.append(&mut from.raid_events);
         into.text_requests.append(&mut from.text_requests);
         into.bee_anger.append(&mut from.bee_anger);
+        into.bell_events.append(&mut from.bell_events);
         into.sculk.merge(std::mem::take(&mut from.sculk));
         into.hearts.merge(std::mem::take(&mut from.hearts));
+        into.gateways.merge(std::mem::take(&mut from.gateways));
         into.sign_editors.merge(std::mem::take(&mut from.sign_editors));
         into.spawners.merge(std::mem::take(&mut from.spawners));
         into.initial_mobs.append(&mut from.initial_mobs);
@@ -267,6 +281,7 @@ impl RegionPart for RegionBlocks {
         parts[0].raid_events = std::mem::take(&mut self.raid_events);
         parts[0].text_requests = std::mem::take(&mut self.text_requests);
         parts[0].bee_anger = std::mem::take(&mut self.bee_anger);
+        parts[0].bell_events = std::mem::take(&mut self.bell_events);
         {
             let mut sculk: SmallVec<[&mut crate::sculk::Sculk; 4]> = parts.iter_mut().map(|p| &mut p.sculk).collect();
             self.sculk.split_into(&mut sculk, |c| owner((c.x, c.z)));
@@ -274,6 +289,10 @@ impl RegionPart for RegionBlocks {
         {
             let mut hearts: SmallVec<[&mut crate::heart::Hearts; 4]> = parts.iter_mut().map(|p| &mut p.hearts).collect();
             self.hearts.split_into(&mut hearts, |c| owner((c.x, c.z)));
+        }
+        {
+            let mut gateways: SmallVec<[&mut crate::gateway::Gateways; 4]> = parts.iter_mut().map(|p| &mut p.gateways).collect();
+            self.gateways.split_into(&mut gateways, |c| owner((c.x, c.z)));
         }
         {
             let mut editors: SmallVec<[&mut crate::signs::SignEditors; 4]> = parts.iter_mut().map(|p| &mut p.sign_editors).collect();
@@ -298,7 +317,7 @@ impl RegionPart for RegionBlocks {
     }
 
     fn count(&self) -> usize {
-        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.sign_editors.len() + self.spawners.len() + self.initial_mobs.len()
+        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.gateways.len() + self.sign_editors.len() + self.spawners.len() + self.initial_mobs.len()
     }
 
     fn for_each_cell(&self, f: &mut dyn FnMut(CellPos)) {
@@ -519,8 +538,6 @@ pub(crate) struct BlockOut {
     /// Sculk shriekers whose shriek ended (`tryRespond`) and their warning level: the region
     /// answers with darkness and maybe a warden.
     pub responds: Vec<(BlockPos, i32)>,
-    /// Bells that rang this phase (their block events ran): the region lists what hears them.
-    pub bell_events: Vec<BlockPos>,
     /// Block states changed so far (whatever the flags).
     pub edits: u64,
     /// What dispensers did to living things in front of them.
@@ -590,6 +607,7 @@ impl Level for RegionLevel<'_> {
             crate::container::block_set(self, pos, flags, old);
             crate::sculk::block_set(self, pos);
             crate::heart::block_set(self, pos);
+            crate::gateway::block_set(self, pos);
             crate::mob_spawner::block_set(self, pos);
         }
         Some(old)
@@ -962,13 +980,20 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
             let min_section = chunk.min_y() >> 4;
             sections.clear();
             sections.extend(chunk.sections.iter().enumerate().map(|(i, s)| (min_section + i as i32, s.is_randomly_ticking())));
-            let (random, rand_value) = chunk_random(level.env.seed, level.env.game_time, c);
+            let (random, first_value) = chunk_random(level.env.seed, level.env.game_time, c);
+            // `Level.randValue`: the position generator the chunks of a level share and
+            // continue one after another, game tick after game tick. Here the chunks of a cell
+            // do (in position order), and each cell starts from its first chunk's hash.
+            let rand_value = level.cells.cell(c.cell()).and_then(|cell| cell.rand_value()).unwrap_or(first_value);
             let saved = std::mem::replace(&mut level.blocks.random, random);
             let saved_value = std::mem::replace(&mut level.blocks.data.rand_value, rand_value);
             tick_thunder(level, c);
             tick_chunk_blocks(level, c, &sections, speed);
+            let left = std::mem::replace(&mut level.blocks.data.rand_value, saved_value);
+            if let Some(cell) = level.cells.cell_mut(c.cell()) {
+                cell.set_rand_value(left);
+            }
             level.blocks.random = saved;
-            level.blocks.data.rand_value = saved_value;
         }
     }
     let dt = crate::diag::lap("tb.random", dt);
@@ -1125,8 +1150,9 @@ fn find_lightning_rod(level: &RegionLevel, center: BlockPos) -> Option<BlockPos>
 /// blocks marked for post-processing take their shape from their neighbours, and the
 /// scheduled block and fluid ticks start. Vanilla sets them with flags 20 before any player
 /// has the chunk; Kiln may have sent it already, so clients hear about the change.
-/// Region tick time spent on generation leftovers per tick at most (the rest wait a tick).
-const GENERATED_BUDGET: std::time::Duration = std::time::Duration::from_millis(1);
+/// Chunks whose generation leftovers run per tick at most (the rest wait a tick). A count, not a time: how many tick
+/// later a chunk's leftovers apply must not depend on how loaded the machine is.
+const GENERATED_LEFTOVERS_PER_TICK: usize = 16;
 
 fn apply_generated(level: &mut RegionLevel) {
     if level.blocks.generated.is_empty() {
@@ -1137,13 +1163,14 @@ fn apply_generated(level: &mut RegionLevel) {
     let mut later = Vec::new();
     // A burst of chunks becoming full (players arriving somewhere new) spreads over a few ticks:
     // in vanilla too a chunk's leftovers run whenever the chunk pipeline promotes it.
-    let started = std::time::Instant::now();
+    let mut applied = 0;
     for (c, updates) in pending {
         let ready = (-1..=1).all(|dx| (-1..=1).all(|dz| level.cells.chunk(ChunkPos::new(c.x + dx, c.z + dz)).is_some()));
-        if !ready || started.elapsed() >= GENERATED_BUDGET {
+        if !ready || applied >= GENERATED_LEFTOVERS_PER_TICK {
             later.push((c, updates));
             continue;
         }
+        applied += 1;
         for p in updates.post_process {
             let pos = BlockPos::new(p[0], p[1], p[2]);
             let s = level.block(pos);
