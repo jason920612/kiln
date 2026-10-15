@@ -193,7 +193,13 @@ impl Behavior for MoveToTargetSink {
         let reached = Self::reached(cx, &w);
         if !reached && self.try_compute_path(cx, &w) {
             self.last_target_pos = util::tracker_block(cx, &w.target);
+            if crate::mob::brain::debug_on() {
+                eprintln!("DBG t={} move start path ok to {:?}", cx.time, self.last_target_pos);
+            }
             return true;
+        }
+        if crate::mob::brain::debug_on() {
+            eprintln!("DBG t={} move refused reached={} target {:?}", cx.time, reached, util::tracker_block(cx, &w.target));
         }
         cx.b.mem.erase(Mem::WalkTarget);
         if reached {
@@ -210,6 +216,9 @@ impl Behavior for MoveToTargetSink {
         !cx.m.nav.is_done() && w.is_some_and(|w| !Self::reached(cx, &w)) && !spectator
     }
     fn stop(&mut self, cx: &mut Cx) {
+        if crate::mob::brain::debug_on() {
+            eprintln!("DBG t={} move stop at {:?} stuck={}", cx.time, cx.e.position(), cx.m.nav.is_stuck);
+        }
         if let Some(w) = cx.b.mem.walk_target()
             && !Self::reached(cx, &w)
             && cx.m.nav.is_stuck

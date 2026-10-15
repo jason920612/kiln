@@ -967,7 +967,7 @@ pub fn pin(e: &mut Entity) {
     e.random = random;
 }
 
-pub(super) fn debug_on() -> bool {
+pub(crate) fn debug_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("KILN_BRAIN_DEBUG").is_some())
 }
