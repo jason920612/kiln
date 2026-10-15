@@ -1162,7 +1162,7 @@ pub(crate) fn player_packet(
             let fluids = p.fluids(&|pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0));
             let before = (p.on_ground, p.fall_flying);
             p.try_start_fall_flying(fluids.in_water || fluids.in_lava);
-            tracing::info!("DEBUG START_FALL_FLYING {}: on_ground {} flying before {} after {} fluids {:?}", p.name, before.0, before.1, p.fall_flying, (fluids.in_water, fluids.in_lava));
+            tracing::info!("DEBUG START_FALL_FLYING {}: on_ground {} flying before {} after {} tick {}", p.name, before.0, before.1, p.fall_flying, env.game_time);
         }
         PlayIn::PlayerCommand { action } if action != STOP_SLEEPING => {
             const START_SPRINTING: i32 = 1;
@@ -1844,6 +1844,9 @@ fn handle_move(
             p.teleport(from, rot, now);
             return Move::Rejected;
         }
+    }
+    if p.on_ground != on_ground {
+        tracing::info!("DEBUG ground {}: {} -> {} at tick {} y {:.2}", p.name, p.on_ground, on_ground, now, to[1]);
     }
     p.pos = to;
     p.rot = rot;
