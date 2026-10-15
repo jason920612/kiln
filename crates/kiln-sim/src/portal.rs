@@ -411,6 +411,12 @@ impl Sim {
                 if let Some(pos) = self.gateway_destination(from, entry) {
                     let rot = self.players[&t.conn].rot;
                     self.change_dimension(t.conn, from, pos, rot);
+                } else if let Some(p) = self.players.get_mut(&t.conn) {
+                    // `TheEndGatewayBlock.entityInside` does not start a trip while the gateway cools down: the
+                    // player stays inside without a portal process and goes as soon as it has cooled (not after
+                    // waiting out an entity portal cooldown that standing inside keeps full).
+                    p.portal = None;
+                    p.portal_cooldown = 0;
                 }
             }
         }
@@ -911,7 +917,10 @@ impl Sim {
         let be = self.dims[dim].regions.chunk(chunk_pos)?.block_entity(lx, entry.y, lz)?.clone();
         let int = |k: &str| be.nbt.get(k).and_then(Tag::as_i64);
         let key = [entry.x, entry.y, entry.z];
-        if self.dims[dim].gateway_cooldowns.get(&key).is_some_and(|&t| t > self.game_time) {
+        // (Players that were inside before the first one left all go: they were past `entityInside` already; only a
+        // cooldown started in an earlier tick holds a trip back.)
+        let now = self.game_time;
+        if self.dims[dim].gateway_cooldowns.get(&key).is_some_and(|&t| t > now && t - GATEWAY_COOLDOWN as i64 != now) {
             return None;
         }
         let exit = match be.nbt.get("exit_portal") {

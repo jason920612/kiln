@@ -624,6 +624,13 @@ pub trait Kind: Sync + Send {
     fn spawn_ignores_light(&self) -> bool {
         false
     }
+    /// `getWalkTargetValue` where the type overrides it with something not about light (hoglin: crimson nylium;
+    /// enderman, pillager, warden, creaking: 0): the value natural spawning tests (`PathfinderMob.checkSpawnRules`).
+    /// `None`: the category's light-based rule.
+    fn spawn_walk_target(&self, view: &dyn SpawnView, pos: BlockPos) -> Option<f32> {
+        let _ = (view, pos);
+        None
+    }
     /// false: `checkFallDamage` overridden to do nothing (ghasts, phantoms: no fall distance,
     /// no landing, no fluid refresh after the move).
     fn checks_fall_damage(&self) -> bool {

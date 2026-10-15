@@ -180,6 +180,33 @@ impl Kind for Strider {
         Some(if st(m).in_lava { f32::NEG_INFINITY } else { 0.0 })
     }
 
+    /// `Strider.checkStriderSpawnRules`: the first block above the lava column is air.
+    fn check_spawn_rules(&self, view: &dyn ext::SpawnView, pos: BlockPos, _r: &mut kiln_javamath::random::LegacyRandom) -> Option<bool> {
+        let mut p = pos;
+        loop {
+            p = p.above();
+            if !crate::physics::fluid_state(view.block(p)).kind.is_lava() {
+                break;
+            }
+        }
+        Some(kiln_data::blocks_types::is_air(view.block(p)))
+    }
+
+    /// `SpawnPlacementTypes.IN_LAVA`.
+    fn placement(&self) -> ext::Placement {
+        ext::Placement::InLava
+    }
+
+    /// `Strider.checkSpawnObstruction` allows lava in the box.
+    fn spawn_in_liquids(&self) -> bool {
+        true
+    }
+
+    /// `Strider.getWalkTargetValue` is 10 in lava and 0 otherwise (never negative before the mob has moved).
+    fn spawn_ignores_light(&self) -> bool {
+        true
+    }
+
     fn stable_destination(&self, level: &dyn EntityLevel, p: BlockPos) -> Option<bool> {
         Some(is_lava(level, p) || path::is_stable_destination(level, p))
     }

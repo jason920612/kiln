@@ -9,8 +9,9 @@ use kiln_item::component::EquipmentSlot;
 use kiln_item::{ItemStack, keys};
 use kiln_javamath::random::RandomSource;
 
-/// `ServerboundPlayerCommandPacket.Action.START_FALL_FLYING`.
-pub(crate) const START_FALL_FLYING: i32 = 8;
+/// `ServerboundPlayerCommandPacket.Action.START_FALL_FLYING`: ordinal 6 in 26.x (STOP_SLEEPING, START_SPRINTING, STOP_SPRINTING,
+/// START_RIDING_JUMP, STOP_RIDING_JUMP, OPEN_INVENTORY, START_FALL_FLYING; the sneak actions are gone, `PlayerInput` carries them).
+pub(crate) const START_FALL_FLYING: i32 = 6;
 
 /// `LivingEntity.canGlideUsing`: a glider worn in its own slot that the next point of damage
 /// would not break.

@@ -205,6 +205,13 @@ impl Player {
                 self.add_effect(Effect::simple(e.effect, e.duration, 0));
             }
         }
+        // `OminousBottleAmplifier.onConsume` (found by a real client: the server never applied it, so the
+        // bottle started no raid): Bad Omen of the bottle's level for 100 minutes, without particles.
+        if let Some(amplifier) = stack.get(keys::OMINOUS_BOTTLE_AMPLIFIER)
+            && let Some(id) = crate::effects::effect_id("minecraft:bad_omen")
+        {
+            self.add_effect(Effect::new(id, 120_000, amplifier.0, false, false, true));
+        }
         for effect in &consumable.on_consume_effects {
             self.apply_consume_effect(effect, block, ctx.game_time);
         }

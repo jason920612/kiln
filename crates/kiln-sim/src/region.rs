@@ -227,6 +227,16 @@ impl RegionWork<'_> {
                 entities::paddle_boat(self.entities, &self.players, i, left, right);
                 continue;
             }
+            // The inventory key while riding opens the mount's screen (`PlayerCommand.OPEN_INVENTORY`).
+            if let PlayIn::PlayerCommand { action: OPEN_INVENTORY } = pkt {
+                if let Some(vehicle) = self.players[i].vehicle
+                    && !self.players[i].dead
+                {
+                    let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                    crate::carts::open_ridden(self.entities, &mut level, self.players[i], vehicle, &mut self.out.spawns);
+                }
+                continue;
+            }
             if let PlayIn::RidingJump { data } = pkt {
                 entities::riding_jump(self.entities, &mut self.players, i, data, &env.blocks);
                 continue;
@@ -1048,13 +1058,15 @@ pub(crate) fn is_player_packet(pkt: &PlayIn) -> bool {
         | PlayIn::SetCarriedItem { .. }
         | PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::RequestStats)
         | PlayIn::ClientTickEnd => true,
-        PlayIn::PlayerCommand { action } => *action != STOP_SLEEPING,
+        PlayIn::PlayerCommand { action } => *action != STOP_SLEEPING && *action != OPEN_INVENTORY,
         _ => false,
     }
 }
 
 /// `PlayerCommand`'s "Leave Bed" action.
 const STOP_SLEEPING: i32 = 0;
+/// `ServerboundPlayerCommandPacket.Action.OPEN_INVENTORY`.
+const OPEN_INVENTORY: i32 = 5;
 
 /// `ServerboundPlayerActionPacket.Action.STAB`.
 const STAB: i32 = 8;

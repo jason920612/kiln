@@ -750,7 +750,9 @@ fn spawn_category_for_chunk(
             let yaw = r.next_float() * 360.0;
             // `isValidPositionForMob`: the walk target value and the spawn obstruction.
             let magic = light_magic(level, pos);
-            let walk = if kind.is_animal() {
+            let walk = if let Some(v) = kind.ext().and_then(|k| k.spawn_walk_target(&View(level), kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z))) {
+                v
+            } else if kind.is_animal() {
                 if kiln_data::blocks_types::block_of(level.block(pos.below())).name == "minecraft:grass_block" { 10.0 } else { magic - 0.5 }
             } else {
                 -(magic - 0.5)
@@ -941,9 +943,13 @@ pub(crate) fn check_spawn_rules(level: &RegionLevel, pos: KBlockPos, kind: MobKi
     kiln_entity::mob::kinds::zombie::dark_enough_view(&View(level), kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z), r) && kiln_entity::mob::path::valid_spawn(below, false)
 }
 
+/// `LevelReader.getLightLevelDependentMagicValue`: the light, lerped towards 1 by the dimension's
+/// `ambient_light` (0.1 in the nether: a dark nether floor is worth 0.1, not 0).
 fn light_magic(level: &RegionLevel, pos: KBlockPos) -> f32 {
     let f = level.raw_brightness(pos, level.env.mobs.sky_darken) as f32 / 15.0;
-    f / (4.0 - 3.0 * f)
+    let g = f / (4.0 - 3.0 * f);
+    let ambient = kiln_data::dimension_type(crate::DIMENSIONS[level.env.dim].0).map_or(0.0, |d| d.ambient_light);
+    g + ambient * (1.0 - g)
 }
 
 fn aabb(pos: [f64; 3], w: f32, h: f32) -> ([f64; 3], [f64; 3]) {

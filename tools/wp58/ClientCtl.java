@@ -428,6 +428,46 @@ public class ClientCtl {
                     sb.append(" passengers=").append(en.getPassengers().size());
                     return sb.toString();
                 });
+            case "ent": // ent EID: how the client shows entity EID (wp65): position, pose, equipment, swing/use state, vehicle, passengers
+                return onMain(() -> {
+                    Entity en = mc.level.getEntity(Integer.parseInt(a[1]));
+                    if (en == null) {
+                        return "ERR no entity";
+                    }
+                    JsonObject o = new JsonObject();
+                    o.addProperty("type", BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()).getPath());
+                    o.addProperty("x", en.getX());
+                    o.addProperty("y", en.getY());
+                    o.addProperty("z", en.getZ());
+                    o.addProperty("yaw", en.getYRot());
+                    o.addProperty("pose", en.getPose().name());
+                    o.addProperty("vehicle", en.getVehicle() == null ? -1 : en.getVehicle().getId());
+                    JsonArray ps = new JsonArray();
+                    for (Entity pe : en.getPassengers()) {
+                        ps.add(pe.getId());
+                    }
+                    o.add("passengers", ps);
+                    if (en instanceof net.minecraft.world.entity.LivingEntity le) {
+                        o.addProperty("hp", le.getHealth());
+                        o.addProperty("main", id(le.getMainHandItem()));
+                        o.addProperty("off", id(le.getOffhandItem()));
+                        o.addProperty("head", id(le.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD)));
+                        o.addProperty("chest", id(le.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST)));
+                        o.addProperty("legs", id(le.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.LEGS)));
+                        o.addProperty("feet", id(le.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.FEET)));
+                        o.addProperty("using", le.isUsingItem());
+                        o.addProperty("blocking", le.isBlocking());
+                        o.addProperty("swinging", le.isSwinging());
+                        o.addProperty("swingAnim", le.getSwingAnimation(1.0F));
+                        o.addProperty("sprint", le.isSprinting());
+                        o.addProperty("crouch", le.isCrouching());
+                        o.addProperty("glide", le.isFallFlying());
+                        o.addProperty("sleeping", le.isSleeping());
+                        o.addProperty("onFire", le.isOnFire());
+                        o.addProperty("invisible", le.isInvisible());
+                    }
+                    return o.toString();
+                });
             case "mapinfo": // mapinfo [SLOT]: the map in the main hand (or inventory SLOT) as the client's map data sees it
                 return onMain(() -> {
                     ItemStack st = a.length > 1 ? mc.player.getInventory().getItem(Integer.parseInt(a[1])) : mc.player.getMainHandItem();
