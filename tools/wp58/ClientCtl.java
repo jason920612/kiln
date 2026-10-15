@@ -740,6 +740,10 @@ public class ClientCtl {
                     e.addProperty("item", id(ie.getItem()));
                     e.addProperty("n", ie.getItem().getCount());
                 } else if (en instanceof net.minecraft.world.entity.LivingEntity le) {
+                    e.addProperty("pose", en.getPose().name());
+                    e.addProperty("bbh", en.getBbHeight());
+                    e.addProperty("bbw", en.getBbWidth());
+                    e.addProperty("pick", en.isPickable());
                     e.addProperty("hp", le.getHealth());
                     if (le.isBaby()) {
                         e.addProperty("baby", true);
