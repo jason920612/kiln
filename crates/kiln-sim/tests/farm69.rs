@@ -287,6 +287,7 @@ fn the_farm_in_the_simulation() {
     }
     if std::env::var_os("FARM_IDLE").is_some() {
         let a = IDLE.lock().unwrap();
+        println!("IDS {:?}", sim.mobs().iter().take(4).map(|m| m.0).collect::<Vec<_>>());
         println!("IDLE samples {} x 0..8: {:?}", a.1, (1..10).map(|i| (a.0[i] as f64 / a.1 as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
     }
     println!("TOTAL {} golems in {days} days, {pens} pens", log.len());
