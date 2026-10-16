@@ -519,9 +519,19 @@ public class MobVectors {
         player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
         player.snapTo(0, 300, 0, 0f, 0f);
         level.tickRateManager().setFrozen(false);
+        // (MOB_CMD_JAVAGOLEM=1: no datapack, the harness itself finds each new golem (the tick after it spawned) and removes it, as `removeGolems` does)
+        boolean javaGolem = System.getenv("MOB_CMD_JAVAGOLEM") != null;
+        List<Long> golemTimes = new ArrayList<>();
+        java.util.Set<Integer> seenGolems = new java.util.HashSet<>();
         java.util.function.IntConsumer ticks = n -> {
             try {
                 for (int i = 0; i < n; i++) {
+                    if (javaGolem) {
+                        for (Entity ge : level.getEntities((Entity) null, new AABB(X0 - 100, F - 10, Z0 - 100, X0 + 100, F + 60, Z0 + pens * DZ + 100), e -> e instanceof net.minecraft.world.entity.animal.golem.IronGolem)) {
+                            if (seenGolems.add(ge.getId())) golemTimes.add(level.getGameTime());
+                            ge.discard();
+                        }
+                    }
                     tickServerMethod.invoke(server, (java.util.function.BooleanSupplier) () -> true);
                     runServerTasks(server);
                 }
@@ -568,7 +578,8 @@ public class MobVectors {
             cmd(server, "kill @e[type=minecraft:zombie,tag=wp66z]");
         }
         // the golems the datapack logged
-        var log = server.getCommandStorage().get(Identifier.parse("wp66:log")).toString();
+        var log = javaGolem ? "" : server.getCommandStorage().get(Identifier.parse("wp66:log")).toString();
+        for (long gt : golemTimes) log += "{t: " + gt + "}";
         StringBuilder spawned = new StringBuilder();
         var m = java.util.regex.Pattern.compile("t: ?(-?\\d+)").matcher(log);
         while (m.find()) {
