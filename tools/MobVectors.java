@@ -281,6 +281,9 @@ public class MobVectors {
         boolean serverTick;
         /// wp69: points of interest a villager has claimed (`PoiManager.take`: what `AcquirePoi` does): a bed with its ticket taken makes a village of its section.
         final List<BlockPos> takenPois = new ArrayList<>();
+        /// wp69: the farm of wp66 built and run with console commands (the way the console driver does), the server ticking through `tickServer`, for this many pens;
+        /// `cmdDays` days of zombie. Statistics only: the golems the datapack logged are recorded.
+        int cmdPens, cmdDays;
         Scenario(String name) { this.name = name; }
     }
 
@@ -460,6 +463,20 @@ public class MobVectors {
                 walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
             }
         }
+        if (System.getenv("MOB_DATAPACK") != null) {
+            // wp69: a datapack in the world (the wp66 golem logger of the console runs)
+            Path from = Path.of(System.getenv("MOB_DATAPACK")), to = world.resolve("datapacks").resolve(from.getFileName());
+            try (var walk = Files.walk(from)) {
+                for (Path p : (Iterable<Path>) walk::iterator) {
+                    Path t = to.resolve(from.relativize(p).toString());
+                    if (Files.isDirectory(p)) Files.createDirectories(t);
+                    else {
+                        Files.createDirectories(t.getParent());
+                        Files.copy(p, t, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+            }
+        }
     }
 
     static MinecraftServer awaitServer() throws Exception {
@@ -486,6 +503,83 @@ public class MobVectors {
     }
 
     static java.lang.reflect.Method runAllTasks, tickServerMethod;
+
+    static void cmd(MinecraftServer server, String c) {
+        server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), c);
+    }
+
+    /// wp69: `tools/wp69/rt_farm69.py` inside the harness: the same commands, the server's own tick (functions included: the wp66 datapack logs the golems).
+    static String farmByCommands(ServerLevel level, ServerPlayer player, Scenario s) throws Exception {
+        var server = level.getServer();
+        final int X0 = 4000, Z0 = 4000, F = -61, DZ = 40, pens = s.cmdPens;
+        if (tickServerMethod == null) {
+            tickServerMethod = net.minecraft.server.MinecraftServer.class.getDeclaredMethod("tickServer", java.util.function.BooleanSupplier.class);
+            tickServerMethod.setAccessible(true);
+        }
+        player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
+        player.snapTo(0, 300, 0, 0f, 0f);
+        level.tickRateManager().setFrozen(false);
+        java.util.function.IntConsumer ticks = n -> {
+            try {
+                for (int i = 0; i < n; i++) {
+                    tickServerMethod.invoke(server, (java.util.function.BooleanSupplier) () -> true);
+                    runServerTasks(server);
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
+        cmd(server, "forceload add " + (X0 - 12) + " " + (Z0 - 12) + " " + (X0 + 24) + " " + (Z0 + pens * DZ + 20));
+        for (String c : new String[] {"gamerule minecraft:spawn_mobs false", "gamerule minecraft:advance_weather false", "gamerule minecraft:advance_time false", "gamerule minecraft:mob_drops false",
+                "difficulty normal", "weather clear 1000000", "time set 11500", "kill @e[type=!player]"}) cmd(server, c);
+        ticks.accept(2);
+        for (int pen = 0; pen < pens; pen++) {
+            int z0 = Z0 + pen * DZ;
+            java.util.function.BiFunction<int[], Integer, String> at = (d, dummy) -> (X0 + d[0]) + " " + (F + d[1]) + " " + (z0 + d[2]);
+            cmd(server, "fill " + (X0 - 12) + " " + F + " " + (z0 - 12) + " " + (X0 + 24) + " " + F + " " + (z0 + 20) + " minecraft:stone");
+            cmd(server, "fill " + (X0 - 12) + " " + (F + 1) + " " + (z0 - 12) + " " + (X0 + 24) + " " + (F + 8) + " " + (z0 + 20) + " minecraft:air");
+            cmd(server, "fill " + at.apply(new int[] {-1, 1, -1}, 0) + " " + at.apply(new int[] {12, 3, 9}, 0) + " minecraft:stone_bricks");
+            cmd(server, "fill " + at.apply(new int[] {0, 1, 0}, 0) + " " + at.apply(new int[] {8, 2, 8}, 0) + " minecraft:air");
+            cmd(server, "fill " + at.apply(new int[] {10, 1, 0}, 0) + " " + at.apply(new int[] {11, 2, 8}, 0) + " minecraft:air");
+            for (int z = 0; z < 9; z++) {
+                cmd(server, "setblock " + at.apply(new int[] {9, 1, z}, 0) + " minecraft:oak_fence");
+                cmd(server, "setblock " + at.apply(new int[] {9, 2, z}, 0) + " minecraft:air");
+            }
+            for (int z : new int[] {2, 4, 6}) {
+                cmd(server, "setblock " + at.apply(new int[] {3, 1, z}, 0) + " minecraft:red_bed[facing=east,part=head]");
+                cmd(server, "setblock " + at.apply(new int[] {4, 1, z}, 0) + " minecraft:red_bed[facing=east,part=foot]");
+            }
+        }
+        for (int pen = 0; pen < pens; pen++)
+            for (int i = 0; i < 3; i++)
+                cmd(server, "summon minecraft:villager " + (X0 + 6) + ".5 " + (F + 1) + " " + (Z0 + pen * DZ + 3 + i * 2) + ".5 {VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b,Tags:[\"wp66\"]}");
+        cmd(server, "data remove storage wp66:log golems");
+        cmd(server, "scoreboard players set #n wp66 0");
+        cmd(server, "gamerule minecraft:advance_time true");
+        long g0 = level.getGameTime();
+        // dt = 11500 + ticks since now: the zombies come at dt 300 of each day and go at dt 11000
+        for (int day = 0; day < s.cmdDays; day++) {
+            long arrive = (24000 - 11500) + 300 + 24000L * day, leave = arrive + 10700;
+            ticks.accept((int) (arrive - (level.getGameTime() - g0)));
+            cmd(server, "kill @e[type=minecraft:zombie,tag=wp66z]");
+            for (int pen = 0; pen < pens; pen++)
+                cmd(server, "summon minecraft:zombie " + (X0 + 10) + ".5 " + (F + 1) + " " + (Z0 + pen * DZ + 4) + ".5 {PersistenceRequired:1b,Tags:[\"wp66z\"]}");
+            ticks.accept((int) (leave - (level.getGameTime() - g0)));
+            cmd(server, "kill @e[type=minecraft:zombie,tag=wp66z]");
+        }
+        // the golems the datapack logged
+        var log = server.getCommandStorage().get(Identifier.parse("wp66:log")).toString();
+        StringBuilder spawned = new StringBuilder();
+        var m = java.util.regex.Pattern.compile("t: ?(-?\d+)").matcher(log);
+        while (m.find()) {
+            long t = Long.parseLong(m.group(1));
+            if (spawned.length() > 0) spawned.append(',');
+            spawned.append(String.format(Locale.ROOT, "{\"tick\":%d,\"type\":\"minecraft:iron_golem\",\"pos\":[0,0,0]}", t - g0 - 1));
+        }
+        level.tickRateManager().setFrozen(true);
+        cmd(server, "gamerule minecraft:spawn_mobs true");
+        return String.format(Locale.ROOT, "{\"name\":\"%s\",\"day_time\":11500,\"ticks\":%d,\"spawned\":[%s]}", s.name, level.getGameTime() - g0, spawned);
+    }
 
     /// `BlockableEventLoop.runAllTasks` (protected): what the server's own loop runs between ticks.
     static void runServerTasks(MinecraftServer server) throws Exception {
@@ -609,6 +703,7 @@ public class MobVectors {
     }
 
     static String run(ServerLevel level, ServerPlayer player, Scenario s) throws Exception {
+        if (s.cmdPens > 0) return farmByCommands(level, player, s);
         for (var b : s.blocks.entrySet()) level.setBlock(b.getKey(), b.getValue(), FLAGS);
         awaitLight(level);
         // wp44 spawners: the block entities get their NBT (`loadCustomOnly`), and the light around them is recorded.
@@ -6871,6 +6966,13 @@ public class MobVectors {
             s.fullTick = true;
             s.diverges = true;
             s.ticks = 600;
+            out.add(s);
+        }
+        // The console driver's farm, built and run by commands inside the harness (wp66 datapack: MOB_DATAPACK=tools/datapacks/wp66).
+        for (int i = 0; i < 6; i++) {
+            Scenario s = new Scenario("farm69_cmd_" + i);
+            s.cmdPens = 4;
+            s.cmdDays = 6;
             out.add(s);
         }
         // The same through the server's own tick (statistics only).
