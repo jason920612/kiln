@@ -120,8 +120,11 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
         d.set(data::living_entity::EFFECT_AMBIENCE, &DataValue::Boolean(true));
     }
     d.set(data::living_entity::HEALTH, &DataValue::Float(m.health));
-    let mob_flags = (m.no_ai as i8) | ((m.left_handed as i8) << 1) | ((m.aggressive as i8) << 2);
-    d.set(data::mob::MOB_FLAGS, &DataValue::Byte(mob_flags));
+    // `Mob.DATA_MOB_FLAGS_ID` (15): a mannequin is no `Mob`, and its field 15 is the `Avatar`'s main hand.
+    if m.kind.is_mob() {
+        let mob_flags = (m.no_ai as i8) | ((m.left_handed as i8) << 1) | ((m.aggressive as i8) << 2);
+        d.set(data::mob::MOB_FLAGS, &DataValue::Byte(mob_flags));
+    }
     if kiln_entity::mob::breed::is_ageable(m.kind) && m.age < 0 {
         d.set(data::ageable_mob::BABY, &DataValue::Boolean(true));
     }
@@ -474,6 +477,40 @@ pub(crate) fn drop_item(stack: kiln_item::ItemStack, pos: [f64; 3], h: u64) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A client decodes an entity data entry by the serializer registered for its index on that entity type and
+    /// disconnects on any other ("Invalid entity data item type for field 15 on entity ClientMannequin": a mannequin,
+    /// which is no `Mob`, was sent the mob flags byte where its `Avatar` main hand belongs). Every mob type's entity
+    /// data must be fields of that type, with the serializer the type gives them.
+    #[test]
+    fn every_mob_sends_only_fields_of_its_entity_type() {
+        for &kind in mob::ALL_KINDS {
+            let name = kind.type_name();
+            let t = kiln_data::entities::by_name(name).expect("entity type");
+            let allowed: Vec<(u8, i32)> = t.fields().iter().map(|(_, f)| (f.index, f.serializer)).collect();
+            for (label, extra) in [("adult", None), ("baby", Some(("Age", kiln_proto::nbt::Tag::Int(-24000))))] {
+                let mut fields = vec![
+                    ("id".to_owned(), kiln_proto::nbt::Tag::String(name.into())),
+                    ("UUID".into(), kiln_proto::nbt::Tag::IntArray(vec![1, 2, 3, 4])),
+                    ("Pos".into(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::Double(0.5), kiln_proto::nbt::Tag::Double(64.0), kiln_proto::nbt::Tag::Double(0.5)])),
+                ];
+                if let Some((k, v)) = extra {
+                    fields.push((k.into(), v));
+                }
+                let spawn = Spawn::from_saved(&kiln_proto::nbt::Tag::Compound(fields), 7, true).unwrap_or_else(|| panic!("{name} loads"));
+                let e = match &spawn.body {
+                    crate::entities::Body::Loaded(e) => e,
+                    crate::entities::Body::LoadedStack(_, riders) => &riders[0].entity,
+                    _ => panic!("{name}: a loaded mob"),
+                };
+                let m = mob::data(e).unwrap_or_else(|| panic!("{name}: mob data"));
+                let d = metadata(e, m);
+                for f in d.fields() {
+                    assert!(allowed.contains(f), "{name} ({label}) sends field {} with serializer {}, which its type does not define: {allowed:?}", f.0, f.1);
+                }
+            }
+        }
+    }
 
     #[test]
     fn difficulty_of_a_new_world() {

@@ -275,6 +275,8 @@ fn put_particle(b: &mut BytesMut, p: &Particle) {
 #[derive(Debug, Clone, Default)]
 pub struct EntityData {
     buf: BytesMut,
+    /// The (index, serializer id) of every entry set, in order (what a test needs to check against the type's fields).
+    fields: Vec<(u8, i32)>,
 }
 
 impl EntityData {
@@ -291,7 +293,13 @@ impl EntityData {
         self.buf.put_u8(field.index);
         self.buf.put_varint(field.serializer);
         value.write(&mut self.buf);
+        self.fields.push((field.index, field.serializer));
         self
+    }
+
+    /// The (index, serializer id) of the entries, in order.
+    pub fn fields(&self) -> &[(u8, i32)] {
+        &self.fields
     }
 
     pub fn is_empty(&self) -> bool {

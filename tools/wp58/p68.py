@@ -91,3 +91,85 @@ def alive_b(c):
         c.cmd("mousepos 240 149"); time.sleep(1.5)
         c.mouse("left", "tap"); time.sleep(2.5)
     return c.state(0)["health"]
+
+
+# ---- wp68: facts and packet recordings of one scenario, written per target so K and V can be diffed ----
+import collections
+SPYDIR = OUT / "spy"
+FACTDIR = OUT / "facts"
+_NUM = re.compile(r"-?\d+\.\d+(?:E-?\d+)?")
+_facts_name = [None]
+FACTS = []
+
+def scenario(name):
+    """Start a scenario: facts are collected into OUT/facts/<name>_<T>.txt"""
+    _facts_name[0] = name
+    FACTS.clear()
+    FACTDIR.mkdir(parents=True, exist_ok=True)
+    SPYDIR.mkdir(parents=True, exist_ok=True)
+
+def F(*x):
+    s = " ".join(str(i) for i in x)
+    FACTS.append(s)
+    print("F:", s, flush=True)
+    if _facts_name[0]:
+        (FACTDIR / f"{_facts_name[0]}_{T}.txt").write_text("\n".join(FACTS) + "\n")
+
+def rec_start(c):
+    c.cmd("spy on")
+    c.cmd("spy clear")
+    c.cmd("spylog clear")
+
+def rec_stop(c, tag, show=True):
+    """Save the packets since rec_start as OUT/spy/<scenario>-<tag>_<T>.json and print the counts of normalised lines."""
+    lines = json.loads(c.cmd("spylog clear"))
+    norm = [_NUM.sub("#", l) for l in lines]
+    cnt = collections.Counter(norm)
+    nm = f"{_facts_name[0]}-{tag}"
+    (SPYDIR / f"{nm}_{T}.json").write_text(json.dumps(dict(cnt), indent=0, sort_keys=True))
+    if show:
+        print(f"spy {tag}: {len(lines)} lines, {len(cnt)} distinct", flush=True)
+    return cnt
+
+def spy_diff(name, tag):
+    """Differences between the Kiln (K) and vanilla (V) recordings of <name>-<tag>"""
+    k = json.loads((SPYDIR / f"{name}-{tag}_K.json").read_text())
+    v = json.loads((SPYDIR / f"{name}-{tag}_V.json").read_text())
+    out = []
+    for key in sorted(set(k) | set(v)):
+        if k.get(key, 0) != v.get(key, 0):
+            out.append(f"K{k.get(key,0):>4} V{v.get(key,0):>4}  {key[:200]}")
+    return out
+
+def pos(c):
+    s = c.state(0)
+    return round(s["x"], 2), round(s["y"], 2), round(s["z"], 2)
+
+def dist(p, q):
+    return round(math.hypot(p[0] - q[0], p[2] - q[2]), 2)
+
+def give(nm, item, n=1):
+    sv(f"give {nm} {item} {n}", show=False)
+
+def kit(nm, extra=()):
+    sv(f"clear {nm}", show=False)
+    sv(f"effect clear {nm}", show=False)
+    sv(f"gamemode survival {nm}", show=False)
+    for it in extra:
+        sv(f"give {nm} {it}", show=False)
+
+def clear_area():
+    """Remove every non-player entity (dying slimes and sulfur cubes split, so repeat)."""
+    for _ in range(4):
+        sv("kill @e[type=!player]", wait=0.35, show=False)
+
+def select_item(c, item):
+    return c.select(item)
+
+def use_on_entity(c, eid, item, button="right", dy=0.6, tries=8):
+    """Hold `item`, look at entity eid and right-click it (real interaction). True when the click landed on the entity."""
+    c.select(item)
+    return interact_ent(c, eid, button=button, tries=tries, dy=dy)
+
+def ents_of(c, t, rng=30):
+    return [e for e in c.state(rng)["entities"] if e["t"] == t]
