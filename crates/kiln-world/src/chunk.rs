@@ -375,10 +375,10 @@ impl Chunk {
     }
 
     fn column_top(&self, x: usize, z: usize) -> u16 {
-        for rel in (0..self.height()).rev() {
-            let (s, ly) = ((rel >> 4) as usize, (rel & 15) as usize);
-            if !self.sections[s].is_empty() && !is_air(self.sections[s].get(x, ly, z)) {
-                return rel as u16 + 1;
+        // (Empty sections are passed over whole.)
+        for (s, section) in self.sections.iter().enumerate().rev().filter(|(_, sec)| !sec.is_empty()) {
+            if let Some(ly) = (0..16).rev().find(|&ly| !is_air(section.get(x, ly, z))) {
+                return (s * 16 + ly) as u16 + 1;
             }
         }
         0

@@ -196,12 +196,19 @@ const GROUP_CHUNKS: i32 = 8;
 /// the light every block would have after updating them one by one (each level is the brightest
 /// some source reaches, whatever order they spread in), but cleared and spread once.
 pub fn update_light_many<S: CellStore + ?Sized>(w: &mut S, changed: &[[i32; 3]]) {
-    let mut changed = changed.to_vec();
-    // By group of chunks, so far-apart changes do not take the chunks between them.
+    // By group of chunks, so far-apart changes do not take the chunks between them (a position
+    // that comes twice is cleared and spread from twice, to the same effect).
     let group = |p: &[i32; 3]| ((p[0] >> 4).div_euclid(GROUP_CHUNKS), (p[2] >> 4).div_euclid(GROUP_CHUNKS));
-    changed.sort_unstable_by_key(|p| (group(p), *p));
-    changed.dedup();
-    for positions in changed.chunk_by(|a, b| group(a) == group(b)) {
+    let mut groups: std::collections::BTreeMap<(i32, i32), Vec<[i32; 3]>> = Default::default();
+    let first = changed.first().map(group);
+    let one = changed.iter().all(|p| Some(group(p)) == first);
+    if !one {
+        for p in changed {
+            groups.entry(group(p)).or_default().push(*p);
+        }
+    }
+    let lists: Vec<&[[i32; 3]]> = if one { vec![changed] } else { groups.values().map(Vec::as_slice).collect() };
+    for positions in lists.into_iter().filter(|l| !l.is_empty()) {
         let (mut min, mut max) = ((i32::MAX, i32::MAX), (i32::MIN, i32::MIN));
         for p in positions {
             let (cx, cz) = (p[0] >> 4, p[2] >> 4);

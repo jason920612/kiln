@@ -67,13 +67,24 @@ impl Gateways {
             return;
         }
         for p in self.chunk_positions(pos) {
-            let (x, z) = ((p.x & 15) as usize, (p.z & 15) as usize);
-            let Some(mut be) = chunk.block_entity(x, p.y, z).filter(|be| type_name(be.kind) == TYPE).cloned() else { continue };
-            let age = self.map[&p];
-            if age_of(&be) != age {
-                be.merge_fields(vec![("Age".into(), Tag::Long(age))]);
-                chunk.set_block_entity(x, p.y, z, be);
-            }
+            self.store_one(p, chunk);
+        }
+    }
+
+    /// [`Gateways::store`] for the gateway at `p` alone.
+    pub fn store_at(&mut self, p: BlockPos, chunk: &mut Chunk) {
+        if self.dirty && self.map.contains_key(&p) {
+            self.store_one(p, chunk);
+        }
+    }
+
+    fn store_one(&self, p: BlockPos, chunk: &mut Chunk) {
+        let (x, z) = ((p.x & 15) as usize, (p.z & 15) as usize);
+        let Some(mut be) = chunk.block_entity(x, p.y, z).filter(|be| type_name(be.kind) == TYPE).cloned() else { return };
+        let age = self.map[&p];
+        if age_of(&be) != age {
+            be.merge_fields(vec![("Age".into(), Tag::Long(age))]);
+            chunk.set_block_entity(x, p.y, z, be);
         }
     }
 
