@@ -763,8 +763,31 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 量測修正:傀儡的機會是 `gameTime % 100 == 0`,殭屍出現後第一個機會的相位讓每日總數差 ±15%(wp66 的 vanilla 8 次相位全在 +82..+105、Kiln 8 次散在 0..+74)。
 相位配對後(`rt_farm69.py ALIGN=1 PHASE=φ`,φ = 0/25/50/75 各 8 次 × 一區 6 日)vanilla 7.33、Kiln 6.42 隻/欄日(0.875,差 5σ)。
 
+**(wp71 補記:來源找到了,是比較的世界不同——vanilla 的農場蓋在 flat 世界的泥土上,Kiln 的在虛空世界,見 6.17。)**
+
 沒做／已知:這 12.5% 的來源沒找到。Kiln 與行程內的 vanilla(harness)逐位元相同,統計也一致(5.9~6.4 對 5.8~6.8),行程內 vanilla 與真 vanilla 伺服器(6.8~7.8)不同;
 已排除地形、模擬距離、玩家、`tick sprint`、資料包、傀儡移除方式、天氣與規則、實體 id、隨機種子、建造方式等(`docs/wp69.md`)。時間窗口:殭屍出現後 +50..+100 刻真 vanilla 的村民較晚離開、恐慌較晚結束。
+
+### 6.17 wp71（`wp71-farm-rng`）：鐵傀儡農場 12.5% 的來源
+
+細節與證據見 `docs/wp71.md`。**結論:Kiln 的行為沒有錯,wp66/wp69 比的是兩個不同的世界。** 村民的隨機閒逛(`VillageBoundRandomStroll` → `LandRandomPos.getPos`)只收腳下方塊實心的候選位置再抬出實心方塊,
+所以地板下有沒有地面決定了「找不到走向目標」的比例:vanilla 實測 2.0%(有地面)對 28.6%(地板下挖空),Kiln 模擬 2.1% 與 28.5%。vanilla 的農場在 flat 世界(地板下有泥土),Kiln 的在虛空世界。
+
+| 世界(24 區 × 6 日,相位 0,傀儡數) | vanilla | Kiln 伺服器 | Kiln 模擬 |
+|---|---|---|---|
+| 地板下有地面 | 1017.6(7 次) | 1005(2 次) | 993(3 次) |
+| 地板下是空氣 | 871(2 次) | 880(2 次) | 852(3 次) |
+
+最後驗證(兩個真伺服器,農場下 3 層實心石頭,24 區 × 6 日,`ALIGN=1 PHASE=0/25/50/75` 各 2 次):vanilla 8307、Kiln 8267 → 7.21 對 7.18 隻/欄日(0.995;每個相位 0.97~1.02)。閒置位置分布兩邊相同(Kiln 兩次之間的差和與 vanilla 的差一樣大)。
+
+| 項目 | 原本 | 現在 | 證據 |
+|---|---|---|---|
+| 實體每刻的關卡隨機(`entity_level_random`) | 刻與 id 原樣 xor,`(t, a)` 與 `(t^k, a^k)` 同一條流 | 各過一輪 SplitMix64 | `level_random_tests` 2 個(原本紅) |
+| 大腦各閘的洗牌種子 | `base + k`(連號 LCG 種子,各閘的流差固定常數;第一抽卡方 266,000) | 混過的種子;parity 重播仍 `base + k`(`pin_gate_seeds`) | `gate_seed_tests`(原本紅);`mob_parity` 全部逐位元不變 |
+| 農場測試台 | 一段最後一刻出現的傀儡沒被殺 | 補殺 | 夜間 `golem_detected_recently` 6.6% → 0 |
+| `stroll_targets.rs`(新) | — | 地板下有地面 2.6%、空氣 29.8% 找不到走向目標(vanilla 2.0% / 28.6%) | 固定「地板下的世界」這個變因,無對應修正可拿掉 |
+
+沒有記錄的 hash 或向量因此改變(`crowd_golden` 只有玩家、`mob_parity` 的閘種子由重播固定)。排除的假說:大腦流改為全部共用一條或混勻種子,傀儡數不變(856、862 對 866)。
 
 
 ## 7. 重跑
@@ -852,6 +875,9 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 #   MOB_FARM_STATS=1 python tools/mob_vectors.py --filter farm69_days --out ...        # 統計用場景（不比對）
 #   VM：bash tools/wp69/run_v.sh|run_k.sh TAG REPS（env PENS、ALIGN=1、PHASE、HOMES、ZTP、SAMPLE），埠 vanilla 25596、Kiln 25599
 #   cargo test --release -p kiln-sim --test farm69 -- --ignored --nocapture（FARM_DAYS/PENS/ARRIVE/PANIC/TRACE/VILLAGE）
+# wp71：農場的真 vanilla java agent 統計與兩邊逐項比較（見 docs/wp71.md）
+#   VM：bash tools/wp71/build.sh；ALIGN=1 PHASE=n bash tools/wp71/run_v71.sh|run_k71.sh TAG REPS（env DAYS、PENS、DEEP、CLEARBELOW、NOZOMBIE、SAMPLE），埠 vanilla 25596、Kiln 25599
+#   FARM_STATS=out.stats cargo test --release -p kiln-sim --test farm69 -- --ignored --nocapture；python3 tools/wp71/cmp_stats.py V.agent K.stats
 # wp66：隨機刻取樣、鐵傀儡農場、完整突襲的並排（VM；Kiln 25588、vanilla 25594，見 docs/wp66.md）
 #   bash tools/wp58/wp66_start.sh / wp66_vanilla.sh（或 fresh.sh）、vm_client66.sh、vm_observer66.sh，然後
 #   TARGET=K|V python3 tools/wp58/rt_cane.py … / rt_crops.py … / rt_machine.py … / rt_golem.py run 6 4 OUT.json
