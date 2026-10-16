@@ -110,3 +110,34 @@ fn a_creeper_killed_by_a_skeleton_drops_a_music_disc() {
     let discs = sim.entity_nbt().into_iter().filter(|t| t.get("Item").and_then(|i| i.get("id")).and_then(Tag::as_str).is_some_and(|id| id.contains("music_disc"))).count();
     assert_eq!(discs, 0);
 }
+
+/// A mob that dies burning drops its meat cooked (`furnace_smelt` under `entity_properties` `flags.is_on_fire`): the loot context
+/// could not smelt at all, so burning cows dropped raw beef.
+#[test]
+fn burning_cows_drop_cooked_beef() {
+    if !have_datapack() {
+        eprintln!("no vanilla datapack: skipped");
+        return;
+    }
+    let mut sim = Sim::new(SimConfig::new(4, 4, None));
+    let (msg, stats) = join(1, "User", 2);
+    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
+    let mut client = Client::new(1, stats);
+    let mut ticks = |sim: &mut Sim, client: &mut Client, n: usize| {
+        for _ in 0..n {
+            let mut inbox = Vec::new();
+            client.tick(None, &mut inbox);
+            assert!(sim.step(inbox));
+        }
+    };
+    ticks(&mut sim, &mut client, 5);
+    let p = client.pos;
+    for _ in 0..12 {
+        assert!(sim.step([ToSim::Console(format!("summon minecraft:cow {} {} {} {{NoAI:1b,Fire:200s}}", p[0] + 4.0, p[1], p[2]))]));
+    }
+    ticks(&mut sim, &mut client, 3);
+    assert!(sim.step([ToSim::Console("kill @e[type=cow]".into())]));
+    ticks(&mut sim, &mut client, 3);
+    assert!(items_dropped(&sim, "minecraft:cooked_beef") > 0, "cooked beef from burning cows");
+    assert_eq!(items_dropped(&sim, "minecraft:beef"), 0, "no raw beef from burning cows");
+}

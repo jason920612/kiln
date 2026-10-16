@@ -375,6 +375,8 @@ pub(crate) struct DeathContext {
 pub(crate) struct DeathExtra {
     pub loot: Option<std::sync::Arc<kiln_loot::LootData>>,
     pub vehicle_type: Option<&'static str>,
+    /// The recipes (`furnace_smelt` cooks the meat of a mob that burned or was killed with fire aspect).
+    pub rules: Option<std::sync::Arc<kiln_inventory::Rules>>,
 }
 
 /// `EntitySubPredicate`s that depend on the entity's class (`type_specific/sheep`, `type_specific/cube_mob`).
@@ -432,6 +434,12 @@ impl kiln_loot::LootContext for DeathContext {
     }
     fn has_damage_source(&self) -> bool {
         true
+    }
+    /// `furnace_smelt`: the first smelting recipe that takes the item (`RecipeManager.getRecipeFor(SMELTING)` and `assemble`).
+    fn smelt(&self, input: &kiln_item::ItemStack) -> Option<kiln_item::ItemStack> {
+        let rules = self.extra.rules.as_ref()?;
+        let i = rules.recipes.find_cooking(kiln_inventory::recipe::CookingKind::Smelting, input, None)?;
+        Some(rules.recipes.assemble_single(i))
     }
     fn damage_source_matches(&self, p: &kiln_loot::predicate::world::DamageSourcePredicate) -> bool {
         // Only the damage type tags are known here; entity sub-predicates fail.

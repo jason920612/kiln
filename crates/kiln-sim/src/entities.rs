@@ -3367,6 +3367,7 @@ fn carry_out(
                 specific: crate::mobs::TypeSpecific::of(kiln_entity::mob::data(phys)),
                 extra: crate::mobs::DeathExtra {
                     loot: Some(loot.clone()),
+                    rules: Some(env.menus.clone()),
                     vehicle_type: phys.vehicle.and_then(|v| list.binary_search_by_key(&v, |e| e.id).ok()).and_then(|j| list[j].phys.as_deref()).map(|p| p.type_name),
                 },
             };
