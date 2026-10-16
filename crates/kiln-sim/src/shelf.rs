@@ -10,6 +10,7 @@ use crate::container::BeKind;
 use kiln_blocks::behaviour::shelf as chain;
 use kiln_blocks::{BlockPos, Direction, Effect, Level, state};
 use kiln_inventory::Container;
+use kiln_inventory::stack::StackExt;
 use kiln_item::ItemStack;
 
 fn sound(level: &mut RegionLevel, pos: BlockPos, sound: &'static str) {
