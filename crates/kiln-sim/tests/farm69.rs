@@ -76,8 +76,39 @@ fn zombies(sim: &mut Sim, pens: i32, on: bool) {
     );
 }
 
+/// `FARM_PANIC`: how often the villagers panic (as the vanilla dawn scenarios of `mob_parity` count: dt 300..1500 only when `FARM_PANIC=dawn`,
+/// else dt 300..11000) and in how many of the opportunities (`game time % 100 == 0`) somebody of the pen panics.
+#[derive(Default)]
+struct Panic {
+    ticks: u64,
+    panicking: u64,
+    opps: u64,
+    opps_any: u64,
+}
+
+fn count_panic(sim: &Sim, panic: &mut Panic, dawn: bool) {
+    let dt = sim.day_time() % 24000;
+    if !(300..if dawn { 1500 } else { 11000 }).contains(&dt) {
+        return;
+    }
+    let mut pens: std::collections::BTreeMap<i32, bool> = std::collections::BTreeMap::new();
+    for (id, kind, pos, _) in sim.mobs() {
+        if kind != "minecraft:villager" {
+            continue;
+        }
+        let p = sim.mob_brain(id).is_some_and(|b| b.iter().any(|t| t == "act:panic"));
+        panic.ticks += 1;
+        panic.panicking += p as u64;
+        *pens.entry(((pos[2] + 20.0) / 40.0).floor() as i32).or_default() |= p;
+    }
+    if sim.game_time() % 100 == 0 {
+        panic.opps += pens.len() as u64;
+        panic.opps_any += pens.values().filter(|&&b| b).count() as u64;
+    }
+}
+
 /// Runs `n` ticks, logging new golems (and killing them in the tick after).
-fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log: &mut Vec<(i64, i64, [f64; 3])>) {
+fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log: &mut Vec<(i64, i64, [f64; 3])>, panic: &mut Panic) {
     let mut kill = false;
     for _ in 0..n {
         if kill {
@@ -85,6 +116,9 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
             kill = false;
         } else {
             assert!(sim.step([]));
+        }
+        if let Ok(v) = std::env::var("FARM_PANIC") {
+            count_panic(sim, panic, v == "dawn");
         }
         // `FARM_TRACE=from,to`: where the villagers of the first pens are, every 20 ticks of the day between.
         if let Some((from, to)) = std::env::var("FARM_TRACE").ok().and_then(|v| v.split_once(',').map(|(a, b)| (a.parse::<i64>().unwrap(), b.parse::<i64>().unwrap()))) {
@@ -119,24 +153,26 @@ fn the_farm_in_the_simulation() {
     console(&mut sim, ["time set 11500".to_string()]);
     let mut seen = std::collections::HashSet::new();
     let mut log = Vec::new();
+    let mut panic = Panic::default();
     let t0 = std::time::Instant::now();
     for day in 0..=days {
         let dt = sim.day_time() % 24000;
         if dt >= 11000 || day == 0 {
             zombies(&mut sim, pens, false);
-            advance(&mut sim, (24000 - dt + 300) % 24000, &mut seen, &mut log);
+            advance(&mut sim, (24000 - dt + 300) % 24000, &mut seen, &mut log, &mut panic);
         }
         if day == days {
             break;
         }
         zombies(&mut sim, pens, true);
         let dt = sim.day_time() % 24000;
-        advance(&mut sim, 11000 - dt, &mut seen, &mut log);
+        advance(&mut sim, 11000 - dt, &mut seen, &mut log, &mut panic);
         eprintln!("day {day}: {} golems so far [{:.0}s]", log.len(), t0.elapsed().as_secs_f64());
     }
     for (g, dt, p) in &log {
         println!("GOLEM {g} {} {:.1} {:.1} {:.1}", dt % 24000, p[0], p[1], p[2]);
     }
+    println!("PANIC villager-ticks {} panicking {:.4} opps {} any {:.4}", panic.ticks, panic.panicking as f64 / panic.ticks.max(1) as f64, panic.opps, panic.opps_any as f64 / panic.opps.max(1) as f64);
     println!("TOTAL {} golems in {days} days, {pens} pens", log.len());
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
