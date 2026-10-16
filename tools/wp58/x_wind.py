@@ -1,5 +1,5 @@
 from p68_small import *
-reset()
+prep(); time.sleep(2); reset()
 sv("fill 10 200 10 30 240 30 minecraft:air", show=False)
 sv(f"tp {ME} 20.5 200 20.5", show=False)
 time.sleep(1.0)

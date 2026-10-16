@@ -3310,9 +3310,6 @@ fn carry_out(
             };
             let sound = fx.map_or("minecraft:entity.generic.explode", |f| f.sound);
             let (Some(particle), Some(sound)) = (kiln_data::builtin_id("minecraft:particle_type", particle), kiln_data::builtin_id("minecraft:sound_event", sound)) else { return };
-            if std::env::var_os("KILN_DEBUG_BLAST").is_some() {
-                eprintln!("blast at {at:?} power {power} knockbacks {knockbacks:?}");
-            }
             // (`Entity.push`: the server's own motion of the player takes it too, and so does the motion packet a hurt player is sent.)
             for (id, v) in &knockbacks {
                 if let Some(p) = players.iter_mut().find(|p| p.entity_id == *id) {
