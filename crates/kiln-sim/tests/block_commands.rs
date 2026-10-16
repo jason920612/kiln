@@ -131,9 +131,9 @@ fn the_light_of_a_fill_is_the_light_of_its_blocks_set_one_by_one() {
         assert_eq!(together.block_at(p[0], p[1], p[2]), one.block_at(p[0], p[1], p[2]), "block at {p:?}");
         assert_eq!(together.light_at(p[0], p[1], p[2]), one.light_at(p[0], p[1], p[2]), "light at {p:?}");
     }
-    // Light is there when the command is done: inside the box, lit by the glowstone only.
-    let (block, sky) = together.light_at(min[0] + 1, min[1] + 3, min[2] + 3).unwrap();
-    assert_eq!((block, sky), (14, 0), "inside the box beside the strip");
+    // Light is there when the command is done: beside the strip inside the box (under glass,
+    // which lets the sky through).
+    assert_eq!(together.light_at(min[0] + 1, min[1] + 3, min[2] + 3), Some((14, 15)), "inside the box beside the strip");
 }
 
 #[test]
