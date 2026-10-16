@@ -59,7 +59,7 @@ fn build(sim: &mut Sim, pens: i32) {
     console(sim, ["kill @e[type=!player]".to_string()]);
     // `FARM_SHIFT=n`: n entities come and go first, so the villagers get other entity ids (and with them other random streams): another sample of the same farm.
     if let Some(n) = std::env::var("FARM_SHIFT").ok().and_then(|v| v.parse::<i32>().ok()).filter(|&n| n > 0) {
-        console(sim, (0..n).map(|_| "summon minecraft:marker 0 100 0".to_string()));
+        console(sim, (0..n).map(|_| "summon minecraft:armor_stand 1 100 1".to_string()));
         console(sim, ["kill @e[type=!player]".to_string()]);
     }
     let mut cmds = Vec::new();
