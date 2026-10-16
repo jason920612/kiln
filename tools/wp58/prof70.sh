@@ -12,16 +12,19 @@ setsid nohup ~/wt/wp70-command-perf/target/release/kiln-bot --addr 127.0.0.1:255
   --name-prefix Bench --report-interval 3600 > ~/wp70/bot_prof.log 2>&1 < /dev/null &
 sleep 6
 echo "gamemode spectator Bench0" > $c; echo "tp Bench0 16 200 16" > $c
+# SETUP: commands (separated by ";") run before recording
+IFS=';' read -ra pre <<< "${SETUP:-}"
+for l in "${pre[@]}"; do echo "$l" > $c; sleep 1; done
 sleep 20
 pid=$(pgrep -x kiln-run70)
-sudo -n perf record -F 499 --call-graph dwarf,32768 -p "$pid" -o ~/wp70/$name.data -- sleep "$secs" > /dev/null 2>&1 &
+sudo -n perf record -F ${FREQ:-999} --call-graph dwarf,16384 -p "$pid" -o ~/wp70/$name.data -- sleep "$secs" > /dev/null 2>&1 &
 sleep 1
 echo "$cmd" > $c
 wait %1
 "$tools/wp70_servers.sh" K stop
 pkill -f "name-prefix Bench --report-interval 3600" 2>/dev/null
 sudo -n chown test ~/wp70/$name.data
-perf report -i ~/wp70/$name.data --no-children --percent-limit 0.5 --stdio -g none 2>/dev/null | grep -v "^#" | grep -v "^$" | head -60 > ~/wp70/$name.txt
-perf report -i ~/wp70/$name.data --children --percent-limit 2 --stdio -g none 2>/dev/null | grep -v "^#" | grep -v "^$" | head -80 >> ~/wp70/$name.txt
+perf report -i ~/wp70/$name.data --comm sim --no-children --percent-limit 0.7 --stdio -g none 2>/dev/null | grep -v "^#" | grep -v "^$" | head -50 > ~/wp70/$name.txt
+perf report -i ~/wp70/$name.data --comm sim --children --percent-limit 3 --stdio -g none 2>/dev/null | grep -v "^#" | grep -v "^$" | grep -v "(inlined)" | head -70 >> ~/wp70/$name.txt
 grep -n "slow tick\|mspt" ~/wp70/K/server.log | tail -3 >> ~/wp70/$name.txt
 echo done >> ~/wp70/$name.txt
