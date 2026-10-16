@@ -180,6 +180,12 @@ impl LevelWeather {
         self.rain_level() as f64 > 0.2
     }
 
+    /// `WeatherAttributes`: the rain layer applies while the rain level less the thunder level is above 0, the thunder layer while the
+    /// thunder level is.
+    pub fn has_layer(&self) -> bool {
+        self.rain_level() > 0.0 || self.thunder_level() > 0.0
+    }
+
     /// `Level.isThundering` for a level that can have weather.
     pub fn is_thundering(&self) -> bool {
         self.thunder_level() as f64 > 0.9
@@ -421,6 +427,11 @@ impl Sim {
     /// `Level.isRaining` of level `dim`.
     pub(crate) fn is_raining(&self, dim: crate::DimId) -> bool {
         can_have_weather(dim) && self.level_weather[dim].is_raining()
+    }
+
+    /// Whether `WeatherAttributes` has a layer over level `dim`'s attributes: its rain or thunder level is above 0.
+    pub(crate) fn has_weather_layer(&self, dim: crate::DimId) -> bool {
+        can_have_weather(dim) && self.level_weather[dim].has_layer()
     }
 
     /// `Level.isThundering` of level `dim`.

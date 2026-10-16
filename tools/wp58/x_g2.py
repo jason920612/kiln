@@ -1,0 +1,25 @@
+from p68_ghast import *
+kill_all_mobs()
+sv("forceload add 100 100 100 100", show=False); time.sleep(1.5)
+sv("setblock 100 200 100 minecraft:stone", show=False)
+sv("fill 99 201 99 101 204 101 minecraft:air", show=False)
+sv("tp KilnTest 100.5 203 98.5", show=False)
+time.sleep(3)
+sv("gamerule random_tick_speed 3000", show=False)
+rec_start(a)
+sv("setblock 100 202 100 minecraft:dried_ghast[waterlogged=true,hydration=3]", show=False, wait=0.6)
+for i in range(60):
+    sprint_ticks(200)
+    n = sv("execute if entity @e[type=happy_ghast]", show=False)
+    if "pass" in n and "fail" not in n:
+        print("server has a ghast at step", i, flush=True)
+        break
+print(sv("data get entity @e[type=happy_ghast,limit=1] Pos", show=False)[-100:])
+time.sleep(1.0)
+ls_ = json.loads(a.cmd("spylog ts clear"))
+print("spy:", len(ls_), [l[:100] for l in ls_ if "AddEntity" in l or "ghast" in l or "RemoveEntities" in l][:30])
+print([l[:80] for l in ls_ if "SetEntityMotion" in l or "TeleportEntity" in l or "Pos" in l][:10])
+print(sv("data get entity @e[type=happy_ghast,limit=1]", show=False)[-1500:])
+st_=a.state(100)
+print("client sees:", [(e["t"], e["id"], round(e["x"],1), round(e["y"],1), round(e["z"],1)) for e in st_["entities"]], pos(a), st_["health"])
+sv("gamerule random_tick_speed 3", show=False)

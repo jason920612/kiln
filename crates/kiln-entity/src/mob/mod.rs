@@ -988,6 +988,11 @@ pub fn variant_components(m: &MobData) -> Vec<kiln_item::Component> {
         MobKind::Salmon | MobKind::TropicalFish | MobKind::Mooshroom => kinds::fish::variant_components(m).unwrap_or_default(),
         MobKind::Axolotl => kinds::axolotl::variant_components(m).unwrap_or_default(),
         MobKind::Frog => vec![C::FrogVariant(v::FrogVariant(m.variant))],
+        // `sheep/color` (the wool a killed sheep drops is picked by it).
+        MobKind::Sheep => match &m.species {
+            Species::Sheep { color, .. } => kiln_item::component::DyeColor::from_id(*color as i32).map(C::SheepColor).into_iter().collect(),
+            _ => Vec::new(),
+        },
         // -- wp32: parrots
         MobKind::Parrot => vec![C::ParrotVariant(v::ParrotVariant::ALL[kinds::parrot::variant(m) as usize])],
         _ => Vec::new(),

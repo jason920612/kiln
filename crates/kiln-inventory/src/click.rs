@@ -154,6 +154,16 @@ pub fn handle_container_button_click(menu: &mut Menu, env: &mut Env, container_i
     accepted
 }
 
+/// `handleBundleItemSelected` (`AbstractContainerMenu.setSelectedBundleItemIndex`): the mouse wheel over a bundle in slot `slot` selects
+/// the stack `index` of it (-1 or a repeat: none), so the next right click takes that stack out.
+pub fn handle_select_bundle_item(menu: &mut Menu, env: &mut Env, slot: i32, index: i32) {
+    if let Ok(slot) = usize::try_from(slot)
+        && slot < menu.len()
+    {
+        crate::bundle::toggle_selected_item(menu.item_mut(env, slot), index);
+    }
+}
+
 /// `handleRenameItem`: the anvil's name field (ignored unless an anvil menu is open).
 pub fn handle_rename_item(menu: &mut Menu, env: &mut Env, name: &str, still_valid: bool) -> bool {
     if menu.kind != crate::MenuKind::Anvil || !still_valid {

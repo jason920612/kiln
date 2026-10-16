@@ -54,6 +54,8 @@ pub struct Weather {
     pub raining: bool,
     /// `Level.isThundering`.
     pub thundering: bool,
+    /// Any rain or thunder level above 0: `WeatherAttributes` lays its attribute values over the level's as soon as it does.
+    pub weather_layer: bool,
     /// `minecraft:max_snow_accumulation_height`.
     pub max_snow_height: i32,
 }
@@ -61,7 +63,7 @@ pub struct Weather {
 impl Default for Weather {
     /// Clear skies, default rules.
     fn default() -> Self {
-        Self { raining: false, thundering: false, max_snow_height: 1 }
+        Self { raining: false, thundering: false, weather_layer: false, max_snow_height: 1 }
     }
 }
 

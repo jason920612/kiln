@@ -149,7 +149,7 @@
 | 珊瑚、海綿、鷹架、絆線與鉤、目標方塊、大型垂葉 | A | 13 | `wet` 7＋`misc` 的絆線、目標、垂葉、銅燈 scenario | 鷹架塌落的實體部分為 C |
 | 刷怪磚、試煉刷怪磚、寶庫 | A | 3 | 刷怪磚：mob_parity 的 `spawner_` 49 個 scenario（延遲、潛在生成物與權重、範圍、上限、光線與自訂規則、生怪蛋、`spawner_blocks_work`、亂數與存檔）；試煉刷怪磚 `interact_parity` `trial_` 14 個、寶庫 `vault_` 19 個 scenario（wp49，見 6.3） | 試煉刷怪磚的怪物位置由 level 亂數決定，向量用給定位置避開；不祥試煉的物品雨由 wp50 補上（`ominous_item_spawner`：`ominous50` 15 個 `container_parity` scenario＋`tests/ominous_trial.rs`） |
 | 告示牌、懸掛式告示牌 | A | 4 | `interact_parity` 的 sign／equip／book／pick 共 409 個 scenario（編輯與編輯鎖、染色、上蠟、螢光墨囊、點擊事件、牆上與懸掛式放置） | 懸掛告示牌的存活（支撐消失會掉）未模擬 |
-| 營火、蜂巢、鐘、講台、裝飾陶罐、書架（雕紋）、合成器、製圖台 | A | 8 | wp49：`interact_parity` 的營火＋陶罐＋書架 `b49` 67、鐘 76、蜂巢 22、講台 22、合成器 99、陶罐 44、製圖台與地圖 21；`container_parity` 的營火 6、蜂巢 6、講台 10、陶罐 14、合成器 26（見 6.3） | 原清單中的擱板（shelf）與潛影導管沒有獨立向量（未驗證，沿用 C） |
+| 營火、蜂巢、鐘、講台、裝飾陶罐、書架（雕紋）、合成器、製圖台 | A | 8 | wp49：`interact_parity` 的營火＋陶罐＋書架 `b49` 67、鐘 76、蜂巢 22、講台 22、合成器 99、陶罐 44、製圖台與地圖 21；`container_parity` 的營火 6、蜂巢 6、講台 10、陶罐 14、合成器 26（見 6.3） | 擱板（shelf）在 wp68 補上方塊實體、點擊、通電與連鎖（見 6.15;實機並排 B + `shelves.rs` C）;潛影導管沒有獨立向量（未驗證，沿用 C） |
 | 指令方塊（普通、連鎖、重複；條件式）、結構方塊、拼圖方塊 | A（指令方塊、結構方塊、拼圖方塊） | 3 | wp49：`interact_parity` 的指令方塊 46 個＋`container_parity` 的 `cmdblock` 24 個 scenario（執行、條件、連鎖、重複、紅石、自動、`command_block_output`、礦車指令方塊） | wp50 補上結構方塊與拼圖方塊（`interact_parity` 的 `structure50` 88 個 scenario，見 6.4）；缺口：存檔時不收集範圍內的實體、拼圖方塊 `generate` 的 `keepJigsaws` 旗標不作用 |
 | 其他：日光感測器、旗幟、花盆、蛋糕、凋零玫瑰、終界傳送門框架、氣泡柱、可摔落的刷子方塊 | A（wp50 補上旗幟圖樣） | 9 | 終界傳送門框架：`end` 28 個 scenario；凋零玫瑰：`effect_parity` `haz_wither_rose_*`；wp49：日光感測器 `daylight` 4、蛋糕 `cake` 23、花盆（見上）、氣泡柱 `block/bubble` 6、刷子 `brush` 17 個 scenario；wp50：旗幟圖樣（織布機、盾牌、鍋釜洗旗）`banner50` 19、`cauldron50` 170 個 scenario | – |
 
@@ -720,6 +720,33 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 沒做／已知:鐵傀儡農場 Kiln 比 vanilla 少 11%(10 次 6 日實測,原因沒找到,村民恐慌的行為包逐行相符,只見到逃離後半段多走 0.7 格);突襲逾時(48000 刻)沒有實機並排;`INSTALL_BUDGET` 仍以牆鐘計;Kiln 的大範圍 `/fill` 慢。
 
 
+### 6.15 wp68（`wp68-playthrough6`）：26.x 最新內容的第六次真實客戶端遊玩（分割模式：Kiln 與 vanilla 同一時刻做同一件事）
+
+細節與證據見 `docs/playthrough-wp68.md`。同一個種子(68),演員 `KilnTest` 連 Kiln、另一個同名客戶端連 vanilla,`par.sh` 把同一支腳本同時丟給兩邊;多人場景用 `Obs` 連同一個伺服器。
+指令只用在佈置。找到並修好 15 個整合問題,每個都有迴歸測試(`tools/wp68_neg.py` 拿掉修正測試就失敗)。
+
+| 項目 | 原版怎麼做 | Kiln 原本 | 現在 | 證據 |
+|---|---|---|---|---|
+| 人偶(mannequin)的 entity data | 只有 Mob 才有 mob flags 欄位 | 送了 → 客戶端斷線 | 只在 `is_mob()` 送;幼體才送 `AGE_LOCKED` | `mobs.rs::every_mob_sends_only_fields_of_its_entity_type`(逐型別檢查) |
+| 硫磺方塊桶 | 空桶取起(存名稱、血量、年齡、身體裝備)、桶放回 | 伺服器沒做(客戶端預測看起來成功) | `sulfur_cube.rs` bucket_* | `sulfur_bucket.rs`;實機兩邊相同 |
+| 黃金蒲公英 | 任何幼體(`#cannot_be_age_locked` 之外)鎖/解鎖年齡,送粒子 | 只有蝌蚪/馬/熊貓 | `ageable_dandelion` | `age_lock.rs` |
+| 乾燥恐魔 | 水化後孵出幼體快樂恐魔 | 方塊消失什麼都沒生 | `Effect::HatchGhastling` | `ghastling.rs` |
+| entity data 回到預設值 | `sendDirtyEntityData` 把改回預設的欄位也送 | 不送(幼體在客戶端永遠長不大) | `EntityData::dirty_since` | `entity_data_reset.rs` + proto 單元測試 |
+| `/data merge entity` | 不影響騎乘關係 | 把乘客甩下 | 保留 passengers/vehicle | `data_merge_riders.rs` |
+| `/item replace entity` 坐騎欄位 | `saddle`/`armor.body` | no such slot | `mob_extra_ordinal` | `item_replace_mount_slots.rs` |
+| 音效 id | — | 3 個寫錯(海龜蛋、嗅探獸蛋、鸚鵡螺鞍) | 改正,整個原始碼的音效 id 掃描 | `sound_ids.rs` |
+| 駱駝 entity data | 不送已馴服旗標 | 送 | 只送進食 | `mobs.rs::a_camel_does_not_send_the_tame_flag` |
+| 死亡戰利品謂詞 | `sheep`/`cube_mob`/`components`/攻擊者裝備與型別/載具、`furnace_smelt` | 一律「否」、`smelt` 空的 | `DeathContext.specific/extra`、`smelt()` | `death_loot_specific.rs` |
+| 束口袋選取 | `bundle_item_selected` 封包 | 沒處理 | `BundleContents.selected`、`handle_select_bundle_item` | `bundle.rs::the_selected_stack_is_the_one_removed` |
+| 嗅探獸蛋 | `onPlace` 每次狀態改變都跑 | 只首次(裂一次就停) | 拿掉守衛 | `sniffer_egg.rs` |
+| 蜜蜂與下雨 | `bees_stay_in_hive` 環境屬性被雨/雷層設為 true | 只有夜晚 | `Weather.weather_layer` | `bees_rain.rs` |
+| 木質層架 | 方塊實體 3 格、點擊交換、通電連鎖(最多 3)換快捷欄、比較器 | 只有方塊狀態,右鍵沒反應 | `behaviour/shelf.rs`、`sim/shelf.rs`、`BeKind::Shelf` | `shelves.rs`;實機層架 `data get`/音效/通電逐項相同 |
+| 實體爆炸給玩家的擊退 | `ClientboundExplodePacket.playerKnockback`(客戶端加到自己的速度),粒子與音效在封包裡,音調客戶端抽 | `SetEntityMotion`(取代)+ 分開的粒子/音效封包 + 多抽 2 次關卡亂數 | 全部改送爆炸封包;伺服器端玩家速度加衝量 | `explosion_packet.rs`;實機風彈腳下最高點 206.07/206.08 對 206.07/206.08(修正前 206.93) |
+
+並排一致(沒有問題):矛刺擊/衝刺、鸚鵡螺與殭屍鸚鵡螺、駱駝與駱駝屍殼、沙/礫考古、犰狳、合成器、狼鎧、銅傀儡全流程、銅方塊氧化(11 種)、避雷針與閃電打銅、快樂恐魔(兩人同騎)、試煉刷怪籠整個週期與不祥之兆、保險庫(兩位玩家各拿各的獎勵)、不祥保險庫、微風(25 秒 7 顆風彈對 7 顆)、沼澤骷髏剪毛、嗅探獸、創角怪與樹脂、爐子燒樹脂、**重啟持久化**(21 種方塊實體、實體、玩家、計分板、遊戲規則、成就/統計、漏斗時鐘…;只有問題 13 的蜜蜂差異)。
+驗證(VM):workspace 測試(不帶與帶 `KILN_DATAPACK`)各 180 個二進位 `ok`、determinism 6/6、`mob_parity` 1451/1451(濾掉 wp69 剛加的 11 筆 `farm69_*` 向量;那 9 個失敗場景屬於 wp69 尚未合併的修正)、`parity_suites` 101/102(同一個原因)、`crowd_golden` 4/4 不必重錄、負向檢查 16/16。
+沒修的小差異與沒做的項目見 `docs/playthrough-wp68.md`(實體互動揮手動畫、方塊事件重複次數、`sound_entity`、遠處刷怪籠 `data get` 的預設欄位、4 人同騎、重錘數字…)。
+
 ## 7. 重跑
 
 ```sh
@@ -805,6 +832,10 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 #   TARGET=K|V python3 tools/wp58/rt_cane.py … / rt_crops.py … / rt_machine.py … / rt_golem.py run 6 4 OUT.json
 #   TARGET=K|V [MODE=victory|loss] python3 tools/wp58/p66_raid.py OUT.json ; p66_day.py ; p66_trade.py ; p66_bell.py
 #   負向檢查（拿掉修正，測試要失敗）：tools/wp66_negative.sh
+# wp68：分割模式的並排遊玩（VM；Kiln 25589、vanilla 25595，見 docs/playthrough-wp68.md）
+#   bash tools/wp58/wp68_start.sh / wp68_vanilla.sh、switch.sh K split（演員連 Kiln、第二個客戶端連 vanilla）、然後 bash tools/wp58/par.sh p68_<場景>.py [子場景…]
+#   雙客戶端同伺服器：switch.sh K|V both，再 TARGET=K|V python3 p68_vault2.py；重啟持久化：p68_persist.py setup|dump before、restart_both.sh、dump after、persist_cmp.py / persist_kv.py
+#   負向檢查（拿掉修正，測試要失敗）：python3 tools/wp68_neg.py [case…]
 # 登入等封包的 golden 由原版驗證後寫入
 python tools/packet_vectors.py --bless
 ```

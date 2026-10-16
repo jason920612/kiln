@@ -6,6 +6,7 @@
 use super::{MobData, MobKind, Species, breed};
 use crate::entity::Entity;
 use crate::level::{EntityLevel, Event};
+use crate::math::Vec3;
 use kiln_item::ItemStack;
 
 /// The player doing the clicking.
@@ -166,9 +167,38 @@ fn mob_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, wh
         _ => {}
     }
     if breed::is_animal(m.kind) {
-        return animal_interact(e, m, level, who, stack);
+        let out = animal_interact(e, m, level, who, stack);
+        if out.success {
+            return out;
+        }
+    }
+    // `AgeableMob.mobInteract` (the end of every ageable type's chain): a golden dandelion.
+    if breed::is_ageable(m.kind) {
+        return ageable_dandelion(e, m, level, stack).unwrap_or(Outcome::PASS);
     }
     Outcome::PASS
+}
+
+/// `AgeableMob.mobInteract`: a golden dandelion held to a baby (`canUseGoldenDandelion`: not for the types in
+/// `#cannot_be_age_locked`, and not while the lock's particles still play) toggles its age lock
+/// (`setAgeLockedData`: the age goes back to the start of babyhood, the particles run for 40 ticks), uses up the
+/// dandelion, makes a locked mob persistent and plays the use (locked) or unuse sound to everyone.
+pub fn ageable_dandelion(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, stack: &ItemStack) -> Option<Outcome> {
+    if !is(stack, "minecraft:golden_dandelion") || !m.baby() || m.age_lock_timer != 0 || super::entity_type_tag(e.type_name, "minecraft:cannot_be_age_locked") {
+        return None;
+    }
+    let locked = !m.age_locked;
+    m.age_locked = locked;
+    super::set_age_in(e, m, breed::BABY_START_AGE, Some(&mut *level));
+    m.age_lock_timer = 40;
+    if locked {
+        m.persistence_required = true;
+    }
+    let at = e.position();
+    let center = Vec3::new(at.x.floor() + 0.5, at.y.floor() + 0.5, at.z.floor() + 0.5);
+    let sound = if locked { "minecraft:item.golden_dandelion.use" } else { "minecraft:item.golden_dandelion.unuse" };
+    level.emit(Event::Sound { pos: center, sound: super::sound_event(sound), source: "players", volume: 1.0, pitch: 1.0 });
+    Some(Outcome::success(HeldChange::Consume(1)))
 }
 
 /// `Animal.mobInteract`: food makes an adult fall in love, or a baby grow up faster.

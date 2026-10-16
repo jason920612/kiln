@@ -58,6 +58,8 @@ pub(crate) enum BeKind {
     Campfire,
     /// Six slots for one book each (`ChiseledBookShelfBlockEntity`).
     ChiseledBookshelf,
+    /// Three slots for a stack each, on the front of a wooden shelf (`ShelfBlockEntity`).
+    Shelf,
     /// Holds nothing; works its signal out every 20 ticks (`DaylightDetectorBlockEntity`).
     DaylightDetector,
     /// Holds nothing; shakes when hit (`BellBlockEntity`).
@@ -104,6 +106,7 @@ impl BeKind {
             "jukebox" => BeKind::Jukebox,
             "campfire" => BeKind::Campfire,
             "chiseled_bookshelf" => BeKind::ChiseledBookshelf,
+            "shelf" => BeKind::Shelf,
             "daylight_detector" => BeKind::DaylightDetector,
             "bell" => BeKind::Bell,
             "beehive" => BeKind::Beehive,
@@ -131,6 +134,7 @@ impl BeKind {
             BeKind::Jukebox => 1,
             BeKind::Campfire => 4,
             BeKind::ChiseledBookshelf => 6,
+            BeKind::Shelf => 3,
             BeKind::DecoratedPot | BeKind::Lectern | BeKind::Brushable => 1,
             BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw => 0,
         }
@@ -140,7 +144,7 @@ impl BeKind {
     pub fn randomizable(self) -> bool {
         !matches!(
             self,
-            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw
+            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::Shelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw
         )
     }
 
@@ -167,6 +171,7 @@ impl BeKind {
             BeKind::Jukebox => "container.jukebox",
             BeKind::Campfire => "container.campfire",
             BeKind::ChiseledBookshelf => "container.chiseled_bookshelf",
+            BeKind::Shelf => "container.shelf",
             BeKind::DaylightDetector => "container.daylight_detector",
             BeKind::Bell => "block.minecraft.bell",
             BeKind::Beehive => "block.minecraft.beehive",

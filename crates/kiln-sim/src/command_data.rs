@@ -119,11 +119,17 @@ impl Sim {
         // (`Entity.load` leaves the entity's random alone: a reload from the seed would give every
         // foal of one pair the same stats.)
         let random = e.phys.as_deref().map(|p| p.random.clone());
+        // (Nor does it dismount anyone: riders and the vehicle are links, not saved data.)
+        let links = e.phys.as_deref().map(|p| (p.passengers.clone(), p.vehicle));
         match kiln_entity::persist::load(&Tag::Compound(fields), e.id, seed) {
             Ok(mut loaded) => {
                 loaded.uuid = e.uuid.as_u128();
                 if let Some(r) = random {
                     loaded.random = r;
+                }
+                if let Some((passengers, vehicle)) = links {
+                    loaded.passengers = passengers;
+                    loaded.vehicle = vehicle;
                 }
                 e.phys = Some(Box::new(loaded));
                 e.sync();
@@ -1159,6 +1165,8 @@ impl Sim {
                     raider,
                     attacker: None,
                     components: self.entity_mut(target).and_then(|e| e.phys.as_deref()).and_then(kiln_entity::mob::data).map(kiln_entity::mob::variant_components).unwrap_or_default(),
+                    specific: crate::mobs::TypeSpecific::of(self.entity_mut(target).and_then(|e| e.phys.as_deref()).and_then(kiln_entity::mob::data)),
+                    extra: crate::mobs::DeathExtra { loot: self.loot.clone(), vehicle_type: None, rules: Some(self.rules.clone()) },
                 };
                 self.roll_table(&kiln_command::host::LootTableArg::Id(table), &ctx)?
             }
@@ -1422,8 +1430,27 @@ fn mob_equipment_index(slot: i32) -> Option<usize> {
     })
 }
 
+/// The `EquipmentSlot` ordinal of the slots only some mobs have (`armor.body` is `BODY`, `saddle` is `SADDLE`): a horse's
+/// armour and saddle, a nautilus', a camel's, a happy ghast's harness - kept by the type, not in `equipment`.
+fn mob_extra_ordinal(slot: i32) -> Option<u8> {
+    match slot {
+        105 => Some(6),
+        106 => Some(7),
+        _ => None,
+    }
+}
+
 fn mob_slot(m: &kiln_entity::mob::MobData, slot: i32) -> Option<kiln_item::ItemStack> {
-    Some(m.equipment[mob_equipment_index(slot)?].clone())
+    if let Some(i) = mob_equipment_index(slot) {
+        return Some(m.equipment[i].clone());
+    }
+    // (The slot exists when the type takes an item in it; an empty one is not listed, so ask by trying on a copy.)
+    let ord = mob_extra_ordinal(slot)?;
+    let kind = m.kind.ext()?;
+    if !kind.set_extra_equipment(&mut m.clone(), ord, kiln_item::ItemStack::empty()) {
+        return None;
+    }
+    Some(kind.extra_equipment(m).into_iter().find(|(o, _)| *o == ord).map(|(_, s)| s).unwrap_or_else(kiln_item::ItemStack::empty))
 }
 
 fn set_mob_slot(m: &mut kiln_entity::mob::MobData, slot: i32, stack: kiln_item::ItemStack) -> bool {
@@ -1432,7 +1459,10 @@ fn set_mob_slot(m: &mut kiln_entity::mob::MobData, slot: i32, stack: kiln_item::
             m.equipment[i] = stack;
             true
         }
-        None => false,
+        None => match (mob_extra_ordinal(slot), m.kind.ext()) {
+            (Some(ord), Some(kind)) => kind.set_extra_equipment(m, ord, stack),
+            _ => false,
+        },
     }
 }
 

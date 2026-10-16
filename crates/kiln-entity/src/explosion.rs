@@ -123,7 +123,7 @@ pub fn explode_ruled(
         })
     });
     let mut positions = exploded_positions(level, center, radius, rules);
-    hurt_entities(level, source, causing, center, radius, interaction, damage, rules.knockback.unwrap_or(1.0));
+    let knockbacks = hurt_entities(level, source, causing, center, radius, interaction, damage, rules.knockback.unwrap_or(1.0));
     if interaction != Interaction::Keep {
         shuffle(&mut positions, level);
         for &pos in &positions {
@@ -141,7 +141,7 @@ pub fn explode_ruled(
             }
         }
     }
-    level.emit(Event::Explosion { pos: center, power: radius, blocks: positions.clone(), source, fx: rules.fx });
+    level.emit(Event::Explosion { pos: center, power: radius, blocks: positions.clone(), keep: interaction == Interaction::Keep, knockbacks, source, fx: rules.fx });
     positions
 }
 
@@ -252,9 +252,10 @@ fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, causing: O
 
 /// `hurtEntities`: damage by exposure and distance, and knockback.
 #[allow(clippy::too_many_arguments)]
-fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, center: Vec3, radius: f32, interaction: Interaction, damage_entities: bool, knockback_multiplier: f32) {
+fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, center: Vec3, radius: f32, interaction: Interaction, damage_entities: bool, knockback_multiplier: f32) -> Vec<(i32, Vec3)> {
+    let mut hit_players: Vec<(i32, Vec3)> = Vec::new();
     if radius < 1.0e-5 {
-        return;
+        return hit_players;
     }
     let r2 = radius * 2.0;
     let area = Aabb::new(
@@ -306,6 +307,7 @@ fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, causing: Opti
         // `Entity.onExplosionHit(source)`: a player remembers where and by what it was hit.
         if level.player(id).is_some() {
             level.emit(crate::level::Event::ExplosionHit { player: id, source });
+            hit_players.push((id, push));
         }
     }
     // `Level.getEntities` lists the ender dragons' parts too, after every other entity: each
@@ -338,6 +340,7 @@ fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, causing: Opti
             }
         }
     }
+    hit_players
 }
 
 /// The blast's damage to `e` (entity `id`) when somebody caused it (`DamageSources.explosion(direct,

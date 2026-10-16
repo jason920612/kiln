@@ -81,6 +81,8 @@ pub(crate) struct Entity {
     section: Option<[i32; 3]>,
     /// A mob's entity data and equipment as its viewers last got them.
     meta_sent: Vec<u8>,
+    /// The entity data last sent (what the next change is worked out against; `None`: the viewers got it with the pairing).
+    meta_prev: Option<EntityData>,
     /// Hash of a mob's syncable attributes as its viewers last got them (0: none yet).
     attrs_sent: u64,
     /// Passengers as viewers last got them (Set Passengers).
@@ -377,6 +379,7 @@ impl Entity {
             seen_by: Vec::new(),
             section: None,
             meta_sent: Vec::new(),
+            meta_prev: None,
             attrs_sent: 0,
             passengers_sent: Vec::new(),
             equipment_sent: Vec::new(),
@@ -437,6 +440,7 @@ impl Entity {
         self.tracker = MovementTracker::new(self.id, self.kind.update_interval, &self.move_state());
         self.sent_vel = self.vel;
         self.meta_sent = Vec::new();
+        self.meta_prev = None;
         self.attrs_sent = 0;
         self.passengers_sent = Vec::new();
         self.equipment_sent = Vec::new();
@@ -2256,8 +2260,10 @@ pub(crate) fn tick(
     ride_players(&mut sim);
     let SimLevel { level, list, proxies, events, spawns, players, deaths, .. } = sim;
     let level = level.into_region();
-    // Explosion knockback reaches the pushed player's client (it owns its movement).
-    for pr in proxies.iter().filter_map(Proxy::made).filter(|e| e.delta != Vec3::ZERO) {
+    // A push that is not an explosion's reaches the pushed player's client (it owns its movement); an explosion's is in its packet
+    // (the client adds it to its motion, which a motion packet would replace).
+    let blasted: Vec<i32> = events.iter().flat_map(|e| if let Event::Explosion { knockbacks, .. } = e { knockbacks.iter().map(|k| k.0).collect() } else { Vec::new() }).collect();
+    for pr in proxies.iter().filter_map(Proxy::made).filter(|e| e.delta != Vec3::ZERO && !blasted.contains(&e.id)) {
         if let Some(p) = players.iter_mut().find(|p| p.entity_id == pr.id)
             && !(p.game_mode == 1 && p.flying)
         {
@@ -2906,6 +2912,8 @@ pub(crate) fn interact_mob(
             raider: None,
             attacker: None,
             components: kiln_entity::mob::data(&phys).map(kiln_entity::mob::variant_components).unwrap_or_default(),
+            specific: crate::mobs::TypeSpecific::of(kiln_entity::mob::data(&phys)),
+            extra: crate::mobs::DeathExtra::default(),
         };
         let seed = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_6561);
         let mut k = 0u64;
@@ -3289,34 +3297,38 @@ fn carry_out(
                 }
             }
         }
-        Event::Explosion { pos, power, fx, .. } => {
-            // `ServerLevel.explode` sends the explosion (sound and particle) to players within 64
-            // blocks; the removed blocks reach clients as block updates.
+        Event::Explosion { pos, power, blocks, keep, knockbacks, fx, .. } => {
+            // `ServerLevel.explode` sends the explosion packet to the players within 64 blocks: the particle and sound it names (the client
+            // plays them), the blocks it took and the knockback this player takes (the client adds it to its motion). The removed blocks
+            // reach clients as block updates.
             let at = arr(pos);
             let particle = match fx {
-                Some(fx) if power < 2.0 => fx.small_particle,
+                Some(fx) if power < 2.0 || keep => fx.small_particle,
                 Some(fx) => fx.large_particle,
-                None if power < 2.0 => "minecraft:explosion",
+                None if power < 2.0 || keep => "minecraft:explosion",
                 None => "minecraft:explosion_emitter",
             };
-            if let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", particle) {
-                let pkt = world_fx::level_particles(&world_fx::LevelParticles {
-                    particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
-                    override_limiter: true,
-                    always_show: false,
-                    pos: at,
-                    offset: [0.0; 3],
-                    max_speed: [1.0, 0.0, 0.0],
-                    count: 0,
-                    randomization: world_fx::ParticleRandomization::Default,
-                });
-                for p in players.iter_mut().filter(|p| dist2(p.pos, at) < 64.0 * 64.0) {
-                    p.send(pkt.clone());
+            let sound = fx.map_or("minecraft:entity.generic.explode", |f| f.sound);
+            let (Some(particle), Some(sound)) = (kiln_data::builtin_id("minecraft:particle_type", particle), kiln_data::builtin_id("minecraft:sound_event", sound)) else { return };
+            // (`Entity.push`: the server's own motion of the player takes it too, and so does the motion packet a hurt player is sent.)
+            for (id, v) in &knockbacks {
+                if let Some(p) = players.iter_mut().find(|p| p.entity_id == *id) {
+                    p.vel = [p.vel[0] + v.x, p.vel[1] + v.y, p.vel[2] + v.z];
                 }
             }
-            let r = level.random();
-            let pitch = (1.0 + (r.next_float() - r.next_float()) * 0.2) * 0.7;
-            send_sound(players, env, n, at, fx.map_or("minecraft:entity.generic.explode", |f| f.sound), world_fx::SoundSource::Blocks, 4.0, pitch);
+            for p in players.iter_mut().filter(|p| dist2(p.pos, at) < 64.0 * 64.0) {
+                let knockback = knockbacks.iter().find(|(id, _)| *id == p.entity_id).filter(|_| p.game_mode != 3 && !(p.game_mode == 1 && p.flying)).map(|(_, v)| arr(*v));
+                let pkt = world_fx::explode(
+                    at,
+                    power,
+                    blocks.len() as i32,
+                    knockback,
+                    &world_fx::Particle { kind: particle, options: world_fx::ParticleOptions::None },
+                    &world_fx::Sound::Registered(sound),
+                    true,
+                );
+                p.send(pkt);
+            }
         }
         Event::MobHurt { entity: id, kind, attacker, direct } => {
             // `broadcastDamageEvent`: the hurt tilt and sound for the mob's viewers.
@@ -3358,6 +3370,12 @@ fn carry_out(
                 }),
                 attacker: attacker_view,
                 components: kiln_entity::mob::data(phys).map(kiln_entity::mob::variant_components).unwrap_or_default(),
+                specific: crate::mobs::TypeSpecific::of(kiln_entity::mob::data(phys)),
+                extra: crate::mobs::DeathExtra {
+                    loot: Some(loot.clone()),
+                    rules: Some(env.menus.clone()),
+                    vehicle_type: phys.vehicle.and_then(|v| list.binary_search_by_key(&v, |e| e.id).ok()).and_then(|j| list[j].phys.as_deref()).map(|p| p.type_name),
+                },
             };
             let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174);
             for (k, stack) in crate::mobs::roll(&loot, &table, &ctx, seed).into_iter().enumerate() {
@@ -3542,6 +3560,8 @@ fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, i
         raider: None,
         attacker: None,
         components: phys.and_then(kiln_entity::mob::data).map(kiln_entity::mob::variant_components).unwrap_or_default(),
+        specific: crate::mobs::TypeSpecific::of(phys.and_then(kiln_entity::mob::data)),
+        extra: crate::mobs::DeathExtra::default(),
     };
     let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6966 ^ n as u64);
     for (k, stack) in crate::mobs::roll(&loot, table, &ctx, seed).into_iter().enumerate() {
@@ -3980,12 +4000,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
     {
         let mut meta = EntityData::new();
         x.entity_data(phys, &mut meta);
-        if meta.entries() != e.meta_sent.as_slice() {
-            if !e.meta_sent.is_empty() {
-                packets.push(entity::set_entity_data(e.id, &meta));
-            }
-            e.meta_sent = meta.entries().to_vec();
-        }
+        push_dirty_data(e.id, meta, &mut e.meta_sent, &mut e.meta_prev, &mut packets, false);
     }
     // An extension entity that wears things (an armor stand): the equipment packet when it changes.
     if let Some(phys) = e.phys.as_deref()
@@ -4010,12 +4025,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
         && let EntityKind::Mob(m) = &phys.kind
     {
         let meta = crate::mobs::metadata(phys, m);
-        if meta.entries() != e.meta_sent.as_slice() {
-            if !e.meta_sent.is_empty() {
-                packets.push(entity::set_entity_data(e.id, &meta));
-            }
-            e.meta_sent = meta.entries().to_vec();
-        }
+        push_dirty_data(e.id, meta, &mut e.meta_sent, &mut e.meta_prev, &mut packets, false);
         // `ServerEntity.sendDirtyEntityData`: attributes that changed (effects, babies, taming, `/attribute`).
         let hash = crate::mobs::attributes_hash(m);
         if hash != e.attrs_sent {
@@ -4044,12 +4054,8 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
     // Arrows: crit and in-ground flags change in flight (extension entities: above).
     if e.phys.as_deref().is_some_and(|p| matches!(p.kind, EntityKind::Arrow(_))) {
         let meta = e.metadata();
-        if meta.entries() != e.meta_sent.as_slice() {
-            if !e.meta_sent.is_empty() || e.age > 1 {
-                packets.push(entity::set_entity_data(e.id, &meta));
-            }
-            e.meta_sent = meta.entries().to_vec();
-        }
+        let late = e.age > 1;
+        push_dirty_data(e.id, meta, &mut e.meta_sent, &mut e.meta_prev, &mut packets, late);
     }
     if let Some(phys) = e.phys.as_deref()
         && phys.passengers != e.passengers_sent
@@ -4181,4 +4187,31 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
 fn _assert_sync() {
     fn f<T: Sync>() {}
     f::<SimLevel<'static, 'static, 'static>>();
+}
+
+
+/// `ServerEntity.sendDirtyEntityData`: when the entity's data differs from what its viewers hold, a packet with the entries
+/// that changed (and, for a value that went back to its default, that default - the data here lists non-default values only,
+/// so an entry that is gone must be reset). The first look at an entity only records what its pairing packet carried, unless
+/// `send_when_unprimed`.
+fn push_dirty_data(id: i32, meta: EntityData, sent: &mut Vec<u8>, prev: &mut Option<EntityData>, packets: &mut Vec<Bytes>, send_when_unprimed: bool) {
+    let changed = meta.entries() != sent.as_slice();
+    match prev {
+        None => {
+            if changed && send_when_unprimed && !meta.is_empty() {
+                packets.push(entity::set_entity_data(id, &meta));
+            }
+        }
+        Some(p) => {
+            if !changed {
+                return;
+            }
+            let d = meta.dirty_since(p);
+            if !d.is_empty() {
+                packets.push(entity::set_entity_data(id, &d));
+            }
+        }
+    }
+    *sent = meta.entries().to_vec();
+    *prev = Some(meta);
 }

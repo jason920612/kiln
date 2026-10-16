@@ -112,7 +112,7 @@ fn release_mob(level: &RegionLevel, bucket: &ItemStack, mob_type: &str, target: 
     let mut spawn = match kind {
         // An axolotl keeps its variant, health and age in the bucket.
         MobKind::Axolotl => crate::mobs::bucket_axolotl(bucket, at)?,
-        MobKind::Salmon | MobKind::Cod | MobKind::Pufferfish | MobKind::TropicalFish | MobKind::Tadpole => {
+        MobKind::Salmon | MobKind::Cod | MobKind::Pufferfish | MobKind::TropicalFish | MobKind::Tadpole | MobKind::SulfurCube => {
             let mut s = crate::mobs::bucket_release(bucket, [target.x, target.y, target.z], env.mobs.difficulty, env.game_time, seed)?;
             s.pos = at;
             if let crate::entities::Body::Ready(e) = &mut s.body {

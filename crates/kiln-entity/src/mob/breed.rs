@@ -12,13 +12,31 @@ pub const BABY_START_AGE: i32 = -24000;
 /// `Animal.PARENT_AGE_AFTER_BREEDING`.
 pub const PARENT_AGE_AFTER_BREEDING: i32 = 6000;
 
+/// `AgeableMob.makeAgeLockedParticle`: every second tick of the lock's 40, a pause (locked) or reset (unlocked) growth
+/// particle above the mob; the new timer.
+pub fn age_lock_particle(e: &mut Entity, level: &mut dyn crate::level::EntityLevel, timer: i32, locked: bool) -> i32 {
+    if timer <= 0 {
+        return timer;
+    }
+    if timer % 2 == 0 {
+        let (w, h) = (e.width as f64, e.height as f64);
+        let x = e.x() + w * (2.0 * e.random.next_double() - 1.0);
+        let y = e.y() + h * ((2.0 * e.random.next_double() - 1.0) * 0.2) + h + if locked { 0.2f32 as f64 } else { 0.0 };
+        let z = e.z() + w * (2.0 * e.random.next_double() - 1.0);
+        level.particle(if locked { "minecraft:pause_mob_growth" } else { "minecraft:reset_mob_growth" }, crate::math::Vec3::new(x, y, z));
+    }
+    timer - 1
+}
+
 /// `AgeableMob.aiStep` and `Animal.aiStep` after `Mob.aiStep`: the forced-age particles, growing
 /// up (or the breeding cooldown running out), the age lock particles, then love mode counting
 /// down with its heart particles (only their random draws matter here).
 pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn crate::level::EntityLevel) {
     if m.forced_age_timer > 0 {
         if m.forced_age_timer % 4 == 0 {
-            super::random_point(e, 1.0);
+            // `sendParticles(HAPPY_VILLAGER, getRandomX(1.0), getRandomY() + 0.5, getRandomZ(1.0), 1, 0, 0, 0, 0)`.
+            let p = super::random_point(e, 1.0);
+            level.particle("minecraft:happy_villager", crate::math::Vec3::new(p.x, p.y + 0.5, p.z));
         }
         m.forced_age_timer -= 1;
     }
@@ -30,15 +48,7 @@ pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn crate::level::En
             super::set_age_in(e, m, age - 1, Some(&mut *level));
         }
     }
-    if m.age_lock_timer > 0 {
-        if m.age_lock_timer % 2 == 0 {
-            // `getRandomX(1.0)`, `getRandomY(0.2)`, `getRandomZ(1.0)`.
-            e.random.next_double();
-            e.random.next_double();
-            e.random.next_double();
-        }
-        m.age_lock_timer -= 1;
-    }
+    m.age_lock_timer = age_lock_particle(e, level, m.age_lock_timer, m.age_locked);
     if !is_animal(m.kind) {
         return;
     }
@@ -174,7 +184,7 @@ pub fn spawn_child(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
     if let Some(item) = m.kind.ext().and_then(|k| k.breed_as_item()) {
         let pitch = (e.random.next_float() - e.random.next_float()) * 0.2 + 0.5;
         if !e.silent {
-            level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.sniffer.egg_plop", source: "neutral", volume: 1.0, pitch });
+            level.emit(Event::Sound { pos: e.position(), sound: "minecraft:block.sniffer_egg.plop", source: "neutral", volume: 1.0, pitch });
         }
         if let Some(stack) = kiln_item::ItemStack::of(item, 1) {
             super::spawn_at_location(e, level, stack);

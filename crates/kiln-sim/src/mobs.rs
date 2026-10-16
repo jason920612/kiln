@@ -120,10 +120,17 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
         d.set(data::living_entity::EFFECT_AMBIENCE, &DataValue::Boolean(true));
     }
     d.set(data::living_entity::HEALTH, &DataValue::Float(m.health));
-    let mob_flags = (m.no_ai as i8) | ((m.left_handed as i8) << 1) | ((m.aggressive as i8) << 2);
-    d.set(data::mob::MOB_FLAGS, &DataValue::Byte(mob_flags));
+    // `Mob.DATA_MOB_FLAGS_ID` (15): a mannequin is no `Mob`, and its field 15 is the `Avatar`'s main hand.
+    if m.kind.is_mob() {
+        let mob_flags = (m.no_ai as i8) | ((m.left_handed as i8) << 1) | ((m.aggressive as i8) << 2);
+        d.set(data::mob::MOB_FLAGS, &DataValue::Byte(mob_flags));
+    }
     if kiln_entity::mob::breed::is_ageable(m.kind) && m.age < 0 {
         d.set(data::ageable_mob::BABY, &DataValue::Boolean(true));
+    }
+    // `AgeableMob.AGE_LOCKED` (a tadpole has its own, see its entity data).
+    if m.age_locked && m.kind != MobKind::Tadpole && kiln_entity::mob::breed::is_ageable(m.kind) {
+        d.set(data::ageable_mob::AGE_LOCKED, &DataValue::Boolean(true));
     }
     match &m.species {
         Species::Cow | Species::Chicken { .. } => {
@@ -183,6 +190,8 @@ pub(crate) fn bucket_release(bucket: &kiln_item::ItemStack, pos: [i32; 3], diffi
     mob::finalize_spawn(&mut e, &mut r, &ctx, &mut mob::GroupData::default(), false);
     if kind == MobKind::Tadpole {
         kiln_entity::mob::kinds::tadpole::apply_bucket(&mut e, bucket);
+    } else if kind == MobKind::SulfurCube {
+        kiln_entity::mob::kinds::sulfur_cube::apply_bucket(&mut e, bucket);
     } else {
         kiln_entity::mob::kinds::fish::apply_bucket(&mut e, bucket);
     }
@@ -354,6 +363,40 @@ pub(crate) struct DeathContext {
     /// The dying mob's own components `entity_properties` of `this` match (a chicken's variant
     /// decides the colour of its egg).
     pub components: Vec<kiln_item::Component>,
+    /// The `type_specific` facts of the dying mob that loot tables ask for: a sheep's `sheared` and a slime's or cube's `size`.
+    pub specific: TypeSpecific,
+    /// What an `attacker`, `direct_attacker` or `vehicle` predicate needs beyond that.
+    pub extra: DeathExtra,
+}
+
+/// The loot data (its tags answer item and enchantment tag predicates of the killer's weapon) and the type of the mob the
+/// dying one rode (a husk on a camel husk, a zombie on a zombie horse have more to drop).
+#[derive(Clone, Default)]
+pub(crate) struct DeathExtra {
+    pub loot: Option<std::sync::Arc<kiln_loot::LootData>>,
+    pub vehicle_type: Option<&'static str>,
+    /// The recipes (`furnace_smelt` cooks the meat of a mob that burned or was killed with fire aspect).
+    pub rules: Option<std::sync::Arc<kiln_inventory::Rules>>,
+}
+
+/// `EntitySubPredicate`s that depend on the entity's class (`type_specific/sheep`, `type_specific/cube_mob`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct TypeSpecific {
+    pub sheared: Option<bool>,
+    pub cube_size: Option<i32>,
+}
+
+impl TypeSpecific {
+    /// The facts of `m`, when it is a sheep or a cube mob (a slime, magma cube, sulfur cube).
+    pub(crate) fn of(m: Option<&MobData>) -> TypeSpecific {
+        let Some(m) = m else { return TypeSpecific::default() };
+        let sheared = match &m.species {
+            Species::Sheep { sheared, .. } => Some(*sheared),
+            _ => None,
+        };
+        let cube_size = matches!(m.kind, MobKind::Slime | MobKind::MagmaCube | MobKind::SulfurCube).then(|| kiln_entity::mob::kinds::slime::size(m));
+        TypeSpecific { sheared, cube_size }
+    }
 }
 
 /// The killer as a `source_entity` predicate sees it.
@@ -381,9 +424,8 @@ impl kiln_loot::LootContext for DeathContext {
     fn has_entity(&self, target: kiln_loot::EntityTarget) -> bool {
         match target {
             kiln_loot::EntityTarget::This => true,
-            kiln_loot::EntityTarget::Attacker | kiln_loot::EntityTarget::DirectAttacker | kiln_loot::EntityTarget::AttackingPlayer => {
-                self.killed_by_player
-            }
+            kiln_loot::EntityTarget::Attacker | kiln_loot::EntityTarget::DirectAttacker => self.killed_by_player || self.attacker.is_some(),
+            kiln_loot::EntityTarget::AttackingPlayer => self.killed_by_player,
             _ => false,
         }
     }
@@ -392,6 +434,12 @@ impl kiln_loot::LootContext for DeathContext {
     }
     fn has_damage_source(&self) -> bool {
         true
+    }
+    /// `furnace_smelt`: the first smelting recipe that takes the item (`RecipeManager.getRecipeFor(SMELTING)` and `assemble`).
+    fn smelt(&self, input: &kiln_item::ItemStack) -> Option<kiln_item::ItemStack> {
+        let rules = self.extra.rules.as_ref()?;
+        let i = rules.recipes.find_cooking(kiln_inventory::recipe::CookingKind::Smelting, input, None)?;
+        Some(rules.recipes.assemble_single(i))
     }
     fn damage_source_matches(&self, p: &kiln_loot::predicate::world::DamageSourcePredicate) -> bool {
         // Only the damage type tags are known here; entity sub-predicates fail.
@@ -405,6 +453,21 @@ impl kiln_loot::LootContext for DeathContext {
             && p.tags.iter().all(|t| crate::health::damage_type_tag(id, t.tag.as_str()) == t.expected)
     }
     fn entity_matches(&self, target: kiln_loot::EntityTarget, predicate: &kiln_loot::predicate::EntityPredicate) -> bool {
+        use kiln_loot::predicate::world::EntitySubPredicate as Q;
+        if matches!(target, kiln_loot::EntityTarget::Attacker | kiln_loot::EntityTarget::DirectAttacker) {
+            // The killer: its type and variant (a skeleton's creeper disc), and a player's main hand (fire aspect cooks the meat).
+            let Some(a) = self.attacker.as_ref() else { return false };
+            return predicate.parts.iter().all(|part| match part {
+                Q::Equipment(slots) => {
+                    let (Some(loot), true) = (self.extra.loot.as_ref(), a.type_name == "minecraft:player") else { return false };
+                    slots.iter().all(|(slot, ip)| match (slot.as_str(), self.weapon.as_ref()) {
+                        ("mainhand", Some(w)) => kiln_loot::predicate::item_matches(&loot.tags, ip, w),
+                        _ => false,
+                    })
+                }
+                other => a.matches(&kiln_loot::predicate::world::EntityPredicate { parts: vec![other.clone()], json: predicate.json.clone() }),
+            });
+        }
         if target != kiln_loot::EntityTarget::This {
             return false;
         }
@@ -423,6 +486,14 @@ impl kiln_loot::LootContext for DeathContext {
                 self.raider.is_some() && has_raid.is_none_or(|h| h == raid) && is_captain.is_none_or(|c| c == captain)
             }
             P::Components(cs) => cs.iter().all(|c| self.components.contains(c)),
+            // `vehicle`: what the dying mob rode.
+            P::Vehicle(v) => self.extra.vehicle_type.is_some_and(|t| {
+                let id = kiln_item::registry::ENTITY_TYPE.id(t).unwrap_or(-1);
+                v.parts.iter().all(|p| matches!(p, P::EntityType(set) if set.contains(id)))
+            }),
+            // `SheepPredicate` / `CubeMobPredicate`: only for a mob of the class.
+            P::Sheep { sheared } => self.specific.sheared.is_some_and(|s| sheared.is_none_or(|w| w == s)),
+            P::CubeMob { size } => self.specific.cube_size.is_some_and(|c| size.min.is_none_or(|m| c >= m) && size.max.is_none_or(|m| c <= m)),
             P::Flags(f) if f.is_baby.is_some() => f.is_baby == Some(self.baby) && {
                 let mut f2 = f.clone();
                 f2.is_baby = None;
@@ -474,6 +545,57 @@ pub(crate) fn drop_item(stack: kiln_item::ItemStack, pos: [f64; 3], h: u64) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A camel (and its husk) is tame by `isTamed()` alone: a vanilla server does not list the horse flags (field 18) for it
+    /// unless it is grazing, and Kiln sent the tame bit.
+    #[test]
+    fn a_camel_does_not_send_the_tame_flag() {
+        for name in ["minecraft:camel", "minecraft:camel_husk"] {
+            let tag = kiln_proto::nbt::Tag::Compound(vec![
+                ("id".into(), kiln_proto::nbt::Tag::String(name.into())),
+                ("UUID".into(), kiln_proto::nbt::Tag::IntArray(vec![1, 2, 3, 4])),
+                ("Pos".into(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::Double(0.5), kiln_proto::nbt::Tag::Double(64.0), kiln_proto::nbt::Tag::Double(0.5)])),
+            ]);
+            let spawn = Spawn::from_saved(&tag, 7, true).unwrap_or_else(|_| panic!("{name} loads"));
+            let crate::entities::Body::Loaded(e) = &spawn.body else { panic!("a loaded mob") };
+            let d = metadata(e, mob::data(e).unwrap());
+            assert!(!d.fields().iter().any(|f| f.0 == 18), "{name}: the horse flags are not sent: {:?}", d.fields());
+        }
+    }
+
+    /// A client decodes an entity data entry by the serializer registered for its index on that entity type and
+    /// disconnects on any other ("Invalid entity data item type for field 15 on entity ClientMannequin": a mannequin,
+    /// which is no `Mob`, was sent the mob flags byte where its `Avatar` main hand belongs). Every mob type's entity
+    /// data must be fields of that type, with the serializer the type gives them.
+    #[test]
+    fn every_mob_sends_only_fields_of_its_entity_type() {
+        for &kind in mob::ALL_KINDS {
+            let name = kind.type_name();
+            let t = kiln_data::entities::by_name(name).expect("entity type");
+            let allowed: Vec<(u8, i32)> = t.fields().iter().map(|(_, f)| (f.index, f.serializer)).collect();
+            for (label, extra) in [("adult", None), ("baby", Some(("Age", kiln_proto::nbt::Tag::Int(-24000))))] {
+                let mut fields = vec![
+                    ("id".to_owned(), kiln_proto::nbt::Tag::String(name.into())),
+                    ("UUID".into(), kiln_proto::nbt::Tag::IntArray(vec![1, 2, 3, 4])),
+                    ("Pos".into(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::Double(0.5), kiln_proto::nbt::Tag::Double(64.0), kiln_proto::nbt::Tag::Double(0.5)])),
+                ];
+                if let Some((k, v)) = extra {
+                    fields.push((k.into(), v));
+                }
+                let spawn = Spawn::from_saved(&kiln_proto::nbt::Tag::Compound(fields), 7, true).unwrap_or_else(|_| panic!("{name} loads"));
+                let e = match &spawn.body {
+                    crate::entities::Body::Loaded(e) => e,
+                    crate::entities::Body::LoadedStack(_, riders) => &riders[0].entity,
+                    _ => panic!("{name}: a loaded mob"),
+                };
+                let m = mob::data(e).unwrap_or_else(|| panic!("{name}: mob data"));
+                let d = metadata(e, m);
+                for f in d.fields() {
+                    assert!(allowed.contains(f), "{name} ({label}) sends field {} with serializer {}, which its type does not define: {allowed:?}", f.0, f.1);
+                }
+            }
+        }
+    }
 
     #[test]
     fn difficulty_of_a_new_world() {

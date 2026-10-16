@@ -102,7 +102,7 @@ pub fn set_container_contents(stack: &mut ItemStack, kind: ContainerKind, items:
             for mut item in items {
                 bundle.try_insert(&mut item);
             }
-            stack.insert(keys::BUNDLE_CONTENTS, BundleContents(bundle.items.iter().filter_map(template).collect()));
+            stack.insert(keys::BUNDLE_CONTENTS, BundleContents::new(bundle.items.iter().filter_map(template).collect()));
         }
         ContainerKind::ChargedProjectiles => {
             stack.insert(keys::CHARGED_PROJECTILES, ChargedProjectiles(items.iter().filter_map(template).collect()));

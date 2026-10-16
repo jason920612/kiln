@@ -1,0 +1,31 @@
+from p68_small import *
+sv("kill @e[type=item]", show=False)
+sv("kill @e[tag=nai]", show=False)
+sv(f"tp {ME} 20.5 200 30.5", show=False)
+sv(f"clear {ME}", show=False)
+time.sleep(1)
+# (a) pot
+sv("setblock 10 200 30 minecraft:decorated_pot{item:{id:'minecraft:diamond',count:2}}", show=False)
+sv("setblock 12 200 30 minecraft:decorated_pot", show=False)
+sv("setblock 14 200 30 minecraft:decorated_pot[facing=south]{components:{'minecraft:pot_decorations':['minecraft:angler_pottery_sherd','minecraft:brick','minecraft:brick','minecraft:archer_pottery_sherd']}}", show=False)
+for x in (10, 12, 14):
+    print("pot", x, re.sub(r".*(block data: |query\[)", "", sv(f"data get block {x} 200 30", show=False, wait=0.4))[:260])
+# (b) /kill loot
+sv("summon minecraft:cow 26.5 200 30.5 {Tags:[\"nai\"],NoAI:1b}", show=False)
+sv("summon minecraft:sheep 28.5 200 30.5 {Tags:[\"nai\"],NoAI:1b}", show=False)
+time.sleep(1)
+sv("kill @e[tag=nai]", show=False)
+time.sleep(1)
+print("loot after /kill:", collections.Counter(e.get("item") for e in a.state(16)["entities"] if e["t"] == "item"))
+# (c) lead
+sv("kill @e[type=item]", show=False)
+sv("summon minecraft:cow 22.5 200 30.5 {Tags:[\"nai\"],NoAI:1b}", show=False)
+sv("setblock 25 200 30 minecraft:oak_fence", show=False)
+give(ME, "minecraft:lead", 3)
+time.sleep(1)
+cow = ents_of(a, "cow", 6)
+ok = use_on_entity(a, cow[0]["id"], "minecraft:lead", dy=0.5)
+print("leashed", ok, "leads:", a.inv().get("minecraft:lead"))
+a.lookat(25.5, 200.8, 30.5); time.sleep(0.5); a.mouse("right", "tap"); time.sleep(1)
+print("on the fence: leads", a.inv().get("minecraft:lead"), re.findall(r"leash: [^}]*\]|leash: \{[^}]*\}", sv("data get entity @e[type=cow,tag=nai,limit=1]", show=False, wait=0.4)))
+sv("kill @e[tag=nai]", show=False)

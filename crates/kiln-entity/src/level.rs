@@ -327,8 +327,9 @@ pub enum Event {
     /// A projectile hit a block (`Block.onProjectileHit`) or an entity: damage, egg hatching,
     /// pearl teleports and potion splashes are the simulation's.
     ProjectileHit { projectile: i32, projectile_type: &'static str, owner: Option<i32>, hit: crate::projectile::Hit },
-    /// An explosion at `pos`; `blocks` were destroyed (for the explode packet).
-    Explosion { pos: Vec3, power: f32, blocks: Vec<BlockPos>, source: Option<i32>, fx: Option<ExplosionFx> },
+    /// An explosion at `pos`; `blocks` were destroyed (for the explode packet), `keep`: it leaves the blocks alone. `knockbacks` is what each
+    /// player it pushed takes (the packet carries it: the client adds it to its own motion).
+    Explosion { pos: Vec3, power: f32, blocks: Vec<BlockPos>, keep: bool, knockbacks: Vec<(i32, Vec3)>, source: Option<i32>, fx: Option<ExplosionFx> },
     /// A mob took a full hit (`broadcastDamageEvent`: the hurt animation for viewers).
     MobHurt { entity: i32, kind: DamageKind, attacker: Option<i32>, direct: Option<i32> },
     /// A mob died: the simulation drops its loot table (`LivingEntity.dropFromLootTable`).

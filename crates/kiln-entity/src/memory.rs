@@ -3,7 +3,7 @@
 
 use crate::entity::{Entity, EntityKind};
 use crate::level::{EntityFilter, EntityLevel, Event, PlayerView};
-use crate::math::{Aabb, BlockPos};
+use crate::math::{Aabb, BlockPos, Vec3};
 use kiln_javamath::random::{LegacyRandom, RandomSource as _};
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
@@ -52,6 +52,8 @@ pub struct MemoryLevel {
     pub bottom_layer: Option<u16>,
     pub min_y: i32,
     pub events: Vec<Event>,
+    /// `ServerLevel.sendParticles` of a particle without options: (particle, position).
+    pub particles: Vec<(&'static str, Vec3)>,
     pub players: Vec<PlayerView>,
     /// World age (`game_time`), sky darkening and difficulty for mobs.
     pub game_time: i64,
@@ -117,6 +119,7 @@ impl MemoryLevel {
             bottom_layer: None,
             min_y,
             events: Vec::new(),
+            particles: Vec::new(),
             players: Vec::new(),
             game_time: 0,
             sky_darken: 0,
@@ -291,6 +294,10 @@ impl MemoryLevel {
 }
 
 impl EntityLevel for MemoryLevel {
+    fn particle(&mut self, particle: &'static str, pos: Vec3) {
+        self.particles.push((particle, pos));
+    }
+
     fn shulker_lid(&self, pos: BlockPos) -> Option<f32> {
         self.lids.get(&pos).copied()
     }

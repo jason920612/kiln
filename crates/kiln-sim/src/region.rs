@@ -1293,6 +1293,13 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 }
             }
         }
+        // `handleBundleItemSelected`: the mouse wheel over a bundle in the open menu.
+        PlayIn::SelectBundleItem { slot, index } => {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            crate::container::open::menu_op(p, &mut level, fx.spawns, |menu, _, env| {
+                kiln_inventory::click::handle_select_bundle_item(menu, env, slot, index);
+            });
+        }
         PlayIn::ContainerButtonClick { container_id, button_id } => {
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
             crate::container::open::menu_op(p, &mut level, fx.spawns, |menu, _, env| {
@@ -1509,7 +1516,9 @@ fn use_on_block(
         kiln_data::block_logic::block_class(level.block(bp)),
         kiln_data::block_logic::BlockClass::CopperGolemStatueBlock | kiln_data::block_logic::BlockClass::WeatheringCopperGolemStatueBlock
     );
-    if !(p.sneaking && have_something) && (!held.is_empty() || statue) {
+    // (A shelf reacts to an empty hand too: `useItemOn` takes the stack from the slot.)
+    let shelf = kiln_data::block_logic::block_class(level.block(bp)) == kiln_data::block_logic::BlockClass::ShelfBlock;
+    if !(p.sneaking && have_something) && (!held.is_empty() || statue || shelf) {
         let used = held.clone();
         if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, cursor, !main_hand, spawns) {
             let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);

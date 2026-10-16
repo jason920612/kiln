@@ -379,6 +379,7 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
         C::CakeBlock => cake_candle(p, level, pos, s, off_hand, &stack),
         C::FlowerPotBlock => pot_plant(p, level, pos, s, off_hand, &stack),
         C::ChiseledBookShelfBlock => crate::bookshelf::use_item_on(p, level, pos, s, face, cursor, off_hand, &stack),
+        C::ShelfBlock => crate::shelf::use_item_on(p, level, pos, s, face, cursor, off_hand),
         // `TntBlock.useItemOn`: fire or a fire charge primes it on the spot (no fire is placed).
         C::TntBlock if !stack.is_empty() && matches!(stack.item_name(), "minecraft:flint_and_steel" | "minecraft:fire_charge") => {
             if kiln_blocks::redstone::devices::prime(level, pos) {

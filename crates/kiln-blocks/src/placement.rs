@@ -274,6 +274,8 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
         }
         C::BellBlock => return crate::behaviour::bell::placement(level, d, pos, c.face, c.horizontal()),
         C::BeehiveBlock => state::set_dir(d, "facing", c.horizontal().opposite()),
+        // `ShelfBlock.getStateForPlacement`: its front toward the player, powered by a signal there, waterlogged in water.
+        C::ShelfBlock => c.waterlogged(crate::behaviour::shelf::placement(level, d, pos, c.horizontal())),
         // `DecoratedPotBlock.getStateForPlacement`: the player's own way, in water waterlogged.
         C::DecoratedPotBlock => c.waterlogged(state::set_dir(d, "facing", c.horizontal())),
         // `LecternBlock.getStateForPlacement` (a game master's item with a `Book` aside).

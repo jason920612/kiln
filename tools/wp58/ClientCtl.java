@@ -640,6 +640,42 @@ public class ClientCtl {
                     }
                     return "ok " + md.centerX + "," + md.centerZ;
                 });
+            case "scroll": // scroll DY: the mouse wheel (bundle selection: hover a bundle slot first, `guihover`)
+                return onMain(() -> { mc.mouseHandler.onScroll(mc.getWindow().handle(), 0, Double.parseDouble(a[1])); return "ok"; });
+            case "guihover": // guihover SLOT: put the mouse over a slot of the open container screen without clicking (wp68)
+                return onMain(() -> {
+                    try {
+                        var screen = mc.gui.screen();
+                        if (!(screen instanceof AbstractContainerScreen<?> c)) {
+                            return "ERR no container screen";
+                        }
+                        Slot s = c.getMenu().slots.get(Integer.parseInt(a[1]));
+                        Field lp = AbstractContainerScreen.class.getDeclaredField("leftPos");
+                        Field tp = AbstractContainerScreen.class.getDeclaredField("topPos");
+                        lp.setAccessible(true);
+                        tp.setAccessible(true);
+                        double scale = mc.getWindow().getGuiScale();
+                        setField(mc.mouseHandler, "xpos", (lp.getInt(c) + s.x + 8) * scale);
+                        setField(mc.mouseHandler, "ypos", (tp.getInt(c) + s.y + 8) * scale);
+                        return "ok";
+                    } catch (Exception e) {
+                        return "ERR " + e;
+                    }
+                });
+            case "bundlesel": // bundlesel SLOT: the client's view of the bundle in container slot SLOT (inventory slot with "inv N")
+                return onMain(() -> {
+                    ItemStack st = a[1].equals("inv") ? mc.player.getInventory().getItem(Integer.parseInt(a[2]))
+                        : ((AbstractContainerScreen<?>) mc.gui.screen()).getMenu().slots.get(Integer.parseInt(a[1])).getItem();
+                    var bc = st.get(net.minecraft.core.component.DataComponents.BUNDLE_CONTENTS);
+                    if (bc == null) {
+                        return "ERR not a bundle: " + st;
+                    }
+                    StringBuilder sb = new StringBuilder("selected=" + bc.getSelectedItemIndex() + " size=" + bc.size() + " items=");
+                    for (var it : bc.items()) {
+                        sb.append(it.item().getRegisteredName()).append('x').append(it.count()).append(' ');
+                    }
+                    return sb.toString();
+                });
             default:
                 return "ERR unknown command " + a[0];
         }
