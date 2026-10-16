@@ -9,6 +9,7 @@ scenario("sniffer")
 def run():
     prep()
     time.sleep(2)
+    sv("kill @e[type=sniffer]", show=False)
     platform(0, 0, 40, 40, y=199, clear=12)
     sv(f"tp {ME} 6.5 200 6.5", show=False)
     time.sleep(1.0)

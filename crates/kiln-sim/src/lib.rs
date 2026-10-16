@@ -2575,6 +2575,7 @@ impl Sim {
                 weather: kiln_blocks::weather::Weather {
                     raining: self.is_raining(dim),
                     thundering: self.is_thundering(dim),
+                    weather_layer: self.has_weather_layer(dim),
                     max_snow_height: self.rule_int("minecraft:max_snow_accumulation_height"),
                 },
                 climates: self.climates.clone(),

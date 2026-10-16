@@ -43,6 +43,9 @@ def place_blocks():
 def setup():
     prep()
     time.sleep(2)
+    sv("kill @e[tag=p68]", show=False)
+    sv("kill @e[tag=p68b]", show=False)
+    sv("kill @e[type=oak_boat]", show=False)
     platform(0, 0, 40, 40, y=199, clear=14)
     sv(f"gamemode survival {ME}", show=False)
     sv(f"tp {ME} 30.5 200 10.5", show=False)
@@ -113,20 +116,6 @@ def setup():
         time.sleep(0.8)
     F("cow leash:", re.findall(r"[Ll]eash: \{[^}]*\}", sv("data get entity @e[type=cow,tag=p68,limit=1]", show=False)))
     place_blocks()
-    # real: ride a boat
-    give(ME, "minecraft:oak_boat", 1)
-    sv(f"tp {ME} 6.5 200 38.5", show=False)
-    time.sleep(1.5)
-    a.select("minecraft:oak_boat")
-    a.lookat(6.5, 199.99, 36.5)
-    time.sleep(0.6)
-    a.mouse("right", "tap")
-    time.sleep(1.0)
-    boats = ents_of(a, "oak_boat", 20)
-    if boats:
-        interact_ent(a, boats[0]["id"], button="right", tries=6, dy=0.3)
-        time.sleep(1.0)
-    F("riding a boat:", a.state(0)["vehicle"], pos(a))
     # scoreboard, team, gamerules, advancement, stats
     for c in (
         "scoreboard objectives add p68score dummy \"P68\"",
@@ -165,19 +154,41 @@ def setup():
     for _ in range(10):
         a.key("space", "tap")
         time.sleep(0.6)
-    # redstone clock: an observer loop on a lever-less torch clock: two repeaters and a torch inverting into a lamp line
-    sv("fill 5 200 36 12 200 36 minecraft:air", show=False)
-    sv("setblock 5 200 36 minecraft:repeater[facing=east,delay=4]", show=False)
-    sv("setblock 6 200 36 minecraft:redstone_wire", show=False)
-    sv("setblock 7 200 36 minecraft:repeater[facing=east,delay=4]", show=False)
-    sv("setblock 8 200 36 minecraft:redstone_wire", show=False)
-    sv("setblock 9 200 36 minecraft:redstone_lamp", show=False)
-    sv("setblock 5 200 35 minecraft:redstone_torch", show=False)
-    sv("setblock 4 200 36 minecraft:redstone_block", show=False)
-    time.sleep(0.5)
-    sv("setblock 4 200 36 minecraft:air", show=False)
+    # a villager with a bed and a job site of his own (no NoAI): the Brain memories after the tick
+    sv("fill 33 200 36 37 203 40 minecraft:air", show=False)
+    sv("setblock 34 200 38 minecraft:composter", show=False)
+    sv("setblock 36 200 38 minecraft:red_bed[facing=east,part=foot]", show=False)
+    sv("setblock 37 200 38 minecraft:red_bed[facing=east,part=head]", show=False)
+    sv("summon minecraft:villager 35.5 200 38.5 {Tags:[\"p68b\"],PersistenceRequired:1b,VillagerData:{profession:'minecraft:none',level:1,type:'minecraft:plains'}}", show=False)
+    sv("tick sprint 400", show=False, wait=0.5)
+    time.sleep(1)
+    for _ in range(60):
+        if "sprinting" not in sv("tick query", show=False, wait=0.3).lower():
+            break
+        time.sleep(1)
+    F("villager2:", re.findall(r"profession: \"[^\"]*\"", sv("data get entity @e[type=villager,tag=p68b,limit=1]", show=False)))
+    # a hopper clock: two hoppers pass one item back and forth, a comparator reads the first one into a lamp
+    sv("fill 4 200 33 8 200 37 minecraft:air", show=False)
+    sv("setblock 5 200 36 minecraft:hopper[facing=east]{Items:[{Slot:0b,id:'minecraft:stone',count:1}]}", show=False)
+    sv("setblock 6 200 36 minecraft:hopper[facing=west]", show=False)
+    sv("setblock 5 200 35 minecraft:comparator[facing=south]", show=False)
+    sv("setblock 5 200 34 minecraft:redstone_lamp", show=False)
     time.sleep(3)
-    F("setup done: lamp", blk(a, 9, 200, 36))
+    # the boat last: the player rides it at the dump
+    give(ME, "minecraft:oak_boat", 1)
+    sv(f"tp {ME} 14.5 200 40.5", show=False)
+    time.sleep(1.5)
+    a.select("minecraft:oak_boat")
+    a.lookat(14.5, 199.99, 38.5)
+    time.sleep(0.6)
+    a.mouse("right", "tap")
+    time.sleep(1.0)
+    boats = ents_of(a, "oak_boat", 20)
+    if boats:
+        interact_ent(a, boats[0]["id"], button="right", tries=6, dy=0.3)
+        time.sleep(1.0)
+    F("riding a boat:", a.state(0)["vehicle"], pos(a))
+    F("setup done: lamp", blk(a, 5, 200, 34))
 
 
 PROBES = [
@@ -191,6 +202,7 @@ PROBES = [
     ("llama", "data get entity @e[type=llama,tag=p68,limit=1]", None),
     ("cow", "data get entity @e[type=cow,tag=p68,limit=1]", None),
     ("villager", "data get entity @e[type=villager,tag=p68,limit=1]", None),
+    ("villager2", "data get entity @e[type=villager,tag=p68b,limit=1]", None),
     ("ghast", "data get entity @e[type=happy_ghast,tag=p68,limit=1]", None),
     ("golem", "data get entity @e[type=copper_golem,tag=p68,limit=1]", None),
     ("wolf", "data get entity @e[type=wolf,tag=p68,limit=1]", None),
@@ -237,7 +249,7 @@ def dump(tag):
     # the clock: sample the lamp
     lamp = []
     for _ in range(40):
-        out = sv("execute if block 9 200 36 minecraft:redstone_lamp[lit=true]", show=False, wait=0.25)
+        out = sv("execute if block 5 200 34 minecraft:redstone_lamp[lit=true]", show=False, wait=0.25)
         lamp.append("pass" in out and "fail" not in out)
         time.sleep(0.4)
     res["clock_lamp_samples"] = "".join("1" if x else "0" for x in lamp)
