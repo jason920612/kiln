@@ -642,6 +642,9 @@ public class MobVectors {
             player.snapTo(0, 300, 0, 0f, 0f);
         }
         level.getRandom().setSeed(s.levelSeed);
+        // wp69 debugging aid: `MOB_TRACE_LEVEL=<scenario>` makes the level's random log every draw (with its callers) of the ticks
+        // `MOB_TRACE_FROM`..`MOB_TRACE_TO` to <cwd>/dbg.txt.
+        if (s.name.equals(System.getenv("MOB_TRACE_LEVEL"))) set(level, "random", new TracingRandom(s.levelSeed));
         // The world age is pinned before the mobs are made (wp28: brains read it when they are built:
         // a villager's schedule, `lastScheduleUpdate`).
         var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
@@ -1097,6 +1100,7 @@ public class MobVectors {
         TracingRandom(long seed) { super(seed); }
         @Override public int next(int bits) {
             int v = super.next(bits);
+            if (traceTick < Integer.parseInt(System.getenv().getOrDefault("MOB_TRACE_FROM", "0")) || traceTick > Integer.parseInt(System.getenv().getOrDefault("MOB_TRACE_TO", "1000000"))) return v;
             StringBuilder sb = new StringBuilder("RND tick=" + traceTick + " bits=" + bits + " <-");
             int n = 0;
             for (StackTraceElement el : new Throwable().getStackTrace()) {
