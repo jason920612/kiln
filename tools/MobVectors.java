@@ -843,6 +843,8 @@ public class MobVectors {
             if (s.fullTick) {
                 // (the server's own loop calls `tickRateManager.tick()` each tick, which sets this: the harness is that loop)
                 set(level.tickRateManager(), "runGameElements", true);
+                // (`MinecraftServer.tickChildren`: the clocks first, then the levels)
+                level.getServer().clockManager().tick();
                 level.tick(() -> true);
                 // (what the server thread's loop runs between ticks: chunk status changes, entity sections going live)
                 runServerTasks(level.getServer());
