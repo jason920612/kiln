@@ -337,8 +337,9 @@ impl Sim {
         if let Some(region) = self.dims[dim].regions.at_mut(chunk_pos.cell()) {
             let (cells, part) = region.cells_and_part_mut();
             if let Some(chunk) = cells.chunk_mut(chunk_pos) {
-                part.1.containers.store(chunk_pos, chunk);
-                part.1.spawners.store(chunk_pos, chunk);
+                let at = kiln_blocks::BlockPos::new(x, y, z);
+                part.1.containers.store_at(at, chunk);
+                part.1.spawners.store_at(at, chunk);
             }
         }
         let Some(chunk) = self.dims[dim].regions.chunk_mut(chunk_pos) else { return false };
