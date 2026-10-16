@@ -162,14 +162,8 @@ impl Kind for Tadpole {
             }
         }
         // `AgeableMob.makeAgeLockedParticle`.
-        let s = st_mut(m);
-        if s.age_lock_particle_timer > 0 {
-            if s.age_lock_particle_timer % 2 == 0 {
-                let _ = mob::random_point(e, 1.0);
-            }
-            let s = st_mut(m);
-            s.age_lock_particle_timer -= 1;
-        }
+        let (timer, locked) = (st(m).age_lock_particle_timer, st(m).age_locked);
+        st_mut(m).age_lock_particle_timer = mob::breed::age_lock_particle(e, level, timer, locked);
     }
 
     fn tick_move(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {

@@ -128,6 +128,10 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
     if kiln_entity::mob::breed::is_ageable(m.kind) && m.age < 0 {
         d.set(data::ageable_mob::BABY, &DataValue::Boolean(true));
     }
+    // `AgeableMob.AGE_LOCKED` (a tadpole has its own, see its entity data).
+    if m.age_locked && m.kind != MobKind::Tadpole && kiln_entity::mob::breed::is_ageable(m.kind) {
+        d.set(data::ageable_mob::AGE_LOCKED, &DataValue::Boolean(true));
+    }
     match &m.species {
         Species::Cow | Species::Chicken { .. } => {
             let (variant, sound) = match m.kind {
