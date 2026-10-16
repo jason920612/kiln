@@ -1075,7 +1075,7 @@ fn replay(s: &Value) -> Result<usize, String> {
             for &id in &ids[initial..] {
                 if let Some(e) = level.entity(id)
                     && e.type_name == "minecraft:iron_golem"
-                    && e.tick_count == 0
+                    && !e.is_removed()
                 {
                     GOLEMS.lock().unwrap().push((s["name"].as_str().unwrap().to_owned(), level.day_time));
                 }
