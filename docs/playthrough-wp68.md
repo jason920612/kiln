@@ -88,6 +88,16 @@ Python 在 Windows 的預設編碼是 cp950,改檔要指定 `encoding='utf-8'`�
 整段遊玩的 Kiln `kiln_sim` 統計列(每 30 秒一行,30 行):mspt 平均 0.8~2.6 ms(整體平均 1.42)、p99 2.7~8.7 ms、最大值只在 `/fill` 與一次出現 600 格以上的指令批次時到 50~210 ms(`g.console`);
 沒有 `moved too quickly` 之外的警告(一次,掉下 16 格的測試)。這次沒有大量區塊載入的場景(平台+少數實體);沒有發現異常。
 
-## 驗證
+## 驗證(VM,`07d83eba` 起)
 
-最後驗證(VM):`cargo test --workspace --release --no-fail-fast`(不帶與帶 `KILN_DATAPACK=/home/test/kiln/work/generated`)、`kiln-sim --test determinism`、`kiln-entity --test mob_parity`(1451 個場景)、`tools/parity_suites.py --skip-workspace`;結果見 `docs/parity-coverage.md` 6.15。負向檢查(`tools/wp68_neg.py`)每個修正拿掉後對應測試都失敗。
+| 項目 | 結果 |
+| --- | --- |
+| `cargo test --workspace --release --no-fail-fast`(不帶 `KILN_DATAPACK`) | 180 個測試二進位 `ok`;唯一失敗是 `mobs_match_vanilla`,**且只有 9 個 `farm69_*` 場景**(見下) |
+| 同上,帶 `KILN_DATAPACK=/home/test/kiln/work/generated` | 相同:180 個 `ok`,唯一失敗同上 |
+| `kiln-sim --test determinism` | 6/6 通過 |
+| `kiln-entity --test mob_parity`(1451 個場景) | **1451 個全部 `ok`、0 個 FAIL**(把別的 session 剛加進 `work/m6-mobs2/vectors.jsonl` 的 11 筆 `farm69_*` 向量濾掉後跑;原檔我備份為 `vectors.jsonl.wp68bak`,沒有改動) |
+| `tools/parity_suites.py --skip-workspace` | 102 套件中 101 個通過;失敗的 `mob_parity` 就是上面那 9 個 `farm69_*` 場景 |
+| `crowd_golden` | 4/4 通過,**不必重錄**(群眾場景只有玩家,生物的 entity data 與爆炸封包不在其中) |
+| 負向檢查 `tools/wp68_neg.py` | 16 個案例(15 個問題,問題 5 分單元與模擬兩個測試)拿掉修正後對應測試全部失敗 |
+
+`farm69_*` 是並行的 wp69(鐵傀儡農場)session 寫進共用向量檔的新場景,對應它還沒合併的修正(村民 `golem_detected_recently` 記憶的順序與 `y = 100.5625 對 100`);我的分支沒有那些修正,所以那 9 個失敗與本分支的改動無關(wp69 合併後會過)。
