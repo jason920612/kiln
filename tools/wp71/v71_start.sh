@@ -30,5 +30,5 @@ rm -f console; mkfifo console
 W=$HOME/kiln/work
 CP=$(ls $W/versions/*/server-*.jar $(find $W/libraries -name '*.jar') | tr '\n' ':')
 rm -f ${W71_OUT:-w71agent.out}
-W71_OUT=${W71_OUT:-$PWD/w71agent.out} nohup java -Xmx1500M -Dwp71vanilla-marker=1 -Dw71.x0=4000 -Dw71.z0=4000 -javaagent:$HOME/w71/agent.jar --add-opens java.base/java.lang=ALL-UNNAMED -cp "$CP" net.minecraft.server.Main --nogui < console > server.log 2>&1 &
+W71_OUT=${W71_OUT:-$PWD/w71agent.out} nohup java -Xmx1500M -Dwp71vanilla-marker=1 -Dw71.x0=4000 -Dw71.z0=4000 $W71_JOPTS -javaagent:$HOME/w71/agent.jar --add-opens java.base/java.lang=ALL-UNNAMED -cp "$CP" net.minecraft.server.Main --nogui < console > server.log 2>&1 &
 echo started $!
