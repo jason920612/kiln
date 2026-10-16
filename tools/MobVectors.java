@@ -575,8 +575,11 @@ public class MobVectors {
         };
         cmd(server, "forceload add " + (X0 - 12) + " " + (Z0 - 12) + " " + (X0 + 24) + " " + (Z0 + pens * DZ + 20));
         for (String c : new String[] {"gamerule minecraft:spawn_mobs false", "gamerule minecraft:advance_weather false", "gamerule minecraft:advance_time false", "gamerule minecraft:mob_drops false",
-                "difficulty normal", "weather clear 1000000", "time set 11500", "kill @e[type=!player]"}) cmd(server, c);
+                "difficulty normal", "weather clear 1000000", "kill @e[type=!player]"}) cmd(server, c);
         ticks.accept(2);
+        // (the day time is set to agree with the game time modulo `MOB_CMD_PHASE` hundreds' remainder: 0 = the opportunities fall on whole hundreds of the day, the arrival of the zombie 100 ticks before one)
+        long dt0 = 11500 + (level.getGameTime() % 100) + Long.parseLong(System.getenv().getOrDefault("MOB_CMD_PHASE", "0"));
+        cmd(server, "time set " + dt0);
         boolean javaBlocks = "java".equals(System.getenv("MOB_CMD_BLOCKS"));
         for (int pen = 0; pen < pens; pen++) {
             int z0 = Z0 + pen * DZ;
@@ -631,7 +634,7 @@ public class MobVectors {
         long g0 = level.getGameTime();
         // dt = 11500 + ticks since now: the zombies come at dt 300 of each day and go at dt 11000
         for (int day = 0; day < s.cmdDays; day++) {
-            long arrive = (24000 - 11500) + 300 + 24000L * day, leave = arrive + 10700;
+            long arrive = (24000 - dt0) + 300 + 24000L * day, leave = arrive + 10700;
             ticks.accept((int) (arrive - (level.getGameTime() - g0)));
             boolean javaZombies = "java".equals(System.getenv("MOB_CMD_ZOMBIE"));
             if (!javaZombies) cmd(server, "kill @e[type=minecraft:zombie,tag=wp66z]");
@@ -664,7 +667,7 @@ public class MobVectors {
         }
         level.tickRateManager().setFrozen(true);
         cmd(server, "gamerule minecraft:spawn_mobs true");
-        return String.format(Locale.ROOT, "{\"name\":\"%s\",\"day_time\":11500,\"ticks\":%d,\"probe\":%s,\"spawned\":[%s]}", s.name, level.getGameTime() - g0, probe.json(), spawned);
+        return String.format(Locale.ROOT, "{\"name\":\"%s\",\"day_time\":%d,\"ticks\":%d,\"probe\":%s,\"spawned\":[%s]}", s.name, dt0, level.getGameTime() - g0, probe.json(), spawned);
     }
 
     /// `BlockableEventLoop.runAllTasks` (protected): what the server's own loop runs between ticks.
