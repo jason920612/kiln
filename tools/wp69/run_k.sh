@@ -4,7 +4,7 @@ cd ~/wp69
 tag=$1; reps=$2
 for rep in $(seq 1 $reps); do
   bash ~/wt/wp69-iron-farm/tools/wp69/k69_start.sh stop > /dev/null 2>&1 < /dev/null
-  bash ~/wt/wp69-iron-farm/tools/wp69/k69_start.sh > /dev/null 2>&1 < /dev/null
+  KILN_SEED=$((100 + rep + ${SEEDBASE:-0})) bash ~/wt/wp69-iron-farm/tools/wp69/k69_start.sh > /dev/null 2>&1 < /dev/null
   for i in $(seq 1 60); do grep -q "listening\|Done\|ready" server.log 2>/dev/null && break; sleep 2; done
   sleep 5
   (exec 3<>console; echo reload >&3)
