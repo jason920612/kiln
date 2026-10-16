@@ -15,9 +15,9 @@ rm -f console; mkfifo console
 (sleep 100000000 > console &)
 if [ "$which" = K ]; then
   cp "${3:-$HOME/wt/wp70-command-perf/target/release/kiln}" kiln-run70
-  mkdir -p packs && cp -r ~/wp70/pack/wp70 packs/
+  mkdir -p world/datapacks && cp -r ~/wp70/pack/wp70 world/datapacks/
   export KILN_PORT=25590 KILN_GENERATOR=noise KILN_SEED=70 KILN_DATAPACK=/home/test/kiln/work/generated KILN_WORLD="$dir/world" \
-    KILN_DATAPACKS="$dir/packs" KILN_LANG=/home/test/kiln/work/wp2-commands/diff/en_us.json KILN_WORK=$HOME/kiln/work \
+    KILN_LANG=/home/test/kiln/work/wp2-commands/diff/en_us.json KILN_WORK=$HOME/kiln/work \
     KILN_VIEW_DISTANCE=8 KILN_SIMULATION_DISTANCE=8 RUST_LOG=info NO_COLOR=1
   nohup ./kiln-run70 < console > server.log 2>&1 &
 else

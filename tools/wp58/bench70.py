@@ -131,6 +131,18 @@ class Server:
             time.sleep(0.1)
         raise TimeoutError("no tick query answer")
 
+    def wait_for(self, text, timeout=900.0):
+        """Lines up to the first one containing `text`."""
+        end = time.time() + timeout
+        got = []
+        while time.time() < end:
+            for l in self.lines():
+                if text in l:
+                    return got
+                got.append(l)
+            time.sleep(0.05)
+        raise TimeoutError(text)
+
     def rss_mb(self):
         pat = "kiln-run70" if self.which == "K" else "wp70vanilla-marker"
         try:
@@ -150,7 +162,7 @@ def feedback(lines):
     out = []
     for l in lines:
         m = FEEDBACK.search(l)
-        if m and "tick" not in m.group(1).lower():
+        if m and "tick" not in m.group(1).lower() and "Unknown or incomplete" not in m.group(1):
             out.append(m.group(1))
     return out
 
@@ -198,8 +210,13 @@ def run(args):
                 rss0 = s.rss_mb()
                 t = time.time()
                 s.send(cmd)
-                p50, p99, avg, lines = s.query()
+                # an unknown command after it marks its end (both run in the same tick: wait for it, then a
+                # later tick asks for the times)
+                s.send(f"wp70marker{rep}")
+                lines = s.wait_for(f"wp70marker{rep}")
                 wall = time.time() - t
+                time.sleep(1.0)
+                p50, p99, avg, _ = s.query()
                 rss1 = s.rss_mb()
                 fb = feedback(lines)
                 r = {"case": name, "rep": rep, "cmd": cmd, "blocks": blocks, "p50": p50, "p99": p99, "avg": avg, "wall_s": round(wall, 2),
