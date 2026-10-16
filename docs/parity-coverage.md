@@ -720,6 +720,26 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 沒做／已知:鐵傀儡農場 Kiln 比 vanilla 少 11%(10 次 6 日實測,原因沒找到,村民恐慌的行為包逐行相符,只見到逃離後半段多走 0.7 格);突襲逾時(48000 刻)沒有實機並排;`INSTALL_BUDGET` 仍以牆鐘計;Kiln 的大範圍 `/fill` 慢。
 
 
+### 6.15 wp69（`wp69-iron-farm`）：鐵傀儡農場的 11%
+
+細節與證據見 `docs/wp69.md`。農場的每個零件放進生物比對 harness（`farm69_*` 11 個 scenario、276,617 個生物狀態逐項相同,併入 `work/m6-mobs2/vectors.jsonl`,原檔備份為 `.pre-wp69`）。
+
+| 項目 | 原版怎麼做 | Kiln 原本 | 現在 | 證據 |
+|---|---|---|---|---|
+| 傀儡生成的朝向 | `EntityType.create`:`wrapDegrees(level.random.nextFloat()*360)`,每次嘗試到「建立」都抽 | 不抽 | 抽,頭身同值 | `farm69_day_0/1`、`dawn_0..3`、`cycle`(第一隻傀儡出現那一刻關卡隨機差 5 抽) |
+| 傀儡的 `finalizeSpawn` | `Mob.finalizeSpawn` 用關卡隨機(追蹤範圍加成 2 抽、左撇子 1 抽) | 不呼叫 | 呼叫 | 同上 |
+| `IronGolem.checkSpawnObstruction` | 腳下可站 + 腳位與上 2 格 `isValidEmptySpawnBlock` + `isUnobstructed`(會擋建造的實體) | 腳位到上 3 格全空氣、沒有實體檢查 | 如原版 | 同上 |
+| `golemDetected` 給誰 | 盒子裡每一位村民 | 想要傀儡的前 5 位 | 每一位 | `farm69_crowd_0`(沒睡過的村民少了 `golem_detected_recently`) |
+
+負向檢查:拿掉前三項 → 10 個 scenario 紅;拿掉第四項 → `farm69_crowd_0` 紅。
+
+量測修正:傀儡的機會是 `gameTime % 100 == 0`,殭屍出現後第一個機會的相位讓每日總數差 ±15%(wp66 的 vanilla 8 次相位全在 +82..+105、Kiln 8 次散在 0..+74)。
+相位配對後(`rt_farm69.py ALIGN=1 PHASE=φ`,φ = 0/25/50/75 各 8 次 × 一區 6 日)vanilla 7.33、Kiln 6.42 隻/欄日(0.875,差 5σ)。
+
+沒做／已知:這 12.5% 的來源沒找到。Kiln 與行程內的 vanilla(harness)逐位元相同,統計也一致(5.9~6.4 對 5.8~6.8),行程內 vanilla 與真 vanilla 伺服器(6.8~7.8)不同;
+已排除地形、模擬距離、玩家、`tick sprint`、資料包、傀儡移除方式、天氣與規則、實體 id、隨機種子、建造方式等(`docs/wp69.md`)。時間窗口:殭屍出現後 +50..+100 刻真 vanilla 的村民較晚離開、恐慌較晚結束。
+
+
 ## 7. 重跑
 
 ```sh
@@ -800,6 +820,11 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 # wp64：玩家同步的五個小差異（箭／蜂針、旁觀者隱藏、粉雪、蹲下、瞬間效果）的即時並排
 #   VM：bash tools/wp58/wp64_start.sh / wp64_vanilla.sh、vm_client64.sh、vm_observer64.sh（KILN_CLIENT_PORT=25586|25592），然後
 #   KILN_PLAY_DIR=wp64 [TARGET=V] PYTHONPATH=tools/wp58 python3 tools/wp58/p64.py arrows|sting|spectator|powder|sneak|instant
+# wp69：鐵傀儡農場的逐位元比對與並排（見 docs/wp69.md）
+#   python tools/mob_vectors.py --filter farm69_ --out work/m6-mobs2/farm69.jsonl      # 11 個比對場景，再併入 work/m6-mobs2/vectors.jsonl
+#   MOB_FARM_STATS=1 python tools/mob_vectors.py --filter farm69_days --out ...        # 統計用場景（不比對）
+#   VM：bash tools/wp69/run_v.sh|run_k.sh TAG REPS（env PENS、ALIGN=1、PHASE、HOMES、ZTP、SAMPLE），埠 vanilla 25596、Kiln 25599
+#   cargo test --release -p kiln-sim --test farm69 -- --ignored --nocapture（FARM_DAYS/PENS/ARRIVE/PANIC/TRACE/VILLAGE）
 # wp66：隨機刻取樣、鐵傀儡農場、完整突襲的並排（VM；Kiln 25588、vanilla 25594，見 docs/wp66.md）
 #   bash tools/wp58/wp66_start.sh / wp66_vanilla.sh（或 fresh.sh）、vm_client66.sh、vm_observer66.sh，然後
 #   TARGET=K|V python3 tools/wp58/rt_cane.py … / rt_crops.py … / rt_machine.py … / rt_golem.py run 6 4 OUT.json
