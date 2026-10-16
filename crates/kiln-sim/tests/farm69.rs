@@ -429,6 +429,18 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
         if let Ok(v) = std::env::var("FARM_PANIC") {
             count_panic(sim, panic, v == "dawn");
         }
+        // `FARM_GD=dt`: at that time of day, every villager's golem_detected_recently (with its ticks left) and activity.
+        if let Some(at) = std::env::var("FARM_GD").ok().and_then(|v| v.parse::<i64>().ok())
+            && sim.day_time() % 24000 == at
+        {
+            for (id, kind, pos, _) in sim.mobs() {
+                if kind == "minecraft:villager" {
+                    let b = sim.mob_brain(id).unwrap_or_default();
+                    let pick: Vec<&String> = b.iter().filter(|t| t.starts_with("m:minecraft:golem_detected") || t.starts_with("act:") || t.starts_with("m:minecraft:last_slept") || t.starts_with("m:minecraft:home")).collect();
+                    println!("GD {} dt {at} v{id} {:.1},{:.1},{:.1} {pick:?}", sim.game_time(), pos[0], pos[1], pos[2]);
+                }
+            }
+        }
         // `FARM_TRACE=from,to`: where the villagers of the first pens are, every 20 ticks of the day between.
         if let Some((from, to)) = std::env::var("FARM_TRACE").ok().and_then(|v| v.split_once(',').map(|(a, b)| (a.parse::<i64>().unwrap(), b.parse::<i64>().unwrap()))) {
             let dt = sim.day_time() % 24000;
