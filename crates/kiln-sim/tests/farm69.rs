@@ -436,7 +436,7 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
             let at = sim.day_time() % 24000;
             let mobs_all = sim.mobs();
             for (id, kind, pos, _) in sim.mobs() {
-                if (kind == "minecraft:villager" || kind == "minecraft:iron_golem") && pos[2] < 12.0 {
+                if kind == "minecraft:villager" && pos[2] < 12.0 || kind == "minecraft:iron_golem" {
                     let b = sim.mob_brain(id).unwrap_or_default();
                     let pick: Vec<&String> = b.iter().filter(|t| t.starts_with("m:minecraft:golem_detected") || t.starts_with("act:") || t.starts_with("m:minecraft:last_slept") || t.starts_with("m:minecraft:home")).collect();
                     let near: Vec<String> = sim.mob_nearby(id).iter().map(|n| format!("{n}:{}", mobs_all.iter().find(|m| m.0 == *n).map_or("gone", |m| m.1.trim_start_matches("minecraft:")))).collect();
