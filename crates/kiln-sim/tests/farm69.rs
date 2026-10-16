@@ -194,6 +194,12 @@ fn the_farm_in_the_simulation() {
         advance(&mut sim, 11000 - dt, &mut seen, &mut log, &mut panic);
         eprintln!("day {day}: {} golems so far [{:.0}s]", log.len(), t0.elapsed().as_secs_f64());
     }
+    // `FARM_VILLAGE`: how far from a village the pens' rooms are (`sections_to_village`: 0 is a village).
+    if std::env::var_os("FARM_VILLAGE").is_some() {
+        for pen in 0..pens {
+            println!("VILLAGE pen {pen}: {} (room), {} (zombie cell)", sim.sections_to_village("minecraft:overworld", [4, F + 1, pen * PEN_DZ + 4]), sim.sections_to_village("minecraft:overworld", [10, F + 1, pen * PEN_DZ + 4]));
+        }
+    }
     for (g, dt, p) in &log {
         println!("GOLEM {g} {} {:.1} {:.1} {:.1}", dt % 24000, p[0], p[1], p[2]);
     }
