@@ -87,3 +87,15 @@ NUM = re.compile(r"-?\d+(?:\.\d+)?")
 def data_get(t, what, path=""):
     """`data get <what> <path>`: the raw answer text of server t."""
     return ask(t, f"data get {what} {path}".strip())
+
+
+def respawn_all():
+    """Click the respawn button on any client that shows the death screen (the actor's window is 960x540, the second client's 480x270)."""
+    for c, pos in ((C(25999), "480 298"), (C(26000), "240 149")):
+        for _ in range(4):
+            if c.screen() != "DeathScreen":
+                break
+            c.cmd("mousepos " + pos)
+            time.sleep(1.2)
+            c.mouse("left", "tap")
+            time.sleep(2.5)

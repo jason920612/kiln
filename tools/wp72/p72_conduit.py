@@ -6,6 +6,7 @@ import sys, time, re, json
 import p61
 from p61 import *
 from ctl import C, PLAY
+from lock import respawn_all
 
 p61.VDIR = HOME / "wp72" / "vanilla"
 X, Y, Z = 30, 210, 30
@@ -73,7 +74,7 @@ def step(n=1):
 
 
 def main():
-    vsv_ = lambda c: w("V", c)
+    respawn_all()
     w("V", "op KilnTest")
     for g in ("random_tick_speed 0", "spawn_mobs false", "mob_griefing false", "do_weather_cycle false"):
         both_("gamerule " + g)
@@ -83,6 +84,7 @@ def main():
     both_("gamemode survival KilnTest")
     both_("effect clear KilnTest")
     both_(f"tp KilnTest {X + 0.5} {Y + 12} {Z + 0.5}")
+    both_("effect give KilnTest minecraft:slow_falling 999 0 true")
     both_("kill @e[type=!player]")
     # clear the area and build
     both_(f"fill {X - 9} {Y - 9} {Z - 9} {X + 9} {Y + 9} {Z + 9} minecraft:air")
@@ -108,6 +110,8 @@ def main():
         both_(f"setblock {X + 2} {Y} {Z} minecraft:stone")
     both_(f"summon minecraft:zombie {X + 5.5} {Y - 1.0} {Z + 0.5} {{NoAI:1b,PersistenceRequired:1b}}")
     both_(f"tp KilnTest {X + 0.5} {Y - 5.0} {Z + 5.5}")
+    both_("effect clear KilnTest")
+    both_("effect give KilnTest minecraft:resistance 999 4 true")
     time.sleep(1.5)
     rows = {"K": [], "V": []}
     for k in range(0, 125):
