@@ -75,3 +75,31 @@ fn a_repeater_turns_on_after_its_delay() {
     tick(&mut sim, 30);
     assert_eq!(ticks_until_change(&mut sim, "setblock 4 100 5 minecraft:redstone_block", [5, 100, 5]), 4);
 }
+
+/// The same under `/tick freeze`: the command runs in a frozen tick at the game time `N`, `/tick step 1` runs one tick at a time; the
+/// lamp's delay of 4 shows at the 4th step.
+#[test]
+fn a_frozen_game_stepped_one_tick_at_a_time_takes_the_same_number_of_ticks() {
+    let mut sim = world();
+    for c in ["setblock 5 100 5 minecraft:redstone_lamp", "setblock 6 100 5 minecraft:redstone_block"] {
+        assert!(sim.step([ToSim::Console(c.into())]));
+    }
+    tick(&mut sim, 30);
+    assert!(state_at(&sim, [5, 100, 5]).contains("lit=true"));
+    assert!(sim.step([ToSim::Console("tick freeze".into())]));
+    tick(&mut sim, 3);
+    let t0 = sim.game_time();
+    assert!(sim.step([ToSim::Console("setblock 6 100 5 minecraft:air".into())]));
+    tick(&mut sim, 3);
+    assert_eq!(sim.game_time(), t0, "frozen: no time passes");
+    for k in 1..=10 {
+        assert!(sim.step([ToSim::Console("tick step 1".into())]));
+        tick(&mut sim, 2);
+        assert_eq!(sim.game_time(), t0 + k, "one tick per step");
+        if state_at(&sim, [5, 100, 5]).contains("lit=false") {
+            assert_eq!(k, 4, "the lamp's delay is 4 ticks");
+            return;
+        }
+    }
+    panic!("the lamp never went dark");
+}
