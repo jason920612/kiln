@@ -70,7 +70,15 @@ struct Table {
     block_of: Vec<u16>,
     /// `BLOCK_CLASSES` entry of every block index.
     class_of: Vec<u16>,
+    /// The same entry by state, and each state's own class (the class questions block behaviour
+    /// asks for every update, answered with one look each).
+    entry_of: Vec<u16>,
+    own_class: Vec<BlockClass>,
+    /// The classes of each `BLOCK_CLASSES` entry as bits (by `BlockClass as usize`).
+    class_bits: Vec<[u64; CLASS_WORDS]>,
 }
+
+const CLASS_WORDS: usize = 5;
 
 fn table() -> &'static Table {
     static TABLE: OnceLock<Table> = OnceLock::new();
@@ -100,11 +108,25 @@ fn table() -> &'static Table {
             block_of[b.first as usize..=b.last as usize].fill(i as u16);
         }
         let names = crate::builtin_entries("minecraft:block").expect("block registry");
-        let class_of = BLOCKS
+        let class_of: Vec<u16> = BLOCKS
             .iter()
             .map(|b| names.iter().position(|n| *n == b.name).expect("block in registry") as u16)
             .collect();
-        Table { states, signals, block_of, class_of }
+        let entry_of: Vec<u16> = block_of.iter().map(|&b| class_of[b as usize]).collect();
+        let own_class = entry_of.iter().map(|&e| classes::BLOCK_CLASSES[e as usize].classes[0]).collect();
+        let class_bits = classes::BLOCK_CLASSES
+            .iter()
+            .map(|info| {
+                let mut bits = [0u64; CLASS_WORDS];
+                for &c in info.classes {
+                    let c = c as usize;
+                    assert!(c < CLASS_WORDS * 64, "more block classes than bits");
+                    bits[c >> 6] |= 1 << (c & 63);
+                }
+                bits
+            })
+            .collect();
+        Table { states, signals, block_of, class_of, entry_of, own_class, class_bits }
     })
 }
 
@@ -124,16 +146,19 @@ pub fn class_info(block_index: usize) -> &'static BlockClassInfo {
 
 /// The block's own Java class.
 pub fn block_class(state: u16) -> BlockClass {
-    class_info(block_index(state)).classes[0]
+    table().own_class[state as usize]
 }
 
 /// Whether the block's class is `class` or extends it.
 pub fn is_instance(state: u16, class: BlockClass) -> bool {
-    class_info(block_index(state)).classes.contains(&class)
+    let t = table();
+    let c = class as usize;
+    t.class_bits[t.entry_of[state as usize] as usize][c >> 6] & (1 << (c & 63)) != 0
 }
 
 pub fn implements(state: u16, interface: u32) -> bool {
-    class_info(block_index(state)).interfaces & interface != 0
+    let t = table();
+    classes::BLOCK_CLASSES[t.entry_of[state as usize] as usize].interfaces & interface != 0
 }
 
 pub fn params(state: u16) -> &'static BlockParams {
