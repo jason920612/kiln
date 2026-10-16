@@ -224,15 +224,18 @@ pub fn default_pos_towards(e: &mut Entity, m: &MobData, level: &dyn EntityLevel,
     default_pos_towards_home(e, m, level, h, v, target, angle, m.home)
 }
 
-/// wp71: how often `land_pos` was asked and found nothing.
+/// How often `land_pos` was asked and found nothing (a diagnostic of `tests/farm69.rs`, which turns it on with [`COUNT_LAND`]).
 pub static LAND_STATS: [std::sync::atomic::AtomicU64; 2] = [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
+pub static COUNT_LAND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// `LandRandomPos.getPos(mob, h, v)`.
 pub fn land_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32) -> Option<Vec3> {
     let r = land_pos_inner(e, m, level, h, v);
-    LAND_STATS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if r.is_none() {
-        LAND_STATS[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if COUNT_LAND.load(std::sync::atomic::Ordering::Relaxed) {
+        LAND_STATS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if r.is_none() {
+            LAND_STATS[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
     r
 }

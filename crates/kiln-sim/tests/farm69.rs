@@ -40,8 +40,9 @@ fn build(sim: &mut Sim, pens: i32) {
     }
     for pen in 0..pens {
         let mut cmds = vec![
-            // `FARM_DEEP=n`: n more layers of solid ground below the pen (the real vanilla farm stands on a flat world's dirt).
-            format!("fill {} {} minecraft:stone", at(pen, -12, -std::env::var("FARM_DEEP").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0), -12), at(pen, 24, 0, 20)),
+            // `FARM_DEEP=n` (default 3): n more layers of solid ground below the pen, as the vanilla farm has (a flat world's dirt). wp71: with nothing below the pen
+            // the villagers' stroll targets are found a third as often and the farm makes 14 % fewer golems, in vanilla as well.
+            format!("fill {} {} minecraft:stone", at(pen, -12, -std::env::var("FARM_DEEP").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(3), -12), at(pen, 24, 0, 20)),
             format!("fill {} {} minecraft:air", at(pen, -12, 1, -12), at(pen, 24, 8, 20)),
             format!("fill {} {} minecraft:stone_bricks", at(pen, -1, 1, -1), at(pen, 12, 3, 9)),
             format!("fill {} {} minecraft:air", at(pen, 0, 1, 0), at(pen, 8, 2, 8)),
@@ -214,6 +215,7 @@ fn pen_of(z: f64) -> i32 {
 }
 
 fn stats_sample(sim: &Sim) {
+    kiln_entity::mob::random_pos::COUNT_LAND.store(true, std::sync::atomic::Ordering::Relaxed);
     let mut guard = STATS.lock().unwrap();
     let st = guard.get_or_insert_with(Stats::default);
     let mobs = sim.mobs();
