@@ -174,13 +174,13 @@ impl Player {
             // A double chest's second half is taken out while the menu works on both.
             let mut second_taken: Option<(BlockPos, ContainerBe)> = None;
             if let (Some(OpenBlock::Containers { second: Some((p, _)), .. }), Some(cs)) = (&*open, containers.as_deref_mut()) {
-                second_taken = cs.map.remove(p).map(|c| (*p, c));
+                second_taken = cs.remove(p).map(|c| (*p, c));
             }
             let result;
             {
                 let mut both: Option<Compound>;
                 let (block, use_open): (Option<&mut dyn Container>, bool) = match (&*open, containers.as_deref_mut()) {
-                    (Some(OpenBlock::Containers { first, second }), Some(cs)) => match (cs.map.get_mut(&first.0), second_taken.as_mut()) {
+                    (Some(OpenBlock::Containers { first, second }), Some(cs)) => match (cs.get_mut(first.0), second_taken.as_mut()) {
                         (Some(a), Some((_, b))) if second.is_some() => {
                             both = Some(Compound { a, b });
                             (both.as_mut().map(|c| c as &mut dyn Container), true)
@@ -201,7 +201,7 @@ impl Player {
                 };
             }
             if let (Some((p, c)), Some(cs)) = (second_taken, containers.as_deref_mut()) {
-                cs.map.insert(p, c);
+                cs.insert(p, c);
             }
             result
         };
@@ -262,7 +262,7 @@ impl Player {
         // and its recipes unlock.
         if took_result
             && let Some(OpenBlock::Containers { first, second: None }) = &self.containers.open
-            && let Some(c) = containers.as_deref_mut().and_then(|cs| cs.map.get_mut(&first.0))
+            && let Some(c) = containers.as_deref_mut().and_then(|cs| cs.get_mut(first.0))
             && matches!(c.kind, BeKind::Furnace(_))
         {
             let at = self.pos;
@@ -271,7 +271,7 @@ impl Player {
         }
         // Menu changes to a furnace's input restart its cooking right away.
         if let Some(OpenBlock::Containers { first, second: None }) = &self.containers.open
-            && let Some(c) = containers.and_then(|cs| cs.map.get_mut(&first.0))
+            && let Some(c) = containers.and_then(|cs| cs.get_mut(first.0))
         {
             super::furnace::apply_input_change(c, rules);
         }

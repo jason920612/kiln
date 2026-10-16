@@ -1873,6 +1873,10 @@ impl Host for Sim {
         crate::dim_id(dimension).is_some_and(|d| self.set_forced(d, chunk, forced))
     }
 
+    fn load_forced_chunks(&mut self) {
+        self.load_forced_now();
+    }
+
     fn random_between(&mut self, sequence: Option<&Identifier>, min: i32, max: i32) -> i32 {
         use kiln_javamath::random::RandomSource;
         let bound = max.wrapping_sub(min).wrapping_add(1);

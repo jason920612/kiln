@@ -34,7 +34,7 @@ use kiln_proto::nbt::Tag;
 use kiln_world::{Blocks, ChunkPos};
 use kiln_world::block_entity::{BlockEntity, type_name};
 use kiln_world::chunk::Chunk;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Which container block entity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -856,7 +856,15 @@ impl kiln_inventory::Container for ContainerBe {
 /// The container block entities of a region's chunks, by position.
 #[derive(Default)]
 pub(crate) struct Containers {
-    pub map: BTreeMap<BlockPos, ContainerBe>,
+    map: BTreeMap<BlockPos, ContainerBe>,
+    /// Where the dispensers and droppers among them are (the region tick asks every tick; scanning
+    /// every container for them cost ~10% of an idle tick with thousands of chests). Kept by
+    /// [`Containers::insert`] and [`Containers::remove`], the only ways in and out of `map`.
+    dispensers: BTreeSet<BlockPos>,
+}
+
+fn is_dispenser(c: &ContainerBe) -> bool {
+    matches!(c.kind, BeKind::Dispenser | BeKind::Dropper)
 }
 
 fn chunk_of(pos: BlockPos) -> ChunkPos {
@@ -875,14 +883,35 @@ fn kind_of(be: &BlockEntity) -> Option<BeKind> {
 impl Containers {
     /// Where the region's dispensers and droppers are.
     pub fn dispensers(&self) -> Vec<BlockPos> {
-        self.map.iter().filter(|(_, c)| matches!(c.kind, BeKind::Dispenser | BeKind::Dropper)).map(|(p, _)| *p).collect()
+        self.dispensers.iter().copied().collect()
+    }
+
+    pub fn insert(&mut self, pos: BlockPos, c: ContainerBe) {
+        if is_dispenser(&c) {
+            self.dispensers.insert(pos);
+        } else {
+            self.dispensers.remove(&pos);
+        }
+        self.map.insert(pos, c);
+    }
+
+    pub fn remove(&mut self, pos: &BlockPos) -> Option<ContainerBe> {
+        let c = self.map.remove(pos)?;
+        if is_dispenser(&c) {
+            self.dispensers.remove(pos);
+        }
+        Some(c)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&BlockPos, &ContainerBe)> {
+        self.map.iter()
     }
 
     /// A chunk entered the region: its containers are decoded.
     pub fn chunk_loaded(&mut self, pos: ChunkPos, chunk: &Chunk) {
         for ((x, y, z), be) in chunk.block_entities() {
             if let Some(kind) = kind_of(be) {
-                self.map.insert(be_pos(pos, x, y, z), ContainerBe::load(kind, be.kind, &be.nbt));
+                self.insert(be_pos(pos, x, y, z), ContainerBe::load(kind, be.kind, &be.nbt));
             }
         }
     }
@@ -909,7 +938,7 @@ impl Containers {
     pub fn chunk_unloaded(&mut self, pos: ChunkPos) {
         let gone: Vec<BlockPos> = self.chunk_positions(pos);
         for p in gone {
-            self.map.remove(&p);
+            self.remove(&p);
         }
     }
 
@@ -930,10 +959,10 @@ impl Containers {
                 {
                     new.last_plain = old.last_plain.clone();
                 }
-                self.map.insert(pos, loaded);
+                self.insert(pos, loaded);
             }
             None => {
-                self.map.remove(&pos);
+                self.remove(&pos);
             }
         }
     }
@@ -947,7 +976,7 @@ impl Containers {
             (Some(_), None) => false,
             (None, _) => true,
         };
-        let removed = if kept { None } else { self.map.remove(&pos) };
+        let removed = if kept { None } else { self.remove(&pos) };
         if let Some(be) = now
             && !self.map.contains_key(&pos)
             && let Some(kind) = kind_of(be)
@@ -959,7 +988,7 @@ impl Containers {
                 c.cook_total = 0;
                 c.lit_total = 0;
             }
-            self.map.insert(pos, c);
+            self.insert(pos, c);
         }
         removed
     }
@@ -974,13 +1003,15 @@ impl Containers {
 
     /// Moves the containers of chunks `owner` assigns elsewhere into `parts`.
     pub fn split_into(&mut self, parts: &mut [&mut Containers], owner: impl Fn(ChunkPos) -> usize) {
+        self.dispensers.clear();
         for (p, c) in std::mem::take(&mut self.map) {
-            parts[owner(chunk_of(p))].map.insert(p, c);
+            parts[owner(chunk_of(p))].insert(p, c);
         }
     }
 
     pub fn merge(&mut self, from: Containers) {
         self.map.extend(from.map);
+        self.dispensers.extend(from.dispensers);
     }
 
     pub fn len(&self) -> usize {

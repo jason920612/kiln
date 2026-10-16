@@ -404,6 +404,9 @@ fn change_force_load<S: Host>(s: &mut S, from: [i32; 2], to: [i32; 2], add: bool
             }
         }
     }
+    if add {
+        s.load_forced_chunks();
+    }
     if changed == 0 {
         let key = if add { "commands.forceload.added.failure" } else { "commands.forceload.removed.failure" };
         return Err(CommandError::new(tr!(key)));

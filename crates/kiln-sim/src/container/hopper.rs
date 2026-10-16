@@ -204,11 +204,11 @@ pub(crate) fn with_target<R>(level: &mut RegionLevel, target: &Target, f: impl F
     let positions = target.positions();
     let mut taken: Vec<(BlockPos, ContainerBe)> = Vec::new();
     for p in &positions {
-        match level.blocks.containers.map.remove(p) {
+        match level.blocks.containers.remove(p) {
             Some(c) => taken.push((*p, c)),
             None => {
                 for (p, c) in taken {
-                    level.blocks.containers.map.insert(p, c);
+                    level.blocks.containers.insert(p, c);
                 }
                 return None;
             }
@@ -224,7 +224,7 @@ pub(crate) fn with_target<R>(level: &mut RegionLevel, target: &Target, f: impl F
         super::furnace::apply_input_change(c, &rules);
     }
     for (p, c) in taken {
-        level.blocks.containers.map.insert(p, c);
+        level.blocks.containers.insert(p, c);
     }
     Some(r)
 }
@@ -348,7 +348,7 @@ fn eject_items(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: Block
     let facing = state::get_dir(s, "facing").unwrap_or(Direction::Down);
     let Some(target) = container_at(level, pos.relative(facing)) else { return eject_into_cart(level, items, pos, facing) };
     let face = facing.opposite();
-    let Some(mut hopper) = level.blocks.containers.map.remove(&pos) else { return false };
+    let Some(mut hopper) = level.blocks.containers.remove(&pos) else { return false };
     let ticked = hopper.ticked_game_time;
     let result = with_target(level, &target, |dest| {
         if is_full(dest, face) {
@@ -377,7 +377,7 @@ fn eject_items(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: Block
         }
         false
     });
-    level.blocks.containers.map.insert(pos, hopper);
+    level.blocks.containers.insert(pos, hopper);
     for p in target.positions() {
         crate::jukebox::settle(level, p);
     }
@@ -483,7 +483,7 @@ fn suck_in_items(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: Blo
         return moved;
     }
     if let Some(source) = container_at(level, above) {
-        let Some(mut hopper) = level.blocks.containers.map.remove(&pos) else { return false };
+        let Some(mut hopper) = level.blocks.containers.remove(&pos) else { return false };
         let source_is_hopper = matches!(source, Target::One(p) if level.blocks.containers.get(p).is_some_and(|c| c.kind == BeKind::Hopper));
         let source_ticked = if source_is_hopper { level.blocks.containers.get(above).map(|c| c.ticked_game_time) } else { None };
         let result = with_target(level, &source, |src| {
@@ -494,7 +494,7 @@ fn suck_in_items(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: Blo
             }
             false
         });
-        level.blocks.containers.map.insert(pos, hopper);
+        level.blocks.containers.insert(pos, hopper);
         for p in source.positions() {
             crate::jukebox::settle(level, p);
         }

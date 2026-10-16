@@ -703,6 +703,7 @@ impl Sim {
         for c in bounds.chunks() {
             self.set_forced(dim, c, true);
         }
+        self.load_forced_now();
     }
 
     fn unforce(&mut self, dim: DimId, chunks: &[[i32; 2]]) {
