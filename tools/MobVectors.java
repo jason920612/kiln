@@ -973,6 +973,10 @@ public class MobVectors {
         if (s.fullTick) {
             level.tickRateManager().setFrozen(false);
             level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawn_mobs false");
+            // (wp69: `MOB_CMD_RULES=1`: the rules and the weather of the console driver)
+            if (System.getenv("MOB_CMD_RULES") != null)
+                for (String c : new String[] {"gamerule minecraft:advance_weather false", "gamerule minecraft:mob_drops false", "difficulty normal", "weather clear 1000000"})
+                    cmd(level.getServer(), c);
         }
         for (int tick = 0; tick < s.ticks; tick++) {
             ad.tick = tick;
