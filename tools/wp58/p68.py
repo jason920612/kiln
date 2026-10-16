@@ -185,6 +185,7 @@ def setup_two(x=20.5, y=200, z=20.5, mode="survival", resist=True):
         sv("op KilnTest", show=False)
         sv("op Obs", show=False)
     sv("gamerule spawn_mobs false", show=False)
+    sv("gamerule spawn_phantoms false", show=False)
     sv("gamerule mob_griefing true", show=False)
     sv("difficulty normal", show=False)
     sv("time set day", show=False)

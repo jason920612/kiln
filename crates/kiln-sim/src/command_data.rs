@@ -119,11 +119,17 @@ impl Sim {
         // (`Entity.load` leaves the entity's random alone: a reload from the seed would give every
         // foal of one pair the same stats.)
         let random = e.phys.as_deref().map(|p| p.random.clone());
+        // (Nor does it dismount anyone: riders and the vehicle are links, not saved data.)
+        let links = e.phys.as_deref().map(|p| (p.passengers.clone(), p.vehicle));
         match kiln_entity::persist::load(&Tag::Compound(fields), e.id, seed) {
             Ok(mut loaded) => {
                 loaded.uuid = e.uuid.as_u128();
                 if let Some(r) = random {
                     loaded.random = r;
+                }
+                if let Some((passengers, vehicle)) = links {
+                    loaded.passengers = passengers;
+                    loaded.vehicle = vehicle;
                 }
                 e.phys = Some(Box::new(loaded));
                 e.sync();

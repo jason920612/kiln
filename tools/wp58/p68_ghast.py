@@ -34,7 +34,7 @@ def sprint_ticks(n):
 
 def hydrate():
     kill_all_mobs()
-    sv("fill 18 200 18 24 204 24 minecraft:air", show=False)
+    sv("fill 10 200 10 36 204 36 minecraft:air", show=False)
     # real: place the dried ghast on the floor, then pour water on it
     give("KilnTest", "minecraft:dried_ghast", 1)
     give("KilnTest", "minecraft:water_bucket", 1)
@@ -53,11 +53,13 @@ def hydrate():
         return None
     x, y, z = hits[0]
     a.select("minecraft:water_bucket")
-    a.lookat(x + 0.5, y + 0.6, z + 0.5)
+    a.lookat(x + 0.5, y + 0.5, z + 0.5)
     time.sleep(0.5)
     a.mouse("right", "tap")
     time.sleep(0.8)
-    F("after the bucket:", blk(a, x, y, z), "around:", [blk(a, x + dx, y, z + dz) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))])
+    F("after the bucket:", blk(a, x, y, z), "above:", blk(a, x, y + 1, z))
+    sv("tp KilnTest 6.5 200 6.5", show=False)
+    time.sleep(1.0)
     rec_start(a)
     sv("gamerule random_tick_speed 3000", show=False)
     # hydration steps (5000 ticks each, started by a random tick) then the spawn; short sprints so the new
@@ -65,15 +67,20 @@ def hydrate():
     for step in range(120):
         sprint_ticks(250)
         b_ = blk(a, x, y, z)
-        if step % 10 == 0 or "dried_ghast" not in b_:
-            F("hydration step", step, b_, "ghasts:", len(ents_of(a, "happy_ghast", 30)))
+        if step % 5 == 0 or "dried_ghast" not in b_:
+            F("hydration step", step, b_, "ghasts:", len(ents_of(a, "happy_ghast", 30)), "player", pos(a), a.state(0)["health"], [(e["t"], round(e["x"], 1), round(e["y"], 1), round(e["z"], 1)) for e in a.state(30)["entities"]][:6])
         if "dried_ghast" not in b_:
             break
     time.sleep(1.0)
+    F("server ghast pos:", re.findall(r"Pos: \[[^\]]*\]", server_ghast()), "player", pos(a))
     sv("gamerule random_tick_speed 3", show=False)
     ls = lines()
     F("hydration lines:", [l[:90] for l in ls if "sound" in l or "particle" in l][:10])
     gs = ents_of(a, "happy_ghast", 30)
+    if not gs:
+        sv("tp @e[type=happy_ghast,limit=1] 8.5 202 8.5", show=False)
+        time.sleep(1.5)
+        gs = ents_of(a, "happy_ghast", 30)
     return gs[0] if gs else None
 
 
@@ -122,7 +129,7 @@ def ghast_of(c, eid):
 
 
 def steer(eid):
-    sv("data merge entity @e[type=happy_ghast,limit=1] {NoAI:0b}", show=False)
+    # (NoAI stays on: `/data merge entity` on a vehicle drops its riders on Kiln.)
     time.sleep(1.0)
     g0 = ghast_of(a, eid)
     p0 = (g0["x"], g0["y"], g0["z"])
