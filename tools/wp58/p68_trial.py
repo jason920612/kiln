@@ -56,7 +56,7 @@ def gametime():
     return int(m[-1]) if m else None
 
 
-def fight(secs=150):
+def fight(secs=420):
     """Stand beside the spawner; real hits on what comes at the player, the rest of the spawner's mobs are removed by command; log the
     spawner's state (block state + data) with the game time, the items it ejects."""
     sv(f"tp {ME} 231.5 -29 231.5", show=False)
