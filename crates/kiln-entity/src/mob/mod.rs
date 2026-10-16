@@ -1154,7 +1154,7 @@ pub fn new(kind: MobKind, id: i32, uuid: u128, seed: i64) -> Entity {
     e.y_rot = e.random.next_float() * 6.2831855;
     m.y_head_rot = e.y_rot;
     // ... then the brain (its sensors' first scans are delayed by draws from the mob's random).
-    m.brain_random = kiln_javamath::random::LegacyRandom::new(seed ^ 0x2545_F491_4F6C_DD1D);
+    m.brain_random = kiln_javamath::random::LegacyRandom::new(if brain::x_rng() == 2 { x_mix(seed) } else { seed ^ 0x2545_F491_4F6C_DD1D });
     if let Some(k) = kind.ext() {
         m.brain = k.make_brain(&m, &mut e.random).map(Box::new);
     }
@@ -3567,4 +3567,12 @@ impl DamageKind {
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
             .is_some_and(|(_, ids)| ids.contains(&id))
     }
+}
+
+/// wp71 experiment: a SplitMix64 mix.
+pub(crate) fn x_mix(seed: i64) -> i64 {
+    let mut z = (seed as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    (z ^ (z >> 31)) as i64
 }

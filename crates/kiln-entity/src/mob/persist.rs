@@ -28,7 +28,7 @@ fn op_of(name: &str) -> Option<Op> {
 /// Builds the mob of a loaded compound (the kind was `MobTicking` until now).
 pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
     let mut m = MobData::new(kind, &mut e.random);
-    m.brain_random = kiln_javamath::random::LegacyRandom::new(e.random.state() ^ 0x2545_F491_4F6C_DD1D);
+    m.brain_random = kiln_javamath::random::LegacyRandom::new(if super::brain::x_rng() == 2 { super::x_mix(e.random.state()) } else { e.random.state() ^ 0x2545_F491_4F6C_DD1D });
     if let Some(k) = kind.ext() {
         m.brain = k.make_brain(&m, &mut e.random).map(Box::new);
     }

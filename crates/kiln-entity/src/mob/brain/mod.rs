@@ -167,6 +167,10 @@ pub struct Cx<'a> {
 impl Cx<'_> {
     /// The random vanilla draws from `level.getRandom()` (the mob's own stream, see the module doc).
     pub fn rng(&mut self) -> &mut LegacyRandom {
+        // wp71 experiment: KILN_X_RNG=shared draws from one stream per thread, like the level random.
+        if x_rng() == 1 {
+            return x_shared();
+        }
         match self.level.shared_ai_random() {
             Some(r) => r,
             None => &mut self.m.brain_random,
@@ -970,4 +974,32 @@ pub fn pin(e: &mut Entity) {
 pub(super) fn debug_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("KILN_BRAIN_DEBUG").is_some())
+}
+
+/// wp71 experiment switch.
+pub fn x_rng() -> u8 {
+    static X: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    *X.get_or_init(|| match std::env::var("KILN_X_RNG").as_deref() {
+        Ok("shared") => 1,
+        Ok("mixed") => 2,
+        _ => 0,
+    })
+}
+
+thread_local! {
+    static X_SHARED: std::cell::UnsafeCell<Option<LegacyRandom>> = const { std::cell::UnsafeCell::new(None) };
+}
+
+static X_COUNT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+#[allow(clippy::mut_from_ref)]
+pub fn x_shared() -> &'static mut LegacyRandom {
+    X_SHARED.with(|c| unsafe {
+        let r = &mut *c.get();
+        if r.is_none() {
+            let n = X_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            *r = Some(LegacyRandom::new(0x1234_5678_9abc_def0u64.wrapping_mul(n as u64 + 7) as i64 ^ std::env::var("KILN_X_SEED").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(0)));
+        }
+        &mut *(r.as_mut().unwrap() as *mut LegacyRandom)
+    })
 }
