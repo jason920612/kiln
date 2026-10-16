@@ -497,7 +497,7 @@ mod tests {
                 if let Some((k, v)) = extra {
                     fields.push((k.into(), v));
                 }
-                let spawn = Spawn::from_saved(&kiln_proto::nbt::Tag::Compound(fields), 7, true).unwrap_or_else(|| panic!("{name} loads"));
+                let spawn = Spawn::from_saved(&kiln_proto::nbt::Tag::Compound(fields), 7, true).unwrap_or_else(|_| panic!("{name} loads"));
                 let e = match &spawn.body {
                     crate::entities::Body::Loaded(e) => e,
                     crate::entities::Body::LoadedStack(_, riders) => &riders[0].entity,
