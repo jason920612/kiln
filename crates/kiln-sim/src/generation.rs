@@ -10,7 +10,6 @@ use crossbeam_channel::{Receiver, Sender};
 use kiln_world::chunk::Chunk;
 use kiln_world::{ChunkGenerator, ChunkPos, Dimension};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -27,10 +26,7 @@ pub fn generation_totals() -> (u64, std::time::Duration) {
 
 /// Generation threads run only on CPU time nothing else wants (`SCHED_IDLE` on Linux, below
 /// normal priority on Windows): ticks and other programs go first, and idle cores generate.
-/// While the tick waits for them ([`GenPool::wait`]: a command that loads chunks, like vanilla's
-/// `getChunk`) they run at normal priority instead: the tick's own threads are idle then, and on
-/// a busy machine idle-only threads would barely run while the whole server waits.
-fn set_priority(background: bool) {
+fn background_priority() {
     #[cfg(target_os = "linux")]
     {
         #[repr(C)]
@@ -40,11 +36,10 @@ fn set_priority(background: bool) {
         unsafe extern "C" {
             fn sched_setscheduler(pid: i32, policy: i32, param: *const SchedParam) -> i32;
         }
-        const SCHED_OTHER: i32 = 0;
         const SCHED_IDLE: i32 = 5;
         // SAFETY: pid 0 is the calling thread; the parameter outlives the call.
         unsafe {
-            sched_setscheduler(0, if background { SCHED_IDLE } else { SCHED_OTHER }, &SchedParam { priority: 0 });
+            sched_setscheduler(0, SCHED_IDLE, &SchedParam { priority: 0 });
         }
     }
     #[cfg(windows)]
@@ -53,11 +48,10 @@ fn set_priority(background: bool) {
             fn GetCurrentThread() -> isize;
             fn SetThreadPriority(thread: isize, priority: i32) -> i32;
         }
-        const THREAD_PRIORITY_NORMAL: i32 = 0;
         const THREAD_PRIORITY_BELOW_NORMAL: i32 = -1;
         // SAFETY: the current-thread pseudo-handle and a documented priority value.
         unsafe {
-            SetThreadPriority(GetCurrentThread(), if background { THREAD_PRIORITY_BELOW_NORMAL } else { THREAD_PRIORITY_NORMAL });
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
         }
     }
 }
@@ -82,8 +76,6 @@ pub(crate) struct GenPool {
     /// Finished chunks not installed yet (still in `in_flight`, so not asked for again).
     ready: std::collections::BTreeMap<ChunkPos, Chunk>,
     claims: Arc<Mutex<HashMap<ChunkPos, Claim>>>,
-    /// Whether the tick waits for the threads (they run at normal priority then).
-    waited_on: Arc<AtomicBool>,
     /// A fork of the generator kept for its statistics.
     probe: Box<dyn ChunkGenerator>,
 }
@@ -94,15 +86,13 @@ impl GenPool {
         let (urgent, urgent_jobs) = crossbeam_channel::unbounded::<ChunkPos>();
         let (done, results) = crossbeam_channel::unbounded();
         let claims: Arc<Mutex<HashMap<ChunkPos, Claim>>> = Arc::default();
-        let waited_on = Arc::new(AtomicBool::new(false));
         for i in 0..threads.max(1) {
-            let (jobs, urgent_jobs, done, claims, waited_on) = (jobs.clone(), urgent_jobs.clone(), done.clone(), claims.clone(), waited_on.clone());
+            let (jobs, urgent_jobs, done, claims) = (jobs.clone(), urgent_jobs.clone(), done.clone(), claims.clone());
             let mut generator = generator.fork();
             std::thread::Builder::new()
                 .name(format!("kiln-gen-{i}"))
                 .spawn(move || {
-                    let mut background = true;
-                    set_priority(background);
+                    background_priority();
                     loop {
                         // Urgent chunks first; otherwise whichever queue has work.
                         let pos = match urgent_jobs.try_recv() {
@@ -119,10 +109,6 @@ impl GenPool {
                                 _ => continue,
                             }
                         }
-                        if background == waited_on.load(Relaxed) {
-                            background = !background;
-                            set_priority(background);
-                        }
                         let started = Instant::now();
                         let mut chunk = generator.generate(pos, dimension);
                         // Its own light here, off the tick: its region adds what crosses the
@@ -138,17 +124,7 @@ impl GenPool {
                 })
                 .expect("spawning a generation thread");
         }
-        Self {
-            requests,
-            urgent,
-            results,
-            in_flight: HashMap::new(),
-            urgent_sent: Default::default(),
-            ready: Default::default(),
-            claims,
-            waited_on,
-            probe: generator.fork(),
-        }
+        Self { requests, urgent, results, in_flight: HashMap::new(), urgent_sent: Default::default(), ready: Default::default(), claims, probe: generator.fork() }
     }
 
     /// Queues `pos` unless it is already queued; `false` when the queue is full.
@@ -220,11 +196,6 @@ impl GenPool {
                 self.ready.insert(pos, chunk);
             }
         }
-    }
-
-    /// Whether the tick waits for the threads ([`GenPool::wait`]); set back when it is done.
-    pub fn waited_on(&self, on: bool) {
-        self.waited_on.store(on, Relaxed);
     }
 
     /// Blocks until the threads finish another chunk, and collects it.
