@@ -257,6 +257,8 @@ public class MobVectors {
         /// wp69: iron golems that exist at the start of a tick are removed before anything else of it (the wp66 farm's
         /// tick function kills each new golem; here they are discarded).
         boolean removeGolems;
+        /// wp69: no per-tick trace (statistics scenarios that run for days: only what spawned is recorded).
+        boolean noTrace;
         Scenario(String name) { this.name = name; }
     }
 
@@ -891,6 +893,7 @@ public class MobVectors {
                     Files.writeString(Path.of("dbg.txt"), "ENT tick=" + tick + " " + BuiltInRegistries.ENTITY_TYPE.getKey(oe.getType()) + " id=" + oe.getId() + " removed=" + oe.isRemoved() + " pos=" + oe.position() + " delta=" + oe.getDeltaMovement() + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
                 }
             }
+            if (!s.noTrace) {
             if (tick > 0) trace.append(',');
             trace.append('[');
             for (int i = 0; i < initial; i++) {
@@ -902,6 +905,7 @@ public class MobVectors {
                 trace.append(state(nm));
             }
             trace.append(']');
+            }
             // wp41: where the scenario's other entities (boats, minecarts) are, and how fast.
             if (tick > 0) othersTrace.append(',');
             othersTrace.append('[');
@@ -6706,6 +6710,29 @@ public class MobVectors {
             s.removeGolems = true;
             s.ticks = 4000;
             Action in = new Action(1800, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+            out.add(s);
+        }
+        // Days of the farm (statistics only: no trace, no replay): 6 days of one pen, the zombie in the cell from dt 300 to 11000.
+        for (int i = 0; i < 16; i++) {
+            Scenario s = new Scenario("farm69_days_" + i);
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69600L + 10L * i, 1000L - 11000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 300;
+            s.levelSeed = 600 + i;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.noTrace = true;
+            s.ticks = 6 * 24000;
+            for (int d = 0; d < 6; d++) {
+                Action in = new Action(d == 0 ? 0 : 24000 * d - 1, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+                Action off = new Action(24000 * d + 10699, "tp"); off.mob = 3; off.x = 17.5; off.y = BY; off.z = 17.5; s.actions.add(off);
+            }
             out.add(s);
         }
         // A day, a night and the next morning: the zombie goes at dusk (into a closed box) and comes back the next morning.
