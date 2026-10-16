@@ -11,6 +11,8 @@ use kiln_sim::{Sim, SimConfig};
 fn a_hydrated_dried_ghast_hatches_a_baby_happy_ghast_facing_the_way_it_faced() {
     let mut sim = Sim::new(SimConfig::new(4, 4, None));
     let (msg, stats) = join(1, "User", 2);
+    *stats.log.lock().unwrap() = Some(Vec::new());
+    let stats_for_log = stats.clone();
     assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
     let mut client = Client::new(1, stats);
     fn tick(sim: &mut Sim, client: &mut Client, n: usize) {
@@ -44,4 +46,12 @@ fn a_hydrated_dried_ghast_hatches_a_baby_happy_ghast_facing_the_way_it_faced() {
     // (It starts in the block's column and flies about while the loop above waits for the next hundred ticks.)
     assert!((at[0].as_f64().unwrap() - x as f64).abs() < 12.0 && (at[2].as_f64().unwrap() - z as f64).abs() < 12.0, "near the block: {at:?}");
     assert_ne!(sim.block_at(x, y, z), Some(d::DRIED_GHAST), "the dried ghast is gone");
+    // ... and the player who stands near it is shown the new entity.
+    let ghast_id = sim.entity_ids_of("minecraft:happy_ghast")[0];
+    let log = stats_for_log.log.lock().unwrap().clone().unwrap();
+    let added = log.iter().any(|p| {
+        let mut r = kiln_proto::codec::Reader::new(p);
+        r.varint().ok() == Some(kiln_data::packets::play::clientbound::ADD_ENTITY) && r.varint().ok() == Some(ghast_id)
+    });
+    assert!(added, "the hatched ghastling was sent to the player (entity {ghast_id})");
 }

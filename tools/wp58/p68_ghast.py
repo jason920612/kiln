@@ -60,12 +60,16 @@ def hydrate():
     F("after the bucket:", blk(a, x, y, z), "around:", [blk(a, x + dx, y, z + dz) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))])
     rec_start(a)
     sv("gamerule random_tick_speed 3000", show=False)
-    # hydration steps (5000 ticks each, started by a random tick) then the spawn
-    for step in range(8):
-        sprint_ticks(5005)
-        F("hydration step", step, blk(a, x, y, z), "ghasts:", len(ents_of(a, "happy_ghast", 30)))
-        if ents_of(a, "happy_ghast", 30):
+    # hydration steps (5000 ticks each, started by a random tick) then the spawn; short sprints so the new
+    # ghastling is still near when the block turns to water
+    for step in range(120):
+        sprint_ticks(250)
+        b_ = blk(a, x, y, z)
+        if step % 10 == 0 or "dried_ghast" not in b_:
+            F("hydration step", step, b_, "ghasts:", len(ents_of(a, "happy_ghast", 30)))
+        if "dried_ghast" not in b_:
             break
+    time.sleep(1.0)
     sv("gamerule random_tick_speed 3", show=False)
     ls = lines()
     F("hydration lines:", [l[:90] for l in ls if "sound" in l or "particle" in l][:10])
