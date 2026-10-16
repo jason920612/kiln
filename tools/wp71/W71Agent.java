@@ -16,6 +16,18 @@ public final class W71Agent {
         inst.addTransformer(new java.lang.instrument.ClassFileTransformer() {
             @Override
             public byte[] transform(ClassLoader loader, String name, Class<?> cls, java.security.ProtectionDomain pd, byte[] bytes) {
+            if ("net/minecraft/world/entity/ai/util/LandRandomPos".equals(name)) {
+                ClassFile cf = ClassFile.of();
+                return cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(
+                        m -> m.methodName().equalsString("getPos") && m.methodType().equalsString("(Lnet/minecraft/world/entity/PathfinderMob;II)Lnet/minecraft/world/phys/Vec3;"),
+                        (CodeBuilder b, CodeElement e) -> {
+                            if (e instanceof java.lang.classfile.instruction.ReturnInstruction) {
+                                b.dup();
+                                b.invokestatic(ClassDesc.of("w71.W71Hook"), "landRet", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_Object));
+                            }
+                            b.with(e);
+                        }));
+            }
             if (!"net/minecraft/server/level/ServerLevel".equals(name)) return null;
             ClassFile cf = ClassFile.of();
             return cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(

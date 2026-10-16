@@ -383,6 +383,8 @@ fn stats_dump(path: &str, golems: usize) {
     let mut guard = STATS.lock().unwrap();
     let st = guard.get_or_insert_with(Stats::default);
     st.counts.insert("golem".into(), golems as u64);
+    st.counts.insert("land|calls".into(), kiln_entity::mob::random_pos::LAND_STATS[0].load(std::sync::atomic::Ordering::Relaxed));
+    st.counts.insert("land|none".into(), kiln_entity::mob::random_pos::LAND_STATS[1].load(std::sync::atomic::Ordering::Relaxed));
     let text: String = st.counts.iter().map(|(k, v)| format!("{k}	{v}
 ")).collect();
     std::fs::write(path, text).unwrap();

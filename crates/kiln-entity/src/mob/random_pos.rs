@@ -224,8 +224,20 @@ pub fn default_pos_towards(e: &mut Entity, m: &MobData, level: &dyn EntityLevel,
     default_pos_towards_home(e, m, level, h, v, target, angle, m.home)
 }
 
+/// wp71: how often `land_pos` was asked and found nothing.
+pub static LAND_STATS: [std::sync::atomic::AtomicU64; 2] = [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
+
 /// `LandRandomPos.getPos(mob, h, v)`.
 pub fn land_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32) -> Option<Vec3> {
+    let r = land_pos_inner(e, m, level, h, v);
+    LAND_STATS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if r.is_none() {
+        LAND_STATS[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    r
+}
+
+fn land_pos_inner(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32) -> Option<Vec3> {
     crate::prof!("path", "land_pos");
     let home = m.home;
     let restrict = mob_restricted(e, home, h as f64);

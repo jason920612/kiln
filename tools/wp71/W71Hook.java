@@ -209,6 +209,11 @@ public final class W71Hook {
         return v.getZ();
     }
 
+    public static void landRet(Object o) {
+        add("land|calls");
+        if (o == null) add("land|none");
+    }
+
     static int pen(double z) {
         return Math.floorDiv((int) Math.floor(z - Z0) + 20, PEN_DZ);
     }
