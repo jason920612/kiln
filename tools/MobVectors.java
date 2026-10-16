@@ -122,6 +122,19 @@ public class MobVectors {
             case "hurt" -> ((LivingEntity) tracked.get(a.mob)).hurtServer(level,
                     new net.minecraft.world.damagesource.DamageSource(level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.DAMAGE_TYPE)
                             .getOrThrow(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DAMAGE_TYPE, Identifier.parse(a.what)))), (float) a.x);
+            // wp69: `/summon <what> x y z {PersistenceRequired:1b}` (`finalizeSpawn` included).
+            case "summon" -> {
+                EntityType<?> et = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(a.what));
+                Mob mm = (Mob) et.create(level, EntitySpawnReason.COMMAND);
+                mm.snapTo(a.x, a.y, a.z, 0f, 0f);
+                mm.setPersistenceRequired();
+                mm.finalizeSpawn(level, level.getCurrentDifficultyAt(mm.blockPosition()), EntitySpawnReason.COMMAND, null);
+                level.addFreshEntityWithPassengers(mm);
+            }
+            // wp69: every entity of type `what` goes (`/kill`: `discard`).
+            case "killall" -> {
+                for (Entity ke : level.getEntities((Entity) null, box(), e -> !(e instanceof ServerPlayer) && BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString().equals(a.what))) ke.discard();
+            }
             // wp69: mob `mob` is put at pos (its navigation stopped).
             case "tp" -> {
                 Entity t = tracked.get(a.mob);
@@ -262,6 +275,8 @@ public class MobVectors {
         /// wp69: the level really ticks (`ServerLevel.tick`: time, the entity list, the points of interest...) instead of the harness
         /// ticking the mobs by hand: for statistics (`noTrace`), to see what the level adds.
         boolean fullTick;
+        /// wp69: the golems of the tick before are killed (death animation, 20 ticks) instead of discarded.
+        boolean killGolems;
         Scenario(String name) { this.name = name; }
     }
 
@@ -822,7 +837,11 @@ public class MobVectors {
             if (!s.fullTick) levelData.setGameTime(startTime + 1 + tick);
             if (s.advanceDay && !s.fullTick) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + (s.dayTime + 1 + tick));
             if (s.removeGolems) {
-                for (Entity ge : tracked) if (ge instanceof net.minecraft.world.entity.animal.golem.IronGolem && !ge.isRemoved()) ge.discard();
+                for (Entity ge : tracked) {
+                    if (ge instanceof net.minecraft.world.entity.animal.golem.IronGolem ig && !ge.isRemoved()) {
+                        if (s.killGolems) { if (ig.isAlive()) ig.kill(level); } else ge.discard();
+                    }
+                }
             }
             traceTick = tick;
             // The player's own tick (not run while the server thread is ours): its hurt cooldown.
@@ -6806,6 +6825,47 @@ public class MobVectors {
                 Action off = new Action(24000 * d + 10699, "tp"); off.mob = 3; off.x = 17.5; off.y = BY; off.z = 17.5; s.actions.add(off);
             }
             out.add(s);
+        }
+        // Variants of the full-tick days, each step nearer to what the console driver of wp66 does: (1) a zombie summoned each morning and killed at
+        // dusk, (2) villagers that find their beds themselves (starting at dusk), (3) golems killed (the death animation) instead of removed.
+        String[] variants = {"v1", "v2", "v3", "v123"};
+        for (String v : variants) {
+            for (int i = 0; i < 12; i++) {
+                Scenario s = new Scenario("farm69_" + v + "_" + i);
+                farm69Pen(s);
+                boolean summon = v.contains("1"), homes = !v.contains("2"), kill = v.contains("3");
+                farm69Mobs(s, 69700L + 10L * i + (v.hashCode() & 0xFFF) * 1000, homes ? 1000L - 11000L : null, summon ? null : new double[] {17.5, 17.5}, homes);
+                if (summon) {
+                    // (the box of the zombie is not needed)
+                } else {
+                    for (int x = 15; x <= 19; x++)
+                        for (int z = 15; z <= 19; z++)
+                            for (int y = BY; y <= BY + 3; y++) {
+                                boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                                if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                            }
+                }
+                s.dayTime = homes ? 300 : 11500;
+                s.levelSeed = 700 + i;
+                s.noTrace = true;
+                s.fullTick = true;
+                s.removeGolems = true;
+                s.killGolems = kill;
+                int first = homes ? 0 : 12800 - 1;
+                s.ticks = homes ? 6 * 24000 : 12800 + 6 * 24000;
+                for (int d = 0; d < 6; d++) {
+                    int arrive = homes ? (d == 0 ? 0 : 24000 * d - 1) : 12800 - 1 + 24000 * d;
+                    int leave = arrive + 10699;
+                    if (summon) {
+                        Action in = new Action(arrive, "summon"); in.what = "minecraft:zombie"; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+                        Action off = new Action(leave, "killall"); off.what = "minecraft:zombie"; s.actions.add(off);
+                    } else {
+                        Action in = new Action(arrive, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+                        Action off = new Action(leave, "tp"); off.mob = 3; off.x = 17.5; off.y = BY; off.z = 17.5; s.actions.add(off);
+                    }
+                }
+                out.add(s);
+            }
         }
         // A day, a night and the next morning: the zombie goes at dusk (into a closed box) and comes back the next morning.
         {
