@@ -26,7 +26,9 @@ def build(pens):
          "difficulty normal", "weather clear 1000000", "time set 11500", "kill @e[type=!player]", "scoreboard objectives add wp66 dummy"], timeout=300)
     for pen in range(pens):
         cmds = [
-            f"fill {X0-12} {F} {Z0+pen*PEN_DZ-12} {X0+24} {F} {Z0+pen*PEN_DZ+20} minecraft:stone",
+            # DEEP=n (default 3): n more layers of stone below the floor, so that both servers have solid ground under the pen whatever their world is (wp71: the
+            # flat world of the vanilla server has dirt there, the void world of the Kiln server nothing, and strolling villagers choose their targets by what is below them).
+            f"fill {X0-12} {F-int(os.environ.get('DEEP', '3'))} {Z0+pen*PEN_DZ-12} {X0+24} {F} {Z0+pen*PEN_DZ+20} minecraft:stone",
             # CLEARBELOW=n: the n layers below the floor (the flat world's dirt and bedrock) made air: nothing below the pen, as in the Kiln test world (wp71).
             *([f"fill {X0-12} {F-int(os.environ['CLEARBELOW'])} {Z0+pen*PEN_DZ-12} {X0+24} {F-1} {Z0+pen*PEN_DZ+20} minecraft:air"] if os.environ.get("CLEARBELOW") else []),
             f"fill {X0-12} {F+1} {Z0+pen*PEN_DZ-12} {X0+24} {F+8} {Z0+pen*PEN_DZ+20} minecraft:air",
