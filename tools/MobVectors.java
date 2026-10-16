@@ -6642,7 +6642,10 @@ public class MobVectors {
                     boolean room = y < BY + 2 && z >= 0 && z <= 8 && ((x >= 0 && x <= 8) || (x >= 10 && x <= 11));
                     if (!room) block(s, x, y, z, "minecraft:stone_bricks");
                 }
-        for (int z = 0; z <= 8; z++) block(s, 9, BY, z, "minecraft:oak_fence[north=true,south=true]");
+        for (int z = 0; z <= 8; z++) {
+            block(s, 9, BY, z, "minecraft:oak_fence[north=true,south=true]");
+            block(s, 9, BY + 1, z, "minecraft:air");
+        }
         for (int z : new int[] {2, 4, 6}) {
             block(s, 3, BY, z, "minecraft:red_bed[facing=east,part=head,occupied=false]");
             block(s, 4, BY, z, "minecraft:red_bed[facing=east,part=foot,occupied=false]");
