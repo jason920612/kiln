@@ -839,11 +839,18 @@ impl Grid {
     }
 }
 
-/// The level random stand-in for entity `id` this tick.
+/// SplitMix64's finalizer: every input bit changes about half of the output bits.
+fn mix64(z: u64) -> u64 {
+    let z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// The level random stand-in for entity `id` this tick: a stream of its own for every (tick, entity), so that no two entities share draws.
+/// (wp71: the tick used to be xored into the seed raw and the id into that, so `(tick, id)` and `(tick ^ k, id ^ k)` got the same stream:
+/// neighbouring entities drew the same numbers a few ticks apart. Each input now goes through a mixing round of its own.)
 fn entity_level_random(seed: i64, game_time: i64, id: i32) -> LegacyRandom {
-    let mut h = (seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (game_time as u64) ^ 0x6c65_7665_6c;
-    h = (h ^ id as u32 as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    h ^= h >> 31;
+    let h = mix64(mix64(mix64(seed as u64 ^ 0x6c65_7665_6c).wrapping_add(game_time as u64)).wrapping_add(id as u32 as u64));
     LegacyRandom::new(h as i64)
 }
 
@@ -4214,4 +4221,53 @@ fn push_dirty_data(id: i32, meta: EntityData, sent: &mut Vec<u8>, prev: &mut Opt
     }
     *sent = meta.entries().to_vec();
     *prev = Some(meta);
+}
+
+#[cfg(test)]
+mod level_random_tests {
+    use super::entity_level_random;
+    use kiln_javamath::random::RandomSource;
+
+    fn draws(seed: i64, tick: i64, id: i32) -> [i32; 6] {
+        let mut r = entity_level_random(seed, tick, id);
+        [0; 6].map(|_| r.next_int())
+    }
+
+    /// Different entities never get the same stream, at any two ticks: neighbouring ids (a spawn batch) and ticks a few apart used to collide
+    /// (`(tick, id)` and `(tick ^ k, id ^ k)` were one stream).
+    #[test]
+    fn two_entities_never_share_a_stream() {
+        let mut seen = std::collections::HashMap::new();
+        for id in 1_000_000..1_000_040 {
+            for tick in 5000..5064 {
+                if let Some(other) = seen.insert(draws(42, tick, id), (tick, id)) {
+                    panic!("(tick {tick}, id {id}) draws what {other:?} drew");
+                }
+            }
+        }
+    }
+
+    /// The first draw is uniform over entities at one tick and over ticks for one entity, and independent of the next entity's and the next tick's.
+    #[test]
+    fn the_first_draws_are_uniform_and_independent() {
+        const N: usize = 40_000;
+        let bucket = |v: i32| ((v as u32 as u64 * 10) >> 32) as usize;
+        let chi = |counts: &[u32; 100]| {
+            let e = counts.iter().sum::<u32>() as f64 / 100.0;
+            counts.iter().map(|&c| (c as f64 - e).powi(2) / e).sum::<f64>()
+        };
+        // (chi-square with 99 degrees of freedom: 99 +- 14; beyond 160 is a p of about 1e-5)
+        let (mut by_id, mut by_tick, mut next_id, mut next_tick) = ([0u32; 100], [0u32; 100], [0u32; 100], [0u32; 100]);
+        for i in 0..N {
+            let (tick, id) = (9000 + (i / 200) as i64, 1_000_000 + (i % 200) as i32);
+            let a = draws(7, tick, id)[0];
+            by_id[bucket(a) * 10 + bucket(draws(7, tick, id + 1)[0])] += 1;
+            by_tick[bucket(a) * 10 + bucket(draws(7, tick + 1, id)[0])] += 1;
+            next_id[bucket(a) * 10 + bucket(draws(7, tick, id ^ 3)[0])] += 1;
+            next_tick[bucket(a) * 10 + bucket(draws(7, tick ^ 3, id)[0])] += 1;
+        }
+        for (name, counts) in [("id, id + 1", by_id), ("tick, tick + 1", by_tick), ("id, id ^ 3", next_id), ("tick, tick ^ 3", next_tick)] {
+            assert!(chi(&counts) < 160.0, "the first draws of {name} are not independent: chi-square {}", chi(&counts));
+        }
+    }
 }
