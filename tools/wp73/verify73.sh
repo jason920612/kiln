@@ -13,7 +13,7 @@ for s in ${steps[@]}; do
     ws_dp) KILN_DATAPACK=/home/test/kiln/work/generated cargo test --workspace --release --no-fail-fast > "$out/ws_dp.log" 2>&1; echo "ws_dp exit $?" >> "$out/summary" ;;
     suites) python3 tools/parity_suites.py --skip-workspace --out "$out/suites" > "$out/suites.log" 2>&1; echo "suites exit $?" >> "$out/summary" ;;
     diff) cargo build --release -p kiln-server -p kiln-bot > "$out/diff_build.log" 2>&1
-          python3 tools/command_diff.py --kiln-port 25590 --vanilla-port 25597 > "$out/diff.log" 2>&1; echo "diff exit $?" >> "$out/summary" ;;
+          KILN_DIFF_SCRATCH=$HOME/wp73/diffscratch python3 tools/command_diff.py --kiln-port 25590 --vanilla-port 25597 --kiln-exe target/release/kiln --bot-exe target/release/kiln-bot > "$out/diff.log" 2>&1; echo "diff exit $?" >> "$out/summary" ;;
   esac
 done
 echo done >> "$out/summary"
