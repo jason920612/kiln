@@ -201,6 +201,7 @@ struct Stats {
     trace_prev: std::collections::HashMap<i32, String>,
     prev_inter: std::collections::HashMap<i32, bool>,
     prev_rc: std::collections::HashMap<i32, i32>,
+    prev_state: std::collections::HashMap<i32, String>,
     zombie_since: Option<i64>,
     trace_from: Option<i64>,
 }
@@ -323,6 +324,15 @@ fn stats_sample(sim: &Sim) {
         let rc = trace.iter().filter(|t| *t == "run:RunOne").count() as i32;
         let inter = trace.iter().any(|t| t.starts_with("m:minecraft:interaction_target"));
         let was_inter = st.prev_inter.insert(*id, inter).unwrap_or(false);
+        let new_walk_key = walk.is_some() && key != prev_key;
+        if let Some(pst) = st.prev_state.get(id) {
+            *c.entry(format!("hzN|{ph}|{cls}|{pst}")).or_default() += 1;
+            if new_walk_key {
+                *c.entry(format!("{}|{ph}|{cls}|{pst}", if walk.unwrap().0 { "hzE" } else { "hzB" })).or_default() += 1;
+            }
+        }
+        let lk = trace.iter().any(|t| t.starts_with("m:minecraft:look_target"));
+        st.prev_state.insert(*id, format!("w{}r{rc}i{}l{}s{}c{}", walk.is_some() as i32, inter as i32, lk as i32, run.contains("MoveToTargetSink") as i32, cant as i32));
         let prc = st.prev_rc.insert(*id, rc).unwrap_or(0);
         if rc > prc {
             let new_walk = walk.is_some() && key != prev_key;

@@ -32,6 +32,7 @@ public final class W71Hook {
     static final Map<Integer, Boolean> PREV_CANT = new HashMap<>();
     static final Map<Integer, Boolean> PREV_INTER = new HashMap<>();
     static final Map<Integer, Integer> PREV_RC = new HashMap<>();
+    static final Map<Integer, String> PREV_STATE = new HashMap<>();
     static final Map<Integer, Object[]> PENDING = new HashMap<>();
     static final Map<Integer, String> TRACE_PREV = new HashMap<>();
     static long zombieSince = -1, traceFrom = -1;
@@ -149,6 +150,16 @@ public final class W71Hook {
                 boolean inter = brain.hasMemoryValue(net.minecraft.world.entity.ai.memory.MemoryModuleType.INTERACTION_TARGET);
                 boolean wasInter = PREV_INTER.getOrDefault(v.getId(), false);
                 PREV_INTER.put(v.getId(), inter);
+                {
+                    String pst = PREV_STATE.get(v.getId());
+                    if (pst != null) {
+                        add("hzN|" + ph + "|" + cls + "|" + pst);
+                        if (sig != null && !key.equals(prevKey) && sig.startsWith("B")) add("hzB|" + ph + "|" + cls + "|" + pst);
+                        if (sig != null && !key.equals(prevKey) && sig.startsWith("E")) add("hzE|" + ph + "|" + cls + "|" + pst);
+                    }
+                    boolean lk = brain.hasMemoryValue(net.minecraft.world.entity.ai.memory.MemoryModuleType.LOOK_TARGET);
+                    PREV_STATE.put(v.getId(), "w" + (wopt.isPresent() ? 1 : 0) + "r" + rc + "i" + (inter ? 1 : 0) + "l" + (lk ? 1 : 0) + "s" + (run.contains("MoveToTargetSink") ? 1 : 0) + "c" + (cant ? 1 : 0));
+                }
                 int prc = PREV_RC.getOrDefault(v.getId(), 0);
                 PREV_RC.put(v.getId(), rc);
                 if (rc > prc) {
