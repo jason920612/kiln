@@ -650,6 +650,11 @@ fn replay(s: &Value) -> Result<usize, String> {
             level.add_effect_instance(id, fx, None);
         }
     }
+    // wp69: the points of interest villagers had claimed.
+    for t in s.get("taken_pois").and_then(Value::as_array).into_iter().flatten() {
+        let at = BlockPos::new(t[0].as_i64().unwrap() as i32, t[1].as_i64().unwrap() as i32, t[2].as_i64().unwrap() as i32);
+        level.poi_take(&["minecraft:home"], at, 1, &|_, p| p == at);
+    }
     // wp29: riders sit on their mounts (`startRiding`) before the first tick.
     for (i, spec) in s["mobs"].as_array().unwrap().iter().enumerate() {
         let Some(v) = spec.get("vehicle").and_then(Value::as_i64).filter(|&v| v >= 0) else { continue };

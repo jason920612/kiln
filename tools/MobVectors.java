@@ -279,6 +279,8 @@ public class MobVectors {
         boolean killGolems;
         /// wp69: with `fullTick`, the server's own `tickServer` (functions, clocks, levels, connections, player list) instead of the level alone.
         boolean serverTick;
+        /// wp69: points of interest a villager has claimed (`PoiManager.take`: what `AcquirePoi` does): a bed with its ticket taken makes a village of its section.
+        final List<BlockPos> takenPois = new ArrayList<>();
         Scenario(String name) { this.name = name; }
     }
 
@@ -688,6 +690,9 @@ public class MobVectors {
             var poi = net.minecraft.world.entity.ai.village.poi.PoiTypes.forState(b.getValue());
             if (poi.isPresent()) level.getPoiManager().add(b.getKey(), poi.get());
         }
+        for (BlockPos tp : s.takenPois) {
+            level.getPoiManager().take(h -> true, (h, pp) -> pp.equals(tp), tp, 1);
+        }
         if (s.spawnMonsters) {
             level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawn_monsters true");
         }
@@ -1069,8 +1074,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp, Float.toString(s.playerHealth));
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"advance_day\":%b,\"remove_golems\":%b,\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"esound_trace\":[%s],\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, s.advanceDay, s.removeGolems, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, entitySoundTrace, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"advance_day\":%b,\"remove_golems\":%b,\"taken_pois\":%s,\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"esound_trace\":[%s],\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, s.advanceDay, s.removeGolems, takenPoisJson(s), nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, entitySoundTrace, trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
@@ -1187,6 +1192,15 @@ public class MobVectors {
             }
             return v;
         }
+    }
+
+    static String takenPoisJson(Scenario s) {
+        StringBuilder sb = new StringBuilder("[");
+        for (BlockPos p : s.takenPois) {
+            if (sb.length() > 1) sb.append(',');
+            sb.append('[').append(p.getX()).append(',').append(p.getY()).append(',').append(p.getZ()).append(']');
+        }
+        return sb.append(']').toString();
     }
 
     static String effectsJson(List<Object[]> effects) {
@@ -6791,6 +6805,19 @@ public class MobVectors {
             s.removeGolems = true;
             s.ticks = 4000;
             Action in = new Action(1800, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+            out.add(s);
+        }
+        // The beds' tickets taken (what the villagers of the console runs did when they found their beds themselves): the pen is a village.
+        for (int variant = 0; variant < 4; variant++) {
+            Scenario s = new Scenario("farm69_vday_" + variant);
+            farm69Pen(s);
+            farm69Mobs(s, 69980L + 20 * variant, 1000L - 11000L, new double[] {10.5, 4.5}, true);
+            for (int z : new int[] {2, 4, 6}) s.takenPois.add(new BlockPos(3, BY, z));
+            s.dayTime = 300;
+            s.levelSeed = 980 + variant;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 3000;
             out.add(s);
         }
         // The same on a flat world's ground (what the console runs of wp66 had on vanilla): a target for a fleeing villager inside the ground moves up out of it.
