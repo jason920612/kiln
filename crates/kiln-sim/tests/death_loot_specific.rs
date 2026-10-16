@@ -63,3 +63,50 @@ fn killed_sheep_drop_wool_and_killed_small_slimes_drop_slime_balls() {
     assert!(items_dropped(&sim, "minecraft:mutton") > 0, "mutton from killed sheep");
     assert!(items_dropped(&sim, "minecraft:slime_ball") > 0, "slime balls from killed small slimes");
 }
+
+/// A creeper killed by a skeleton drops a music disc (`entity_properties` of the `attacker`: `#minecraft:skeletons`), which the death
+/// context could not answer for a mob killer.
+#[test]
+fn a_creeper_killed_by_a_skeleton_drops_a_music_disc() {
+    if !have_datapack() {
+        eprintln!("no vanilla datapack: skipped");
+        return;
+    }
+    let mut sim = Sim::new(SimConfig::new(4, 4, None));
+    let (msg, stats) = join(1, "User", 2);
+    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
+    let mut client = Client::new(1, stats);
+    let mut ticks = |sim: &mut Sim, client: &mut Client, n: usize| {
+        for _ in 0..n {
+            let mut inbox = Vec::new();
+            client.tick(None, &mut inbox);
+            assert!(sim.step(inbox));
+        }
+    };
+    ticks(&mut sim, &mut client, 5);
+    let p = client.pos;
+    assert!(sim.step([ToSim::Console(format!("summon minecraft:skeleton {} {} {} {{NoAI:1b,PersistenceRequired:1b}}", p[0] + 4.0, p[1], p[2]))]));
+    for _ in 0..10 {
+        assert!(sim.step([ToSim::Console(format!("summon minecraft:creeper {} {} {} {{NoAI:1b,PersistenceRequired:1b}}", p[0] - 4.0, p[1], p[2]))]));
+        ticks(&mut sim, &mut client, 1);
+        assert!(sim.step([ToSim::Console("damage @e[type=creeper,limit=1] 100 minecraft:arrow by @e[type=skeleton,limit=1]".into())]));
+        ticks(&mut sim, &mut client, 2);
+    }
+    let discs = sim
+        .entity_nbt()
+        .into_iter()
+        .filter(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:item"))
+        .filter(|t| t.get("Item").and_then(|i| i.get("id")).and_then(Tag::as_str).is_some_and(|id| id.contains("music_disc")))
+        .count();
+    assert_eq!(discs, 10, "a disc from each creeper the skeleton killed");
+    // ... and none from the creepers a command kills
+    assert!(sim.step([ToSim::Console("kill @e[type=item]".into())]));
+    for _ in 0..5 {
+        assert!(sim.step([ToSim::Console(format!("summon minecraft:creeper {} {} {} {{NoAI:1b,PersistenceRequired:1b}}", p[0] - 4.0, p[1], p[2]))]));
+        ticks(&mut sim, &mut client, 1);
+        assert!(sim.step([ToSim::Console("kill @e[type=creeper]".into())]));
+        ticks(&mut sim, &mut client, 2);
+    }
+    let discs = sim.entity_nbt().into_iter().filter(|t| t.get("Item").and_then(|i| i.get("id")).and_then(Tag::as_str).is_some_and(|id| id.contains("music_disc"))).count();
+    assert_eq!(discs, 0);
+}

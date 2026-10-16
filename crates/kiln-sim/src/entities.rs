@@ -2911,6 +2911,7 @@ pub(crate) fn interact_mob(
             attacker: None,
             components: kiln_entity::mob::data(&phys).map(kiln_entity::mob::variant_components).unwrap_or_default(),
             specific: crate::mobs::TypeSpecific::of(kiln_entity::mob::data(&phys)),
+            extra: crate::mobs::DeathExtra::default(),
         };
         let seed = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_6561);
         let mut k = 0u64;
@@ -3364,6 +3365,10 @@ fn carry_out(
                 attacker: attacker_view,
                 components: kiln_entity::mob::data(phys).map(kiln_entity::mob::variant_components).unwrap_or_default(),
                 specific: crate::mobs::TypeSpecific::of(kiln_entity::mob::data(phys)),
+                extra: crate::mobs::DeathExtra {
+                    loot: Some(loot.clone()),
+                    vehicle_type: phys.vehicle.and_then(|v| list.binary_search_by_key(&v, |e| e.id).ok()).and_then(|j| list[j].phys.as_deref()).map(|p| p.type_name),
+                },
             };
             let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174);
             for (k, stack) in crate::mobs::roll(&loot, &table, &ctx, seed).into_iter().enumerate() {
@@ -3549,6 +3554,7 @@ fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, i
         attacker: None,
         components: phys.and_then(kiln_entity::mob::data).map(kiln_entity::mob::variant_components).unwrap_or_default(),
         specific: crate::mobs::TypeSpecific::of(phys.and_then(kiln_entity::mob::data)),
+        extra: crate::mobs::DeathExtra::default(),
     };
     let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6966 ^ n as u64);
     for (k, stack) in crate::mobs::roll(&loot, table, &ctx, seed).into_iter().enumerate() {

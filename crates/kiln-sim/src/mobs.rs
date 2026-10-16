@@ -365,6 +365,16 @@ pub(crate) struct DeathContext {
     pub components: Vec<kiln_item::Component>,
     /// The `type_specific` facts of the dying mob that loot tables ask for: a sheep's `sheared` and a slime's or cube's `size`.
     pub specific: TypeSpecific,
+    /// What an `attacker`, `direct_attacker` or `vehicle` predicate needs beyond that.
+    pub extra: DeathExtra,
+}
+
+/// The loot data (its tags answer item and enchantment tag predicates of the killer's weapon) and the type of the mob the
+/// dying one rode (a husk on a camel husk, a zombie on a zombie horse have more to drop).
+#[derive(Clone, Default)]
+pub(crate) struct DeathExtra {
+    pub loot: Option<std::sync::Arc<kiln_loot::LootData>>,
+    pub vehicle_type: Option<&'static str>,
 }
 
 /// `EntitySubPredicate`s that depend on the entity's class (`type_specific/sheep`, `type_specific/cube_mob`).
@@ -412,9 +422,8 @@ impl kiln_loot::LootContext for DeathContext {
     fn has_entity(&self, target: kiln_loot::EntityTarget) -> bool {
         match target {
             kiln_loot::EntityTarget::This => true,
-            kiln_loot::EntityTarget::Attacker | kiln_loot::EntityTarget::DirectAttacker | kiln_loot::EntityTarget::AttackingPlayer => {
-                self.killed_by_player
-            }
+            kiln_loot::EntityTarget::Attacker | kiln_loot::EntityTarget::DirectAttacker => self.killed_by_player || self.attacker.is_some(),
+            kiln_loot::EntityTarget::AttackingPlayer => self.killed_by_player,
             _ => false,
         }
     }
@@ -436,6 +445,21 @@ impl kiln_loot::LootContext for DeathContext {
             && p.tags.iter().all(|t| crate::health::damage_type_tag(id, t.tag.as_str()) == t.expected)
     }
     fn entity_matches(&self, target: kiln_loot::EntityTarget, predicate: &kiln_loot::predicate::EntityPredicate) -> bool {
+        use kiln_loot::predicate::world::EntitySubPredicate as Q;
+        if matches!(target, kiln_loot::EntityTarget::Attacker | kiln_loot::EntityTarget::DirectAttacker) {
+            // The killer: its type and variant (a skeleton's creeper disc), and a player's main hand (fire aspect cooks the meat).
+            let Some(a) = self.attacker.as_ref() else { return false };
+            return predicate.parts.iter().all(|part| match part {
+                Q::Equipment(slots) => {
+                    let (Some(loot), true) = (self.extra.loot.as_ref(), a.type_name == "minecraft:player") else { return false };
+                    slots.iter().all(|(slot, ip)| match (slot.as_str(), self.weapon.as_ref()) {
+                        ("mainhand", Some(w)) => kiln_loot::predicate::item_matches(&loot.tags, ip, w),
+                        _ => false,
+                    })
+                }
+                other => a.matches(&kiln_loot::predicate::world::EntityPredicate { parts: vec![other.clone()], json: predicate.json.clone() }),
+            });
+        }
         if target != kiln_loot::EntityTarget::This {
             return false;
         }
@@ -454,6 +478,11 @@ impl kiln_loot::LootContext for DeathContext {
                 self.raider.is_some() && has_raid.is_none_or(|h| h == raid) && is_captain.is_none_or(|c| c == captain)
             }
             P::Components(cs) => cs.iter().all(|c| self.components.contains(c)),
+            // `vehicle`: what the dying mob rode.
+            P::Vehicle(v) => self.extra.vehicle_type.is_some_and(|t| {
+                let id = kiln_item::registry::ENTITY_TYPE.id(t).unwrap_or(-1);
+                v.parts.iter().all(|p| matches!(p, P::EntityType(set) if set.contains(id)))
+            }),
             // `SheepPredicate` / `CubeMobPredicate`: only for a mob of the class.
             P::Sheep { sheared } => self.specific.sheared.is_some_and(|s| sheared.is_none_or(|w| w == s)),
             P::CubeMob { size } => self.specific.cube_size.is_some_and(|c| size.min.is_none_or(|m| c >= m) && size.max.is_none_or(|m| c <= m)),
