@@ -216,6 +216,113 @@ fn set_body(m: &mut MobData, stack: ItemStack) {
     s.body_drop = 2.0;
 }
 
+// ---------------------------------------------------------------------- the bucket
+
+/// `Bucketable.bucketMobPickup` for the cube (`canBePickedUpWithBucket`: an empty bucket): the bucket becomes a
+/// `sulfur_cube_bucket` that keeps the cube, and the cube is gone.
+fn bucket_pickup(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, stack: &ItemStack) -> Option<Outcome> {
+    if stack.is_empty() || mob::item_name(stack) != "minecraft:bucket" || !mob::is_alive(e, m) {
+        return None;
+    }
+    if !e.silent {
+        level.emit(Event::Sound { pos: e.position(), sound: "minecraft:item.bucket.fill_sulfur_cube", source: m.kind.sound_source(), volume: 1.0, pitch: 1.0 });
+    }
+    let mut filled = ItemStack::of("minecraft:sulfur_cube_bucket", 1)?;
+    save_to_bucket(e, m, &mut filled);
+    e.discard();
+    Some(Outcome::success(HeldChange::Fill(filled)))
+}
+
+/// `SulfurCube.saveToBucketTag`: `Bucketable.saveDefaultDataToBucketTag` (the custom name, and the flags and health in
+/// `bucket_entity_data`), the body as `sulfur_cube_content`, and the age and its lock.
+pub fn save_to_bucket(e: &Entity, m: &MobData, bucket: &mut ItemStack) {
+    use kiln_item::component::{CustomData, SulfurCubeContent};
+    if let Some((_, name)) = e.extra.iter().find(|(k, _)| k == "CustomName")
+        && let Some(text) = kiln_item::Text::from_nbt(name.clone())
+    {
+        bucket.insert(kiln_item::keys::CUSTOM_NAME, text);
+    }
+    let mut tag: Vec<(String, Tag)> = Vec::new();
+    if m.no_ai {
+        tag.push(("NoAI".into(), Tag::Byte(1)));
+    }
+    if e.silent {
+        tag.push(("Silent".into(), Tag::Byte(1)));
+    }
+    if e.no_gravity {
+        tag.push(("NoGravity".into(), Tag::Byte(1)));
+    }
+    if e.invulnerable {
+        tag.push(("Invulnerable".into(), Tag::Byte(1)));
+    }
+    if m.persistence_required {
+        tag.push(("PersistenceRequired".into(), Tag::Byte(1)));
+    }
+    tag.push(("Health".into(), Tag::Float(m.health)));
+    tag.push(("age".into(), Tag::Int(m.age)));
+    tag.push(("age_locked".into(), Tag::Byte(m.age_locked as i8)));
+    bucket.insert(kiln_item::keys::BUCKET_ENTITY_DATA, CustomData(Tag::Compound(tag)));
+    let body = &sul(m).body;
+    if !body.is_empty() {
+        bucket.insert(kiln_item::keys::SULFUR_CUBE_CONTENT, SulfurCubeContent(kiln_item::ItemStackTemplate::from_stack(body)));
+    }
+}
+
+/// `MobBucketItem.spawn` on a cube just made and finalized: the bucket's custom name and body
+/// (`applyImplicitComponents`), then `loadFromBucketTag` (the flags, the health, the age and its lock) and
+/// `setFromBucket(true)`.
+pub fn apply_bucket(e: &mut Entity, bucket: &ItemStack) {
+    if let Some(name) = bucket.get(kiln_item::keys::CUSTOM_NAME) {
+        e.extra.retain(|(k, _)| k != "CustomName");
+        e.extra.push(("CustomName".into(), name.nbt().clone()));
+    }
+    let content = bucket.get(kiln_item::keys::SULFUR_CUBE_CONTENT).map(|c| c.0.create());
+    let tag = bucket.get(kiln_item::keys::BUCKET_ENTITY_DATA).map(|c| c.0.clone());
+    let Some(m) = mob::data_mut(e) else { return };
+    if let Some(body) = content.filter(|b| !b.is_empty()) {
+        set_body(m, body);
+    }
+    sul_mut(m).from_bucket = true;
+    let mut silent = None;
+    let mut no_gravity = None;
+    let mut invulnerable = None;
+    let mut age = None;
+    if let Some(Tag::Compound(fields)) = tag {
+        for (k, v) in &fields {
+            let on = v.as_f64().is_some_and(|b| b != 0.0);
+            match k.as_str() {
+                "NoAI" => m.no_ai = on,
+                "Silent" => silent = Some(on),
+                "NoGravity" => no_gravity = Some(on),
+                "Invulnerable" => invulnerable = Some(on),
+                "PersistenceRequired" if on => m.persistence_required = true,
+                "Health" => {
+                    if let Some(h) = v.as_f64() {
+                        m.set_health(h as f32);
+                    }
+                }
+                "age" => age = v.as_i64().map(|a| a as i32),
+                "age_locked" => m.age_locked = on,
+                _ => {}
+            }
+        }
+    }
+    if let Some(on) = silent {
+        e.silent = on;
+    }
+    if let Some(on) = no_gravity {
+        e.no_gravity = on;
+    }
+    if let Some(on) = invulnerable {
+        e.invulnerable = on;
+    }
+    if let Some(a) = age {
+        let mut m = mob::take(e);
+        mob::set_age(e, &mut m, a);
+        mob::put(e, m);
+    }
+}
+
 // ---------------------------------------------------------------------- the fuse
 
 /// `PrimedTnt.getRandomShortFuse`.
@@ -872,7 +979,8 @@ impl Kind for SulfurCube {
             let _ = MAINHAND;
             return Some(Outcome::success(HeldChange::Consume(1)));
         }
-        None
+        // `Bucketable.bucketMobPickup`: an empty bucket takes the cube (`canBePickedUpWithBucket`).
+        bucket_pickup(e, m, level, stack)
     }
 
     fn load(&self, e: &mut Entity, m: &mut MobData, r: &mut Input) {

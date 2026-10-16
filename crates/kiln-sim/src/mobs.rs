@@ -186,6 +186,8 @@ pub(crate) fn bucket_release(bucket: &kiln_item::ItemStack, pos: [i32; 3], diffi
     mob::finalize_spawn(&mut e, &mut r, &ctx, &mut mob::GroupData::default(), false);
     if kind == MobKind::Tadpole {
         kiln_entity::mob::kinds::tadpole::apply_bucket(&mut e, bucket);
+    } else if kind == MobKind::SulfurCube {
+        kiln_entity::mob::kinds::sulfur_cube::apply_bucket(&mut e, bucket);
     } else {
         kiln_entity::mob::kinds::fish::apply_bucket(&mut e, bucket);
     }

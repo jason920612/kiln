@@ -630,6 +630,7 @@ pub fn bucket_mob(item: &str) -> Option<MobKind> {
         "minecraft:tropical_fish_bucket" => MobKind::TropicalFish,
         "minecraft:pufferfish_bucket" => MobKind::Pufferfish,
         "minecraft:tadpole_bucket" => MobKind::Tadpole,
+        "minecraft:sulfur_cube_bucket" => MobKind::SulfurCube,
         _ => return None,
     })
 }
