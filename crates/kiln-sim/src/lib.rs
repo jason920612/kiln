@@ -2267,6 +2267,12 @@ impl Sim {
         out
     }
 
+    /// A brain mob's activities, running behaviours and memories (`MobData::brain_trace`), for tests and tools.
+    pub fn mob_brain(&self, id: i32) -> Option<Vec<String>> {
+        let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id)?;
+        Some(kiln_entity::mob::data(e.phys.as_deref()?)?.brain_trace())
+    }
+
     /// A mob's combat state, as `tools/CombatVectors.java` records it (for tests and tools).
     pub fn mob_state(&self, id: i32) -> Option<MobState> {
         let list = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter());

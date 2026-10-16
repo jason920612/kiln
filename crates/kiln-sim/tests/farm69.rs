@@ -92,7 +92,8 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
             if (from..to).contains(&dt) && dt % 20 == 0 {
                 for (id, kind, pos, _) in sim.mobs() {
                     if (kind == "minecraft:villager" || kind == "minecraft:zombie") && pos[2] < 12.0 {
-                        println!("TRACE {} {dt} {id} {} {:.2} {:.2} {:.2}", sim.game_time(), kind.trim_start_matches("minecraft:"), pos[0], pos[1], pos[2]);
+                        let brain = sim.mob_brain(id).map(|b| b.into_iter().filter(|t| t.starts_with("act:") || t.starts_with("m:minecraft:nearest_hostile") || t.starts_with("m:minecraft:golem") || t.starts_with("m:minecraft:home") || t.starts_with("m:minecraft:last_slept")).collect::<Vec<_>>().join(",")).unwrap_or_default();
+                        println!("TRACE {} {dt} {id} {} {:.2} {:.2} {:.2} {brain}", sim.game_time(), kind.trim_start_matches("minecraft:"), pos[0], pos[1], pos[2]);
                     }
                 }
             }
