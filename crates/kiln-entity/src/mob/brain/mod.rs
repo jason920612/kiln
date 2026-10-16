@@ -952,6 +952,57 @@ impl RandomSource for PeekLong<'_> {
     }
 }
 
+/// Whether the gates are seeded as `MobVectors.pinBrain` seeds vanilla's: gate `k` with `base + k` (the parity replay says so; see [`pin_gate_seeds`]).
+static PINNED_GATE_SEEDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The parity replay asks for the pinned gate seeds `base + k`, which it can give vanilla's gates too. Everywhere else the gates are seeded as
+/// vanilla's are, each with a stream of its own (see [`gate_seed`]).
+pub fn pin_gate_seeds(on: bool) {
+    PINNED_GATE_SEEDS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The seed of the shuffle of gate `k` of a brain whose random gave `base`. Vanilla's gates draw from randoms made independently
+/// (`RandomSource.create()`), so the seeds are mixed: the generators are linear, and the streams of two neighbouring seeds stay a constant apart
+/// (the first draws of gate `k` and `k + 1` were one function of each other, and so were the following ones for as long as the gates drew as often).
+pub(crate) fn gate_seed(base: i64, k: i64) -> i64 {
+    if PINNED_GATE_SEEDS.load(std::sync::atomic::Ordering::Relaxed) {
+        return base.wrapping_add(k);
+    }
+    let z = (base as u64).wrapping_add((k as u64).wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    let z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    (z ^ (z >> 31)) as i64
+}
+
+#[cfg(test)]
+mod gate_seed_tests {
+    use super::gate_seed;
+    use kiln_javamath::random::{LegacyRandom, RandomSource};
+
+    /// The shuffles of the gates of one brain are independent of each other: the n-th draws of gate `k` and `k + 1` over many brains are uniform in
+    /// the plane (chi-square over 10 x 10 cells, 99 degrees of freedom: 99 +- 14). With the seeds `base + k` the first two draws alone give 10^5.
+    #[test]
+    fn the_gates_of_a_brain_draw_independent_streams() {
+        const N: i64 = 30_000;
+        for draw in 0..4 {
+            let mut cells = [0u32; 100];
+            for i in 0..N {
+                let base = i.wrapping_mul(0x2545_F491_4F6C_DD1D) ^ 0x5eed;
+                let (mut a, mut b) = (LegacyRandom::new(gate_seed(base, 1)), LegacyRandom::new(gate_seed(base, 2)));
+                for _ in 0..draw {
+                    a.next_int();
+                    b.next_int();
+                }
+                let cell = |v: i32| ((v as u32 as u64 * 10) >> 32) as usize;
+                cells[cell(a.next_int()) * 10 + cell(b.next_int())] += 1;
+            }
+            let e = N as f64 / 100.0;
+            let chi: f64 = cells.iter().map(|&c| (c as f64 - e).powi(2) / e).sum();
+            assert!(chi < 160.0, "draw {draw} of gate 1 against gate 2: chi-square {chi}");
+        }
+    }
+}
+
 /// The parity harness' pin: the gates' shuffles seeded from the mob's random state and every
 /// sensor's first scan delayed by a draw from it (`MobVectors.pinBrain` does the same).
 pub fn pin(e: &mut Entity) {

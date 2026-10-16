@@ -480,6 +480,8 @@ fn replay(s: &Value) -> Result<usize, String> {
     let pin_yaw = s.get("pin_yaw").and_then(Value::as_bool) == Some(true);
     // Recordings since wp29 pin a rider that appears during its vehicle's tick before it ticks.
     let early_pin = s.get("pin_passengers").and_then(Value::as_bool) == Some(true);
+    // The pinned replay seeds the gates as the harness seeds vanilla's (`base + k`); the production-mode statistics runs as the server does.
+    kiln_entity::mob::brain::pin_gate_seeds(!production());
     let mut level = MemoryLevel::new(-64, s["level_seed"].as_i64().unwrap());
     level.share_ai_random = !production() || std::env::var_os("KILN_PROD_SHARED").is_some();
     level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
