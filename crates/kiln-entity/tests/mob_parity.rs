@@ -14,6 +14,21 @@ use kiln_entity::mob::{self, DamageSource, MobKind};
 use serde_json::Value;
 use std::path::PathBuf;
 
+/// wp69: replay in production mode (`farm_stats`): each mob draws its AI from its own stream (not the recording's shared one), nothing is compared;
+/// the day time of every new iron golem is logged.
+static PRODUCTION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static GOLEMS: std::sync::Mutex<Vec<(String, i64)>> = std::sync::Mutex::new(Vec::new());
+/// Per 100 ticks after dt 300: (villager-ticks, panicking ones).
+static PANIC_BINS: std::sync::Mutex<[(u64, u64); 20]> = std::sync::Mutex::new([(0, 0); 20]);
+/// Per scenario: (villager-ticks with the zombie in the cell, panicking ones, golems).
+static PANIC_ALL: std::sync::Mutex<Vec<(String, u64, u64)>> = std::sync::Mutex::new(Vec::new());
+/// Idle occupancy: villagers by x offset (bin = floor(x) + 1), and their number.
+static XBINS: std::sync::Mutex<([u64; 12], u64)> = std::sync::Mutex::new(([0; 12], 0));
+
+fn production() -> bool {
+    PRODUCTION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn f(v: &Value) -> f64 {
     v.as_f64().unwrap_or_else(|| panic!("not a number: {v}"))
 }
@@ -331,6 +346,16 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
             let m = mob::data_mut(level.entity_mut(id).unwrap()).unwrap();
             mob::kinds::parrot::set_record_playing_nearby(m, at, what == "play");
         }
+        // wp69: a mob is put at the position (its navigation stopped).
+        "tp" => {
+            let id = ids[a["mob"].as_u64().unwrap() as usize];
+            let e = level.entity_mut(id).unwrap();
+            e.set_pos(pos);
+            e.set_old_pos_and_rot();
+            if let Some(m) = mob::data_mut(e) {
+                m.nav.stop();
+            }
+        }
         // wp28: `time set` in the middle of a scenario.
         "daytime" => level.day_time = pos.x as i64,
         // wp28 animals: an item entity (`duration` items, default 1) at rest at the position.
@@ -456,7 +481,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     // Recordings since wp29 pin a rider that appears during its vehicle's tick before it ticks.
     let early_pin = s.get("pin_passengers").and_then(Value::as_bool) == Some(true);
     let mut level = MemoryLevel::new(-64, s["level_seed"].as_i64().unwrap());
-    level.share_ai_random = true;
+    level.share_ai_random = !production() || std::env::var_os("KILN_PROD_SHARED").is_some();
     level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
     level.sky_darken = s["sky_darken"].as_i64().unwrap() as i32;
     // wp28: the overworld clock (villagers' schedule).
@@ -556,7 +581,7 @@ fn replay(s: &Value) -> Result<usize, String> {
         let kind = MobKind::by_name(spec["type"].as_str().unwrap()).expect("mob type");
         let id = spec["id"].as_i64().unwrap() as i32;
         // (wp28: a uuid of its own, for the memories that hold entities by uuid: anger.)
-        let mut e = mob::new(kind, id, id as u128 + 0x5eed_0000, 0);
+        let mut e = mob::new(kind, id, id as u128 + 0x5eed_0000, if production() { spec["seed"].as_i64().unwrap() } else { 0 });
         let yaw = f(&spec["yaw"]) as f32;
         e.set_pos(vec3(&spec["pos"]));
         e.y_rot = yaw;
@@ -609,10 +634,12 @@ fn replay(s: &Value) -> Result<usize, String> {
         e.random = kiln_javamath::random::LegacyRandom::new(spec["seed"].as_i64().unwrap());
         // A brain mob's random for what vanilla draws from the level's: the recording's level
         // random, seeded per scenario; the sensors and gates pinned as `MobVectors.pinBrain` does.
-        if let Some(m) = mob::data_mut(&mut e) {
-            m.brain_random = kiln_javamath::random::LegacyRandom::new(s["level_seed"].as_i64().unwrap());
+        if !production() {
+            if let Some(m) = mob::data_mut(&mut e) {
+                m.brain_random = kiln_javamath::random::LegacyRandom::new(s["level_seed"].as_i64().unwrap());
+            }
+            kiln_entity::mob::brain::pin(&mut e);
         }
-        kiln_entity::mob::brain::pin(&mut e);
         ids.push(id);
         level.insert(e);
         // wp28 creaking: the heart holding this creaking (`setCreakingInfo(creaking)`).
@@ -626,6 +653,11 @@ fn replay(s: &Value) -> Result<usize, String> {
             let fx = kiln_entity::effect::Effect::named(fx[0].as_str().unwrap(), fx[1].as_i64().unwrap() as i32, fx[2].as_i64().unwrap() as i32).unwrap();
             level.add_effect_instance(id, fx, None);
         }
+    }
+    // wp69: the points of interest villagers had claimed.
+    for t in s.get("taken_pois").and_then(Value::as_array).into_iter().flatten() {
+        let at = BlockPos::new(t[0].as_i64().unwrap() as i32, t[1].as_i64().unwrap() as i32, t[2].as_i64().unwrap() as i32);
+        level.poi_take(&["minecraft:home"], at, 1, &|_, p| p == at);
     }
     // wp29: riders sit on their mounts (`startRiding`) before the first tick.
     for (i, spec) in s["mobs"].as_array().unwrap().iter().enumerate() {
@@ -682,7 +714,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         .collect();
     let want_hits: Vec<(i64, f64)> = s["hits"].as_array().unwrap().iter().map(|h| (h[0].as_i64().unwrap(), f(&h[1]))).collect();
     let mut got_hits: Vec<(i64, f64)> = Vec::new();
-    let trace = s["trace"].as_array().unwrap();
+    // (statistics scenarios record no trace: production mode runs `ticks` ticks anyway)
+    let silent: Vec<Value> = if production() && s["trace"].as_array().is_some_and(|t| t.is_empty()) { vec![Value::Array(Vec::new()); s["ticks"].as_u64().unwrap() as usize] } else { Vec::new() };
+    let trace = if silent.is_empty() { s["trace"].as_array().unwrap() } else { &silent };
     let initial = ids.len();
     // Vanilla numbers new entities on from the scenario's mobs (id parity paces the AI).
     level.set_next_entity_id(s.get("next_id").and_then(Value::as_i64).map_or_else(|| ids.iter().chain(&other_ids).copied().max().unwrap_or(0) + 1, |v| v as i32));
@@ -694,6 +728,20 @@ fn replay(s: &Value) -> Result<usize, String> {
     for (tick, expected) in trace.iter().enumerate().take(window) {
         let tick = tick as i64;
         level.game_time = start + 1 + tick;
+        // wp69: the day time advances with the game time, and the golems of the tick before are gone.
+        if s.get("advance_day").and_then(Value::as_bool) == Some(true) {
+            level.day_time = s.get("day_time").and_then(Value::as_i64).unwrap_or(1000) + 1 + tick;
+        }
+        if s.get("remove_golems").and_then(Value::as_bool) == Some(true) {
+            for &id in &ids {
+                if let Some(e) = level.entity_mut(id)
+                    && e.type_name == "minecraft:iron_golem"
+                    && !e.is_removed()
+                {
+                    e.discard();
+                }
+            }
+        }
         level.tick_players();
         // What the hurts and actions spawn is in the level at once but joins the harness's
         // ticked entities at the end of the tick (vanilla's harness ticks what it tracks).
@@ -1036,6 +1084,54 @@ fn replay(s: &Value) -> Result<usize, String> {
         if !spawners.is_empty() && ids.len() != expected.as_array().unwrap().len() {
             return Err(format!("tick {tick}: {} mobs (kiln) vs {} (vanilla)", ids.len(), expected.as_array().unwrap().len()));
         }
+        if production() {
+            // idle occupancy (`MobVectors.Probe.xsample`): the villagers by x, every 20 ticks of the day between dt 300 and 11000
+            {
+                let dt = level.day_time % 24000;
+                if (300..11000).contains(&dt) && level.game_time % 20 == 0 && s["name"].as_str().is_some_and(|n| n.starts_with("farm69_idl_")) {
+                    let mut x = XBINS.lock().unwrap();
+                    for &id in &ids[..3] {
+                        if let Some(e) = level.entity(id) {
+                            let b = (e.position().x.floor() as i32 + 1).clamp(0, 11) as usize;
+                            x.0[b] += 1;
+                            x.1 += 1;
+                        }
+                    }
+                }
+            }
+            // the zombie of a farm scenario is in the cell (x 10..12) by day, in its box (x 17) otherwise
+            if ids.len() > 3 && level.entity(ids[3]).is_some_and(|z| (9.0..12.0).contains(&z.position().x)) {
+                let mut all = PANIC_ALL.lock().unwrap();
+                let name = s["name"].as_str().unwrap().to_owned();
+                if all.last().is_none_or(|l| l.0 != name) {
+                    all.push((name, 0, 0));
+                }
+                let last = all.last_mut().unwrap();
+                for &id in &ids[..3] {
+                    last.1 += 1;
+                    last.2 += level.entity(id).and_then(mob::data).is_some_and(|m| m.brain_trace().iter().any(|t| t == "act:panic")) as u64;
+                }
+            }
+            let dt = level.day_time % 24000;
+            if (300..2300).contains(&dt) {
+                let mut bins = PANIC_BINS.lock().unwrap();
+                for &id in &ids[..3] {
+                    let p = level.entity(id).and_then(mob::data).is_some_and(|m| m.brain_trace().iter().any(|t| t == "act:panic"));
+                    let b = &mut bins[((dt - 300) / 100) as usize];
+                    b.0 += 1;
+                    b.1 += p as u64;
+                }
+            }
+            for &id in &ids[initial..] {
+                if let Some(e) = level.entity(id)
+                    && e.type_name == "minecraft:iron_golem"
+                    && !e.is_removed()
+                {
+                    GOLEMS.lock().unwrap().push((s["name"].as_str().unwrap().to_owned(), level.day_time));
+                }
+            }
+            continue;
+        }
         for (k, want) in expected.as_array().unwrap().iter().enumerate() {
             let want = want.as_array().unwrap();
             let want_goals = want.last().unwrap().as_str().unwrap();
@@ -1221,4 +1317,45 @@ fn mobs_match_vanilla() {
     }
     eprintln!("mob parity: {pass} passed, {fail} failed, {states} mob states identical");
     assert_eq!(fail, 0, "{fail} scenarios differ from vanilla");
+}
+
+/// wp69: the golem farm's dawn in production mode (each mob its own random stream, as in the server), many seeds: when does the first golem
+/// of the day come? `KILN_MOB_VECTORS=.../farm69_dawn.jsonl cargo test --release -p kiln-entity --test mob_parity farm_stats -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn farm_stats() {
+    let Some(path) = vectors() else { return };
+    let text = std::fs::read_to_string(&path).unwrap();
+    PRODUCTION.store(true, std::sync::atomic::Ordering::Relaxed);
+    for line in text.lines() {
+        let s: Value = serde_json::from_str(line).unwrap();
+        if !s["name"].as_str().is_some_and(|n| n.starts_with("farm69_")) {
+            continue;
+        }
+        let _ = replay(&s);
+    }
+    let log = GOLEMS.lock().unwrap();
+    let mut by: std::collections::BTreeMap<String, Vec<i64>> = std::collections::BTreeMap::new();
+    for (n, t) in log.iter() {
+        by.entry(n.clone()).or_default().push(t % 24000);
+    }
+    let mut first: std::collections::BTreeMap<i64, usize> = std::collections::BTreeMap::new();
+    let (mut none, mut total) = (0, 0);
+    for (n, v) in &by {
+        println!("{n}: {v:?}");
+        total += v.len();
+        *first.entry((v.iter().copied().filter(|&t| t >= 300).min().unwrap_or(0) - 300) / 100 * 100).or_default() += 1;
+    }
+    none += text.lines().filter(|l| l.contains("\"name\":\"farm69_dawn_")).count() - by.len();
+    for (n, a, b) in PANIC_ALL.lock().unwrap().iter() {
+        println!("PANICALL {n}: villager-ticks with the zombie in the cell {a}, panicking {b} = {:.4}", *b as f64 / (*a).max(1) as f64);
+    }
+    {
+        let x = XBINS.lock().unwrap();
+        if x.1 > 0 {
+            println!("IDLE production mode: samples {} x 0..8: {:?}", x.1, (1..10).map(|i| (x.0[i] as f64 / x.1 as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
+        }
+    }
+    println!("PANIC per 100 ticks after the zombie: {:?}", PANIC_BINS.lock().unwrap().iter().map(|&(a, b)| (b as f64 / a.max(1) as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
+    println!("FIRST (first golem after dt 300, bins of 100): {first:?}; scenarios without a golem: {none}; golems {total}");
 }

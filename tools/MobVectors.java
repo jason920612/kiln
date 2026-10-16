@@ -122,6 +122,25 @@ public class MobVectors {
             case "hurt" -> ((LivingEntity) tracked.get(a.mob)).hurtServer(level,
                     new net.minecraft.world.damagesource.DamageSource(level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.DAMAGE_TYPE)
                             .getOrThrow(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DAMAGE_TYPE, Identifier.parse(a.what)))), (float) a.x);
+            // wp69: `/summon <what> x y z {PersistenceRequired:1b}` (`finalizeSpawn` included).
+            case "summon" -> {
+                EntityType<?> et = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(a.what));
+                Mob mm = (Mob) et.create(level, EntitySpawnReason.COMMAND);
+                mm.snapTo(a.x, a.y, a.z, 0f, 0f);
+                mm.setPersistenceRequired();
+                mm.finalizeSpawn(level, level.getCurrentDifficultyAt(mm.blockPosition()), EntitySpawnReason.COMMAND, null);
+                level.addFreshEntityWithPassengers(mm);
+            }
+            // wp69: every entity of type `what` goes (`/kill`: `discard`).
+            case "killall" -> {
+                for (Entity ke : level.getEntities((Entity) null, box(), e -> !(e instanceof ServerPlayer) && BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString().equals(a.what))) ke.discard();
+            }
+            // wp69: mob `mob` is put at pos (its navigation stopped).
+            case "tp" -> {
+                Entity t = tracked.get(a.mob);
+                t.snapTo(a.x, a.y, a.z, t.getYRot(), t.getXRot());
+                if (t instanceof Mob tm) tm.getNavigation().stop();
+            }
             case "daytime" -> level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + (long) a.x);
             // wp28 creaking: the block at pos goes away: broken by the player (`what` = "player":
             // `playerWillDestroy`, then the block is removed), or replaced by air.
@@ -246,6 +265,30 @@ public class MobVectors {
         boolean traceEquip;
         /// wp32 parrots: the level's random is compared at the end (what a scenario draws from it, imitations).
         boolean checkLevelRandom;
+        /// wp69: the day time advances with the game time (`ServerLevel.tickTime`: before the entities tick).
+        boolean advanceDay;
+        /// wp69: iron golems that exist at the start of a tick are removed before anything else of it (the wp66 farm's
+        /// tick function kills each new golem; here they are discarded).
+        boolean removeGolems;
+        /// wp69: no per-tick trace (statistics scenarios that run for days: only what spawned is recorded).
+        boolean noTrace;
+        /// wp69: the level really ticks (`ServerLevel.tick`: time, the entity list, the points of interest...) instead of the harness
+        /// ticking the mobs by hand: for statistics (`noTrace`), to see what the level adds.
+        boolean fullTick;
+        /// wp69: the golems of the tick before are killed (death animation, 20 ticks) instead of discarded.
+        boolean killGolems;
+        /// wp69: with `fullTick`, the server's own `tickServer` (functions, clocks, levels, connections, player list) instead of the level alone.
+        boolean serverTick;
+        /// wp69: points of interest a villager has claimed (`PoiManager.take`: what `AcquirePoi` does): a bed with its ticket taken makes a village of its section.
+        final List<BlockPos> takenPois = new ArrayList<>();
+        /// wp69: the farm of wp66 built and run with console commands (the way the console driver does), the server ticking through `tickServer`, for this many pens;
+        /// `cmdDays` days of zombie. Statistics only: the golems the datapack logged are recorded.
+        int cmdPens, cmdDays;
+        /// wp69: from this tick on (for 200 ticks) the first three mobs (villagers) are counted against the fourth (the zombie): per 10 ticks,
+        /// villager-ticks within 8 blocks of it, moving fast (more than 0.15 blocks a tick) and in the panic activity. Summed over scenarios.
+        int arrivalTick = -1;
+        /// wp69: the villagers are counted by x (`Probe.xsample`) every 20 ticks of the day between dt 300 and 11000.
+        boolean xsample;
         Scenario(String name) { this.name = name; }
     }
 
@@ -326,7 +369,7 @@ public class MobVectors {
         player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
         player.snapTo(0, 300, 0, 0f, 0f);
         var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
-        levelData.setGameTime(1000L);
+        levelData.setGameTime(1000L + Long.parseLong(System.getenv().getOrDefault("MOB_GT_PHASE", "0")));
         if (hard) {
             server.setDifficulty(net.minecraft.world.Difficulty.HARD, true);
             level.getChunkAt(new net.minecraft.core.BlockPos(0, BY, 0)).setInhabitedTime(4_000_000L);
@@ -425,6 +468,20 @@ public class MobVectors {
                 walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
             }
         }
+        if (System.getenv("MOB_DATAPACK") != null) {
+            // wp69: a datapack in the world (the wp66 golem logger of the console runs)
+            Path from = Path.of(System.getenv("MOB_DATAPACK")), to = world.resolve("datapacks").resolve(from.getFileName());
+            try (var walk = Files.walk(from)) {
+                for (Path p : (Iterable<Path>) walk::iterator) {
+                    Path t = to.resolve(from.relativize(p).toString());
+                    if (Files.isDirectory(p)) Files.createDirectories(t);
+                    else {
+                        Files.createDirectories(t.getParent());
+                        Files.copy(p, t, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+            }
+        }
     }
 
     static MinecraftServer awaitServer() throws Exception {
@@ -448,6 +505,233 @@ public class MobVectors {
             Thread.sleep(100);
         }
         throw new IllegalStateException("server did not start");
+    }
+
+    /// wp69 (`MOB_PROBE=1`): per tick, what the villagers' brains hold while a zombie is in the world (counts of villager-ticks).
+    static final class Probe {
+        long ticks, panic, hostile, trigger, near, opps, oppsTrigger, oppsPanic, villagerTicks;
+        /// Villagers by x offset from the pen's corner (floor): every 20 ticks of the day between dt 300 and 11000 (as the datapack's `sample` counts), whether a zombie is about or not.
+        final long[] xbins = new long[12];
+        long xsamples;
+        void xsample(ServerLevel level, double x0, long dt) {
+            if (dt < 300 || dt >= 11000 || level.getGameTime() % 20 != 0) return;
+            for (Entity e : level.getEntities((Entity) null, new AABB(-5000, -70, -5000, 5000, 320, 5000), e -> e instanceof net.minecraft.world.entity.npc.villager.Villager v && v.isAlive())) {
+                int b = (int) Math.floor(e.getX() - x0);
+                xbins[Math.max(0, Math.min(11, b + 1))]++;
+                xsamples++;
+            }
+        }
+        void sample(ServerLevel level) {
+            var zs = level.getEntities((Entity) null, new AABB(-5000, -70, -5000, 5000, 320, 5000), e -> e instanceof net.minecraft.world.entity.monster.zombie.Zombie && e.isAlive());
+            if (zs.isEmpty()) return;
+            ticks++;
+            boolean opp = level.getGameTime() % 100 == 0;
+            boolean anyTrigger = false, anyPanic = false;
+            for (Entity e : level.getEntities((Entity) null, new AABB(-5000, -70, -5000, 5000, 320, 5000), e -> e instanceof net.minecraft.world.entity.npc.villager.Villager v && v.isAlive())) {
+                var v = (net.minecraft.world.entity.npc.villager.Villager) e;
+                var brain = v.getBrain();
+                villagerTicks++;
+                boolean p = brain.isActive(net.minecraft.world.entity.schedule.Activity.PANIC);
+                boolean h = brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.NEAREST_HOSTILE).isPresent();
+                boolean t = false;
+                for (var b : brain.getRunningBehaviors()) if (b.getClass().getSimpleName().equals("VillagerPanicTrigger")) t = true;
+                panic += p ? 1 : 0; hostile += h ? 1 : 0; trigger += t ? 1 : 0;
+                anyTrigger |= t; anyPanic |= p;
+                for (Entity z : zs) if (z.distanceToSqr(v) <= 64) { near++; break; }
+            }
+            if (opp) { opps++; oppsTrigger += anyTrigger ? 1 : 0; oppsPanic += anyPanic ? 1 : 0; }
+        }
+        String json() {
+            return String.format(Locale.ROOT, "{\"xbins\":%s,\"xsamples\":%d,\"ticks\":%d,\"villager_ticks\":%d,\"panic\":%d,\"hostile\":%d,\"trigger\":%d,\"near\":%d,\"opps\":%d,\"opps_trigger\":%d,\"opps_panic\":%d}", java.util.Arrays.toString(xbins), xsamples, ticks, villagerTicks, panic, hostile, trigger, near, opps, oppsTrigger, oppsPanic);
+        }
+    }
+
+    // (wp69: `MOB_HAS_TIME=false`: the server's tick is told it has no time left, as the real loop does while it is behind or sprinting)
+    static final java.util.function.BooleanSupplier HAS_TIME = "false".equals(System.getenv("MOB_HAS_TIME")) ? () -> false : () -> true;
+    /// wp69: `Scenario.arrivalTick`'s counters: [10-tick bin][villager-ticks, near, fast, panic].
+    static final long[][] arrival = new long[20][4];
+    static double[][] arrivalPrev;
+
+    static void arrivalSample(Scenario s, List<Entity> tracked, int tick) {
+        int t = tick - s.arrivalTick;
+        if (t < 0 || t >= 200) { arrivalPrev = null; return; }
+        Entity z = tracked.get(3);
+        double[][] cur = new double[3][2];
+        for (int i = 0; i < 3; i++) {
+            Mob v = (Mob) tracked.get(i);
+            cur[i][0] = v.getX();
+            cur[i][1] = v.getZ();
+            long[] b = arrival[t / 10];
+            b[0]++;
+            if (z.distanceToSqr(v) <= 64) b[1]++;
+            if (arrivalPrev != null && Math.hypot(cur[i][0] - arrivalPrev[i][0], cur[i][1] - arrivalPrev[i][1]) > 0.15) b[2]++;
+            if (v.getBrain().isActive(net.minecraft.world.entity.schedule.Activity.PANIC)) b[3]++;
+        }
+        arrivalPrev = cur;
+    }
+
+    static String arrivalJson() {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < arrival.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(java.util.Arrays.toString(arrival[i]));
+        }
+        return sb.append(']').toString();
+    }
+
+    static final Probe probe = new Probe();
+    static final boolean PROBE = System.getenv("MOB_PROBE") != null;
+
+    static java.lang.reflect.Method runAllTasks, tickServerMethod;
+
+    static void cmd(MinecraftServer server, String c) {
+        server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), c);
+    }
+
+    /// wp69: `tools/wp69/rt_farm69.py` inside the harness: the same commands, the server's own tick (functions included: the wp66 datapack logs the golems).
+    static String farmByCommands(ServerLevel level, ServerPlayer player, Scenario s) throws Exception {
+        var server = level.getServer();
+        // (MOB_CMD_AT=x,y,z: where the first pen's corner and floor are: 4000,-61,4000 as the console driver has them; 0,99,0 is where the harness's own scenarios stand)
+        String[] at0 = System.getenv().getOrDefault("MOB_CMD_AT", "4000,-61,4000").split(",");
+        final int X0 = Integer.parseInt(at0[0]), F = Integer.parseInt(at0[1]), Z0 = Integer.parseInt(at0[2]), DZ = 40, pens = s.cmdPens;
+        if (tickServerMethod == null) {
+            tickServerMethod = net.minecraft.server.MinecraftServer.class.getDeclaredMethod("tickServer", java.util.function.BooleanSupplier.class);
+            tickServerMethod.setAccessible(true);
+        }
+        player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
+        player.snapTo(0, 300, 0, 0f, 0f);
+        level.tickRateManager().setFrozen(false);
+        // (MOB_CMD_JAVAGOLEM=1: no datapack, the harness itself finds each new golem (the tick after it spawned) and removes it, as `removeGolems` does)
+        boolean javaGolem = System.getenv("MOB_CMD_JAVAGOLEM") != null;
+        List<Long> golemTimes = new ArrayList<>();
+        java.util.Set<Integer> seenGolems = new java.util.HashSet<>();
+        final long[] g0Holder = {0};
+        final long[] dt0Holder = {0};
+        java.util.function.IntConsumer ticks = n -> {
+            try {
+                for (int i = 0; i < n; i++) {
+                    if (javaGolem) {
+                        for (Entity ge : level.getEntities((Entity) null, new AABB(X0 - 100, F - 10, Z0 - 100, X0 + 100, F + 60, Z0 + pens * DZ + 100), e -> e instanceof net.minecraft.world.entity.animal.golem.IronGolem)) {
+                            if (seenGolems.add(ge.getId())) golemTimes.add(level.getGameTime());
+                            ge.discard();
+                        }
+                    }
+                    tickServerMethod.invoke(server, HAS_TIME);
+                    runServerTasks(server);
+                    if (PROBE) probe.sample(level);
+                    if (PROBE) probe.xsample(level, X0, Math.floorMod(dt0Holder[0] + (level.getGameTime() - g0Holder[0]), 24000));
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
+        cmd(server, "forceload add " + (X0 - 12) + " " + (Z0 - 12) + " " + (X0 + 24) + " " + (Z0 + pens * DZ + 20));
+        for (String c : new String[] {"gamerule minecraft:spawn_mobs false", "gamerule minecraft:advance_weather false", "gamerule minecraft:advance_time false", "gamerule minecraft:mob_drops false",
+                "difficulty normal", "weather clear 1000000", "kill @e[type=!player]"}) cmd(server, c);
+        ticks.accept(2);
+        // (the day time is set to agree with the game time modulo `MOB_CMD_PHASE` hundreds' remainder: 0 = the opportunities fall on whole hundreds of the day, the arrival of the zombie 100 ticks before one)
+        long dt0 = 11500 + (level.getGameTime() % 100) + Long.parseLong(System.getenv().getOrDefault("MOB_CMD_PHASE", "0"));
+        cmd(server, "time set " + dt0);
+        boolean javaBlocks = "java".equals(System.getenv("MOB_CMD_BLOCKS"));
+        for (int pen = 0; pen < pens; pen++) {
+            int z0 = Z0 + pen * DZ;
+            if (javaBlocks) {
+                // (the pen as the harness's own scenarios have it: blocks put with the harness' flags, the points of interest added by hand)
+                Scenario tmp = new Scenario("tmp");
+                farm69Pen(tmp);
+                for (var b : tmp.blocks.entrySet()) {
+                    BlockPos p = b.getKey().offset(X0, F + 1 - BY, z0);
+                    level.setBlock(p, b.getValue(), FLAGS);
+                    var poi = net.minecraft.world.entity.ai.village.poi.PoiTypes.forState(b.getValue());
+                    if (poi.isPresent()) level.getPoiManager().add(p, poi.get());
+                }
+                awaitLight(level);
+                continue;
+            }
+            java.util.function.BiFunction<int[], Integer, String> at = (d, dummy) -> (X0 + d[0]) + " " + (F + d[1]) + " " + (z0 + d[2]);
+            cmd(server, "fill " + (X0 - 12) + " " + F + " " + (z0 - 12) + " " + (X0 + 24) + " " + F + " " + (z0 + 20) + " minecraft:stone");
+            cmd(server, "fill " + (X0 - 12) + " " + (F + 1) + " " + (z0 - 12) + " " + (X0 + 24) + " " + (F + 8) + " " + (z0 + 20) + " minecraft:air");
+            cmd(server, "fill " + at.apply(new int[] {-1, 1, -1}, 0) + " " + at.apply(new int[] {12, 3, 9}, 0) + " minecraft:stone_bricks");
+            cmd(server, "fill " + at.apply(new int[] {0, 1, 0}, 0) + " " + at.apply(new int[] {8, 2, 8}, 0) + " minecraft:air");
+            cmd(server, "fill " + at.apply(new int[] {10, 1, 0}, 0) + " " + at.apply(new int[] {11, 2, 8}, 0) + " minecraft:air");
+            for (int z = 0; z < 9; z++) {
+                cmd(server, "setblock " + at.apply(new int[] {9, 1, z}, 0) + " minecraft:oak_fence");
+                cmd(server, "setblock " + at.apply(new int[] {9, 2, z}, 0) + " minecraft:air");
+            }
+            for (int z : new int[] {2, 4, 6}) {
+                cmd(server, "setblock " + at.apply(new int[] {3, 1, z}, 0) + " minecraft:red_bed[facing=east,part=head]");
+                cmd(server, "setblock " + at.apply(new int[] {4, 1, z}, 0) + " minecraft:red_bed[facing=east,part=foot]");
+            }
+        }
+        boolean javaVillagers = "java".equals(System.getenv("MOB_CMD_VILLAGERS"));
+        for (int pen = 0; pen < pens; pen++)
+            for (int i = 0; i < 3; i++)
+                if (javaVillagers) {
+                    Mob m = (Mob) BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse("minecraft:villager")).create(level, EntitySpawnReason.COMMAND);
+                    m.snapTo(X0 + 6.5, F + 1, Z0 + pen * DZ + 3.5 + i * 2, 0f, 0f);
+                    var tag = net.minecraft.nbt.TagParser.parseCompoundFully("{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b,Tags:[\"wp66\"]}");
+                    var in = net.minecraft.world.level.storage.TagValueInput.create(net.minecraft.util.ProblemReporter.DISCARDING, level.registryAccess(), tag);
+                    java.lang.reflect.Method read = null;
+                    for (Class<?> c = m.getClass(); c != null && read == null; c = c.getSuperclass())
+                        for (java.lang.reflect.Method mm : c.getDeclaredMethods()) if (mm.getName().equals("readAdditionalSaveData") && mm.getParameterCount() == 1) read = mm;
+                    read.setAccessible(true);
+                    read.invoke(m, in);
+                    m.addTag("wp66");
+                    level.addFreshEntity(m);
+                } else
+                cmd(server, "summon minecraft:villager " + (X0 + 6) + ".5 " + (F + 1) + " " + (Z0 + pen * DZ + 3 + i * 2) + ".5 {VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b,Tags:[\"wp66\"]}");
+        cmd(server, "data remove storage wp66:log golems");
+        cmd(server, "scoreboard players set #n wp66 0");
+        cmd(server, "gamerule minecraft:advance_time true");
+        long g0 = level.getGameTime();
+        g0Holder[0] = g0;
+        dt0Holder[0] = dt0;
+        // dt = 11500 + ticks since now: the zombies come at dt 300 of each day and go at dt 11000
+        for (int day = 0; day < s.cmdDays; day++) {
+            long arrive = (24000 - dt0) + 300 + 24000L * day, leave = arrive + 10700;
+            ticks.accept((int) (arrive - (level.getGameTime() - g0)));
+            if (System.getenv("MOB_CMD_NOZOMBIE") != null) { ticks.accept((int) (leave - (level.getGameTime() - g0))); continue; }
+            boolean javaZombies = "java".equals(System.getenv("MOB_CMD_ZOMBIE"));
+            if (!javaZombies) cmd(server, "kill @e[type=minecraft:zombie,tag=wp66z]");
+            for (int pen = 0; pen < pens; pen++) {
+                if (javaZombies) {
+                    // (as the harness' `summon` action: created, made persistent, finalized, added)
+                    Mob zz = (Mob) BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse("minecraft:zombie")).create(level, EntitySpawnReason.COMMAND);
+                    zz.snapTo(X0 + 10.5, F + 1, Z0 + pen * DZ + 4.5, 0f, 0f);
+                    zz.setPersistenceRequired();
+                    zz.addTag("wp66z");
+                    zz.finalizeSpawn(level, level.getCurrentDifficultyAt(zz.blockPosition()), EntitySpawnReason.COMMAND, null);
+                    level.addFreshEntityWithPassengers(zz);
+                } else
+                cmd(server, "summon minecraft:zombie " + (X0 + 10) + ".5 " + (F + 1) + " " + (Z0 + pen * DZ + 4) + ".5 {PersistenceRequired:1b,Tags:[\"wp66z\"]}");
+            }
+            ticks.accept((int) (leave - (level.getGameTime() - g0)));
+            if (javaZombies) {
+                for (Entity ke : level.getEntities((Entity) null, new AABB(X0 - 100, F - 10, Z0 - 100, X0 + 100, F + 60, Z0 + pens * DZ + 100), e -> e instanceof net.minecraft.world.entity.monster.zombie.Zombie)) ke.discard();
+            } else cmd(server, "kill @e[type=minecraft:zombie,tag=wp66z]");
+        }
+        // the golems the datapack logged
+        var log = javaGolem ? "" : server.getCommandStorage().get(Identifier.parse("wp66:log")).toString();
+        for (long gt : golemTimes) log += "{t: " + gt + "}";
+        StringBuilder spawned = new StringBuilder();
+        var m = java.util.regex.Pattern.compile("t: ?(-?\\d+)").matcher(log);
+        while (m.find()) {
+            long t = Long.parseLong(m.group(1));
+            if (spawned.length() > 0) spawned.append(',');
+            spawned.append(String.format(Locale.ROOT, "{\"tick\":%d,\"type\":\"minecraft:iron_golem\",\"pos\":[0,0,0]}", t - g0 - 1));
+        }
+        level.tickRateManager().setFrozen(true);
+        cmd(server, "gamerule minecraft:spawn_mobs true");
+        return String.format(Locale.ROOT, "{\"name\":\"%s\",\"day_time\":%d,\"ticks\":%d,\"probe\":%s,\"spawned\":[%s]}", s.name, dt0, level.getGameTime() - g0, probe.json(), spawned);
+    }
+
+    /// `BlockableEventLoop.runAllTasks` (protected): what the server's own loop runs between ticks.
+    static void runServerTasks(MinecraftServer server) throws Exception {
+        if (runAllTasks == null) {
+            runAllTasks = net.minecraft.util.thread.BlockableEventLoop.class.getDeclaredMethod("runAllTasks");
+            runAllTasks.setAccessible(true);
+        }
+        runAllTasks.invoke(server);
     }
 
     static void prepare(MinecraftServer server) {
@@ -563,6 +847,7 @@ public class MobVectors {
     }
 
     static String run(ServerLevel level, ServerPlayer player, Scenario s) throws Exception {
+        if (s.cmdPens > 0) return farmByCommands(level, player, s);
         for (var b : s.blocks.entrySet()) level.setBlock(b.getKey(), b.getValue(), FLAGS);
         awaitLight(level);
         // wp44 spawners: the block entities get their NBT (`loadCustomOnly`), and the light around them is recorded.
@@ -630,16 +915,22 @@ public class MobVectors {
             player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
             player.snapTo(0, 300, 0, 0f, 0f);
         }
-        level.getRandom().setSeed(s.levelSeed);
+        if (System.getenv("MOB_NATURAL_RANDOM") == null) level.getRandom().setSeed(s.levelSeed);
+        // wp69 debugging aid: `MOB_TRACE_LEVEL=<scenario>` makes the level's random log every draw (with its callers) of the ticks
+        // `MOB_TRACE_FROM`..`MOB_TRACE_TO` to <cwd>/dbg.txt.
+        if (s.name.equals(System.getenv("MOB_TRACE_LEVEL"))) set(level, "random", new TracingRandom(s.levelSeed));
         // The world age is pinned before the mobs are made (wp28: brains read it when they are built:
         // a villager's schedule, `lastScheduleUpdate`).
         var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
-        levelData.setGameTime(1000L);
+        levelData.setGameTime(1000L + Long.parseLong(System.getenv().getOrDefault("MOB_GT_PHASE", "0")));
         // wp28: points of interest (`PoiManager.add`: the level queues it for later, which never comes
         // while this task runs).
         for (var b : s.blocks.entrySet()) {
             var poi = net.minecraft.world.entity.ai.village.poi.PoiTypes.forState(b.getValue());
             if (poi.isPresent()) level.getPoiManager().add(b.getKey(), poi.get());
+        }
+        for (BlockPos tp : s.takenPois) {
+            level.getPoiManager().take(h -> true, (h, pp) -> pp.equals(tp), tp, 1);
         }
         if (s.spawnMonsters) {
             level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawn_monsters true");
@@ -660,7 +951,7 @@ public class MobVectors {
         // before it (the entity id counter is static).
         // (from a base of the scenario's name, so that a scenario's entities cannot meet the
         // still-tracked ones of the one before)
-        int pinId = 2 + (s.name.hashCode() & 0xFFFFF) * 64;
+        int pinId = 2 + (s.name.hashCode() & 0xFFFFF) * 64 + Integer.parseInt(System.getenv().getOrDefault("MOB_ID_SHIFT", "0"));
         for (MobSpec spec : s.mobs) {
             EntityType<?> type = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(spec.type));
             Mob m = (Mob) type.create(level, EntitySpawnReason.COMMAND);
@@ -693,7 +984,7 @@ public class MobVectors {
                 // Debugging aid: the mob's (`MOB_TRACE_INDEX`, the first by default) random logs who draws from it (to <cwd>/dbg.txt).
                 set(m, "random", new TracingRandom(spec.seed));
             }
-            m.getRandom().setSeed(spec.seed);
+            if (System.getenv("MOB_NATURAL_RANDOM") == null) m.getRandom().setSeed(spec.seed);
             pinCubeMoveYaw(m);
             // wp49 bees: the constructor draws the flower-search cooldown and the validate goals' cooldowns from
             // the mob's unseeded random: recorded, and set in the replay.
@@ -779,13 +1070,29 @@ public class MobVectors {
         }
         int nextId = pinId;
         // The world age is pinned too: some of the mobs' math depends on it.
-        levelData.setGameTime(1000L);
+        levelData.setGameTime(1000L + Long.parseLong(System.getenv().getOrDefault("MOB_GT_PHASE", "0")));
         long startTime = level.getGameTime();
         Adopt ad = new Adopt(tracked, pinned, spawned, s);
+        if (s.fullTick) {
+            level.tickRateManager().setFrozen(false);
+            level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawn_mobs false");
+            // (wp69: `MOB_CMD_RULES=1`: the rules and the weather of the console driver)
+            if (System.getenv("MOB_CMD_RULES") != null)
+                for (String c : new String[] {"gamerule minecraft:advance_weather false", "gamerule minecraft:mob_drops false", "difficulty normal", "weather clear 1000000"})
+                    cmd(level.getServer(), c);
+        }
         for (int tick = 0; tick < s.ticks; tick++) {
             ad.tick = tick;
             // `ServerLevel.tickTime`: the world age advances before entities tick.
-            levelData.setGameTime(startTime + 1 + tick);
+            if (!s.fullTick) levelData.setGameTime(startTime + 1 + tick);
+            if (s.advanceDay && !s.fullTick) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + (s.dayTime + 1 + tick));
+            if (s.removeGolems) {
+                for (Entity ge : tracked) {
+                    if (ge instanceof net.minecraft.world.entity.animal.golem.IronGolem ig && !ge.isRemoved()) {
+                        if (s.killGolems) { if (ig.isAlive()) ig.kill(level); } else ge.discard();
+                    }
+                }
+            }
             traceTick = tick;
             // The player's own tick (not run while the server thread is ours): its hurt cooldown.
             if (s.player != null) {
@@ -802,6 +1109,31 @@ public class MobVectors {
                 if (a.tick == tick) act(level, player, tracked, a);
             }
             float healthBefore = player.getHealth();
+            if (s.fullTick && s.serverTick) {
+                if (tickServerMethod == null) {
+                    tickServerMethod = net.minecraft.server.MinecraftServer.class.getDeclaredMethod("tickServer", java.util.function.BooleanSupplier.class);
+                    tickServerMethod.setAccessible(true);
+                }
+                tickServerMethod.invoke(level.getServer(), (java.util.function.BooleanSupplier) () -> true);
+                runServerTasks(level.getServer());
+                if (PROBE) probe.sample(level);
+                if (s.arrivalTick >= 0) arrivalSample(s, tracked, tick);
+            } else if (s.fullTick) {
+                // (the server's own loop calls `tickRateManager.tick()` each tick, which sets this: the harness is that loop)
+                set(level.tickRateManager(), "runGameElements", true);
+                // (`MinecraftServer.tickChildren`: the clocks first, then the levels)
+                level.getServer().clockManager().tick();
+                level.tick(() -> true);
+                // (what the server thread's loop runs between ticks: chunk status changes, entity sections going live)
+                runServerTasks(level.getServer());
+                if (System.getenv("MOB_DEBUG_FULL") != null && tick % 100 == 5) {
+                    Entity v0 = tracked.get(0);
+                    System.out.println("FULLDBG tick=" + tick + " gametime=" + level.getGameTime() + " entityTicking=" + level.isPositionEntityTicking(v0.blockPosition())
+                            + " tickCount=" + v0.tickCount + " frozen=" + level.tickRateManager().isFrozen() + " runsNormally=" + level.tickRateManager().runsNormally() + " forced=" + level.getForceLoadedChunks().size()
+                            + " players=" + level.players().size() + " isEntityFrozen=" + level.tickRateManager().isEntityFrozen(v0) + " pos=" + v0.position());
+                }
+            }
+            else {
             repinBrains(tracked);
             for (Entity e : new ArrayList<>(tracked)) {
                 if (e.isRemoved()) continue;
@@ -810,6 +1142,8 @@ public class MobVectors {
                 // Riders are ticked with their vehicle (`tickPassenger`).
                 if (!e.isRemoved() && !e.isPassenger()) tickNonPassenger(ad, e);
             }
+            }
+            if (s.xsample) probe.xsample(level, 0.0, Math.floorMod(s.dayTime + 1 + tick, 24000));
             // wp28 creaking: `Level.tickBlockEntities` for the scenario's creaking hearts (their
             // ticker skips uprooted ones).
             for (BlockPos hp : s.hearts) {
@@ -873,6 +1207,7 @@ public class MobVectors {
                     Files.writeString(Path.of("dbg.txt"), "ENT tick=" + tick + " " + BuiltInRegistries.ENTITY_TYPE.getKey(oe.getType()) + " id=" + oe.getId() + " removed=" + oe.isRemoved() + " pos=" + oe.position() + " delta=" + oe.getDeltaMovement() + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
                 }
             }
+            if (!s.noTrace) {
             if (tick > 0) trace.append(',');
             trace.append('[');
             for (int i = 0; i < initial; i++) {
@@ -884,6 +1219,7 @@ public class MobVectors {
                 trace.append(state(nm));
             }
             trace.append(']');
+            }
             // wp41: where the scenario's other entities (boats, minecarts) are, and how fast.
             if (tick > 0) othersTrace.append(',');
             othersTrace.append('[');
@@ -926,6 +1262,10 @@ public class MobVectors {
                 }
                 chestTrace.append(']');
             }
+        }
+        if (s.fullTick) {
+            level.tickRateManager().setFrozen(true);
+            level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawn_mobs true");
         }
         // wp28 creaking: the blocks around the hearts as the scenario left them (resin), and
         // the hearts' positions.
@@ -980,8 +1320,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp, Float.toString(s.playerHealth));
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"esound_trace\":[%s],\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, entitySoundTrace, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"advance_day\":%b,\"remove_golems\":%b,\"arrival\":%s,\"probe\":%s,\"taken_pois\":%s,\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"esound_trace\":[%s],\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, s.advanceDay, s.removeGolems, arrivalJson(), probe.json(), takenPoisJson(s), nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, entitySoundTrace, trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
@@ -1082,6 +1422,7 @@ public class MobVectors {
         TracingRandom(long seed) { super(seed); }
         @Override public int next(int bits) {
             int v = super.next(bits);
+            if (traceTick < Integer.parseInt(System.getenv().getOrDefault("MOB_TRACE_FROM", "0")) || traceTick > Integer.parseInt(System.getenv().getOrDefault("MOB_TRACE_TO", "1000000"))) return v;
             StringBuilder sb = new StringBuilder("RND tick=" + traceTick + " bits=" + bits + " <-");
             int n = 0;
             for (StackTraceElement el : new Throwable().getStackTrace()) {
@@ -1097,6 +1438,15 @@ public class MobVectors {
             }
             return v;
         }
+    }
+
+    static String takenPoisJson(Scenario s) {
+        StringBuilder sb = new StringBuilder("[");
+        for (BlockPos p : s.takenPois) {
+            if (sb.length() > 1) sb.append(',');
+            sb.append('[').append(p.getX()).append(',').append(p.getY()).append(',').append(p.getZ()).append(']');
+        }
+        return sb.append(']').toString();
     }
 
     static String effectsJson(List<Object[]> effects) {
@@ -1221,6 +1571,8 @@ public class MobVectors {
     }
 
     static void pinBrain(Mob m) throws Exception {
+        // (wp69: `MOB_NO_PIN=1`: the brains keep the gates' randoms and the sensors' first delays they were born with: statistics runs)
+        if (System.getenv("MOB_NO_PIN") != null) return;
         var brain = m.getBrain();
         Map<?, ?> byPriority = (Map<?, ?>) get(brain, "availableBehaviorsByPriority");
         if (byPriority.isEmpty()) return;
@@ -1256,7 +1608,15 @@ public class MobVectors {
                 for (Object e : (List<?>) get(sl, "entries")) dbg.append(' ').append(get(e, "data").getClass().getSimpleName()).append('/').append(get(e, "weight"));
                 Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
             }
-            set(sl, "random", net.minecraft.util.RandomSource.create(base + k[0]++));
+            // (wp69: `MOB_GATE_SEED=mix` gives each gate a seed of its own, a mix of base and number, instead of the consecutive ones the parity vectors pin: statistics runs)
+            long gateSeed = base + k[0]++;
+            if ("mix".equals(System.getenv("MOB_GATE_SEED"))) {
+                long z = (base + (k[0] - 1) * 0x9E3779B97F4A7C15L);
+                z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+                z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+                gateSeed = z ^ (z >>> 31);
+            }
+            set(sl, "random", net.minecraft.util.RandomSource.create(gateSeed));
             for (Object e : (List<?>) get(sl, "entries")) seedShuffles(get(e, "data"), base, k, seen);
             return;
         }
@@ -1912,6 +2272,7 @@ public class MobVectors {
         scenariosBrainCore(out);
         scenariosBrainNether(out);
         scenariosBrainVillager(out);
+        scenariosFarm69(out);
         scenariosBrainAnimals(out);
         scenariosBrainNew(out);
         scenariosBrainSpecial(out);
@@ -6611,6 +6972,343 @@ public class MobVectors {
             s.player = new double[] {12.5, BY, 8.5};
             s.playerCreative = true;
             s.levelSeed = 75;
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp69: the iron golem farm of wp66, piece by piece
+    /// The pen of `tools/wp58/rt_golem.py` (x from 0, z from 0, the floor at BY - 1): walls and a roof of stone bricks,
+    /// a room 0..8 x 0..8 with three beds, a fence at x = 9 and a cell 10..11 x 0..8 for the zombie.
+    static void farm69Pen(Scenario s) {
+        farm69Pen(s, false);
+    }
+
+    /// `ground`: the world around is a flat world's ground (two layers of dirt and bedrock below the floor, grass beyond the pen's stone floor, 40 blocks out)
+    /// instead of nothing below and around a floor of 20 blocks.
+    static void farm69Pen(Scenario s, boolean ground) {
+        if (ground) {
+            for (int x = -40; x <= 40; x++)
+                for (int z = -40; z <= 40; z++) {
+                    block(s, x, BY - 1, z, Math.abs(x) <= 12 && z >= -12 && z <= 20 ? "minecraft:stone" : "minecraft:grass_block");
+                    block(s, x, BY - 2, z, "minecraft:dirt");
+                    block(s, x, BY - 3, z, "minecraft:dirt");
+                    block(s, x, BY - 4, z, "minecraft:bedrock");
+                }
+        } else floor(s, 20, "minecraft:stone");
+        for (int x = -1; x <= 12; x++)
+            for (int z = -1; z <= 9; z++)
+                for (int y = BY; y <= BY + 2; y++) {
+                    boolean room = y < BY + 2 && z >= 0 && z <= 8 && ((x >= 0 && x <= 8) || (x >= 10 && x <= 11));
+                    if (!room) block(s, x, y, z, "minecraft:stone_bricks");
+                }
+        for (int z = 0; z <= 8; z++) {
+            block(s, 9, BY, z, "minecraft:oak_fence[north=true,south=true]");
+            block(s, 9, BY + 1, z, "minecraft:air");
+        }
+        for (int z : new int[] {2, 4, 6}) {
+            block(s, 3, BY, z, "minecraft:red_bed[facing=east,part=head,occupied=false]");
+            block(s, 4, BY, z, "minecraft:red_bed[facing=east,part=foot,occupied=false]");
+        }
+    }
+
+    /// Three villagers as the farm summons them (x = 6.5, z = 3.5, 5.5, 7.5), `slept` ticks of game time after their last
+    /// sleep (`LAST_SLEPT`; null: they have not slept) and a zombie in the cell behind the fence (null: none).
+    static void farm69Mobs(Scenario s, long seed, Long lastSlept, double[] zombie, boolean homes) {
+        for (int i = 0; i < 3; i++) {
+            // (a villager without a home picks one of the free beds out of a `HashSet` of pairs holding an identity hash: an
+            // order no replay can know: the homes are given.)
+            String mem = (lastSlept == null ? "" : "\"minecraft:last_slept\":{value:" + lastSlept + "L}")
+                    + (homes ? (lastSlept == null ? "" : ",") + "\"minecraft:home\":{value:{dimension:\"minecraft:overworld\",pos:[I;3," + BY + "," + (2 + 2 * i) + "]}}" : "");
+            // (`MOB_SPLITMIX_SEEDS=1`: statistics runs: seeds of consecutive numbers give the first draws of the mobs' randoms (the sensors' first delays)
+            // nearly the same value, in every scenario: spread by a mix)
+            long mobSeed = seed + i;
+            if (System.getenv("MOB_SPLITMIX_SEEDS") != null) {
+                long z = mobSeed * 0x9E3779B97F4A7C15L;
+                z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+                z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+                mobSeed = z ^ (z >>> 31);
+            }
+            MobSpec m = new MobSpec("minecraft:villager", 6.5, BY, 3.5 + 2 * i, 30f + 70 * i, mobSeed);
+            m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b" + (mem.isEmpty() ? "" : ",Brain:{memories:{" + mem + "}}") + "}";
+            s.mobs.add(m);
+        }
+        if (zombie != null) {
+            MobSpec z = new MobSpec("minecraft:zombie", zombie[0], BY, zombie[1], 90f, seed + 9);
+            z.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(z);
+        }
+    }
+
+    static void scenariosFarm69(List<Scenario> out) {
+        // (`MOB_FARM_STATS=1`: also the families that only count golems over days: statistics, no replay; and all the dawn seeds)
+        boolean stats = System.getenv("MOB_FARM_STATS") != null;
+        // The morning: the villagers slept last night, a zombie they can see stands behind the fence.
+        for (int variant = 0; variant < 2; variant++) {
+            Scenario s = new Scenario("farm69_day_" + variant);
+            farm69Pen(s);
+            farm69Mobs(s, 69100L + 20 * variant, 1000L - 11000L, new double[] {10.5, 4.5}, variant == 1);
+            s.dayTime = 300;
+            s.levelSeed = 69 + variant;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 3000;
+            out.add(s);
+        }
+        // The dawns again, many seeds and no trace (statistics): where the villagers are against the zombie in the 200 ticks after it comes.
+        for (int i = 0; i < (stats ? 200 : 0); i++) {
+            Scenario s = new Scenario("farm69_arr_" + i);
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69400L + 10L * i, 1000L - 8000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 22500;
+            s.levelSeed = 400 + i;
+            s.noTrace = true;
+            s.fullTick = true;
+            s.serverTick = true;
+            s.removeGolems = true;
+            s.ticks = 2100;
+            s.arrivalTick = 1800;
+            Action in = new Action(1800, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+            out.add(s);
+        }
+        // Idle only (statistics): the pen's three villagers all day, no zombie. Counted by x in the harness and, in production mode, by `farm_stats`.
+        for (int i = 0; i < (stats ? 40 : 0); i++) {
+            Scenario s = new Scenario("farm69_idl_" + i);
+            farm69Pen(s);
+            farm69Mobs(s, 69300L + 10L * i, 1000L - 11000L, null, true);
+            s.dayTime = 300;
+            s.levelSeed = 300 + i;
+            s.advanceDay = true;
+            s.noTrace = true;
+            s.xsample = true;
+            s.ticks = 10700;
+            out.add(s);
+        }
+        // A crowd: three villagers slept last night, three did not. The golem's `golemDetected` is for every villager of the box (those that
+        // do not want a golem too), and the three that want one are enough (`minVillagerAmount` 3 of at most 5 counted).
+        for (int variant = 0; variant < 2; variant++) {
+            Scenario s = new Scenario("farm69_crowd_" + variant);
+            farm69Pen(s);
+            farm69Mobs(s, 69970L + 20 * variant, 1000L - 11000L, null, true);
+            for (int i = 0; i < 3; i++) {
+                MobSpec m = new MobSpec("minecraft:villager", 5.5, BY, 1.5 + 3 * i, 30f + 70 * i, 69990L + 20 * variant + i);
+                m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b}";
+                s.mobs.add(m);
+            }
+            MobSpec z = new MobSpec("minecraft:zombie", 10.5, BY, 4.5, 90f, 69999L + 20 * variant);
+            z.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(z);
+            s.dayTime = 300;
+            s.levelSeed = 990 + variant;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 2500;
+            out.add(s);
+        }
+        // The end of a night and the morning after (many seeds): the villagers go to bed and sleep, wake up at dawn; the zombie
+        // comes to the cell 300 ticks into the day. When does the first golem come?
+        for (int i = 0; i < (stats ? 40 : 4); i++) {
+            Scenario s = new Scenario("farm69_dawn_" + i);
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69400L + 10L * i, 1000L - 8000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 22500;
+            s.levelSeed = 400 + i;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 4000;
+            Action in = new Action(1800, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+            out.add(s);
+        }
+        // The beds' tickets taken (what the villagers of the console runs did when they found their beds themselves): the pen is a village.
+        for (int variant = 0; variant < (stats ? 4 : 1); variant++) {
+            Scenario s = new Scenario("farm69_vday_" + variant);
+            farm69Pen(s);
+            farm69Mobs(s, 69980L + 20 * variant, 1000L - 11000L, new double[] {10.5, 4.5}, true);
+            for (int z : new int[] {2, 4, 6}) s.takenPois.add(new BlockPos(3, BY, z));
+            s.dayTime = 300;
+            s.levelSeed = 980 + variant;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 3000;
+            out.add(s);
+        }
+        // The same on a flat world's ground (what the console runs of wp66 had on vanilla): a target for a fleeing villager inside the ground moves up out of it.
+        for (int variant = 0; variant < (stats ? 4 : 1); variant++) {
+            Scenario s = new Scenario("farm69_gday_" + variant);
+            farm69Pen(s, true);
+            farm69Mobs(s, 69950L + 20 * variant, 1000L - 11000L, new double[] {10.5, 4.5}, true);
+            s.dayTime = 300;
+            s.levelSeed = 950 + variant;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 3000;
+            out.add(s);
+        }
+        // Days of the farm (statistics only: no trace, no replay): 6 days of one pen, the zombie in the cell from dt 300 to 11000.
+        for (int i = 0; i < (stats ? 16 : 0); i++) {
+            Scenario s = new Scenario("farm69_days_" + i);
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69600L + 10L * i, 1000L - 11000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 300;
+            s.levelSeed = 600 + i;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.noTrace = true;
+            s.ticks = 6 * 24000;
+            for (int d = 0; d < 6; d++) {
+                Action in = new Action(d == 0 ? 0 : 24000 * d - 1, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+                Action off = new Action(24000 * d + 10699, "tp"); off.mob = 3; off.x = 17.5; off.y = BY; off.z = 17.5; s.actions.add(off);
+            }
+            out.add(s);
+        }
+        if (stats) {
+            Scenario s = new Scenario("farm69_fulldbg");
+            farm69Pen(s);
+            farm69Mobs(s, 69900L, 1000L - 11000L, new double[] {10.5, 4.5}, true);
+            s.dayTime = 300;
+            s.fullTick = true;
+            s.diverges = true;
+            s.ticks = 600;
+            out.add(s);
+        }
+        // The console driver's farm, built and run by commands inside the harness (wp66 datapack: MOB_DATAPACK=tools/datapacks/wp66).
+        for (int i = 0; i < (stats ? 6 : 0); i++) {
+            Scenario s = new Scenario("farm69_cmd_" + i);
+            s.cmdPens = 4;
+            s.cmdDays = 6;
+            out.add(s);
+        }
+        for (int i = 0; i < (stats ? 12 : 0); i++) {
+            Scenario s = new Scenario("farm69_cmd1_" + i);
+            s.cmdPens = 1;
+            s.cmdDays = 6;
+            out.add(s);
+        }
+        // The same through the server's own tick (statistics only).
+        for (int i = 0; i < (stats ? 16 : 0); i++) {
+            Scenario s = new Scenario("farm69_srv_" + i);
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69850L + 10L * i, 1000L - 11000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 300;
+            s.levelSeed = 850 + i;
+            s.noTrace = true;
+            s.fullTick = true;
+            s.serverTick = true;
+            s.removeGolems = true;
+            s.ticks = 6 * 24000;
+            for (int d = 0; d < 6; d++) {
+                Action in = new Action(d == 0 ? 0 : 24000 * d - 1, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+                Action off = new Action(24000 * d + 10699, "tp"); off.mob = 3; off.x = 17.5; off.y = BY; off.z = 17.5; s.actions.add(off);
+            }
+            out.add(s);
+        }
+        // The same with the level really ticking (statistics only).
+        for (int i = 0; i < (stats ? 32 : 0); i++) {
+            Scenario s = new Scenario("farm69_full_" + i);
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69800L + 10L * i, 1000L - 11000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 300;
+            s.levelSeed = 800 + i;
+            s.noTrace = true;
+            s.fullTick = true;
+            s.removeGolems = true;
+            s.ticks = 6 * 24000;
+            for (int d = 0; d < 6; d++) {
+                Action in = new Action(d == 0 ? 0 : 24000 * d - 1, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+                Action off = new Action(24000 * d + 10699, "tp"); off.mob = 3; off.x = 17.5; off.y = BY; off.z = 17.5; s.actions.add(off);
+            }
+            out.add(s);
+        }
+        // Variants of the full-tick days, each step nearer to what the console driver of wp66 does: (1) a zombie summoned each morning and killed at
+        // dusk, (2) villagers that find their beds themselves (starting at dusk), (3) golems killed (the death animation) instead of removed.
+        String[] variants = stats ? new String[] {"v1", "v2", "v3", "v123"} : new String[0];
+        for (String v : variants) {
+            for (int i = 0; i < 12; i++) {
+                Scenario s = new Scenario("farm69_" + v + "_" + i);
+                farm69Pen(s);
+                boolean summon = v.contains("1"), homes = !v.contains("2"), kill = v.contains("3");
+                farm69Mobs(s, 69700L + 10L * i + (v.hashCode() & 0xFFF) * 1000, homes ? 1000L - 11000L : null, summon ? null : new double[] {17.5, 17.5}, homes);
+                if (summon) {
+                    // (the box of the zombie is not needed)
+                } else {
+                    for (int x = 15; x <= 19; x++)
+                        for (int z = 15; z <= 19; z++)
+                            for (int y = BY; y <= BY + 3; y++) {
+                                boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                                if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                            }
+                }
+                s.dayTime = homes ? 300 : 11500;
+                s.levelSeed = 700 + i;
+                s.noTrace = true;
+                s.fullTick = true;
+                s.removeGolems = true;
+                s.killGolems = kill;
+                int first = homes ? 0 : 12800 - 1;
+                s.ticks = homes ? 6 * 24000 : 12800 + 6 * 24000;
+                for (int d = 0; d < 6; d++) {
+                    int arrive = homes ? (d == 0 ? 0 : 24000 * d - 1) : 12800 - 1 + 24000 * d;
+                    int leave = arrive + 10699;
+                    if (summon) {
+                        Action in = new Action(arrive, "summon"); in.what = "minecraft:zombie"; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+                        Action off = new Action(leave, "killall"); off.what = "minecraft:zombie"; s.actions.add(off);
+                    } else {
+                        Action in = new Action(arrive, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+                        Action off = new Action(leave, "tp"); off.mob = 3; off.x = 17.5; off.y = BY; off.z = 17.5; s.actions.add(off);
+                    }
+                }
+                out.add(s);
+            }
+        }
+        // A day, a night and the next morning: the zombie goes at dusk (into a closed box) and comes back the next morning.
+        {
+            Scenario s = new Scenario("farm69_cycle");
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69200L, 1000L - 11000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 6000;
+            s.levelSeed = 71;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 19500;
+            // (the zombie, the fourth mob, starts in the box: it comes to the cell at tick 300 of a day, goes at dusk)
+            Action in0 = new Action(0, "tp"); in0.mob = 3; in0.x = 10.5; in0.y = BY; in0.z = 4.5; s.actions.add(in0);
+            Action out0 = new Action(5000, "tp"); out0.mob = 3; out0.x = 17.5; out0.y = BY; out0.z = 17.5; s.actions.add(out0);
+            Action in1 = new Action(18300, "tp"); in1.mob = 3; in1.x = 10.5; in1.y = BY; in1.z = 4.5; s.actions.add(in1);
             out.add(s);
         }
     }

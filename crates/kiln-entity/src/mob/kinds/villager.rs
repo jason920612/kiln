@@ -1427,20 +1427,23 @@ pub fn spawn_golem_if_needed(cx: &mut Cx, min: usize) {
         return;
     }
     let area = cx.e.bounding_box().inflate(10.0, 10.0, 10.0);
-    let mut wanting = vec![cx.e.id];
+    // `getEntitiesOfClass(Villager.class, area)`: this villager and every villager in the box; of them at most five that want a golem
+    // are counted (`limit(5)`), but all of them get the memory below.
+    let mut nearby = vec![cx.e.id];
+    let mut wanting = 1;
     for id in cx.level.entities_in(&area, crate::level::EntityFilter::Living, cx.e.id) {
-        if cx.level.entity(id).is_some_and(|o| o.type_name == "minecraft:villager") && cx.level.entity(id).and_then(mob::data).is_some_and(|d| wants_to_spawn_golem(d, now)) {
-            wanting.push(id);
+        if cx.level.entity(id).is_some_and(|o| o.type_name == "minecraft:villager") {
+            nearby.push(id);
+            wanting += cx.level.entity(id).and_then(mob::data).is_some_and(|d| wants_to_spawn_golem(d, now)) as usize;
         }
     }
-    wanting.truncate(5);
-    if wanting.len() < min {
+    if wanting.min(5) < min {
         return;
     }
     if !try_spawn_iron_golem(cx) {
         return;
     }
-    for id in wanting {
+    for id in nearby {
         if id == cx.e.id {
             village::sensors::golem_detected(&mut cx.b.mem);
         } else if let Some(o) = cx.level.entity_mut(id)
@@ -1452,10 +1455,11 @@ pub fn spawn_golem_if_needed(cx: &mut Cx, min: usize) {
     }
 }
 
-/// `SpawnUtil.trySpawnMob(IRON_GOLEM, MOB_SUMMONED, level, pos, 10, 8, 6, LEGACY_IRON_GOLEM)`.
+/// `SpawnUtil.trySpawnMob(IRON_GOLEM, MOB_SUMMONED, level, pos, 10, 8, 6, LEGACY_IRON_GOLEM, false)`.
 fn try_spawn_iron_golem(cx: &mut Cx) -> bool {
     let origin = cx.e.block_position();
     for _ in 0..10 {
+        // `Mth.randomBetweenInclusive(random, -8, 8)` twice, then the column `6` blocks above the villager.
         let dx = cx.rng().next_int_bounded(17) - 8;
         let dz = cx.rng().next_int_bounded(17) - 8;
         let mut p = origin.offset(dx, 6, dz);
@@ -1479,22 +1483,50 @@ fn try_spawn_iron_golem(cx: &mut Cx) -> bool {
         if !found {
             continue;
         }
-        // `checkSpawnRules` and `checkSpawnObstruction`: air for the golem's 4 blocks, on ground.
-        let below = cx.level.block(p.below());
-        if !kiln_data::block_props::solid_render(below) {
-            continue;
-        }
-        if (0..4).any(|k| !kiln_data::blocks_types::is_air(cx.level.block(p.offset(0, k, 0)))) {
-            continue;
-        }
+        // `EntityType.create`: the block's centre, a yaw from the level's random (drawn whether or not the golem is then
+        // let in), and `finalizeSpawn` on the level's random too (the follow range bonus and the left hand).
         let id = cx.level.next_entity_id();
         let seed = cx.level.fresh_seed();
         let mut g = mob::new(mob::MobKind::IronGolem, id, 0, seed);
         g.set_pos(Vec3::new(p.x as f64 + 0.5, p.y as f64, p.z as f64 + 0.5));
+        let yaw = mob::mth::wrap_degrees(cx.rng().next_float() * 360.0);
+        g.y_rot = yaw;
+        g.x_rot = 0.0;
+        g.set_old_pos_and_rot();
+        if let Some(m) = mob::data_mut(&mut g) {
+            m.y_head_rot = yaw;
+            m.y_body_rot = yaw;
+            m.y_head_rot_o = yaw;
+            m.y_body_rot_o = yaw;
+        }
+        let ctx = mob::SpawnContext { biome: None, moon_brightness: 1.0, special_multiplier: 0.0, effective_difficulty: cx.level.effective_difficulty(p), hard: cx.level.difficulty() == 3, halloween: false };
+        mob::finalize_spawn(&mut g, cx.rng(), &ctx, &mut mob::GroupData::default(), false);
+        if !iron_golem_check_spawn_obstruction(cx, p) {
+            continue;
+        }
         cx.level.add_entity(g);
         return true;
     }
     false
+}
+
+/// `IronGolem.checkSpawnObstruction`: something to stand on, the golem's own block and the two above it fit
+/// `NaturalSpawner.isValidEmptySpawnBlock` (the block itself with no liquid asked about), and no entity that blocks building
+/// is in its box. (Only the three blocks: a ceiling right above them is no obstruction.)
+fn iron_golem_check_spawn_obstruction(cx: &Cx, p: BlockPos) -> bool {
+    if !kiln_data::block_props::solid_render(cx.level.block(p.below())) {
+        return false;
+    }
+    if !(1..3).all(|k| mob::path::valid_empty_spawn(cx.level.block(p.offset(0, k, 0)), false)) {
+        return false;
+    }
+    let here = cx.level.block(p);
+    if !mob::path::valid_empty_spawn(here, false) {
+        return false;
+    }
+    let half = 1.4f32 / 2.0;
+    let bb = crate::math::Aabb::new(p.x as f64 + 0.5 - half as f64, p.y as f64, p.z as f64 + 0.5 - half as f64, p.x as f64 + 0.5 + half as f64, p.y as f64 + 2.7f32 as f64, p.z as f64 + 0.5 + half as f64);
+    super::creaking_heart::is_unobstructed(&*cx.level, &bb)
 }
 
 /// `SpawnUtil.Strategy.LEGACY_IRON_GOLEM.canSpawnOn`: a solid, non-glass block, air (or a liquid)
