@@ -136,7 +136,7 @@ public final class W71Hook {
                         if ((Boolean) slot.getClass().getMethod("hasValue").invoke(slot)) ms.add(en.getKey().toString().replace("minecraft:", ""));
                     }
                     for (String m : ms) sb.append(m).append(' ');
-                    String desc = sb.toString() + " | " + String.format("%.2f %.2f", x, z) + (wopt.isPresent() ? " W" + sig + "@" + String.format("%.1f,%.1f", at[0], at[2]) : "");
+                    String desc = sb.toString() + " | " + String.format("%.2f %.2f", v.getX(), v.getZ()) + (wopt.isPresent() ? " W" + sig + "@" + String.format("%.1f,%.1f", at[0], at[2]) : "");
                     String descNoPos = sb.toString() + (wopt.isPresent() ? " W" + sig : "");
                     if (!descNoPos.equals(TRACE_PREV.put(v.getId(), descNoPos))) System.out.println("TRACE " + (gt - traceFrom) + " v" + v.getId() + " " + desc);
                 }
