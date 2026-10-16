@@ -694,6 +694,20 @@ fn replay(s: &Value) -> Result<usize, String> {
     for (tick, expected) in trace.iter().enumerate().take(window) {
         let tick = tick as i64;
         level.game_time = start + 1 + tick;
+        // wp69: the day time advances with the game time, and the golems of the tick before are gone.
+        if s.get("advance_day").and_then(Value::as_bool) == Some(true) {
+            level.day_time = s.get("day_time").and_then(Value::as_i64).unwrap_or(1000) + 1 + tick;
+        }
+        if s.get("remove_golems").and_then(Value::as_bool) == Some(true) {
+            for &id in &ids {
+                if let Some(e) = level.entity_mut(id)
+                    && e.type_name == "minecraft:iron_golem"
+                    && !e.is_removed()
+                {
+                    e.discard();
+                }
+            }
+        }
         level.tick_players();
         // What the hurts and actions spawn is in the level at once but joins the harness's
         // ticked entities at the end of the tick (vanilla's harness ticks what it tracks).

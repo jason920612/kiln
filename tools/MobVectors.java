@@ -246,6 +246,11 @@ public class MobVectors {
         boolean traceEquip;
         /// wp32 parrots: the level's random is compared at the end (what a scenario draws from it, imitations).
         boolean checkLevelRandom;
+        /// wp69: the day time advances with the game time (`ServerLevel.tickTime`: before the entities tick).
+        boolean advanceDay;
+        /// wp69: iron golems that exist at the start of a tick are removed before anything else of it (the wp66 farm's
+        /// tick function kills each new golem; here they are discarded).
+        boolean removeGolems;
         Scenario(String name) { this.name = name; }
     }
 
@@ -786,6 +791,10 @@ public class MobVectors {
             ad.tick = tick;
             // `ServerLevel.tickTime`: the world age advances before entities tick.
             levelData.setGameTime(startTime + 1 + tick);
+            if (s.advanceDay) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + (s.dayTime + 1 + tick));
+            if (s.removeGolems) {
+                for (Entity ge : tracked) if (ge instanceof net.minecraft.world.entity.animal.golem.IronGolem && !ge.isRemoved()) ge.discard();
+            }
             traceTick = tick;
             // The player's own tick (not run while the server thread is ours): its hurt cooldown.
             if (s.player != null) {
@@ -980,8 +989,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp, Float.toString(s.playerHealth));
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"esound_trace\":[%s],\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, entitySoundTrace, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"advance_day\":%b,\"remove_golems\":%b,\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"esound_trace\":[%s],\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, s.advanceDay, s.removeGolems, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, entitySoundTrace, trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
@@ -1912,6 +1921,7 @@ public class MobVectors {
         scenariosBrainCore(out);
         scenariosBrainNether(out);
         scenariosBrainVillager(out);
+        scenariosFarm69(out);
         scenariosBrainAnimals(out);
         scenariosBrainNew(out);
         scenariosBrainSpecial(out);
@@ -6611,6 +6621,55 @@ public class MobVectors {
             s.player = new double[] {12.5, BY, 8.5};
             s.playerCreative = true;
             s.levelSeed = 75;
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp69: the iron golem farm of wp66, piece by piece
+    /// The pen of `tools/wp58/rt_golem.py` (x from 0, z from 0, the floor at BY - 1): walls and a roof of stone bricks,
+    /// a room 0..8 x 0..8 with three beds, a fence at x = 9 and a cell 10..11 x 0..8 for the zombie.
+    static void farm69Pen(Scenario s) {
+        floor(s, 20, "minecraft:stone");
+        for (int x = -1; x <= 12; x++)
+            for (int z = -1; z <= 9; z++)
+                for (int y = BY; y <= BY + 2; y++) {
+                    boolean room = y < BY + 2 && z >= 0 && z <= 8 && ((x >= 0 && x <= 8) || (x >= 10 && x <= 11));
+                    if (!room) block(s, x, y, z, "minecraft:stone_bricks");
+                }
+        for (int z = 0; z <= 8; z++) block(s, 9, BY, z, "minecraft:oak_fence[north=true,south=true]");
+        for (int z : new int[] {2, 4, 6}) {
+            block(s, 3, BY, z, "minecraft:red_bed[facing=east,part=head,occupied=false]");
+            block(s, 4, BY, z, "minecraft:red_bed[facing=east,part=foot,occupied=false]");
+        }
+    }
+
+    /// Three villagers as the farm summons them (x = 6.5, z = 3.5, 5.5, 7.5), `slept` ticks of game time after their last
+    /// sleep (`LAST_SLEPT`; null: they have not slept) and a zombie in the cell behind the fence (null: none).
+    static void farm69Mobs(Scenario s, long seed, Long lastSlept, double[] zombie) {
+        String slept = lastSlept == null ? "" : ",Brain:{memories:{\"minecraft:last_slept\":{value:" + lastSlept + "L}}}";
+        for (int i = 0; i < 3; i++) {
+            MobSpec m = new MobSpec("minecraft:villager", 6.5, BY, 3.5 + 2 * i, 30f + 70 * i, seed + i);
+            m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b" + slept + "}";
+            s.mobs.add(m);
+        }
+        if (zombie != null) {
+            MobSpec z = new MobSpec("minecraft:zombie", zombie[0], BY, zombie[1], 90f, seed + 9);
+            z.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(z);
+        }
+    }
+
+    static void scenariosFarm69(List<Scenario> out) {
+        // The morning: the villagers slept last night, a zombie they can see stands behind the fence.
+        for (int variant = 0; variant < 2; variant++) {
+            Scenario s = new Scenario("farm69_day_" + variant);
+            farm69Pen(s);
+            farm69Mobs(s, 69100L + 20 * variant, 1000L - 11000L, new double[] {10.5, 4.5});
+            s.dayTime = 300;
+            s.levelSeed = 69 + variant;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 3000;
             out.add(s);
         }
     }
