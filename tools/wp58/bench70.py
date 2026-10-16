@@ -65,7 +65,7 @@ CASES = [
     # place
     ("place feature oak", ["setblock 320 150 320 dirt"], "place feature minecraft:fancy_oak 320 151 320", 1),
     ("place template", [], "place template minecraft:end_city/fat_tower_base 340 150 340", 1),
-    ("place structure mineshaft", [], "place structure minecraft:mineshaft 400 40 400", 1),
+    ("place structure ruined_portal", [], "place structure minecraft:ruined_portal 400 64 400", 1),
     # bulk functions
     ("function setblock4096 stone", [], "function wp70:set_stone", 4096),
     ("function setblock4096 air", [], "function wp70:set_air", 4096),
