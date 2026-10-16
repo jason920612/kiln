@@ -149,6 +149,8 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
 #[ignore]
 fn the_farm_in_the_simulation() {
     let days: i64 = std::env::var("FARM_DAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+    // `FARM_ARRIVE`: the day time at which the zombies come (300 as in wp66).
+    let arrive: i64 = std::env::var("FARM_ARRIVE").ok().and_then(|v| v.parse().ok()).unwrap_or(300);
     let pens: i32 = std::env::var("FARM_PENS").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
     let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("farm69");
     let _ = std::fs::remove_dir_all(&dir);
@@ -163,7 +165,7 @@ fn the_farm_in_the_simulation() {
         let dt = sim.day_time() % 24000;
         if dt >= 11000 || day == 0 {
             zombies(&mut sim, pens, false);
-            advance(&mut sim, (24000 - dt + 300) % 24000, &mut seen, &mut log, &mut panic);
+            advance(&mut sim, (24000 - dt + arrive) % 24000, &mut seen, &mut log, &mut panic);
         }
         if day == days {
             break;
