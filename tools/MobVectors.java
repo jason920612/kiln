@@ -122,6 +122,12 @@ public class MobVectors {
             case "hurt" -> ((LivingEntity) tracked.get(a.mob)).hurtServer(level,
                     new net.minecraft.world.damagesource.DamageSource(level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.DAMAGE_TYPE)
                             .getOrThrow(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DAMAGE_TYPE, Identifier.parse(a.what)))), (float) a.x);
+            // wp69: mob `mob` is put at pos (its navigation stopped).
+            case "tp" -> {
+                Entity t = tracked.get(a.mob);
+                t.snapTo(a.x, a.y, a.z, t.getYRot(), t.getXRot());
+                if (t instanceof Mob tm) tm.getNavigation().stop();
+            }
             case "daytime" -> level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + (long) a.x);
             // wp28 creaking: the block at pos goes away: broken by the player (`what` = "player":
             // `playerWillDestroy`, then the block is removed), or replaced by air.
@@ -6645,11 +6651,14 @@ public class MobVectors {
 
     /// Three villagers as the farm summons them (x = 6.5, z = 3.5, 5.5, 7.5), `slept` ticks of game time after their last
     /// sleep (`LAST_SLEPT`; null: they have not slept) and a zombie in the cell behind the fence (null: none).
-    static void farm69Mobs(Scenario s, long seed, Long lastSlept, double[] zombie) {
-        String slept = lastSlept == null ? "" : ",Brain:{memories:{\"minecraft:last_slept\":{value:" + lastSlept + "L}}}";
+    static void farm69Mobs(Scenario s, long seed, Long lastSlept, double[] zombie, boolean homes) {
         for (int i = 0; i < 3; i++) {
+            // (a villager without a home picks one of the free beds out of a `HashSet` of pairs holding an identity hash: an
+            // order no replay can know: the homes are given.)
+            String mem = (lastSlept == null ? "" : "\"minecraft:last_slept\":{value:" + lastSlept + "L}")
+                    + (homes ? (lastSlept == null ? "" : ",") + "\"minecraft:home\":{value:{dimension:\"minecraft:overworld\",pos:[I;3," + BY + "," + (2 + 2 * i) + "]}}" : "");
             MobSpec m = new MobSpec("minecraft:villager", 6.5, BY, 3.5 + 2 * i, 30f + 70 * i, seed + i);
-            m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b" + slept + "}";
+            m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b" + (mem.isEmpty() ? "" : ",Brain:{memories:{" + mem + "}}") + "}";
             s.mobs.add(m);
         }
         if (zombie != null) {
@@ -6664,12 +6673,34 @@ public class MobVectors {
         for (int variant = 0; variant < 2; variant++) {
             Scenario s = new Scenario("farm69_day_" + variant);
             farm69Pen(s);
-            farm69Mobs(s, 69100L + 20 * variant, 1000L - 11000L, new double[] {10.5, 4.5});
+            farm69Mobs(s, 69100L + 20 * variant, 1000L - 11000L, new double[] {10.5, 4.5}, variant == 1);
             s.dayTime = 300;
             s.levelSeed = 69 + variant;
             s.advanceDay = true;
             s.removeGolems = true;
             s.ticks = 3000;
+            out.add(s);
+        }
+        // A day, a night and the next morning: the zombie goes at dusk (into a closed box) and comes back the next morning.
+        {
+            Scenario s = new Scenario("farm69_cycle");
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69200L, 1000L - 11000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 6000;
+            s.levelSeed = 71;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 27000;
+            // (the zombie, the fourth mob, starts in the box: it comes to the cell at tick 300 of a day, goes at dusk)
+            Action in0 = new Action(0, "tp"); in0.mob = 3; in0.x = 10.5; in0.y = BY; in0.z = 4.5; s.actions.add(in0);
+            Action out0 = new Action(5000, "tp"); out0.mob = 3; out0.x = 17.5; out0.y = BY; out0.z = 17.5; s.actions.add(out0);
+            Action in1 = new Action(18300, "tp"); in1.mob = 3; in1.x = 10.5; in1.y = BY; in1.z = 4.5; s.actions.add(in1);
             out.add(s);
         }
     }

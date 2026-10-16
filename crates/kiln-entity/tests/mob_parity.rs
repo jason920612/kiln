@@ -331,6 +331,16 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
             let m = mob::data_mut(level.entity_mut(id).unwrap()).unwrap();
             mob::kinds::parrot::set_record_playing_nearby(m, at, what == "play");
         }
+        // wp69: a mob is put at the position (its navigation stopped).
+        "tp" => {
+            let id = ids[a["mob"].as_u64().unwrap() as usize];
+            let e = level.entity_mut(id).unwrap();
+            e.set_pos(pos);
+            e.set_old_pos_and_rot();
+            if let Some(m) = mob::data_mut(e) {
+                m.nav.stop();
+            }
+        }
         // wp28: `time set` in the middle of a scenario.
         "daytime" => level.day_time = pos.x as i64,
         // wp28 animals: an item entity (`duration` items, default 1) at rest at the position.
