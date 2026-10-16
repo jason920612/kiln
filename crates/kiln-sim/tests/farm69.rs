@@ -199,6 +199,8 @@ struct Stats {
     prev_cant: std::collections::HashMap<i32, bool>,
     pending: std::collections::HashMap<i32, (String, i32)>,
     trace_prev: std::collections::HashMap<i32, String>,
+    prev_inter: std::collections::HashMap<i32, bool>,
+    prev_rc: std::collections::HashMap<i32, i32>,
     zombie_since: Option<i64>,
     trace_from: Option<i64>,
 }
@@ -258,7 +260,13 @@ fn stats_sample(sim: &Sim) {
             let at = ent.and_then(|e| mobs.iter().find(|m| m.0 == e).map(|m| m.2)).unwrap_or(at);
             (ent.is_some(), at, speed, close)
         });
-        let key = walk.map(|(e, at, speed, close)| format!("{e}|{:.2}|{:.2}|{:.2}|{speed}|{close}", at[0], at[1], at[2])).unwrap_or_default();
+        let key = sim
+            .mob_walk(*id)
+            .map(|(ent, at, speed, close)| match ent {
+                Some(e) => format!("E|{e}|{speed}|{close}"),
+                None => format!("B|{:.2}|{:.2}|{:.2}|{speed}|{close}", at[0], at[1], at[2]),
+            })
+            .unwrap_or_default();
         let prev_key = st.prev_walk.insert(*id, key.clone()).unwrap_or_default();
         if let Some((ent, at, speed, close)) = walk
             && key != prev_key
@@ -310,6 +318,22 @@ fn stats_sample(sim: &Sim) {
             if st.trace_prev.insert(*id, no_pos.clone()).as_deref() != Some(no_pos.as_str()) {
                 println!("TRACE {} v{id} {sb} | {:.2} {:.2}{w}", sim.game_time() - from, pos[0], pos[2]);
             }
+        }
+        // The gates starting (a RunOne more than the tick before) and what came out of it.
+        let rc = trace.iter().filter(|t| *t == "run:RunOne").count() as i32;
+        let inter = trace.iter().any(|t| t.starts_with("m:minecraft:interaction_target"));
+        let was_inter = st.prev_inter.insert(*id, inter).unwrap_or(false);
+        let prc = st.prev_rc.insert(*id, rc).unwrap_or(0);
+        if rc > prc {
+            let new_walk = walk.is_some() && key != prev_key;
+            let out = if new_walk {
+                if inter && !was_inter { "interact".to_owned() } else { format!("{}walk", if walk.unwrap().0 { "E" } else { "B" }) }
+            } else if inter && !was_inter {
+                "interact-only".to_owned()
+            } else {
+                "none".to_owned()
+            };
+            *c.entry(format!("gs|{ph}|{cls}|{out}")).or_default() += 1;
         }
         st.prev_run.insert(*id, run);
         let dx = (((pos[0] - x0() as f64).floor() as i32) + 1).clamp(0, 12);

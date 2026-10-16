@@ -30,6 +30,8 @@ public final class W71Hook {
     static final Set<Integer> GOLEMS = new HashSet<>();
     static final Map<Integer, String> PREV_WALK = new HashMap<>();
     static final Map<Integer, Boolean> PREV_CANT = new HashMap<>();
+    static final Map<Integer, Boolean> PREV_INTER = new HashMap<>();
+    static final Map<Integer, Integer> PREV_RC = new HashMap<>();
     static final Map<Integer, Object[]> PENDING = new HashMap<>();
     static final Map<Integer, String> TRACE_PREV = new HashMap<>();
     static long zombieSince = -1, traceFrom = -1;
@@ -77,11 +79,13 @@ public final class W71Hook {
                 panicByPen.merge(pen, cls.equals("P"), Boolean::logicalOr);
                 add("ticks|" + ph + "|" + cls);
                 Set<String> run = new HashSet<>();
+                int rc = 0;
                 for (var a : acts) add("tok|" + ph + "|" + cls + "|act:" + a);
                 for (var b : brain.getRunningBehaviors()) {
                     String n = b.getClass().getSimpleName();
                     if (n.isEmpty()) continue;
                     run.add(n);
+                    if (n.equals("RunOne")) rc++;
                     add("tok|" + ph + "|" + cls + "|run:" + n);
                 }
                 Set<String> before = PREV_RUN.getOrDefault(v.getId(), Set.of());
@@ -100,7 +104,8 @@ public final class W71Hook {
                     var tp = w.getTarget().currentPosition();
                     boolean ent = w.getTarget() instanceof net.minecraft.world.entity.ai.behavior.EntityTracker;
                     at = new double[] {tp.x, tp.y, tp.z};
-                    key = String.format("%b|%.2f|%.2f|%.2f|%s|%d", ent, tp.x, tp.y, tp.z, Float.toString(w.getSpeedModifier()), w.getCloseEnoughDist());
+                    key = ent ? String.format("E|%d|%s|%d", ((net.minecraft.world.entity.ai.behavior.EntityTracker) w.getTarget()).getEntity().getId(), Float.toString(w.getSpeedModifier()), w.getCloseEnoughDist())
+                            : String.format("B|%.2f|%.2f|%.2f|%s|%d", tp.x, tp.y, tp.z, Float.toString(w.getSpeedModifier()), w.getCloseEnoughDist());
                     sig = (ent ? "E" : "B") + "s" + String.format("%.2f", w.getSpeedModifier()) + "c" + w.getCloseEnoughDist();
                 }
                 String prevKey = PREV_WALK.put(v.getId(), key);
@@ -141,6 +146,15 @@ public final class W71Hook {
                     if (!descNoPos.equals(TRACE_PREV.put(v.getId(), descNoPos))) System.out.println("TRACE " + (gt - traceFrom) + " v" + v.getId() + " " + desc);
                 }
                 PREV_RUN.put(v.getId(), run);
+                boolean inter = brain.hasMemoryValue(net.minecraft.world.entity.ai.memory.MemoryModuleType.INTERACTION_TARGET);
+                boolean wasInter = PREV_INTER.getOrDefault(v.getId(), false);
+                PREV_INTER.put(v.getId(), inter);
+                int prc = PREV_RC.getOrDefault(v.getId(), 0);
+                PREV_RC.put(v.getId(), rc);
+                if (rc > prc) {
+                    String out = sig != null && !key.equals(prevKey) ? (inter && !wasInter ? "interact" : sig.substring(0, 1) + "walk") : (inter && !wasInter ? "interact-only" : "none");
+                    add("gs|" + ph + "|" + cls + "|" + out);
+                }
                 for (var en : ((Map<?, ?>) memories.get(brain)).entrySet()) {
                     Object slot = en.getValue();
                     if ((Boolean) slot.getClass().getMethod("hasValue").invoke(slot)) add("tok|" + ph + "|" + cls + "|m:" + en.getKey());
