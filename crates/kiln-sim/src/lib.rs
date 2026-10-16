@@ -2653,12 +2653,16 @@ impl Sim {
         let region = d.regions.at_mut(ChunkPos::of_block(pos[0], pos[2]).cell())?;
         let id = region.id();
         let (cells, part) = region.cells_and_part_mut();
-        let bodies = blocks::entity_boxes(players.values().filter(|p| p.dim == dim && p.region == id), &part.0);
+        let entities = &part.0;
+        let all = &*players;
+        let make = move || blocks::entity_boxes(all.values().filter(|p| p.dim == dim && p.region == id), entities);
+        let made = std::cell::OnceCell::new();
         // In a batch of edits the light and the clients wait for its end ([`edits`]).
         let batch = world.edits.open();
         let mut out = blocks::BlockOut { unlit: batch.then(Vec::new), ..Default::default() };
         let result = {
-            let mut level = blocks::RegionLevel { cells: &mut *cells, blocks: &mut part.1, env, out: &mut out, bodies: &bodies, actor: None };
+            let mut level =
+                blocks::RegionLevel { cells: &mut *cells, blocks: &mut part.1, env, out: &mut out, bodies: blocks::Bodies::Later(&made, &make), actor: None };
             f(&mut level)
         };
         let held = if hold { std::mem::take(&mut out.changed) } else { Vec::new() };

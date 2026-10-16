@@ -557,13 +557,43 @@ pub(crate) enum PlayerFx {
     CrafterCrafted { min: [f64; 3], max: [f64; 3], recipe: String, ingredients: Vec<kiln_item::ItemStack> },
 }
 
+/// The entity boxes block work sees: made beforehand, or made when first looked at (block
+/// commands: most block work never looks, and a region may hold thousands of entities).
+#[derive(Clone, Copy)]
+pub(crate) enum Bodies<'a> {
+    Made(&'a [EntityBox]),
+    Later(&'a std::cell::OnceCell<Vec<EntityBox>>, &'a dyn Fn() -> Vec<EntityBox>),
+}
+
+impl<'a> From<&'a Vec<EntityBox>> for Bodies<'a> {
+    fn from(b: &'a Vec<EntityBox>) -> Self {
+        Bodies::Made(b)
+    }
+}
+
+impl<'a> From<&'a [EntityBox]> for Bodies<'a> {
+    fn from(b: &'a [EntityBox]) -> Self {
+        Bodies::Made(b)
+    }
+}
+
+impl std::ops::Deref for Bodies<'_> {
+    type Target = [EntityBox];
+    fn deref(&self) -> &[EntityBox] {
+        match *self {
+            Bodies::Made(b) => b,
+            Bodies::Later(made, make) => made.get_or_init(make),
+        }
+    }
+}
+
 /// A region's cells and block machinery as kiln-blocks' [`Level`].
 pub(crate) struct RegionLevel<'a> {
     pub cells: &'a mut CellSet<Cell>,
     pub blocks: &'a mut RegionBlocks,
     pub env: &'a BlockEnv,
     pub out: &'a mut BlockOut,
-    pub bodies: &'a [EntityBox],
+    pub bodies: Bodies<'a>,
     /// The player acting (effects the client shows itself skip it).
     pub actor: Option<ConnId>,
 }
@@ -1235,7 +1265,7 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
     // in sections without any and skip the block lookups.
     let mut may_have: crate::FastMap<(i32, i32, i32), bool> = Default::default();
     let min_y = level.env.min_y;
-    for b in level.bodies {
+    for b in level.bodies.iter() {
         let lo = [b.min[0] + 1e-5, b.min[1] + 1e-5, b.min[2] + 1e-5].map(|c| c.floor() as i32);
         let hi = [b.max[0] - 1e-5, b.max[1] - 1e-5, b.max[2] - 1e-5].map(|c| c.floor() as i32);
         let mut any = false;
