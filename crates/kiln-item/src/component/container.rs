@@ -43,13 +43,36 @@ impl ComponentValue for ChargedProjectiles {
     }
 }
 
-/// `bundle_contents` (the selected item is client state and not serialized).
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct BundleContents(pub Vec<ItemStackTemplate>);
+/// `bundle_contents`: the stacks and the index of the one the player selected with the mouse wheel (`BundleContents.selectedItem`,
+/// -1: none). The selection is not on the wire or in saves, and does not count when two bundles are compared (`equals` reads the
+/// items only), but the server keeps it so a right click takes the selected stack out.
+#[derive(Debug, Clone)]
+pub struct BundleContents(pub Vec<ItemStackTemplate>, pub i32);
+
+impl BundleContents {
+    pub const NO_SELECTION: i32 = -1;
+
+    /// Contents with nothing selected.
+    pub fn new(items: Vec<ItemStackTemplate>) -> BundleContents {
+        BundleContents(items, Self::NO_SELECTION)
+    }
+}
+
+impl PartialEq for BundleContents {
+    fn eq(&self, other: &BundleContents) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Default for BundleContents {
+    fn default() -> BundleContents {
+        BundleContents::new(Vec::new())
+    }
+}
 
 impl ComponentValue for BundleContents {
     fn read(r: &mut Reader<'_>) -> WireResult<Self> {
-        wire::read_list(r, UNBOUNDED, ItemStackTemplate::read).map(BundleContents)
+        wire::read_list(r, UNBOUNDED, ItemStackTemplate::read).map(BundleContents::new)
     }
     fn write(&self, out: &mut BytesMut) {
         wire::write_list(out, &self.0, ItemStackTemplate::write);
@@ -58,7 +81,7 @@ impl ComponentValue for BundleContents {
         templates_to_value(&self.0)
     }
     fn from_value(v: &Value) -> DataResult<Self> {
-        templates_from_value(v, UNBOUNDED).map(BundleContents)
+        templates_from_value(v, UNBOUNDED).map(BundleContents::new)
     }
 }
 

@@ -1293,6 +1293,13 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 }
             }
         }
+        // `handleBundleItemSelected`: the mouse wheel over a bundle in the open menu.
+        PlayIn::SelectBundleItem { slot, index } => {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            crate::container::open::menu_op(p, &mut level, fx.spawns, |menu, _, env| {
+                kiln_inventory::click::handle_select_bundle_item(menu, env, slot, index);
+            });
+        }
         PlayIn::ContainerButtonClick { container_id, button_id } => {
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
             crate::container::open::menu_op(p, &mut level, fx.spawns, |menu, _, env| {

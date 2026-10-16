@@ -93,14 +93,16 @@ fn can_be_in_bundle(stack: &ItemStack) -> bool {
 struct Mutable {
     items: Vec<ItemStack>,
     weight: Frac,
+    /// `selectedItem` (-1: none).
+    selected: i32,
 }
 
 impl Mutable {
     /// `BundleContents.asMutable` (an unweighable bundle opens as an empty one).
     fn of(contents: &BundleContents) -> Mutable {
         match content_weight(contents) {
-            Some(weight) => Mutable { items: contents.0.iter().map(create_checked).collect(), weight },
-            None => Mutable { items: Vec::new(), weight: Frac::ZERO },
+            Some(weight) => Mutable { items: contents.0.iter().map(create_checked).collect(), weight, selected: contents.1 },
+            None => Mutable { items: Vec::new(), weight: Frac::ZERO, selected: -1 },
         }
     }
 
@@ -142,15 +144,27 @@ impl Mutable {
         n
     }
 
-    /// `removeOne`: the selected stack (none selected: the first).
+    /// `indexIsOutsideAllowedBounds`.
+    fn outside(&self, i: i32) -> bool {
+        i < 0 || i as usize >= self.items.len()
+    }
+
+    /// `toggleSelectedItem`: selecting the selected stack again, or one that is not there, selects none.
+    fn toggle_selected(&mut self, i: i32) {
+        self.selected = if i == self.selected || self.outside(i) { -1 } else { i };
+    }
+
+    /// `removeOne`: the selected stack (none selected: the first), after which nothing is selected.
     fn remove_one(&mut self) -> Option<ItemStack> {
         if self.items.is_empty() {
             return None;
         }
-        let removed = self.items.remove(0).copy();
+        let index = if self.outside(self.selected) { 0 } else { self.selected as usize };
+        let removed = self.items.remove(index).copy();
         if let Some(w) = weight(&removed).and_then(|w| w.mul(removed.count() as i64)).and_then(|w| self.weight.sub(w)) {
             self.weight = w;
         }
+        self.toggle_selected(-1);
         Some(removed)
     }
 
@@ -160,7 +174,18 @@ impl Mutable {
         if self.items.iter().any(ItemStack::is_empty) {
             return Err(ClickCrash { slot: -1 });
         }
-        Ok(BundleContents(self.items.iter().map(ItemStackTemplate::from_stack).collect()))
+        Ok(BundleContents(self.items.iter().map(ItemStackTemplate::from_stack).collect(), self.selected))
+    }
+}
+
+/// `BundleItem.toggleSelectedItem`: the mouse wheel over a bundle (`bundle_item_selected`) selects stack `index`, or none when it is the
+/// selected one or is not there. Anything but a bundle is left alone.
+pub fn toggle_selected_item(stack: &mut ItemStack, index: i32) {
+    let Some(contents) = stack.get(keys::BUNDLE_CONTENTS).cloned() else { return };
+    let mut m = Mutable::of(&contents);
+    m.toggle_selected(index);
+    if let Ok(c) = m.to_component() {
+        stack.set(keys::BUNDLE_CONTENTS.wrap(c));
     }
 }
 
@@ -211,7 +236,8 @@ fn other_stacked_on_me(menu: &mut Menu, env: &mut Env, slot: usize, action: Clic
     let Some(contents) = menu.item(env, slot).get(keys::BUNDLE_CONTENTS).cloned() else { return Ok(false) };
     if action == ClickAction::Primary && carried_empty {
         // toggleSelectedItem(-1): rewrites the component (an unweighable bundle empties).
-        let m = Mutable::of(&contents);
+        let mut m = Mutable::of(&contents);
+        m.toggle_selected(-1);
         menu.item_mut(env, slot).set(keys::BUNDLE_CONTENTS.wrap(m.to_component()?));
         return Ok(false);
     }
@@ -254,12 +280,36 @@ mod tests {
 
     #[test]
     fn bundles_fill_by_weight() {
-        let mut m = Mutable::of(&BundleContents(Vec::new()));
+        let mut m = Mutable::of(&BundleContents::new(Vec::new()));
         let mut pearls = ItemStack::of("ender_pearl", 20).unwrap();
         assert_eq!(m.try_insert(&mut pearls), 16);
         assert_eq!(pearls.count(), 4);
         let mut stone = ItemStack::of("stone", 5).unwrap();
         assert_eq!(m.try_insert(&mut stone), 0);
         assert_eq!(m.remove_one().map(|s| s.count()), Some(16));
+    }
+
+    #[test]
+    fn the_selected_stack_is_the_one_removed() {
+        let mut bundle = ItemStack::of("bundle", 1).unwrap();
+        let mut m = Mutable::of(&BundleContents::new(Vec::new()));
+        for (item, n) in [("stick", 10), ("diamond", 3), ("cobblestone", 20)] {
+            let mut s = ItemStack::of(item, n).unwrap();
+            assert!(m.try_insert(&mut s) > 0);
+        }
+        // (the last inserted comes first: cobblestone, diamond, stick)
+        bundle.set(keys::BUNDLE_CONTENTS.wrap(m.to_component().unwrap()));
+        toggle_selected_item(&mut bundle, 1);
+        assert_eq!(bundle.get(keys::BUNDLE_CONTENTS).unwrap().1, 1);
+        // selecting it again, or an index that is not there, selects none
+        toggle_selected_item(&mut bundle, 1);
+        assert_eq!(bundle.get(keys::BUNDLE_CONTENTS).unwrap().1, -1);
+        toggle_selected_item(&mut bundle, 7);
+        assert_eq!(bundle.get(keys::BUNDLE_CONTENTS).unwrap().1, -1);
+        toggle_selected_item(&mut bundle, 1);
+        let mut m = Mutable::of(bundle.get(keys::BUNDLE_CONTENTS).unwrap());
+        let removed = m.remove_one().unwrap();
+        assert_eq!(removed.item_name(), "minecraft:diamond");
+        assert_eq!(m.selected, -1, "nothing is selected after a removal");
     }
 }
