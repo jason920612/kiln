@@ -35,7 +35,12 @@ CASES = [
     ("272 g", "forceload add 5008 5008 5279 5263", None),
     # loaded already: nothing changes
     ("again e", "forceload add 2000 2000 2255 2255", None),
+    # let them go, wait until they are unloaded and saved, then force them again: read from storage
+    ("remove e", "forceload remove 2000 2000 2255 2255", None),
+    ("reload e", "forceload add 2000 2000 2255 2255", "setblock 2255 301 2255 stone"),
 ]
+# seconds to wait after a case (default 6: the heavy tick leaves the 100-tick window)
+WAIT_AFTER = {"remove e": 40}
 
 
 class Server:
@@ -117,7 +122,7 @@ def run(args):
             r = {"case": name, "cmd": cmd, "wall_s": round(wall, 2), "worst_ms": p99, "idle_ms": p50, "feedback": fb}
             results.append(r)
             print(f"[{which}] {name:10s} worst tick {p99:9.1f} ms  wall {wall:6.2f} s  | " + " | ".join(fb)[:300], flush=True)
-            time.sleep(6)  # the heavy tick leaves the 100-tick window
+            time.sleep(WAIT_AFTER.get(name, 6))
         if args.out:
             Path(args.out).write_text(json.dumps(results, indent=1))
     finally:

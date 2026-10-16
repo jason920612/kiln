@@ -1211,8 +1211,14 @@ impl Dim {
 
     /// Loads every chunk of `wanted` before returning (blocking): stored ones from storage at once, the
     /// missing ones generated ahead of everything else on the generation threads, side by side, and
-    /// installed as they come back.
+    /// installed as they come back. The ones that wait for their cell's region are urgent: they go
+    /// into it as soon as the regionizer gives it one, whatever the tick's install counts.
     fn load_now(&mut self, wanted: &[ChunkPos]) {
+        for &pos in wanted {
+            if self.regions.chunk(pos).is_none() {
+                self.urgent.insert(pos);
+            }
+        }
         if self.generation.is_none() {
             for &pos in wanted {
                 self.load_chunk(pos);
