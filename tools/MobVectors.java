@@ -502,6 +502,37 @@ public class MobVectors {
         throw new IllegalStateException("server did not start");
     }
 
+    /// wp69 (`MOB_PROBE=1`): per tick, what the villagers' brains hold while a zombie is in the world (counts of villager-ticks).
+    static final class Probe {
+        long ticks, panic, hostile, trigger, near, opps, oppsTrigger, oppsPanic, villagerTicks;
+        void sample(ServerLevel level) {
+            var zs = level.getEntities((Entity) null, new AABB(-5000, -70, -5000, 5000, 320, 5000), e -> e instanceof net.minecraft.world.entity.monster.zombie.Zombie && e.isAlive());
+            if (zs.isEmpty()) return;
+            ticks++;
+            boolean opp = level.getGameTime() % 100 == 0;
+            boolean anyTrigger = false, anyPanic = false;
+            for (Entity e : level.getEntities((Entity) null, new AABB(-5000, -70, -5000, 5000, 320, 5000), e -> e instanceof net.minecraft.world.entity.npc.villager.Villager v && v.isAlive())) {
+                var v = (net.minecraft.world.entity.npc.villager.Villager) e;
+                var brain = v.getBrain();
+                villagerTicks++;
+                boolean p = brain.isActive(net.minecraft.world.entity.schedule.Activity.PANIC);
+                boolean h = brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.NEAREST_HOSTILE).isPresent();
+                boolean t = false;
+                for (var b : brain.getRunningBehaviors()) if (b.getClass().getSimpleName().equals("VillagerPanicTrigger")) t = true;
+                panic += p ? 1 : 0; hostile += h ? 1 : 0; trigger += t ? 1 : 0;
+                anyTrigger |= t; anyPanic |= p;
+                for (Entity z : zs) if (z.distanceToSqr(v) <= 64) { near++; break; }
+            }
+            if (opp) { opps++; oppsTrigger += anyTrigger ? 1 : 0; oppsPanic += anyPanic ? 1 : 0; }
+        }
+        String json() {
+            return String.format(Locale.ROOT, "{\"ticks\":%d,\"villager_ticks\":%d,\"panic\":%d,\"hostile\":%d,\"trigger\":%d,\"near\":%d,\"opps\":%d,\"opps_trigger\":%d,\"opps_panic\":%d}", ticks, villagerTicks, panic, hostile, trigger, near, opps, oppsTrigger, oppsPanic);
+        }
+    }
+
+    static final Probe probe = new Probe();
+    static final boolean PROBE = System.getenv("MOB_PROBE") != null;
+
     static java.lang.reflect.Method runAllTasks, tickServerMethod;
 
     static void cmd(MinecraftServer server, String c) {
@@ -536,6 +567,7 @@ public class MobVectors {
                     }
                     tickServerMethod.invoke(server, (java.util.function.BooleanSupplier) () -> true);
                     runServerTasks(server);
+                    if (PROBE) probe.sample(level);
                 }
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -619,7 +651,7 @@ public class MobVectors {
         }
         level.tickRateManager().setFrozen(true);
         cmd(server, "gamerule minecraft:spawn_mobs true");
-        return String.format(Locale.ROOT, "{\"name\":\"%s\",\"day_time\":11500,\"ticks\":%d,\"spawned\":[%s]}", s.name, level.getGameTime() - g0, spawned);
+        return String.format(Locale.ROOT, "{\"name\":\"%s\",\"day_time\":11500,\"ticks\":%d,\"probe\":%s,\"spawned\":[%s]}", s.name, level.getGameTime() - g0, probe.json(), spawned);
     }
 
     /// `BlockableEventLoop.runAllTasks` (protected): what the server's own loop runs between ticks.
@@ -1013,6 +1045,7 @@ public class MobVectors {
                 }
                 tickServerMethod.invoke(level.getServer(), (java.util.function.BooleanSupplier) () -> true);
                 runServerTasks(level.getServer());
+                if (PROBE) probe.sample(level);
             } else if (s.fullTick) {
                 // (the server's own loop calls `tickRateManager.tick()` each tick, which sets this: the harness is that loop)
                 set(level.tickRateManager(), "runGameElements", true);
@@ -1214,8 +1247,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp, Float.toString(s.playerHealth));
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"advance_day\":%b,\"remove_golems\":%b,\"taken_pois\":%s,\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"esound_trace\":[%s],\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, s.advanceDay, s.removeGolems, takenPoisJson(s), nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, entitySoundTrace, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"advance_day\":%b,\"remove_golems\":%b,\"probe\":%s,\"taken_pois\":%s,\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"esound_trace\":[%s],\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, s.advanceDay, s.removeGolems, probe.json(), takenPoisJson(s), nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, entitySoundTrace, trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
