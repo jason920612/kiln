@@ -186,6 +186,96 @@ fn idle_sample(sim: &Sim) {
     }
 }
 
+
+/// `FARM_STATS=path`: what `tools/wp71/W71Hook.java` counts on the real vanilla server (per tick, per villager: the zombie in the pen or not, the activity class (panic, rest,
+/// idle, other), the brain tokens, the starts of behaviours, the position in the pen, the speed and the distance to the zombie), written there as key TAB count lines.
+#[derive(Default)]
+struct Stats {
+    counts: std::collections::BTreeMap<String, u64>,
+    prev_pos: std::collections::HashMap<i32, [f64; 2]>,
+    prev_run: std::collections::HashMap<i32, std::collections::HashSet<String>>,
+}
+
+static STATS: std::sync::Mutex<Option<Stats>> = std::sync::Mutex::new(None);
+
+fn pen_of(z: f64) -> i32 {
+    ((z.floor() as i32) + 20).div_euclid(PEN_DZ)
+}
+
+fn stats_sample(sim: &Sim) {
+    let mut guard = STATS.lock().unwrap();
+    let st = guard.get_or_insert_with(Stats::default);
+    let mobs = sim.mobs();
+    let mut zombies: std::collections::HashMap<i32, Vec<[f64; 3]>> = std::collections::HashMap::new();
+    for (_, kind, pos, _) in &mobs {
+        if *kind == "minecraft:zombie" {
+            zombies.entry(pen_of(pos[2])).or_default().push(*pos);
+        }
+    }
+    let mut panic_by_pen: std::collections::HashMap<i32, bool> = std::collections::HashMap::new();
+    for (id, kind, pos, _) in &mobs {
+        if *kind != "minecraft:villager" {
+            continue;
+        }
+        let Some(trace) = sim.mob_brain(*id) else { continue };
+        let acts: Vec<&str> = trace.iter().filter_map(|t| t.strip_prefix("act:")).collect();
+        let cls = if acts.contains(&"panic") { "P" } else if acts.contains(&"rest") { "R" } else if acts.contains(&"idle") { "I" } else { "O" };
+        let pen = pen_of(pos[2]);
+        let zs = zombies.get(&pen);
+        let ph = if zs.is_none() { "N" } else { "Z" };
+        *panic_by_pen.entry(pen).or_default() |= cls == "P";
+        let c = &mut st.counts;
+        *c.entry(format!("ticks|{ph}|{cls}")).or_default() += 1;
+        let mut run = std::collections::HashSet::new();
+        for t in &trace {
+            if let Some(a) = t.strip_prefix("act:") {
+                *c.entry(format!("tok|{ph}|{cls}|act:{a}")).or_default() += 1;
+            } else if let Some(r) = t.strip_prefix("run:") {
+                run.insert(r.to_owned());
+                *c.entry(format!("tok|{ph}|{cls}|run:{r}")).or_default() += 1;
+            } else if let Some(m) = t.strip_prefix("m:") {
+                *c.entry(format!("tok|{ph}|{cls}|m:{}", m.split('@').next().unwrap())).or_default() += 1;
+            }
+        }
+        let before = st.prev_run.remove(id).unwrap_or_default();
+        for r in &run {
+            if !before.contains(r) {
+                *c.entry(format!("start|{ph}|{cls}|{r}")).or_default() += 1;
+            }
+        }
+        st.prev_run.insert(*id, run);
+        let dx = (((pos[0] - x0() as f64).floor() as i32) + 1).clamp(0, 12);
+        let dz = (((pos[2] - (pen * PEN_DZ) as f64).floor() as i32) + 1).clamp(0, 10);
+        *c.entry(format!("grid|{ph}|{cls}|{dx}|{dz}")).or_default() += 1;
+        if let Some(p) = st.prev_pos.get(id) {
+            let bin = (((pos[0] - p[0]).hypot(pos[2] - p[1])) / 0.01) as i32;
+            *c.entry(format!("speed|{ph}|{cls}|{}", bin.min(50))).or_default() += 1;
+        }
+        st.prev_pos.insert(*id, [pos[0], pos[2]]);
+        if let Some(zs) = zs {
+            let best = zs.iter().map(|z| ((pos[0] - z[0]).powi(2) + (pos[1] - z[1]).powi(2) + (pos[2] - z[2]).powi(2)).sqrt()).fold(1e9, f64::min);
+            *c.entry(format!("zd|{cls}|{}", ((best / 0.5) as i32).min(48))).or_default() += 1;
+        }
+    }
+    if sim.game_time() % 100 == 0 {
+        for pen in zombies.keys() {
+            *st.counts.entry("opp|all".into()).or_default() += 1;
+            if panic_by_pen.get(pen).copied().unwrap_or(false) {
+                *st.counts.entry("opp|any".into()).or_default() += 1;
+            }
+        }
+    }
+}
+
+fn stats_dump(path: &str, golems: usize) {
+    let mut guard = STATS.lock().unwrap();
+    let st = guard.get_or_insert_with(Stats::default);
+    st.counts.insert("golem".into(), golems as u64);
+    let text: String = st.counts.iter().map(|(k, v)| format!("{k}	{v}
+")).collect();
+    std::fs::write(path, text).unwrap();
+}
+
 /// Runs `n` ticks, logging new golems (and killing them in the tick after).
 fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log: &mut Vec<(i64, i64, [f64; 3])>, panic: &mut Panic) {
     let mut kill = false;
@@ -201,6 +291,9 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
         }
         if std::env::var_os("FARM_IDLE").is_some() {
             idle_sample(sim);
+        }
+        if std::env::var_os("FARM_STATS").is_some() {
+            stats_sample(sim);
         }
         if let Ok(v) = std::env::var("FARM_PANIC") {
             count_panic(sim, panic, v == "dawn");
@@ -289,6 +382,9 @@ fn the_farm_in_the_simulation() {
         let a = IDLE.lock().unwrap();
         println!("IDS {:?}", sim.mobs().iter().take(4).map(|m| m.0).collect::<Vec<_>>());
         println!("IDLE samples {} x 0..8: {:?}", a.1, (1..10).map(|i| (a.0[i] as f64 / a.1 as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
+    }
+    if let Ok(path) = std::env::var("FARM_STATS") {
+        stats_dump(&path, log.len());
     }
     println!("TOTAL {} golems in {days} days, {pens} pens", log.len());
     drop(sim);
