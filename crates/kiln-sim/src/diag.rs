@@ -46,12 +46,16 @@ static SLOW: Mutex<Vec<(&'static str, Duration)>> = Mutex::new(Vec::new());
 /// [`lap`], kept for the slow-tick line too.
 pub(crate) fn lap_slow(name: &'static str, start: Instant) -> Instant {
     let now = Instant::now();
-    let d = now - start;
+    add_slow(name, now - start);
+    now
+}
+
+/// [`add`], kept for the slow-tick line too.
+pub(crate) fn add_slow(name: &'static str, d: Duration) {
     add(name, d);
     if !on() && crate::stats::slow_print_ms().is_some() {
         SLOW.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((name, d));
     }
-    now
 }
 
 /// What [`lap_slow`] kept since the last call (without `KILN_PHASE_DETAIL`).

@@ -1363,6 +1363,8 @@ impl Dim {
     /// the chunks that unloaded.
     fn unload(&mut self, chunks: Vec<ChunkPos>, keep: &HashSet<ChunkPos>) -> Vec<ChunkPos> {
         let mut unloaded = Vec::new();
+        // (Block machinery, points of interest, chunk storage.)
+        let mut times = [Duration::ZERO; 3];
         for pos in chunks {
             if keep.contains(&pos) {
                 continue;
@@ -1376,18 +1378,28 @@ impl Dim {
                 continue;
             }
             if let Some(mut chunk) = cell.remove(pos) {
+                let t0 = Instant::now();
                 part.1.chunk_unloaded(pos, &mut chunk, self.game_time);
+                let t1 = Instant::now();
                 if let (Some(store), Some(p)) = (self.poi_store.as_mut(), chunk.pois.as_deref())
                     && p.dirty
                 {
                     store.store(pos, Some(p.to_nbt(kiln_storage::anvil::DATA_VERSION as i32)));
                 }
+                let t2 = Instant::now();
                 self.provider.unload(pos, *chunk);
+                let t3 = Instant::now();
+                times[0] += t1 - t0;
+                times[1] += t2 - t1;
+                times[2] += t3 - t2;
                 unloaded.push(pos);
             }
             if cell.is_empty() {
                 self.emptied.push(pos.cell());
             }
+        }
+        for (name, t) in ["uc.blocks", "uc.poi", "uc.save"].into_iter().zip(times) {
+            diag::add_slow(name, t);
         }
         unloaded
     }
