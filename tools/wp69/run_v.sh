@@ -8,6 +8,6 @@ for rep in $(seq 1 $reps); do
   bash ~/wt/wp69-iron-farm/tools/wp69/v69_start.sh > /dev/null 2>&1 < /dev/null
   for i in $(seq 1 60); do grep -q "Done (" vanilla/server.log 2>/dev/null && break; sleep 2; done
   sleep 2
-  TARGET=V timeout 3000 python3 rt_farm69.py run 6 4 /tmp/w69_V_${tag}_$rep.json 2>&1 | tail -1
+  TARGET=V timeout 3000 python3 rt_farm69.py run 6 ${PENS:-4} /tmp/w69_V_${tag}_$rep.json 2>&1 | tail -1
 done
 echo ALLDONE

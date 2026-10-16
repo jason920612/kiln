@@ -9,6 +9,6 @@ for rep in $(seq 1 $reps); do
   sleep 5
   (exec 3<>console; echo reload >&3)
   sleep 3
-  TARGET=K timeout 3000 python3 rt_farm69.py run 6 4 /tmp/w69_K_${tag}_$rep.json 2>&1 | tail -1
+  TARGET=K timeout 3000 python3 rt_farm69.py run 6 ${PENS:-4} /tmp/w69_K_${tag}_$rep.json 2>&1 | tail -1
 done
 echo ALLDONE
