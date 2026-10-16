@@ -1372,6 +1372,7 @@ impl Dim {
                 continue;
             }
             let stores = self.provider.stores();
+            let Some(owner) = self.regions.owner(pos.cell()) else { continue };
             let Some(region) = self.regions.at_mut(pos.cell()) else { continue };
             let (cells, part) = region.cells_and_part_mut();
             let Some(cell) = cells.get_mut(pos.cell()) else { continue };
@@ -1395,9 +1396,7 @@ impl Dim {
                 times[1] += t2 - t1;
                 times[2] += t3 - t2;
                 unloaded.push(pos);
-                if let Some(r) = self.regions.owner(pos.cell()) {
-                    by_region.entry(r).or_insert_with(|| (pos, HashSet::new())).1.insert(pos);
-                }
+                by_region.entry(owner).or_insert_with(|| (pos, HashSet::new())).1.insert(pos);
             }
             if cell.is_empty() {
                 self.emptied.push(pos.cell());
