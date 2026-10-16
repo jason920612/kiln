@@ -84,6 +84,8 @@ pub(crate) enum BeKind {
     StructureBlock,
     /// A jigsaw block (`JigsawBlockEntity`).
     Jigsaw,
+    /// Holds nothing; powers the players in its water and hurts the hostile mobs in it (`ConduitBlockEntity`).
+    Conduit,
 }
 
 impl BeKind {
@@ -119,6 +121,7 @@ impl BeKind {
             "banner" => BeKind::Banner,
             "structure_block" => BeKind::StructureBlock,
             "jigsaw" => BeKind::Jigsaw,
+            "conduit" => BeKind::Conduit,
             _ => return None,
         })
     }
@@ -136,7 +139,7 @@ impl BeKind {
             BeKind::ChiseledBookshelf => 6,
             BeKind::Shelf => 3,
             BeKind::DecoratedPot | BeKind::Lectern | BeKind::Brushable => 1,
-            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw => 0,
+            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw | BeKind::Conduit => 0,
         }
     }
 
@@ -144,13 +147,13 @@ impl BeKind {
     pub fn randomizable(self) -> bool {
         !matches!(
             self,
-            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::Shelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw
+            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::Shelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw | BeKind::Conduit
         )
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw)
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern | BeKind::Vault | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw | BeKind::Conduit)
     }
 
     /// `getDefaultName` translation key.
@@ -184,6 +187,7 @@ impl BeKind {
             BeKind::Banner => "block.minecraft.banner",
             BeKind::StructureBlock => "block.minecraft.structure_block",
             BeKind::Jigsaw => "block.minecraft.jigsaw",
+            BeKind::Conduit => "block.minecraft.conduit",
         }
     }
 }
@@ -346,6 +350,8 @@ pub(crate) struct ContainerBe {
     pub changes: u64,
     /// A bell's shaking.
     pub bell: Option<Box<crate::bell::BellState>>,
+    /// A conduit's frame, hunting and target.
+    pub conduit: Option<Box<crate::conduit::State>>,
     /// A lectern's page (`LecternBlockEntity.page`) and whether it was turned and its block is yet to pulse.
     pub page: i32,
     pub page_turned: bool,
@@ -447,6 +453,7 @@ impl ContainerBe {
             item_changed: false,
             changes: 0,
             bell: (kind == BeKind::Bell).then(Default::default),
+            conduit: (kind == BeKind::Conduit).then(|| Box::new(crate::conduit::State::load(nbt))),
             page,
             page_turned: false,
             hive: (kind == BeKind::Beehive).then(|| Box::new(crate::beehive::Hive::load(nbt))),
@@ -533,6 +540,11 @@ impl ContainerBe {
             BeKind::Beacon => {
                 if let Some(b) = &self.beacon {
                     b.save(&mut out);
+                }
+            }
+            BeKind::Conduit => {
+                if let Some(c) = &self.conduit {
+                    c.save(&mut out);
                 }
             }
             BeKind::ChiseledBookshelf => {

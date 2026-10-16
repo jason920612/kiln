@@ -2800,6 +2800,67 @@ pub(crate) fn stab_mob(
     Some(MobStabOutcome { hurt, dismounted, health_before })
 }
 
+/// A block entity's damage to the living entity `target` (a conduit's magic): what `hurtServer` of the mob does, then the deaths and
+/// spawns it leaves. Whether it was hurt.
+pub(crate) fn hurt_by_block(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<health::Death>,
+    target: i32,
+    kind: DamageKind,
+    amount: f32,
+) -> bool {
+    let Ok(i) = entities.list.binary_search_by_key(&target, |e| e.id) else { return false };
+    let live = |p: &Player| !p.disconnected && !p.dead;
+    let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x636f_6e64, target);
+    let mut sim = SimLevel {
+        level: World::Region(level),
+        list: &mut entities.list,
+        players,
+        deaths,
+        proxies,
+        views,
+        spawns,
+        events: Vec::new(),
+        next_placeholder: -1_000_000,
+        current: target,
+        seeds: 0x636f_6e64_00,
+        current_source: None,
+        rng,
+        grid: Grid::default(),
+        proxy_at: Default::default(),
+        proxy_grid: Default::default(),
+        view_index: Default::default(),
+        despawn: None,
+        player_writes: 0,
+        touched: None,
+        current_info: None,
+        owner_hints: Vec::new(),
+    };
+    sim.grid = Grid::build(sim.list);
+    sim.index_players();
+    let Some(mut phys) = sim.list[i].phys.take() else { return false };
+    let hurt = if kiln_entity::mob::data(&phys).is_some() {
+        let source = kiln_entity::mob::DamageSource { kind, attacker: None, direct: None, pos: None, attacker_is_player: false };
+        kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, amount)
+    } else {
+        phys.hurt(&mut sim, kind, amount, None)
+    };
+    let e = &mut sim.list[i];
+    e.phys = Some(phys);
+    e.sync();
+    let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
+    for (n, event) in keyed(events) {
+        carry_out(event, n, level, list, players, spawns, deaths);
+    }
+    hurt
+}
+
 /// `ServerGamePacketListenerImpl.handleInteract` on a mob, then `Player.interactOn`: player
 /// `i` of the region's players right-clicks entity `target` with the item in `hand` (0 main,
 /// 1 off). The held item changes as the mob says; sheared wool drops.

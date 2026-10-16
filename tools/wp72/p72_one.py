@@ -45,7 +45,7 @@ def main():
     both_(f"fill {X0 - 1} {Y0 - 1} {Z0 - 1} {X0 + W} {Y0 - 1} {Z0 + D} minecraft:stone")
     both_("kill @e[type=!player]")
     both_("tick step 30")
-    time.sleep(1.5)
+    time.sleep(2.2)
     for c in cmds:
         both_(c)
     time.sleep(0.4)

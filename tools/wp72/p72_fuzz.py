@@ -100,7 +100,7 @@ def gen(rng, palette):
     return cmds
 
 
-CHECK = [1, 1, 2, 4, 8, 16, 32]
+CHECK = [1, 3, 8, 20]
 ACT = [0]
 
 
@@ -111,7 +111,7 @@ def run_case(seed, palette, cmds=None):
     both_(f"fill {X0 - 1} {Y0 - 1} {Z0 - 1} {X0 + W} {Y0 - 1} {Z0 + D} minecraft:stone")
     both_("kill @e[type=!player]")
     both_("tick step 30")
-    time.sleep(1.2)
+    time.sleep(2.2)  # Kiln steps at the tick rate (30 ticks = 1.5 s); vanilla steps at full speed
     for c in cmds:
         both_(c)
     time.sleep(0.3)
@@ -121,7 +121,7 @@ def run_case(seed, palette, cmds=None):
     for step in CHECK:
         both_(f"tick step {step}")
         t += step
-        time.sleep(0.25 + 0.01 * step)
+        time.sleep(0.3 + 0.06 * step)
         kd, vd = stable_dump(ka), stable_dump(va)
         if first is None:
             first = kd

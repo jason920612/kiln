@@ -39,6 +39,7 @@ mod lectern;
 mod maps;
 mod map_items;
 mod bell;
+mod conduit;
 mod campfire;
 mod stands;
 mod frames;
