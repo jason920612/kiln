@@ -846,7 +846,7 @@ public class MobVectors {
                 runServerTasks(level.getServer());
                 if (System.getenv("MOB_DEBUG_FULL") != null && tick % 100 == 5) {
                     Entity v0 = tracked.get(0);
-                    System.out.println("FULLDBG tick=" + tick + " gametime=" + level.getGameTime() + " daytime=" + level.getDayTime() + " entityTicking=" + level.isPositionEntityTicking(v0.blockPosition())
+                    System.out.println("FULLDBG tick=" + tick + " gametime=" + level.getGameTime() + " entityTicking=" + level.isPositionEntityTicking(v0.blockPosition())
                             + " tickCount=" + v0.tickCount + " frozen=" + level.tickRateManager().isFrozen() + " runsNormally=" + level.tickRateManager().runsNormally() + " forced=" + level.getForceLoadedChunks().size()
                             + " players=" + level.players().size() + " isEntityFrozen=" + level.tickRateManager().isEntityFrozen(v0) + " pos=" + v0.position());
                 }
