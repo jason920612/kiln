@@ -6999,7 +6999,16 @@ public class MobVectors {
             // order no replay can know: the homes are given.)
             String mem = (lastSlept == null ? "" : "\"minecraft:last_slept\":{value:" + lastSlept + "L}")
                     + (homes ? (lastSlept == null ? "" : ",") + "\"minecraft:home\":{value:{dimension:\"minecraft:overworld\",pos:[I;3," + BY + "," + (2 + 2 * i) + "]}}" : "");
-            MobSpec m = new MobSpec("minecraft:villager", 6.5, BY, 3.5 + 2 * i, 30f + 70 * i, seed + i);
+            // (`MOB_SPLITMIX_SEEDS=1`: statistics runs: seeds of consecutive numbers give the first draws of the mobs' randoms (the sensors' first delays)
+            // nearly the same value, in every scenario: spread by a mix)
+            long mobSeed = seed + i;
+            if (System.getenv("MOB_SPLITMIX_SEEDS") != null) {
+                long z = mobSeed * 0x9E3779B97F4A7C15L;
+                z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+                z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+                mobSeed = z ^ (z >>> 31);
+            }
+            MobSpec m = new MobSpec("minecraft:villager", 6.5, BY, 3.5 + 2 * i, 30f + 70 * i, mobSeed);
             m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b" + (mem.isEmpty() ? "" : ",Brain:{memories:{" + mem + "}}") + "}";
             s.mobs.add(m);
         }
