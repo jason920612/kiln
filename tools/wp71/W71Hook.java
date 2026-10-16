@@ -31,6 +31,9 @@ public final class W71Hook {
     static final Map<Integer, String> PREV_WALK = new HashMap<>();
     static final Map<Integer, Boolean> PREV_CANT = new HashMap<>();
     static final Map<Integer, Object[]> PENDING = new HashMap<>();
+    static final Map<Integer, String> TRACE_PREV = new HashMap<>();
+    static long zombieSince = -1, traceFrom = -1;
+    static final boolean TRACE = Boolean.getBoolean("w71.trace");
     static Field memories;
     static long lastGt = -1, lastDump = 0;
     static boolean hooked;
@@ -123,6 +126,20 @@ public final class W71Hook {
                         else add("wtN|" + ph + "|" + cls + "|" + psig);
                     }
                 }
+                if (TRACE && pen == 0 && traceFrom >= 0 && gt >= traceFrom && gt < traceFrom + 1500) {
+                    StringBuilder sb = new StringBuilder();
+                    for (var a : acts) sb.append(a).append(' ');
+                    for (String n : new java.util.TreeSet<>(run)) sb.append("run:").append(n).append(' ');
+                    java.util.TreeSet<String> ms = new java.util.TreeSet<>();
+                    for (var en : ((Map<?, ?>) memories.get(brain)).entrySet()) {
+                        Object slot = en.getValue();
+                        if ((Boolean) slot.getClass().getMethod("hasValue").invoke(slot)) ms.add(en.getKey().toString().replace("minecraft:", ""));
+                    }
+                    for (String m : ms) sb.append(m).append(' ');
+                    String desc = sb.toString() + " | " + String.format("%.2f %.2f", x, z) + (wopt.isPresent() ? " W" + sig + "@" + String.format("%.1f,%.1f", at[0], at[2]) : "");
+                    String descNoPos = sb.toString() + (wopt.isPresent() ? " W" + sig : "");
+                    if (!descNoPos.equals(TRACE_PREV.put(v.getId(), descNoPos))) System.out.println("TRACE " + (gt - traceFrom) + " v" + v.getId() + " " + desc);
+                }
                 PREV_RUN.put(v.getId(), run);
                 for (var en : ((Map<?, ?>) memories.get(brain)).entrySet()) {
                     Object slot = en.getValue();
@@ -139,6 +156,10 @@ public final class W71Hook {
                     for (Entity zb : zs) best = Math.min(best, Math.sqrt(v.distanceToSqr(zb)));
                     add("zd|" + cls + "|" + Math.min(48, (int) (best / 0.5)));
                 }
+            }
+            if (TRACE) {
+                if (zombiesByPen.containsKey(0)) { if (zombieSince < 0) zombieSince = gt; if (traceFrom < 0 && gt - zombieSince >= 2000) traceFrom = gt; }
+                else zombieSince = -1;
             }
             if (gt % 100 == 0) {
                 for (var en : zombiesByPen.entrySet()) {

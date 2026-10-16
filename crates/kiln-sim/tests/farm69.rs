@@ -198,6 +198,9 @@ struct Stats {
     prev_walk: std::collections::HashMap<i32, String>,
     prev_cant: std::collections::HashMap<i32, bool>,
     pending: std::collections::HashMap<i32, (String, i32)>,
+    trace_prev: std::collections::HashMap<i32, String>,
+    zombie_since: Option<i64>,
+    trace_from: Option<i64>,
 }
 
 static STATS: std::sync::Mutex<Option<Stats>> = std::sync::Mutex::new(None);
@@ -283,6 +286,31 @@ fn stats_sample(sim: &Sim) {
                 *c.entry(format!("wtN|{ph}|{cls}|{sig}")).or_default() += 1;
             }
         }
+        if let Some(from) = st.trace_from
+            && pen == 0
+            && (from..from + 1500).contains(&sim.game_time())
+        {
+            let mut sb = String::new();
+            for a in &acts {
+                sb.push_str(&format!("{a} "));
+            }
+            let mut rs: Vec<&String> = run.iter().collect();
+            rs.sort();
+            for r in rs {
+                sb.push_str(&format!("run:{r} "));
+            }
+            let mut ms: Vec<String> = trace.iter().filter_map(|t| t.strip_prefix("m:minecraft:")).map(|m| m.split('@').next().unwrap().to_owned()).collect();
+            ms.sort();
+            for m in ms {
+                sb.push_str(&format!("{m} "));
+            }
+            let w = walk.map(|(ent, at, speed, close)| format!(" W{}s{speed:.2}c{close}@{:.1},{:.1}", if ent { "E" } else { "B" }, at[0], at[2])).unwrap_or_default();
+            let wsig = walk.map(|(ent, _, speed, close)| format!(" W{}s{speed:.2}c{close}", if ent { "E" } else { "B" })).unwrap_or_default();
+            let no_pos = format!("{sb}{wsig}");
+            if st.trace_prev.insert(*id, no_pos.clone()).as_deref() != Some(no_pos.as_str()) {
+                println!("TRACE {} v{id} {sb} | {:.2} {:.2}{w}", sim.game_time() - from, pos[0], pos[2]);
+            }
+        }
         st.prev_run.insert(*id, run);
         let dx = (((pos[0] - x0() as f64).floor() as i32) + 1).clamp(0, 12);
         let dz = (((pos[2] - (pen * PEN_DZ) as f64).floor() as i32) + 1).clamp(0, 10);
@@ -295,6 +323,16 @@ fn stats_sample(sim: &Sim) {
         if let Some(zs) = zs {
             let best = zs.iter().map(|z| ((pos[0] - z[0]).powi(2) + (pos[1] - z[1]).powi(2) + (pos[2] - z[2]).powi(2)).sqrt()).fold(1e9, f64::min);
             *c.entry(format!("zd|{cls}|{}", ((best / 0.5) as i32).min(48))).or_default() += 1;
+        }
+    }
+    if std::env::var_os("FARM_TRACE_WALK").is_some() {
+        if zombies.contains_key(&0) {
+            let since = *st.zombie_since.get_or_insert(sim.game_time());
+            if st.trace_from.is_none() && sim.game_time() - since >= 2000 {
+                st.trace_from = Some(sim.game_time());
+            }
+        } else {
+            st.zombie_since = None;
         }
     }
     if sim.game_time() % 100 == 0 {
