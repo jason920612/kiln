@@ -24,6 +24,7 @@ fn main() {
     let start = Instant::now();
     let world = Arc::new(Worldgen::overworld(&pack, 12345, structures).expect("worldgen"));
     println!("worldgen setup {:.0} ms; structures {structures}", start.elapsed().as_secs_f64() * 1e3);
+    let mut timed = kiln_worldgen::pipeline::timing();
     for (run, &t) in threads.iter().enumerate() {
         // A different square per run, so no run reuses another's work.
         let origin = (run as i32 * 1000, 500);
@@ -46,6 +47,16 @@ fn main() {
         });
         let secs = start.elapsed().as_secs_f64();
         let stats = pipeline.stats();
+        let (terrain, decorate, wait) = kiln_worldgen::pipeline::timing();
+        let (terrain, decorate, wait) = (terrain - timed.0, decorate - timed.1, wait - timed.2);
+        timed = kiln_worldgen::pipeline::timing();
+        println!(
+            "     thread time: terrain {:.2} s, decorate {:.2} s, waiting {:.2} s, other {:.2} s",
+            terrain.as_secs_f64(),
+            decorate.as_secs_f64(),
+            wait.as_secs_f64(),
+            secs * t as f64 - (terrain + decorate + wait).as_secs_f64()
+        );
         println!(
             "{t:>3} threads: {} FULL chunks in {secs:.2} s = {:.1} chunks/s ({:.1} ms/chunk per thread); {} decorated, {} held",
             targets.len(),
