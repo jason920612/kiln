@@ -17,7 +17,7 @@ fn run(height: i32, chunks: &[(i32, i32)], ticks: usize) -> Vec<usize> {
     let setup = ["gamerule minecraft:random_tick_speed 0", "gamemode creative Watcher", "difficulty normal", "time set 6000", "gamerule minecraft:advance_time false"];
     assert!(sim.step(std::iter::once(msg).chain(setup.map(|c| ToSim::Console(c.into())))));
     let mut client = Client::new(1, stats);
-    let mut tick = |sim: &mut Sim, client: &mut Client, n: usize| {
+    let tick = |sim: &mut Sim, client: &mut Client, n: usize| {
         for _ in 0..n {
             let mut inbox = Vec::new();
             client.tick(None, &mut inbox);
@@ -46,8 +46,8 @@ fn run(height: i32, chunks: &[(i32, i32)], ticks: usize) -> Vec<usize> {
 
 fn slime_chunks_near_the_player() -> Vec<(i32, i32)> {
     let mut found = Vec::new();
-    for cx in -3..=3 {
-        for cz in -3..=3 {
+    for cx in -3i32..=3 {
+        for cz in -3i32..=3 {
             if (cx.abs() >= 2 || cz.abs() >= 2) && is_slime_chunk(0, cx, cz) {
                 found.push((cx, cz));
             }
