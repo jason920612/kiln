@@ -1420,6 +1420,8 @@ public class MobVectors {
     }
 
     static void pinBrain(Mob m) throws Exception {
+        // (wp69: `MOB_NO_PIN=1`: the brains keep the gates' randoms and the sensors' first delays they were born with: statistics runs)
+        if (System.getenv("MOB_NO_PIN") != null) return;
         var brain = m.getBrain();
         Map<?, ?> byPriority = (Map<?, ?>) get(brain, "availableBehaviorsByPriority");
         if (byPriority.isEmpty()) return;
