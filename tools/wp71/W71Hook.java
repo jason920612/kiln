@@ -33,6 +33,7 @@ public final class W71Hook {
     static final Map<Integer, Boolean> PREV_INTER = new HashMap<>();
     static final Map<Integer, Integer> PREV_RC = new HashMap<>();
     static final Map<Integer, String> PREV_STATE = new HashMap<>();
+    static final Map<Integer, Boolean> PREV_REST = new HashMap<>();
     static final Map<Integer, Object[]> PENDING = new HashMap<>();
     static final Map<Integer, String> TRACE_PREV = new HashMap<>();
     static long zombieSince = -1, traceFrom = -1;
@@ -79,6 +80,16 @@ public final class W71Hook {
                 String ph = zs.isEmpty() ? "N" : "Z";
                 panicByPen.merge(pen, cls.equals("P"), Boolean::logicalOr);
                 add("ticks|" + ph + "|" + cls);
+                {
+                    long dt = level.getOverworldClockTime() % 24000;
+                    int bin = (int) (dt / 500);
+                    add("dt|" + cls + "|" + bin);
+                    boolean gd = brain.hasMemoryValue(net.minecraft.world.entity.ai.memory.MemoryModuleType.GOLEM_DETECTED_RECENTLY);
+                    if (gd) add("dtgd|" + cls + "|" + bin);
+                    boolean rest = acts.contains("rest");
+                    if (rest && !PREV_REST.getOrDefault(v.getId(), false)) add("reststart|" + (int) (dt / 100));
+                    PREV_REST.put(v.getId(), rest);
+                }
                 Set<String> run = new HashSet<>();
                 int rc = 0;
                 for (var a : acts) add("tok|" + ph + "|" + cls + "|act:" + a);

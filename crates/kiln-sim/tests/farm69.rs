@@ -204,6 +204,7 @@ struct Stats {
     prev_inter: std::collections::HashMap<i32, bool>,
     prev_rc: std::collections::HashMap<i32, i32>,
     prev_state: std::collections::HashMap<i32, String>,
+    prev_rest: std::collections::HashMap<i32, bool>,
     zombie_since: Option<i64>,
     trace_from: Option<i64>,
 }
@@ -239,6 +240,19 @@ fn stats_sample(sim: &Sim) {
         *panic_by_pen.entry(pen).or_default() |= cls == "P";
         let c = &mut st.counts;
         *c.entry(format!("ticks|{ph}|{cls}")).or_default() += 1;
+        {
+            let dt = sim.day_time().rem_euclid(24000);
+            let bin = dt / 500;
+            *c.entry(format!("dt|{cls}|{bin}")).or_default() += 1;
+            if trace.iter().any(|t| t.starts_with("m:minecraft:golem_detected_recently")) {
+                *c.entry(format!("dtgd|{cls}|{bin}")).or_default() += 1;
+            }
+            let rest = acts.contains(&"rest");
+            if rest && !st.prev_rest.get(id).copied().unwrap_or(false) {
+                *c.entry(format!("reststart|{}", dt / 100)).or_default() += 1;
+            }
+            st.prev_rest.insert(*id, rest);
+        }
         let mut run = std::collections::HashSet::new();
         for t in &trace {
             if let Some(a) = t.strip_prefix("act:") {
