@@ -259,6 +259,9 @@ public class MobVectors {
         boolean removeGolems;
         /// wp69: no per-tick trace (statistics scenarios that run for days: only what spawned is recorded).
         boolean noTrace;
+        /// wp69: the level really ticks (`ServerLevel.tick`: time, the entity list, the points of interest...) instead of the harness
+        /// ticking the mobs by hand: for statistics (`noTrace`), to see what the level adds.
+        boolean fullTick;
         Scenario(String name) { this.name = name; }
     }
 
@@ -798,11 +801,15 @@ public class MobVectors {
         levelData.setGameTime(1000L);
         long startTime = level.getGameTime();
         Adopt ad = new Adopt(tracked, pinned, spawned, s);
+        if (s.fullTick) {
+            level.tickRateManager().setFrozen(false);
+            level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawn_mobs false");
+        }
         for (int tick = 0; tick < s.ticks; tick++) {
             ad.tick = tick;
             // `ServerLevel.tickTime`: the world age advances before entities tick.
-            levelData.setGameTime(startTime + 1 + tick);
-            if (s.advanceDay) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + (s.dayTime + 1 + tick));
+            if (!s.fullTick) levelData.setGameTime(startTime + 1 + tick);
+            if (s.advanceDay && !s.fullTick) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + (s.dayTime + 1 + tick));
             if (s.removeGolems) {
                 for (Entity ge : tracked) if (ge instanceof net.minecraft.world.entity.animal.golem.IronGolem && !ge.isRemoved()) ge.discard();
             }
@@ -822,6 +829,8 @@ public class MobVectors {
                 if (a.tick == tick) act(level, player, tracked, a);
             }
             float healthBefore = player.getHealth();
+            if (s.fullTick) level.tick(() -> true);
+            else {
             repinBrains(tracked);
             for (Entity e : new ArrayList<>(tracked)) {
                 if (e.isRemoved()) continue;
@@ -829,6 +838,7 @@ public class MobVectors {
                 e.checkDespawn();
                 // Riders are ticked with their vehicle (`tickPassenger`).
                 if (!e.isRemoved() && !e.isPassenger()) tickNonPassenger(ad, e);
+            }
             }
             // wp28 creaking: `Level.tickBlockEntities` for the scenario's creaking hearts (their
             // ticker skips uprooted ones).
@@ -948,6 +958,10 @@ public class MobVectors {
                 }
                 chestTrace.append(']');
             }
+        }
+        if (s.fullTick) {
+            level.tickRateManager().setFrozen(true);
+            level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawn_mobs true");
         }
         // wp28 creaking: the blocks around the hearts as the scenario left them (resin), and
         // the hearts' positions.
@@ -6728,6 +6742,29 @@ public class MobVectors {
             s.advanceDay = true;
             s.removeGolems = true;
             s.noTrace = true;
+            s.ticks = 6 * 24000;
+            for (int d = 0; d < 6; d++) {
+                Action in = new Action(d == 0 ? 0 : 24000 * d - 1, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+                Action off = new Action(24000 * d + 10699, "tp"); off.mob = 3; off.x = 17.5; off.y = BY; off.z = 17.5; s.actions.add(off);
+            }
+            out.add(s);
+        }
+        // The same with the level really ticking (statistics only).
+        for (int i = 0; i < 8; i++) {
+            Scenario s = new Scenario("farm69_full_" + i);
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69800L + 10L * i, 1000L - 11000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 300;
+            s.levelSeed = 800 + i;
+            s.noTrace = true;
+            s.fullTick = true;
+            s.removeGolems = true;
             s.ticks = 6 * 24000;
             for (int d = 0; d < 6; d++) {
                 Action in = new Action(d == 0 ? 0 : 24000 * d - 1, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);

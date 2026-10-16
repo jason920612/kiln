@@ -158,13 +158,24 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
 fn the_farm_in_the_simulation() {
     let days: i64 = std::env::var("FARM_DAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
     // `FARM_ARRIVE`: the day time at which the zombies come (300 as in wp66).
-    let arrive: i64 = std::env::var("FARM_ARRIVE").ok().and_then(|v| v.parse().ok()).unwrap_or(300);
+    let arrive: i64 = std::env::var("FARM_ARRIVE").ok().and_then(|v| v.parse().ok()).unwrap_or(299);
     let pens: i32 = std::env::var("FARM_PENS").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
     let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("farm69");
     let _ = std::fs::remove_dir_all(&dir);
     let mut sim = Sim::new(SimConfig::new(8, 4, Some(dir.clone())));
     build(&mut sim, pens);
-    console(&mut sim, ["time set 11500".to_string()]);
+    // The day time and the game time are made to agree modulo 100: the opportunities of `VillagerPanicTrigger` (`game time % 100 == 0`) then
+    // fall on whole hundreds of the day, as they do in the scenarios `tools/MobVectors.java` records (`farm69_days_*`).
+    let mut want = 11500;
+    for _ in 0..5 {
+        console(&mut sim, [format!("time set {want}")]);
+        let d = (sim.day_time() - sim.game_time()).rem_euclid(100);
+        if d == 0 {
+            break;
+        }
+        want -= d;
+    }
+    assert_eq!((sim.day_time() - sim.game_time()).rem_euclid(100), 0);
     let mut seen = std::collections::HashSet::new();
     let mut log = Vec::new();
     let mut panic = Panic::default();
