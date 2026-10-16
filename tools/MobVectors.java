@@ -570,7 +570,7 @@ public class MobVectors {
         // the golems the datapack logged
         var log = server.getCommandStorage().get(Identifier.parse("wp66:log")).toString();
         StringBuilder spawned = new StringBuilder();
-        var m = java.util.regex.Pattern.compile("t: ?(-?\d+)").matcher(log);
+        var m = java.util.regex.Pattern.compile("t: ?(-?\\d+)").matcher(log);
         while (m.find()) {
             long t = Long.parseLong(m.group(1));
             if (spawned.length() > 0) spawned.append(',');
