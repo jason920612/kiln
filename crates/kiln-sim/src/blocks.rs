@@ -562,7 +562,7 @@ pub(crate) enum PlayerFx {
 #[derive(Clone, Copy)]
 pub(crate) enum Bodies<'a> {
     Made(&'a [EntityBox]),
-    Later(&'a std::cell::OnceCell<Vec<EntityBox>>, &'a dyn Fn() -> Vec<EntityBox>),
+    Later(&'a std::sync::OnceLock<Vec<EntityBox>>, &'a (dyn Fn() -> Vec<EntityBox> + Sync)),
 }
 
 impl<'a> From<&'a Vec<EntityBox>> for Bodies<'a> {

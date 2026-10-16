@@ -2656,7 +2656,7 @@ impl Sim {
         let entities = &part.0;
         let all = &*players;
         let make = move || blocks::entity_boxes(all.values().filter(|p| p.dim == dim && p.region == id), entities);
-        let made = std::cell::OnceCell::new();
+        let made = std::sync::OnceLock::new();
         // In a batch of edits the light and the clients wait for its end ([`edits`]).
         let batch = world.edits.open();
         let mut out = blocks::BlockOut { unlit: batch.then(Vec::new), ..Default::default() };
