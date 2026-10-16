@@ -402,6 +402,11 @@ impl Sim {
             });
             return true;
         }
+        // `BlockInput.place`: changed only if what the block entity saves differs from before (the new data may only
+        // repeat what it has: its defaults are not in the data given).
+        if self.dims[dim].regions.chunk(chunk_pos).and_then(|c| c.block_entity(lx, y, lz)) == Some(&old) {
+            return false;
+        }
         if self.world.defer_be_packet {
             return true;
         }
@@ -1412,11 +1417,6 @@ impl Host for Sim {
             .collect();
         let input = kiln_blocks::commands::BlockInput { state: block.state, defined };
         let (state_changed, held) = self.with_level_held(dim, pos, block.nbt.is_some(), |level| input.place(level, at, flags.0)).unwrap_or((false, Vec::new()));
-        // `BlockInput.place` loads the data only after `setBlock` changed the block: the same block again fails, data or not.
-        if !state_changed {
-            self.send_held_changes(dim, pos, held);
-            return false;
-        }
         self.world.defer_be_packet = held.contains(&pos);
         let loaded = self.load_nbt(dim, pos, block.nbt.as_ref());
         self.world.defer_be_packet = false;
