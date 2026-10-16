@@ -15,7 +15,7 @@ setsid nohup java -Xmx1500m -XX:+UseG1GC --enable-native-access=ALL-UNNAMED --ad
   -Djava.library.path=$G/natives/java -Djna.tmpdir=$G/natives/jna \
   -Dorg.lwjgl.system.SharedLibraryExtractPath=$G/natives/lwjgl -Dio.netty.native.workdir=$G/natives/netty \
   -cp "$(cat ~/mc-client/classpath.txt)" net.minecraft.client.main.Main \
-  --username Obs --version 26.3 --gameDir $G --assetsDir ~/mc-client/assets --assetIndex 34 \
+  --username ${OBS_NAME:-Obs} --version 26.3 --gameDir $G --assetsDir ~/mc-client/assets --assetIndex 34 \
   --uuid 00000000000000000000000000000001 --accessToken 0 --userType legacy --versionType release \
   --width 480 --height 270 --quickPlayMultiplayer localhost:${KILN_CLIENT_PORT:-25589} > $G/stdout.log 2>&1 < /dev/null &
 echo started observer

@@ -2,7 +2,7 @@
 from p68 import *
 import sys
 
-a = C(25999)
+a = C(int(os.environ.get("KILN_AGENT_PORT", "25999")))
 scenario("sulfur")
 ME = "KilnTest"
 
