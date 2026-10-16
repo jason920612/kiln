@@ -61,12 +61,10 @@ def run(binary, name):
         except (TimeoutError, FileNotFoundError):
             if time.time() - t0 > 300:
                 sys.exit("server did not start")
-    for c in ["gamerule random_tick_speed 0", "gamerule spawn_mobs false", "gamerule advance_time false", "gamerule advance_weather false",
+    for c in ["tick freeze", "gamerule random_tick_speed 0", "gamerule spawn_mobs false", "gamerule advance_time false", "gamerule advance_weather false",
               "difficulty peaceful"] + [f"forceload add {a} {b} {c} {d}" for a, b, c, d in AREAS]:
         s.send(c)
-    time.sleep(25)
-    s.send("tick freeze")
-    time.sleep(2)
+    time.sleep(30)
     cmds = []
     for _, setup, cmd, _ in bench70.CASES:
         if cmd.startswith("place") or "summon" in cmd or "@e" in cmd or "kill" in cmd or "tp_each" in cmd:
