@@ -1423,7 +1423,11 @@ pub fn spawn_golem_if_needed(cx: &mut Cx, min: usize) {
     // The brain is out of the mob while it ticks: this villager's memories are in `cx.b`.
     let slept = cx.b.mem.long(Mem::LastSlept);
     let me = slept.is_some_and(|t| now - t < 24000) && !cx.b.mem.has(Mem::GolemDetectedRecently);
+    let dbg = std::env::var_os("KILN_GOLEM_DEBUG").is_some();
     if !me {
+        if dbg {
+            eprintln!("GOLEM t={now} id={} not_me slept={slept:?} detected={}", cx.e.id, cx.b.mem.has(Mem::GolemDetectedRecently));
+        }
         return;
     }
     let area = cx.e.bounding_box().inflate(10.0, 10.0, 10.0);
@@ -1435,10 +1439,19 @@ pub fn spawn_golem_if_needed(cx: &mut Cx, min: usize) {
     }
     wanting.truncate(5);
     if wanting.len() < min {
+        if dbg {
+            eprintln!("GOLEM t={now} id={} wanting={} < {min}", cx.e.id, wanting.len());
+        }
         return;
     }
     if !try_spawn_iron_golem(cx) {
+        if dbg {
+            eprintln!("GOLEM t={now} id={} placement failed (wanting {})", cx.e.id, wanting.len());
+        }
         return;
+    }
+    if dbg {
+        eprintln!("GOLEM t={now} id={} spawned (wanting {})", cx.e.id, wanting.len());
     }
     for id in wanting {
         if id == cx.e.id {
