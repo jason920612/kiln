@@ -13,14 +13,14 @@ fn a_hydrated_dried_ghast_hatches_a_baby_happy_ghast_facing_the_way_it_faced() {
     let (msg, stats) = join(1, "User", 2);
     assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
     let mut client = Client::new(1, stats);
-    let mut tick = |sim: &mut Sim, n: usize| {
+    fn tick(sim: &mut Sim, client: &mut Client, n: usize) {
         for _ in 0..n {
             let mut inbox = Vec::new();
             client.tick(None, &mut inbox);
             assert!(sim.step(inbox));
         }
-    };
-    tick(&mut sim, 5);
+    }
+    tick(&mut sim, &mut client, 5);
     let p = client.pos;
     let (x, y, z) = (p[0].floor() as i32 + 3, p[1].floor() as i32, p[2].floor() as i32);
     assert!(sim.step([
@@ -30,7 +30,7 @@ fn a_hydrated_dried_ghast_hatches_a_baby_happy_ghast_facing_the_way_it_faced() {
     assert_ne!(sim.block_at(x, y, z), Some(d::AIR));
     // A random tick schedules the next step 5000 ticks ahead; the step at hydration 3 hatches it.
     for _ in 0..70 {
-        tick(&mut sim, 100);
+        tick(&mut sim, &mut client, 100);
         if sim.block_at(x, y, z) != sim.block_at(x, y + 10, z) && sim.entity_ids_of("minecraft:happy_ghast").len() == 1 {
             break;
         }
