@@ -17,7 +17,7 @@ IFS=';' read -ra pre <<< "${SETUP:-}"
 for l in "${pre[@]}"; do echo "$l" > $c; sleep 1; done
 sleep 20
 pid=$(pgrep -x kiln-run70)
-sudo -n perf record -F ${FREQ:-999} --call-graph dwarf,16384 -p "$pid" -o ~/wp70/$name.data -- sleep "$secs" > /dev/null 2>&1 &
+sudo -n perf record -F ${FREQ:-999} --call-graph ${CG:-dwarf,16384} -p "$pid" -o ~/wp70/$name.data -- sleep "$secs" > /dev/null 2>&1 &
 perfpid=$!
 sleep 1
 # ALT: a second command; the two take turns while recording (each run changes the blocks again)
@@ -32,6 +32,6 @@ wait $perfpid
 pkill -f "name-prefix Bench --report-interval 3600" 2>/dev/null
 sudo -n chown test ~/wp70/$name.data
 perf report -i ~/wp70/$name.data --comm sim --no-children --percent-limit 0.7 --stdio -g none 2>/dev/null | grep -v "^#" | grep -v "^$" | head -50 > ~/wp70/$name.txt
-perf report -i ~/wp70/$name.data --comm sim --children --percent-limit 3 --stdio -g none 2>/dev/null | grep -v "^#" | grep -v "^$" | grep -v "(inlined)" | head -70 >> ~/wp70/$name.txt
+perf report -i ~/wp70/$name.data --comm sim --children --percent-limit 1.5 --stdio -g none 2>/dev/null | grep -v "^#" | grep -v "^$" | head -100 >> ~/wp70/$name.txt
 grep -n "slow tick\|mspt" ~/wp70/K/server.log | tail -3 >> ~/wp70/$name.txt
 echo done >> ~/wp70/$name.txt
