@@ -43,6 +43,7 @@ fn a_player_pushed_by_a_blast_gets_the_knockback_in_the_explosion_packet_and_no_
             id if id == kiln_data::packets::play::clientbound::SET_ENTITY_MOTION => {
                 if r.varint().unwrap() == me {
                     motions += 1;
+                    eprintln!("motion packet {:?}", pkt);
                 }
             }
             _ => {}
