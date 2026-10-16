@@ -86,6 +86,17 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
         } else {
             assert!(sim.step([]));
         }
+        // `FARM_TRACE=from,to`: where the villagers of the first pens are, every 20 ticks of the day between.
+        if let Some((from, to)) = std::env::var("FARM_TRACE").ok().and_then(|v| v.split_once(',').map(|(a, b)| (a.parse::<i64>().unwrap(), b.parse::<i64>().unwrap()))) {
+            let dt = sim.day_time() % 24000;
+            if (from..to).contains(&dt) && dt % 20 == 0 {
+                for (id, kind, pos, _) in sim.mobs() {
+                    if (kind == "minecraft:villager" || kind == "minecraft:zombie") && pos[2] < 12.0 {
+                        println!("TRACE {} {dt} {id} {} {:.2} {:.2} {:.2}", sim.game_time(), kind.trim_start_matches("minecraft:"), pos[0], pos[1], pos[2]);
+                    }
+                }
+            }
+        }
         for (id, kind, pos, _) in sim.mobs() {
             if kind == "minecraft:iron_golem" && seen.insert(id) {
                 log.push((sim.game_time(), sim.day_time(), pos));
