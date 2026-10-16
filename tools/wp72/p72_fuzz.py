@@ -43,11 +43,20 @@ def dump(c):
     return set(json.loads(c.cmd(f"boxdump {X0} {Y0} {Z0} {X0 + W - 1} {Y0 + H} {Z0 + D - 1}")))
 
 
+def census(c):
+    """Counts of the entities of the box by type (positions are not compared: the level random moves items and falling blocks)."""
+    out = {}
+    for e in c.state(30)["entities"]:
+        if X0 - 2 <= e["x"] <= X0 + W + 2 and Y0 - 2 <= e["y"] <= Y0 + H + 40 and Z0 - 2 <= e["z"] <= Z0 + D + 2 and e["t"] != "player":
+            out[e["t"]] = out.get(e["t"], 0) + 1
+    return tuple(sorted(out.items()))
+
+
 def stable_dump(c, tries=12):
-    prev = dump(c)
+    prev = (dump(c), census(c))
     for _ in range(tries):
         time.sleep(0.12)
-        cur = dump(c)
+        cur = (dump(c), census(c))
         if cur == prev:
             return cur
         prev = cur
@@ -66,6 +75,10 @@ def gen(rng, palette):
                  ("stone", 2), ("obsidian", 1), ("glass", 1), ("redstone_wire", 2), ("lever", 1), ("redstone_torch", 1)],
         "qc": [("piston", 4), ("sticky_piston", 3), ("dropper", 3), ("dispenser", 2), ("redstone_wire", 6), ("redstone_block", 2), ("stone", 4),
                ("redstone_torch", 3), ("repeater", 2), ("lever", 2), ("redstone_lamp", 1), ("observer", 1)],
+        "dupe": [("piston", 4), ("sticky_piston", 4), ("slime_block", 3), ("honey_block", 1), ("sand", 3), ("gravel", 1), ("rail", 2),
+                 ("powered_rail", 2), ("activator_rail", 1), ("white_carpet", 2), ("tnt", 1), ("redstone_block", 2), ("observer", 4),
+                 ("redstone_torch", 2), ("hopper", 1), ("chest", 1), ("stone", 2), ("glass", 1), ("lever", 1), ("redstone_wire", 2),
+                 ("oak_trapdoor", 1), ("ladder", 1), ("torch", 1), ("flower_pot", 1), ("dirt", 1)],
         "rep": [("repeater", 8), ("comparator", 5), ("redstone_wire", 6), ("redstone_torch", 4), ("stone", 3), ("redstone_block", 1),
                 ("lever", 2), ("redstone_lamp", 2), ("observer", 2), ("target", 1)],
     }[palette]
@@ -80,6 +93,12 @@ def gen(rng, palette):
             st = f"comparator[facing={f},mode={rng.choice(['compare', 'subtract'])}]"
         elif k in ("observer", "dropper", "dispenser"):
             st = f"{k}[facing={rng.choice(DIRS6)}]"
+        elif k in ("rail", "powered_rail", "activator_rail"):
+            st = f"{k}[shape={rng.choice(['north_south', 'east_west'])}]"
+        elif k == "ladder":
+            st = f"ladder[facing={f}]"
+        elif k == "oak_trapdoor":
+            st = f"oak_trapdoor[facing={f},half={rng.choice(['top', 'bottom'])},open={rng.choice(['true', 'false'])}]"
         elif k in ("piston", "sticky_piston"):
             st = f"{k}[facing={rng.choice(DIRS6)}]"
         elif k == "hopper":
@@ -127,7 +146,7 @@ def run_case(seed, palette, cmds=None):
             first = kd
         ACT[0] += kd != first
         if kd != vd:
-            diffs.append((t, sorted(kd - vd), sorted(vd - kd)))
+            diffs.append((t, sorted(kd[0] - vd[0]) + [f"ents {kd[1]}"], sorted(vd[0] - kd[0]) + [f"ents {vd[1]}"]))
             break
     return cmds, diffs
 
