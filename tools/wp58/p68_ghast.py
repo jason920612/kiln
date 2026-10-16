@@ -3,7 +3,8 @@ two players, steering, dismount, lead; Kiln (TARGET=K) vs vanilla (TARGET=V)."""
 from p68 import *
 import sys
 
-a, b = two()
+a = C(int(os.environ.get("KILN_AGENT_PORT", "25999")))
+b = None if os.environ.get("SPLIT") else C(26000)
 scenario("ghast")
 
 

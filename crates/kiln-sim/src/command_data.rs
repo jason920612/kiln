@@ -1428,8 +1428,27 @@ fn mob_equipment_index(slot: i32) -> Option<usize> {
     })
 }
 
+/// The `EquipmentSlot` ordinal of the slots only some mobs have (`armor.body` is `BODY`, `saddle` is `SADDLE`): a horse's
+/// armour and saddle, a nautilus', a camel's, a happy ghast's harness - kept by the type, not in `equipment`.
+fn mob_extra_ordinal(slot: i32) -> Option<u8> {
+    match slot {
+        105 => Some(6),
+        106 => Some(7),
+        _ => None,
+    }
+}
+
 fn mob_slot(m: &kiln_entity::mob::MobData, slot: i32) -> Option<kiln_item::ItemStack> {
-    Some(m.equipment[mob_equipment_index(slot)?].clone())
+    if let Some(i) = mob_equipment_index(slot) {
+        return Some(m.equipment[i].clone());
+    }
+    // (The slot exists when the type takes an item in it; an empty one is not listed, so ask by trying on a copy.)
+    let ord = mob_extra_ordinal(slot)?;
+    let kind = m.kind.ext()?;
+    if !kind.set_extra_equipment(&mut m.clone(), ord, kiln_item::ItemStack::empty()) {
+        return None;
+    }
+    Some(kind.extra_equipment(m).into_iter().find(|(o, _)| *o == ord).map(|(_, s)| s).unwrap_or_else(kiln_item::ItemStack::empty))
 }
 
 fn set_mob_slot(m: &mut kiln_entity::mob::MobData, slot: i32, stack: kiln_item::ItemStack) -> bool {
@@ -1438,7 +1457,10 @@ fn set_mob_slot(m: &mut kiln_entity::mob::MobData, slot: i32, stack: kiln_item::
             m.equipment[i] = stack;
             true
         }
-        None => false,
+        None => match (mob_extra_ordinal(slot), m.kind.ext()) {
+            (Some(ord), Some(kind)) => kind.set_extra_equipment(m, ord, stack),
+            _ => false,
+        },
     }
 }
 
