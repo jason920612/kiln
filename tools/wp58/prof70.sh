@@ -17,7 +17,7 @@ pid=$(pgrep -x kiln-run70)
 sudo -n perf record -F 499 --call-graph dwarf,32768 -p "$pid" -o ~/wp70/$name.data -- sleep "$secs" > /dev/null 2>&1 &
 sleep 1
 echo "$cmd" > $c
-wait
+wait %1
 "$tools/wp70_servers.sh" K stop
 pkill -f "name-prefix Bench --report-interval 3600" 2>/dev/null
 sudo -n chown test ~/wp70/$name.data
