@@ -210,8 +210,9 @@ fn powering_by_command_reaches_the_client() {
     w.ticks(2);
     let after = w.client.stats.by_id.lock().unwrap().clone();
     let sent = |id: i32| after.get(&id).map_or(0, |a| a.0) - before.get(&id).map_or(0, |b| b.0);
-    // The lever as a Block Update; the eight wires and the lamp in one Section Blocks Update.
-    assert_eq!(sent(kiln_data::packets::play::clientbound::BLOCK_UPDATE), 1);
+    // The lever, the eight wires and the lamp in one Section Blocks Update: vanilla's `ChunkHolder` collects the changes of
+    // the section and sends them together (wp70: a command's changes go out when it is done; the lever went alone before).
+    assert_eq!(sent(kiln_data::packets::play::clientbound::BLOCK_UPDATE), 0);
     assert_eq!(sent(kiln_data::packets::play::clientbound::SECTION_BLOCKS_UPDATE), 1);
 }
 
