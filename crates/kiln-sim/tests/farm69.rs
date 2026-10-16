@@ -121,8 +121,7 @@ fn count_panic(sim: &Sim, panic: &mut Panic, dawn: bool) {
 
 /// `FARM_ARRIVAL`: where the villagers are against the zombie of their pen in the 200 ticks after it comes (the counters of `MobVectors.arrivalSample`):
 /// per 10 ticks (villager-ticks, within 8 blocks of the zombie, moving fast (> 0.15 blocks a tick), panicking).
-static ARRIVAL: std::sync::Mutex<([[u64; 4]; 20], std::collections::HashMap<i32, [f64; 2]>, Option<i64>)> =
-    std::sync::Mutex::new(([[0; 4]; 20], std::collections::HashMap::new(), None));
+static ARRIVAL: std::sync::Mutex<([[u64; 4]; 20], Vec<(i32, [f64; 2])>, Option<i64>)> = std::sync::Mutex::new(([[0; 4]; 20], Vec::new(), None));
 
 fn arrival_sample(sim: &Sim) {
     let mut a = ARRIVAL.lock().unwrap();
@@ -142,7 +141,7 @@ fn arrival_sample(sim: &Sim) {
         for m in mobs.iter().filter(|m| m.1 == "minecraft:villager" && zone(m.2[2])) {
             let panic = sim.mob_brain(m.0).is_some_and(|b| b.iter().any(|x| x == "act:panic"));
             let d2 = (m.2[0] - zombie.2[0]).powi(2) + (m.2[1] - zombie.2[1]).powi(2) + (m.2[2] - zombie.2[2]).powi(2);
-            let fast = a.1.get(&m.0).is_some_and(|p| ((m.2[0] - p[0]).powi(2) + (m.2[2] - p[1]).powi(2)).sqrt() > 0.15);
+            let fast = a.1.iter().find(|p| p.0 == m.0).is_some_and(|p| ((m.2[0] - p.1[0]).powi(2) + (m.2[2] - p.1[1]).powi(2)).sqrt() > 0.15);
             let b = &mut a.0[(t / 10) as usize];
             b[0] += 1;
             b[1] += (d2 <= 64.0) as u64;
