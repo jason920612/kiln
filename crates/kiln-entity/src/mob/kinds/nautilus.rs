@@ -761,7 +761,7 @@ impl Kind for Nautilus {
             if mob::is_alive(e, m) && tame {
                 use kiln_item::component::EquipmentSlot;
                 if st(m).saddle.is_empty() {
-                    let sound = if st(m).under_water { "minecraft:entity.nautilus.saddle_underwater_equip" } else { "minecraft:entity.nautilus.saddle_equip" };
+                    let sound = if st(m).under_water { "minecraft:item.nautilus_saddle_underwater_equip" } else { "minecraft:item.nautilus_saddle_equip" };
                     if let Some(one) = super::steering::equip_on_target(e, level, stack, EquipmentSlot::Saddle, Some(sound)) {
                         let s = st_mut(m);
                         s.saddle = one;

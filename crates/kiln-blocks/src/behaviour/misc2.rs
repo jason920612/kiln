@@ -42,11 +42,11 @@ pub fn turtle_egg_random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     let hatch = state::get_int(s, "hatch");
     let pitch = egg_pitch(level);
     if hatch < 2 {
-        level.effect(Effect::Sound { pos, sound: "minecraft:block.turtle_egg.crack", volume: 0.7, pitch });
+        level.effect(Effect::Sound { pos, sound: "minecraft:entity.turtle.egg_crack", volume: 0.7, pitch });
         set_block(level, pos, state::set_int(s, "hatch", hatch + 1), flags::CLIENTS);
         level.effect(Effect::GameEvent { pos, event: "minecraft:block_change" });
     } else {
-        level.effect(Effect::Sound { pos, sound: "minecraft:block.turtle_egg.hatch", volume: 0.7, pitch });
+        level.effect(Effect::Sound { pos, sound: "minecraft:entity.turtle.egg_hatch", volume: 0.7, pitch });
         remove_block(level, pos, false);
         level.effect(Effect::GameEvent { pos, event: "minecraft:block_destroy" });
         let eggs = state::get_int(s, "eggs");
