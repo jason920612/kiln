@@ -736,7 +736,7 @@ fn place_feature<S: Host>(c: &CommandContext<S>, s: &mut S) -> Result<i32> {
     let dim = s.dimension().to_owned();
     let (cx, cz) = (pos[0] >> 4, pos[2] >> 4);
     check_loaded(s, &dim, [cx - 1, cz - 1], [cx + 1, cz + 1])?;
-    s.place(&dim, &Placement::Feature { id: id.clone(), inline }, pos)?;
+    super::blocks::editing(s, |s| s.place(&dim, &Placement::Feature { id: id.clone(), inline }, pos))?;
     let [x, y, z] = pos;
     let text = match id {
         Some(id) => tr!("commands.place.feature.success", id.to_string(), x, y, z),
@@ -756,7 +756,7 @@ fn place_jigsaw<S: Host>(c: &CommandContext<S>, s: &mut S) -> Result<i32> {
     let pos = place_at(c, s, "position")?;
     let dim = s.dimension().to_owned();
     check_loaded(s, &dim, [pos[0] >> 4, pos[2] >> 4], [pos[0] >> 4, pos[2] >> 4])?;
-    s.place(&dim, &Placement::Jigsaw { pool, target, max_depth }, pos)?;
+    super::blocks::editing(s, |s| s.place(&dim, &Placement::Jigsaw { pool, target, max_depth }, pos))?;
     s.send_success(tr!("commands.place.jigsaw.success", pos[0], pos[1], pos[2]), true);
     Ok(1)
 }
@@ -768,7 +768,7 @@ fn place_structure<S: Host>(c: &CommandContext<S>, s: &mut S) -> Result<i32> {
     }
     let pos = place_at(c, s, "pos")?;
     let dim = s.dimension().to_owned();
-    s.place(&dim, &Placement::Structure(id.clone()), pos)?;
+    super::blocks::editing(s, |s| s.place(&dim, &Placement::Structure(id.clone()), pos))?;
     s.send_success(tr!("commands.place.structure.success", id.to_string(), pos[0], pos[1], pos[2]), true);
     Ok(1)
 }
@@ -792,7 +792,7 @@ fn place_template<S: Host>(c: &CommandContext<S>, s: &mut S, strict: bool) -> Re
     let integrity = if c.has("integrity") { c.float("integrity") } else { 1.0 };
     let seed = if c.has("seed") { c.integer("seed") } else { 0 };
     let dim = s.dimension().to_owned();
-    s.place(&dim, &Placement::Template { id: id.clone(), rotation, mirror, integrity, seed, strict }, pos)?;
+    super::blocks::editing(s, |s| s.place(&dim, &Placement::Template { id: id.clone(), rotation, mirror, integrity, seed, strict }, pos))?;
     s.send_success(tr!("commands.place.template.success", id.to_string(), pos[0], pos[1], pos[2]), true);
     Ok(1)
 }

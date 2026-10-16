@@ -815,7 +815,7 @@ impl Sim {
         stack.max_permission = 2;
         stack.silent = true;
         let saved = std::mem::replace(&mut self.commands.stack, stack.clone());
-        if let Err(e) = kiln_command::vanilla::run_as_server(&dispatcher, self, &f, stack) {
+        if let Err(e) = self.editing(|s| kiln_command::vanilla::run_as_server(&dispatcher, s, &f, stack)) {
             tracing::warn!("Failed to execute function {id}: {}", e.to_plain());
         }
         self.commands.stack = saved;

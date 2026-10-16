@@ -892,22 +892,16 @@ impl Containers {
         let lo = BlockPos::new(pos.x * 16, i32::MIN, pos.z * 16);
         let hi = BlockPos::new(pos.x * 16 + 15, i32::MAX, pos.z * 16 + 15);
         for (p, c) in self.map.range_mut(lo..=hi) {
-            // (A jukebox's song advances without `setChanged`: it is saved as it stands.)
-            let playing = c.kind == BeKind::Jukebox && c.song.is_some();
-            if !(c.dirty || playing) || chunk_of(*p) != pos {
-                continue;
+            if chunk_of(*p) == pos {
+                store_one(*p, c, chunk);
             }
-            c.dirty = false;
-            let (x, z) = ((p.x & 15) as usize, (p.z & 15) as usize);
-            let Some(old) = chunk.block_entity(x, p.y, z) else { continue };
-            if old.kind != c.type_id {
-                continue;
-            }
-            let mut be = BlockEntity::new(c.type_id);
-            if let Tag::Compound(fields) = c.chunk_tag() {
-                be.merge_fields(fields);
-            }
-            chunk.set_block_entity(x, p.y, z, be);
+        }
+    }
+
+    /// [`Containers::store`] for the container at `p` alone.
+    pub fn store_at(&mut self, p: BlockPos, chunk: &mut Chunk) {
+        if let Some(c) = self.map.get_mut(&p) {
+            store_one(p, c, chunk);
         }
     }
 
@@ -1309,4 +1303,24 @@ mod tests {
         // 2/5 full: floor(0.4 * 14) + 1 = 6.
         assert_eq!(signal_from_items(hopper.iter(), 5), 6);
     }
+}
+
+/// Writes the container at `p` into its chunk's NBT if it changed.
+fn store_one(p: BlockPos, c: &mut ContainerBe, chunk: &mut Chunk) {
+    // (A jukebox's song advances without `setChanged`: it is saved as it stands.)
+    let playing = c.kind == BeKind::Jukebox && c.song.is_some();
+    if !(c.dirty || playing) {
+        return;
+    }
+    c.dirty = false;
+    let (x, z) = ((p.x & 15) as usize, (p.z & 15) as usize);
+    let Some(old) = chunk.block_entity(x, p.y, z) else { return };
+    if old.kind != c.type_id {
+        return;
+    }
+    let mut be = BlockEntity::new(c.type_id);
+    if let Tag::Compound(fields) = c.chunk_tag() {
+        be.merge_fields(fields);
+    }
+    chunk.set_block_entity(x, p.y, z, be);
 }

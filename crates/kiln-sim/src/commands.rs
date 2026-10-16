@@ -337,8 +337,9 @@ impl Sim {
         if let Some(region) = self.dims[dim].regions.at_mut(chunk_pos.cell()) {
             let (cells, part) = region.cells_and_part_mut();
             if let Some(chunk) = cells.chunk_mut(chunk_pos) {
-                part.1.containers.store(chunk_pos, chunk);
-                part.1.spawners.store(chunk_pos, chunk);
+                let at = kiln_blocks::BlockPos::new(x, y, z);
+                part.1.containers.store_at(at, chunk);
+                part.1.spawners.store_at(at, chunk);
             }
         }
         let Some(chunk) = self.dims[dim].regions.chunk_mut(chunk_pos) else { return false };
@@ -400,6 +401,11 @@ impl Sim {
                 }
             });
             return true;
+        }
+        // `BlockInput.place`: changed only if what the block entity saves differs from before (the new data may only
+        // repeat what it has: its defaults are not in the data given).
+        if self.dims[dim].regions.chunk(chunk_pos).and_then(|c| c.block_entity(lx, y, lz)) == Some(&old) {
+            return false;
         }
         if self.world.defer_be_packet {
             return true;
@@ -469,7 +475,8 @@ impl Sim {
         let previous = std::mem::replace(&mut self.commands.source, source);
         let start = self.source_stack(source);
             let stack = std::mem::replace(&mut self.commands.stack, start);
-        if let Err(e) = dispatcher.execute(command, self) {
+        // (Its block edits go out together at its end, [`crate::edits`].)
+        if let Err(e) = self.editing(|s| dispatcher.execute(command, s)) {
             for line in e.chat_lines(command) {
                 self.reply(line);
             }
@@ -1197,7 +1204,7 @@ impl Host for Sim {
     }
 
     fn game_rule(&self, rule: &str) -> GameRuleValue {
-        self.commands.game_rules.get(rule).copied().unwrap_or(match kiln_data::game_rule_default(rule) {
+        self.commands.game_rules.get(rule).copied().unwrap_or_else(|| match kiln_data::game_rule_default(rule) {
             Some(kiln_data::GameRuleDefault::Int(v)) => GameRuleValue::Int(v),
             Some(kiln_data::GameRuleDefault::Bool(b)) => GameRuleValue::Bool(b),
             None => GameRuleValue::Bool(false),
@@ -1368,17 +1375,20 @@ impl Host for Sim {
     fn block_entity(&mut self, dimension: &str, pos: [i32; 3]) -> Option<Tag> {
         let [x, y, z] = pos;
         let dim = crate::dim_id(dimension)?;
+        let (cp, lx, lz) = (ChunkPos::of_block(x, z), (x & 15) as usize, (z & 15) as usize);
+        self.dims[dim].regions.chunk(cp)?.block_entity(lx, y, lz)?;
         // A live container writes its state into the chunk first.
-        if let Some(region) = self.dims[dim].regions.at_mut(ChunkPos::of_block(x, z).cell()) {
+        if let Some(region) = self.dims[dim].regions.at_mut(cp.cell()) {
             let (cells, part) = region.cells_and_part_mut();
-            if let Some(chunk) = cells.chunk_mut(ChunkPos::of_block(x, z)) {
-                part.1.containers.store(ChunkPos::of_block(x, z), chunk);
-                part.1.spawners.store(ChunkPos::of_block(x, z), chunk);
-                part.1.gateways.store(ChunkPos::of_block(x, z), chunk);
+            if let Some(chunk) = cells.chunk_mut(cp) {
+                let at = kiln_blocks::BlockPos::new(x, y, z);
+                part.1.containers.store_at(at, chunk);
+                part.1.spawners.store_at(at, chunk);
+                part.1.gateways.store_at(at, chunk);
             }
         }
-        let chunk = self.dims[dim].regions.chunk(ChunkPos::of_block(x, z))?;
-        chunk.block_entity((x & 15) as usize, y, (z & 15) as usize).map(|be| be.saved(pos))
+        let chunk = self.dims[dim].regions.chunk(cp)?;
+        chunk.block_entity(lx, y, lz).map(|be| be.saved(pos))
     }
 
     /// `Level.setBlock` with the given flags; block entity data then replaces the block
@@ -1418,6 +1428,14 @@ impl Host for Sim {
         let at = block_pos(pos);
         let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
         self.with_level_in(dim, pos, |level| kiln_blocks::commands::update_neighbours_on_block_set(level, at, old));
+    }
+
+    fn begin_block_edits(&mut self) {
+        self.begin_edits(true);
+    }
+
+    fn end_block_edits(&mut self) {
+        self.end_edits(true);
     }
 
     fn destroy_block(&mut self, dimension: &str, pos: [i32; 3], drop: bool) -> bool {

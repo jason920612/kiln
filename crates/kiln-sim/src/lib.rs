@@ -22,6 +22,7 @@
 
 mod advancements;
 mod blocks;
+mod edits;
 mod combat;
 mod melee;
 mod command_data;
@@ -2060,6 +2061,13 @@ impl Sim {
         self.dims[OVERWORLD_ID].regions.get_block(x, y, z)
     }
 
+    /// Block and sky light at a position in the overworld, if its chunk is loaded (for tests).
+    pub fn light_at(&self, x: i32, y: i32, z: i32) -> Option<(u8, u8)> {
+        use kiln_world::chunk::LightLayer;
+        let r = &self.dims[OVERWORLD_ID].regions;
+        Some((r.light_at(LightLayer::Block, x, y, z)?, r.light_at(LightLayer::Sky, x, y, z)?))
+    }
+
     /// The state of the random tick position generator (`Level.randValue`) of the overworld cell
     /// that holds chunk `cx`, `cz`, once a chunk of it has had random ticks (for tests).
     pub fn random_tick_state(&self, cx: i32, cz: i32) -> Option<i32> {
@@ -2633,22 +2641,43 @@ impl Sim {
     /// has more to do to the blocks (data to load) and sends them once afterwards (a `ChunkHolder` sends what a block has when the
     /// tick's changes go out, not in between).
     pub(crate) fn with_level_held<R>(&mut self, dim: DimId, pos: [i32; 3], hold: bool, f: impl FnOnce(&mut blocks::RegionLevel) -> R) -> Option<(R, Vec<[i32; 3]>)> {
-        let env = self.block_env(dim);
-        let Sim { dims, players, .. } = self;
+        let env = self.take_block_env(dim);
+        let r = self.with_level_env(dim, pos, hold, &env, f);
+        self.return_block_env(dim, env);
+        r
+    }
+
+    fn with_level_env<R>(
+        &mut self,
+        dim: DimId,
+        pos: [i32; 3],
+        hold: bool,
+        env: &blocks::BlockEnv,
+        f: impl FnOnce(&mut blocks::RegionLevel) -> R,
+    ) -> Option<(R, Vec<[i32; 3]>)> {
+        let Sim { dims, players, world, .. } = self;
         let d = &mut dims[dim];
         let region = d.regions.at_mut(ChunkPos::of_block(pos[0], pos[2]).cell())?;
         let id = region.id();
         let (cells, part) = region.cells_and_part_mut();
-        let bodies = blocks::entity_boxes(players.values().filter(|p| p.dim == dim && p.region == id), &part.0);
-        let mut out = blocks::BlockOut::default();
+        let entities = &part.0;
+        let all = &*players;
+        let make = move || blocks::entity_boxes(all.values().filter(|p| p.dim == dim && p.region == id), entities);
+        let made = std::sync::OnceLock::new();
+        // In a batch of edits the light and the clients wait for its end ([`edits`]).
+        let batch = world.edits.open();
+        let mut out = blocks::BlockOut { unlit: batch.then(Vec::new), ..Default::default() };
         let result = {
             let mut level =
-                blocks::RegionLevel { cells: &mut *cells, blocks: &mut part.1, env: &env, out: &mut out, bodies: &bodies, actor: None };
+                blocks::RegionLevel { cells: &mut *cells, blocks: &mut part.1, env, out: &mut out, bodies: blocks::Bodies::Later(&made, &make), actor: None };
             f(&mut level)
         };
         let held = if hold { std::mem::take(&mut out.changed) } else { Vec::new() };
+        if batch {
+            world.edits.add(dim, &mut out.changed, out.unlit.take());
+        }
         let mut everyone: Vec<&mut Player> = players.values_mut().filter(|p| p.dim == dim).collect();
-        blocks::finish(cells, out, &mut everyone, &mut d.spawns, &env);
+        blocks::finish(cells, out, &mut everyone, &mut d.spawns, env);
         Some((result, held))
     }
 

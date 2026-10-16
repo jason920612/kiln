@@ -542,6 +542,9 @@ pub(crate) struct BlockOut {
     pub edits: u64,
     /// What dispensers did to living things in front of them.
     pub dispenses: Vec<DispenseOp>,
+    /// While set, blocks change without their light and the positions whose light may change
+    /// come here (the light of a batch of command edits is worked out at its end, [`crate::edits`]).
+    pub unlit: Option<Vec<[i32; 3]>>,
 }
 
 /// A block entity's effect on the players whose box meets `min..max`.
@@ -554,13 +557,43 @@ pub(crate) enum PlayerFx {
     CrafterCrafted { min: [f64; 3], max: [f64; 3], recipe: String, ingredients: Vec<kiln_item::ItemStack> },
 }
 
+/// The entity boxes block work sees: made beforehand, or made when first looked at (block
+/// commands: most block work never looks, and a region may hold thousands of entities).
+#[derive(Clone, Copy)]
+pub(crate) enum Bodies<'a> {
+    Made(&'a [EntityBox]),
+    Later(&'a std::sync::OnceLock<Vec<EntityBox>>, &'a (dyn Fn() -> Vec<EntityBox> + Sync)),
+}
+
+impl<'a> From<&'a Vec<EntityBox>> for Bodies<'a> {
+    fn from(b: &'a Vec<EntityBox>) -> Self {
+        Bodies::Made(b)
+    }
+}
+
+impl<'a> From<&'a [EntityBox]> for Bodies<'a> {
+    fn from(b: &'a [EntityBox]) -> Self {
+        Bodies::Made(b)
+    }
+}
+
+impl std::ops::Deref for Bodies<'_> {
+    type Target = [EntityBox];
+    fn deref(&self) -> &[EntityBox] {
+        match *self {
+            Bodies::Made(b) => b,
+            Bodies::Later(made, make) => made.get_or_init(make),
+        }
+    }
+}
+
 /// A region's cells and block machinery as kiln-blocks' [`Level`].
 pub(crate) struct RegionLevel<'a> {
     pub cells: &'a mut CellSet<Cell>,
     pub blocks: &'a mut RegionBlocks,
     pub env: &'a BlockEnv,
     pub out: &'a mut BlockOut,
-    pub bodies: &'a [EntityBox],
+    pub bodies: Bodies<'a>,
     /// The player acting (effects the client shows itself skip it).
     pub actor: Option<ConnId>,
 }
@@ -595,7 +628,16 @@ impl Level for RegionLevel<'_> {
     }
 
     fn set_raw(&mut self, pos: BlockPos, state: u16, flags: u32) -> Option<u16> {
-        let old = self.cells.set_block(pos.x, pos.y, pos.z, state)?;
+        let old = match self.out.unlit.as_mut() {
+            Some(unlit) => {
+                let old = self.cells.set_block_unlit(pos.x, pos.y, pos.z, state)?;
+                if old != state && kiln_world::light::affects_light(old, state) {
+                    unlit.push([pos.x, pos.y, pos.z]);
+                }
+                old
+            }
+            None => self.cells.set_block(pos.x, pos.y, pos.z, state)?,
+        };
         if old == state {
             return None;
         }
@@ -1223,7 +1265,7 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
     // in sections without any and skip the block lookups.
     let mut may_have: crate::FastMap<(i32, i32, i32), bool> = Default::default();
     let min_y = level.env.min_y;
-    for b in level.bodies {
+    for b in level.bodies.iter() {
         let lo = [b.min[0] + 1e-5, b.min[1] + 1e-5, b.min[2] + 1e-5].map(|c| c.floor() as i32);
         let hi = [b.max[0] - 1e-5, b.max[1] - 1e-5, b.max[2] - 1e-5].map(|c| c.floor() as i32);
         let mut any = false;
@@ -1749,14 +1791,17 @@ pub(crate) fn send_changes(cells: &CellSet<Cell>, changed: &[[i32; 3]], players:
     if changed.is_empty() {
         return;
     }
-    let mut sections: BTreeMap<[i32; 3], Vec<[i32; 3]>> = BTreeMap::new();
+    // Each section's positions in the order first changed, and which of its 4096 it has.
+    let mut sections: BTreeMap<[i32; 3], (Vec<[i32; 3]>, [u64; 64])> = BTreeMap::new();
     for &p in changed {
-        let s = sections.entry([p[0] >> 4, p[1] >> 4, p[2] >> 4]).or_default();
-        if !s.contains(&p) {
+        let (s, seen) = sections.entry([p[0] >> 4, p[1] >> 4, p[2] >> 4]).or_insert_with(|| (Vec::new(), [0; 64]));
+        let i = ((p[1] & 15) << 8 | (p[2] & 15) << 4 | (p[0] & 15)) as usize;
+        if seen[i >> 6] & (1 << (i & 63)) == 0 {
+            seen[i >> 6] |= 1 << (i & 63);
             s.push(p);
         }
     }
-    for (section, positions) in sections {
+    for (section, (positions, _)) in sections {
         let chunk = ChunkPos::new(section[0], section[2]);
         if !players.iter().any(|p| p.sent_chunks.contains(&chunk)) {
             continue;

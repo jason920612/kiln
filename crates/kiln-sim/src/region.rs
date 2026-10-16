@@ -163,7 +163,7 @@ impl RegionWork<'_> {
             // `ServerboundPlayerActionPacket.Action.STAB`: a spear's piercing attack.
             if let PlayIn::PlayerAction { action: STAB, .. } = pkt {
                 if !self.players[i].dead {
-                    let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                    let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
                     crate::spear::piercing_attack(self.entities, &mut level, &mut self.players, i, &mut self.out.spawns, &mut self.out.deaths);
                 }
                 continue;
@@ -180,7 +180,7 @@ impl RegionWork<'_> {
                         blocks: &mut *self.blocks,
                         env: &env.blocks,
                         out: &mut out,
-                        bodies: &bodies,
+                        bodies: (&bodies).into(),
                         actor: None,
                     };
                     crate::combat::handle_attack(self.entities, &mut level, &mut self.players, i, entity_id, &mut self.out.spawns, &mut self.out.deaths);
@@ -200,7 +200,7 @@ impl RegionWork<'_> {
             if let PlayIn::UseItem { hand, sequence, .. } = pkt
                 && self.rod_use(conn, &pkt)
             {
-                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
                 let off = hand == kiln_proto::packets::serverbound::Hand::Off;
                 crate::fishing::use_rod(self.entities, &mut level, &mut self.players, i, off, &mut self.out.spawns);
                 let p = &mut *self.players[i];
@@ -211,7 +211,7 @@ impl RegionWork<'_> {
             if let PlayIn::UseItem { hand, sequence, .. } = pkt
                 && self.stick_use(conn, &pkt)
             {
-                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
                 let off = hand == kiln_proto::packets::serverbound::Hand::Off;
                 crate::steer::use_stick(self.entities, &mut level, &mut self.players, i, off, &mut self.out.spawns, &mut self.out.deaths);
                 let p = &mut *self.players[i];
@@ -232,7 +232,7 @@ impl RegionWork<'_> {
                 if let Some(vehicle) = self.players[i].vehicle
                     && !self.players[i].dead
                 {
-                    let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                    let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
                     crate::carts::open_ridden(self.entities, &mut level, self.players[i], vehicle, &mut self.out.spawns);
                 }
                 continue;
@@ -257,7 +257,7 @@ impl RegionWork<'_> {
                 if sneaking != p.sneaking {
                     p.sneaking = sneaking;
                 }
-                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
                 let off = hand == kiln_proto::packets::serverbound::Hand::Off;
                 let open = entities::interact_mob(self.entities, &mut level, &mut self.players, i, entity_id, off, location, &mut self.out.spawns, &mut self.out.deaths);
                 if open {
@@ -271,7 +271,7 @@ impl RegionWork<'_> {
                 && crate::leash::intercepts(self.players[i], &*self.cells, &env.blocks, hand, pos, face, cursor)
             {
                 let mut level =
-                    RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: Some(conn) };
+                    RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: Some(conn) };
                 if crate::leash::bind(self.entities, &mut level, &mut self.players, i, pos, &mut self.out.spawns, &mut self.out.deaths) {
                     let p = &mut *self.players[i];
                     // `LeadItem.useOn` succeeds on the server: the arm swings.
@@ -291,7 +291,7 @@ impl RegionWork<'_> {
                 && crate::sleep::intercepts(self.players[i], &*self.cells, &env.blocks, pos, face, cursor)
             {
                 let mut level =
-                    RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: Some(conn) };
+                    RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: Some(conn) };
                 crate::sleep::use_item_on(self.entities, &mut level, &mut self.players, i, pos, face, &mut self.out.spawns, &mut self.out.deaths);
                 let p = &mut *self.players[i];
                 p.ack_block_changes = p.ack_block_changes.max(sequence);
@@ -305,7 +305,7 @@ impl RegionWork<'_> {
             local_packet(self.players[i], &mut world, env, pkt, &mut fx);
             crate::carts::push(self.entities, self.players[i], cart);
             if !self.players[i].merchant_events.is_empty() {
-                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
                 crate::trading::apply_events(self.entities, &mut level, &mut self.players, i, &mut self.out.spawns, &mut self.out.deaths);
             }
         }
@@ -325,7 +325,7 @@ impl RegionWork<'_> {
         }
         let bodies = Vec::new();
         let mut out = BlockOut::default();
-        let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+        let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
         for p in self.players.iter_mut() {
             if let Some(at) = p.containers.cart_closed.take() {
                 p.post_container_close(&mut level, at);
@@ -355,7 +355,7 @@ impl RegionWork<'_> {
                         blocks: &mut *self.blocks,
                         env: &env.blocks,
                         out: &mut out,
-                        bodies: &bodies,
+                        bodies: (&bodies).into(),
                         actor: None,
                     };
                     crate::combat::spin_attack(self.entities, &mut level, &mut self.players, i, target, &mut self.out.spawns, &mut self.out.deaths);
@@ -378,7 +378,7 @@ impl RegionWork<'_> {
             }
             let bodies = Vec::new();
             let mut out = BlockOut::default();
-            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
             crate::spear::kinetic_attack(self.entities, &mut level, &mut self.players, i, ticks, &mut self.out.spawns, &mut self.out.deaths);
             blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
         }
@@ -393,7 +393,7 @@ impl RegionWork<'_> {
             }
             let bodies = Vec::new();
             let mut out = BlockOut::default();
-            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: Some(self.players[i].conn) };
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: Some(self.players[i].conn) };
             crate::brush::use_tick(&mut *self.players[i], &mut level, ticks, &mut self.out.spawns);
             blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
         }
@@ -495,7 +495,7 @@ impl RegionWork<'_> {
                     blocks: &mut *self.blocks,
                     env: &env.blocks,
                     out: &mut out,
-                    bodies: &bodies,
+                    bodies: (&bodies).into(),
                     actor: None,
                 };
                 for (p, own) in self.players.iter_mut().zip(own) {
@@ -638,7 +638,7 @@ impl RegionWork<'_> {
                 blocks: &mut *self.blocks,
                 env: &env.blocks,
                 out: &mut out,
-                bodies: &bodies,
+                bodies: (&bodies).into(),
                 actor: None,
             };
             for p in self.players.iter_mut().filter(|p| p.digging.is_some() || p.delayed_destroy.is_some()) {
@@ -708,7 +708,7 @@ impl RegionWork<'_> {
         if !self.blocks.initial_mobs.is_empty() {
             let pending = std::mem::take(&mut self.blocks.initial_mobs);
             let mut out = BlockOut::default();
-            let level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &[], actor: None };
+            let level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: crate::blocks::Bodies::Made(&[]), actor: None };
             let dt = Instant::now();
             crate::spawner::initial_mobs(&level, &pending, &mut self.out.spawns);
             crate::diag::lap("e.initial_mobs", dt);
@@ -748,7 +748,7 @@ impl RegionWork<'_> {
                 blocks: &mut *self.blocks,
                 env: &env.blocks,
                 out: &mut out,
-                bodies: &bodies,
+                bodies: (&bodies).into(),
                 actor: None,
             };
             let any_player = self.players.iter().any(|p| p.game_mode != 3);
@@ -775,7 +775,7 @@ impl RegionWork<'_> {
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         let pushes: Vec<crate::entities::piston::Pushed> = {
-            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
             blocks::tick_pistons(&mut level, ticking);
             let mut pushes = Vec::new();
             level.out.effects.retain(|(_, effect)| match effect {
@@ -788,7 +788,7 @@ impl RegionWork<'_> {
             pushes
         };
         if !pushes.is_empty() && (!self.entities.list.is_empty() || !self.players.is_empty()) {
-            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
             crate::entities::piston::push(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &pushes);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
@@ -803,7 +803,7 @@ impl RegionWork<'_> {
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         let pushes: Vec<crate::entities::piston::Pushed> = {
-            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
             blocks::tick_lids(&mut level, ticking);
             let mut pushes = Vec::new();
             level.out.effects.retain(|(_, effect)| match effect {
@@ -816,7 +816,7 @@ impl RegionWork<'_> {
             pushes
         };
         if !pushes.is_empty() && (!self.entities.list.is_empty() || !self.players.is_empty()) {
-            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
             crate::entities::piston::push(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &pushes);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
@@ -838,7 +838,7 @@ impl RegionWork<'_> {
                 blocks: &mut *self.blocks,
                 env: &env.blocks,
                 out: &mut out,
-                bodies: &bodies,
+                bodies: (&bodies).into(),
                 actor: None,
             };
             crate::container::tick_block_entities(&mut level, &mut items, &ticking);
@@ -1066,7 +1066,7 @@ pub(crate) struct Fx<'a> {
 impl World<'_> {
     /// The world as block behaviour sees it, with `actor` acting.
     fn level<'l>(&'l mut self, env: &'l Env, out: &'l mut BlockOut, bodies: &'l [EntityBox], actor: ConnId) -> RegionLevel<'l> {
-        RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out, bodies, actor: Some(actor) }
+        RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out, bodies: bodies.into(), actor: Some(actor) }
     }
 }
 
@@ -1670,7 +1670,7 @@ fn use_on_block(
     let click = [pos[0] as f64 + cursor[0] as f64, pos[1] as f64 + cursor[1] as f64, pos[2] as f64 + cursor[2] as f64];
     let ctx = PlaceContext { hit: bp, face: dir, click, yaw: p.rot[0], pitch: p.rot[1], sneaking: p.sneaking };
     let Some((at, state)) = placement::placement(level, &item, &ctx) else { return false };
-    if obstructed(p, level.bodies, at, state) {
+    if obstructed(p, &level.bodies, at, state) {
         return false;
     }
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };

@@ -512,6 +512,18 @@ pub trait Blocks: CellStore {
         Some(old)
     }
 
+    /// [`Blocks::set_block`] leaving the light as it was: the caller relights the changes
+    /// later, together ([`Blocks::relight`]).
+    fn set_block_unlit(&mut self, x: i32, y: i32, z: i32, state: u16) -> Option<u16> {
+        self.chunk_mut(ChunkPos::of_block(x, z))?.set((x & 15) as usize, y, (z & 15) as usize, state)
+    }
+
+    /// The light around blocks [`Blocks::set_block_unlit`] changed (only those whose change
+    /// [`light::affects_light`]).
+    fn relight(&mut self, changed: &[[i32; 3]]) {
+        light::update_light_many(self, changed);
+    }
+
     /// Type and update tag of the block entity at a position for a Block Entity Data packet,
     /// if vanilla sends one when that block changes (an empty update tag is an empty compound).
     fn block_entity_data(&self, x: i32, y: i32, z: i32) -> Option<(u16, kiln_proto::nbt::Tag)> {

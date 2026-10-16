@@ -112,17 +112,32 @@ impl Sim {
         let chunk = entities::chunk_of(pos);
 
         self.dims[to].load_chunk(chunk);
-        self.apply_topology();
-        self.update_membership(true);
+        // (Who sees whom across regions needs looking at only if regions or players' regions changed.)
+        let changed = self.apply_topology();
+        self.update_membership(changed);
         let stack = self.stack_of(from, id);
         let now = self.game_time;
-        // Out of whatever regions they are in...
+        // An entity alone that stays in its region is moved where it is: the same as taking it out
+        // and putting it back in id order.
+        if stack.entities == [id] && stack.players.is_empty() {
+            let list = self.dims[to].regions.at_mut(chunk.cell()).map(|r| &mut r.part_mut().0.list);
+            if let Some(e) = list.and_then(|l| l.binary_search_by_key(&id, |e| e.id).ok().map(|i| &mut l[i])) {
+                e.relocate(pos, rot);
+                let gone = vec![(e.id, e.forget_viewers())];
+                self.forget_entities(gone);
+                self.update_membership(false);
+                return;
+            }
+        }
+        // Out of whatever regions they are in (in list order; the lists are in id order)...
         let mut taken: Vec<entities::Entity> = Vec::with_capacity(stack.entities.len());
         for r in self.dims[from].regions.iter_mut() {
             let list = &mut r.part_mut().0.list;
-            let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(list).into_iter().partition(|e| stack.entities.contains(&e.id));
-            *list = rest;
-            taken.extend(mine);
+            let mut at: Vec<usize> = stack.entities.iter().filter_map(|id| list.binary_search_by_key(id, |e| e.id).ok()).collect();
+            at.sort_unstable();
+            for (k, i) in at.into_iter().enumerate() {
+                taken.push(list.remove(i - k));
+            }
         }
         // ...set down at the destination, riders in their seats...
         let order = |taken: &[entities::Entity], id: i32| taken.iter().position(|e| e.id == id);
@@ -171,7 +186,7 @@ impl Sim {
         }
         self.forget_entities(gone);
         // Players that rode along are in the region of their seat.
-        self.update_membership(true);
+        self.update_membership(false);
     }
 
     /// `teleportCrossDimension` for the stack rooted at `root`: it leaves level `from` and

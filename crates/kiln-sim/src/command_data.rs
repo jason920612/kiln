@@ -485,7 +485,7 @@ impl Sim {
                 let mut here: Vec<&mut Player> = players.values_mut().filter(|p| p.dim == dim && p.region == id).collect();
                 here.sort_unstable_by_key(|p| p.conn);
                 let mut level =
-                    crate::blocks::RegionLevel { cells: &mut *cells, blocks: blks, env: &env, out: &mut out, bodies: &bodies, actor: None };
+                    crate::blocks::RegionLevel { cells: &mut *cells, blocks: blks, env: &env, out: &mut out, bodies: (&bodies).into(), actor: None };
                 f(ents, &mut level, &mut here, &mut d.spawns, &mut deaths)
             };
             let mut everyone: Vec<&mut Player> = players.values_mut().filter(|p| p.dim == dim).collect();
