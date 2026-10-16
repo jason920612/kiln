@@ -6,7 +6,7 @@ from lock import *
 
 X0, Y, Z0 = 10, 200, 10
 ITEMS = [("minecraft:cobblestone", 64), ("minecraft:ender_pearl", 16), ("minecraft:snowball", 16), ("minecraft:diamond_sword", 1), ("minecraft:egg", 16),
-         ("minecraft:bucket", 16), ("minecraft:water_bucket", 1), ("minecraft:white_shulker_box", 1), ("minecraft:sign", 16), ("minecraft:oak_log", 64), ("minecraft:stick", 64),
+         ("minecraft:bucket", 16), ("minecraft:water_bucket", 1), ("minecraft:white_shulker_box", 1), ("minecraft:oak_sign", 16), ("minecraft:oak_log", 64), ("minecraft:stick", 64),
          ("minecraft:iron_ingot", 64), ("minecraft:music_disc_13", 1), ("minecraft:potion", 1), ("minecraft:writable_book", 1), ("minecraft:armor_stand", 16)]
 
 
@@ -42,7 +42,7 @@ def build(rng):
     comp_pos = (cx + 1, cy, cz)
     cmds = [f"fill {cx - 1} {cy - 1} {cz - 1} {cx + 3} {cy + 2} {cz + 1} minecraft:air", f"fill {cx - 1} {cy - 1} {cz - 1} {cx + 3} {cy - 1} {cz + 1} minecraft:stone"]
     desc = ""
-    comp = "minecraft:comparator[facing=east,mode={mode}]"
+    comp = "minecraft:comparator[facing=west,mode={mode}]"
     mode = rng.choice(["compare", "compare", "subtract"])
     if kind < 0.6:
         name, block, size = rng.choice(CONTAINERS)
@@ -94,6 +94,8 @@ def build(rng):
         comp_pos = (cx + 2, cy, cz)
         desc += " (through a block)"
     cmds.append(f"setblock {comp_pos[0]} {comp_pos[1]} {comp_pos[2]} " + comp.format(mode=mode))
+    # `/setblock` does not run `setPlacedBy`: the comparator works its output out when a neighbour changes
+    cmds.append(f"setblock {comp_pos[0]} {comp_pos[1]} {comp_pos[2] - 1} minecraft:stone")
     if rng.random() < 0.3:
         # a second signal from the side for the subtract/compare modes
         side = rng.randint(0, 15)
@@ -121,6 +123,12 @@ def main():
         time.sleep(0.3)
         step(4)
         k, v = signal("K", pos), signal("V", pos)
+        for _ in range(2):
+            if k == v:
+                break
+            # the log was read before the answer was complete, or a comparator had not ticked yet: ask again
+            step(2)
+            k, v = signal("K", pos), signal("V", pos)
         ok = k == v
         if not ok:
             bad += 1

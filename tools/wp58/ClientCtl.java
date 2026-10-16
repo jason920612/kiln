@@ -862,12 +862,24 @@ public class ClientCtl {
         "ClientboundEntityPositionSyncPacket", "ClientboundTeleportEntityPacket", "ClientboundChunkBatchStartPacket", "ClientboundChunkBatchFinishedPacket", "ClientboundBlockUpdatePacket",
         "ClientboundSectionBlocksUpdatePacket", "ClientboundTickingStatePacket", "ClientboundTickingStepPacket", "ClientboundBlockEntityDataPacket");
 
+    /** wp72: `spy blocks`: also log block updates, section updates and block entity data (positions, states) in arrival order. */
+    static volatile boolean spyBlocks = false;
+
     static synchronized void spyRecord(Minecraft mc, Object msg) {
         if (msg instanceof net.minecraft.network.protocol.game.ClientboundBundlePacket b) {
             for (var sub : b.subPackets()) {
                 spyRecord(mc, sub);
             }
             return;
+        }
+        if (spyBlocks) {
+            if (msg instanceof net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket p) {
+                spyAdd("block_update " + p.getPos().getX() + " " + p.getPos().getY() + " " + p.getPos().getZ() + " " + p.getBlockState().toString().replace("Block{minecraft:", "").replace("}", ""));
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket p) {
+                p.runUpdates((pos, st) -> spyAdd("section_update " + pos.getX() + " " + pos.getY() + " " + pos.getZ() + " " + st.toString().replace("Block{minecraft:", "").replace("}", "")));
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket p) {
+                spyAdd("be_data " + p.getPos().getX() + " " + p.getPos().getY() + " " + p.getPos().getZ() + " " + BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(p.getType()).getPath());
+            }
         }
         String cn = msg.getClass().getSimpleName();
         SPY.merge(cn, 1, Integer::sum);
@@ -974,6 +986,9 @@ public class ClientCtl {
                     }
                 });
                 spyInstalled = true;
+            }
+            if (what.equals("blocks")) {
+                spyBlocks = true;
             }
             if (what.equals("clear")) {
                 synchronized (ClientCtl.class) {

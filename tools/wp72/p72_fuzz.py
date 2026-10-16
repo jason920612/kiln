@@ -47,7 +47,7 @@ def census(c):
     """Counts of the entities of the box by type (positions are not compared: the level random moves items and falling blocks)."""
     out = {}
     for e in c.state(30)["entities"]:
-        if X0 - 2 <= e["x"] <= X0 + W + 2 and Y0 - 2 <= e["y"] <= Y0 + H + 40 and Z0 - 2 <= e["z"] <= Z0 + D + 2 and e["t"] != "player":
+        if X0 - 2 <= e["x"] <= X0 + W + 2 and Y0 - 2 <= e["y"] <= Y0 + H + 40 and Z0 - 2 <= e["z"] <= Z0 + D + 2 and e["t"] not in ("player", "item", "experience_orb"):  # items merge, move and get picked up with the level random: not compared
             out[e["t"]] = out.get(e["t"], 0) + 1
     return tuple(sorted(out.items()))
 
@@ -130,7 +130,15 @@ def run_case(seed, palette, cmds=None):
     both_(f"fill {X0 - 1} {Y0 - 1} {Z0 - 1} {X0 + W} {Y0 - 1} {Z0 + D} minecraft:stone")
     both_("kill @e[type=!player]")
     both_("tick step 30")
-    time.sleep(2.2)  # Kiln steps at the tick rate (30 ticks = 1.5 s); vanilla steps at full speed
+    time.sleep(2.2)
+    for _ in range(5):
+        # nothing of the last case may be left in the box (items, falling blocks): the census counts them
+        if not census(ka) and not census(va):
+            break
+        both_("kill @e[type=!player]")
+        both_("tick step 3")
+        time.sleep(0.8)
+    time.sleep(0.01)  # Kiln steps at the tick rate (30 ticks = 1.5 s); vanilla steps at full speed
     for c in cmds:
         both_(c)
     time.sleep(0.3)
