@@ -6988,6 +6988,12 @@ public class MobVectors {
             s.cmdDays = 6;
             out.add(s);
         }
+        for (int i = 0; i < 12; i++) {
+            Scenario s = new Scenario("farm69_cmd1_" + i);
+            s.cmdPens = 1;
+            s.cmdDays = 6;
+            out.add(s);
+        }
         // The same through the server's own tick (statistics only).
         for (int i = 0; i < 16; i++) {
             Scenario s = new Scenario("farm69_srv_" + i);
