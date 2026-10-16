@@ -138,6 +138,123 @@ impl Access for Window {
     }
 }
 
+/// [`Window`] over any rectangle of chunks: the changed blocks' chunks and two around them.
+struct Area {
+    x0: i32,
+    z0: i32,
+    width: i32,
+    depth: i32,
+    /// By `dz * width + dx`.
+    chunks: Vec<Option<Box<Chunk>>>,
+}
+
+impl Area {
+    fn take<S: CellStore + ?Sized>(w: &mut S, min: ChunkPos, max: ChunkPos) -> Area {
+        let (width, depth) = (max.x - min.x + 1, max.z - min.z + 1);
+        let chunks = (0..width * depth)
+            .map(|i| {
+                let p = ChunkPos::new(min.x + i % width, min.z + i / width);
+                w.cell_mut(p.cell())?.remove(p)
+            })
+            .collect();
+        Area { x0: min.x, z0: min.z, width, depth, chunks }
+    }
+
+    fn put_back<S: CellStore + ?Sized>(self, w: &mut S) {
+        for (i, c) in self.chunks.into_iter().enumerate() {
+            if let Some(c) = c {
+                let p = ChunkPos::new(self.x0 + i as i32 % self.width, self.z0 + i as i32 / self.width);
+                w.cell_mut(p.cell()).expect("the cell a chunk was taken from").put_back(p, c);
+            }
+        }
+    }
+
+    fn index(&self, pos: ChunkPos) -> Option<usize> {
+        let (dx, dz) = (pos.x - self.x0, pos.z - self.z0);
+        let inside = (0..self.width).contains(&dx) && (0..self.depth).contains(&dz);
+        debug_assert!(inside, "light left the area from {:?} at {pos:?}", (self.x0, self.z0));
+        inside.then(|| (dz * self.width + dx) as usize)
+    }
+}
+
+impl Access for Area {
+    fn chunk_at(&self, pos: ChunkPos) -> Option<&Chunk> {
+        self.chunks[self.index(pos)?].as_deref()
+    }
+    fn chunk_at_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
+        let i = self.index(pos)?;
+        self.chunks[i].as_deref_mut()
+    }
+}
+
+/// Chunks on a side of the groups [`update_light_many`] relights at once (two more on each side
+/// are taken with them).
+const GROUP_CHUNKS: i32 = 8;
+
+/// [`update_light`] for blocks that changed since their light was last right (each changed while
+/// its light waited; vanilla's light engine likewise takes the checks a tick queued together):
+/// the light every block would have after updating them one by one (each level is the brightest
+/// some source reaches, whatever order they spread in), but cleared and spread once.
+pub fn update_light_many<S: CellStore + ?Sized>(w: &mut S, changed: &[[i32; 3]]) {
+    let mut changed = changed.to_vec();
+    // By group of chunks, so far-apart changes do not take the chunks between them.
+    let group = |p: &[i32; 3]| ((p[0] >> 4).div_euclid(GROUP_CHUNKS), (p[2] >> 4).div_euclid(GROUP_CHUNKS));
+    changed.sort_unstable_by_key(|p| (group(p), *p));
+    changed.dedup();
+    for positions in changed.chunk_by(|a, b| group(a) == group(b)) {
+        let (mut min, mut max) = ((i32::MAX, i32::MAX), (i32::MIN, i32::MIN));
+        for p in positions {
+            let (cx, cz) = (p[0] >> 4, p[2] >> 4);
+            min = (min.0.min(cx), min.1.min(cz));
+            max = (max.0.max(cx), max.1.max(cz));
+        }
+        // Light reaches at most two chunks beyond a change (see [`Window`]).
+        let mut area = Area::take(w, ChunkPos::new(min.0 - 2, min.1 - 2), ChunkPos::new(max.0 + 2, max.1 + 2));
+        update_many_in(&mut area, positions);
+        area.put_back(w);
+    }
+}
+
+fn update_many_in<A: Access + ?Sized>(w: &mut A, changed: &[[i32; 3]]) {
+    for layer in [LightLayer::Block, LightLayer::Sky] {
+        let mut removal = Queue::new();
+        let mut relight = Queue::new();
+        for &[x, y, z] in changed {
+            let current = w.light(layer, x, y, z).unwrap_or(0);
+            if current > 0 {
+                w.set(layer, x, y, z, 0);
+                removal.push_back((x, y, z, current));
+            }
+        }
+        decrease(w, layer, &mut removal, &mut relight);
+        for &[x, y, z] in changed {
+            let Some(new) = w.state(x, y, z) else { continue };
+            if layer == LightLayer::Block && light_emission(new) > 0 {
+                let e = light_emission(new);
+                if e > w.light(layer, x, y, z).unwrap_or(0) {
+                    w.set(layer, x, y, z, e);
+                }
+                relight.push_back((x, y, z, e));
+            }
+            seed_around(w, layer, x, y, z, &mut relight);
+        }
+        increase(w, layer, &mut relight);
+    }
+}
+
+/// The neighbours that may now shine into (or through) a changed block.
+fn seed_around<A: Access + ?Sized>(w: &A, layer: LightLayer, x: i32, y: i32, z: i32, relight: &mut Queue) {
+    for (dx, dy, dz) in DIRS {
+        let (nx, ny, nz) = (x + dx, y + dy, z + dz);
+        if let Some(l) = w.light(layer, nx, ny, nz).filter(|&l| l > 0) {
+            relight.push_back((nx, ny, nz, l));
+        }
+    }
+    if layer == LightLayer::Sky && w.light(layer, x, y + 1, z).is_none_or(|l| l == 15) {
+        relight.push_back((x, y + 1, z, 15));
+    }
+}
+
 /// Re-lights around a block that changed from `old` to `new`.
 pub fn update_light<S: CellStore + ?Sized>(w: &mut S, x: i32, y: i32, z: i32, old: u16, new: u16) {
     if !affects_light(old, new) {
@@ -414,7 +531,13 @@ fn increase<A: Access + ?Sized>(w: &mut A, layer: LightLayer, queue: &mut Queue)
         if level <= 1 {
             continue;
         }
-        let from = w.state(x, y, z).unwrap_or(kiln_data::blocks::default_state::AIR);
+        let from = match w.state_and_light(layer, x, y, z) {
+            // A level cleared again after it was queued (another removal found it came from
+            // there) is no longer there to spread: `LightEngine.propagateIncreases` skips it too.
+            Some((_, stored)) if stored < level => continue,
+            Some((s, _)) => s,
+            None => kiln_data::blocks::default_state::AIR,
+        };
         for (dir, (dx, dy, dz)) in DIRS.iter().enumerate() {
             let (nx, ny, nz) = (x + dx, y + dy, z + dz);
             let Some((to, current)) = w.state_and_light(layer, nx, ny, nz) else { continue };

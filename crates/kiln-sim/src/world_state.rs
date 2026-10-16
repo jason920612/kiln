@@ -585,6 +585,8 @@ pub(crate) struct WorldState {
     pub forced_dirty: bool,
     /// A block is being placed with its data (`Host::set_block`): its block entity goes out with the block's change, not on its own.
     pub defer_be_packet: bool,
+    /// Block edits of the commands running ([`crate::edits`]).
+    pub edits: crate::edits::EditBatch,
     /// Each level's generation pipeline (none for flat levels), for `/locate`.
     pub pipelines: Vec<Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>>>,
     /// Each level's worldgen as block behaviour uses it (what grows: saplings, bone meal).
@@ -608,6 +610,7 @@ impl Default for WorldState {
             tick_index: 0,
             forced_dirty: false,
             defer_be_packet: false,
+            edits: Default::default(),
             pipelines: Vec::new(),
         }
     }

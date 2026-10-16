@@ -459,7 +459,7 @@ impl Sim {
         let stack = std::mem::replace(&mut self.commands.stack, start);
         let dispatcher = self.commands.dispatcher.clone();
         let command = command.strip_prefix('/').unwrap_or(command);
-        if let Err(e) = dispatcher.execute(command, self) {
+        if let Err(e) = self.editing(|s| dispatcher.execute(command, s)) {
             for line in e.chat_lines(command) {
                 // (`CommandSourceStack.sendFailure`: a block that tracks its output keeps the failure.)
                 crate::command_block::output(self, line.color("red"));

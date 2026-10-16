@@ -542,6 +542,9 @@ pub(crate) struct BlockOut {
     pub edits: u64,
     /// What dispensers did to living things in front of them.
     pub dispenses: Vec<DispenseOp>,
+    /// While set, blocks change without their light and the positions whose light may change
+    /// come here (the light of a batch of command edits is worked out at its end, [`crate::edits`]).
+    pub unlit: Option<Vec<[i32; 3]>>,
 }
 
 /// A block entity's effect on the players whose box meets `min..max`.
@@ -595,7 +598,16 @@ impl Level for RegionLevel<'_> {
     }
 
     fn set_raw(&mut self, pos: BlockPos, state: u16, flags: u32) -> Option<u16> {
-        let old = self.cells.set_block(pos.x, pos.y, pos.z, state)?;
+        let old = match self.out.unlit.as_mut() {
+            Some(unlit) => {
+                let old = self.cells.set_block_unlit(pos.x, pos.y, pos.z, state)?;
+                if old != state && kiln_world::light::affects_light(old, state) {
+                    unlit.push([pos.x, pos.y, pos.z]);
+                }
+                old
+            }
+            None => self.cells.set_block(pos.x, pos.y, pos.z, state)?,
+        };
         if old == state {
             return None;
         }
@@ -1749,14 +1761,17 @@ pub(crate) fn send_changes(cells: &CellSet<Cell>, changed: &[[i32; 3]], players:
     if changed.is_empty() {
         return;
     }
-    let mut sections: BTreeMap<[i32; 3], Vec<[i32; 3]>> = BTreeMap::new();
+    // Each section's positions in the order first changed, and which of its 4096 it has.
+    let mut sections: BTreeMap<[i32; 3], (Vec<[i32; 3]>, [u64; 64])> = BTreeMap::new();
     for &p in changed {
-        let s = sections.entry([p[0] >> 4, p[1] >> 4, p[2] >> 4]).or_default();
-        if !s.contains(&p) {
+        let (s, seen) = sections.entry([p[0] >> 4, p[1] >> 4, p[2] >> 4]).or_insert_with(|| (Vec::new(), [0; 64]));
+        let i = ((p[1] & 15) << 8 | (p[2] & 15) << 4 | (p[0] & 15)) as usize;
+        if seen[i >> 6] & (1 << (i & 63)) == 0 {
+            seen[i >> 6] |= 1 << (i & 63);
             s.push(p);
         }
     }
-    for (section, positions) in sections {
+    for (section, (positions, _)) in sections {
         let chunk = ChunkPos::new(section[0], section[2]);
         if !players.iter().any(|p| p.sent_chunks.contains(&chunk)) {
             continue;

@@ -105,6 +105,14 @@ pub(super) fn test_block<S: Host>(s: &mut S, dimension: &str, pos: [i32; 3], pre
     predicate.test(state, entity.as_ref())
 }
 
+/// Runs a block command's work between [`Host::begin_block_edits`] and its end.
+pub(super) fn editing<S: Host, R>(s: &mut S, f: impl FnOnce(&mut S) -> R) -> R {
+    s.begin_block_edits();
+    let r = f(s);
+    s.end_block_edits();
+    r
+}
+
 /// `BlockInput.place`: the host adapts the state to its neighbours unless the flags say
 /// `KNOWN_SHAPE`, then vanilla re-applies the explicitly given properties.
 fn place<S: Host>(s: &mut S, dimension: &str, pos: [i32; 3], block: &BlockInput, flags: UpdateFlags) -> bool {
@@ -119,7 +127,7 @@ enum SetMode {
 }
 
 pub fn setblock<S: Host + 'static>(d: &mut Dispatcher<S>) {
-    let run = |mode: SetMode, strict: bool| move |c: &CommandContext<S>, s: &mut S| set_block(c, s, mode, strict);
+    let run = |mode: SetMode, strict: bool| move |c: &CommandContext<S>, s: &mut S| editing(s, |s| set_block(c, s, mode, strict));
     d.register(
         literal("setblock").requires(LEVEL_GAMEMASTERS).then(
             argument("pos", ArgumentType::BlockPos).then(
@@ -174,7 +182,7 @@ type FilterFn<S> = for<'a, 'b> fn(&'b CommandContext<'a, S>) -> Option<&'a Block
 pub fn fill<S: Host + 'static>(d: &mut Dispatcher<S>) {
     let with_modes = |b: Builder<S>, filter: FilterFn<S>| {
         let run = move |mode: FillMode, strict: bool| {
-            move |c: &CommandContext<S>, s: &mut S| fill_blocks(c, s, mode, Filter::Predicate(filter(c)), strict)
+            move |c: &CommandContext<S>, s: &mut S| editing(s, |s| fill_blocks(c, s, mode, Filter::Predicate(filter(c)), strict))
         };
         b.executes(run(FillMode::Replace, false))
             .then(literal("outline").executes(run(FillMode::Outline, false)))
@@ -185,10 +193,10 @@ pub fn fill<S: Host + 'static>(d: &mut Dispatcher<S>) {
     let block = with_modes(argument("block", ArgumentType::BlockState), |_| None)
         .then(
             literal("replace")
-                .executes(|c, s: &mut S| fill_blocks(c, s, FillMode::Replace, Filter::Predicate(None), false))
+                .executes(|c, s: &mut S| editing(s, |s| fill_blocks(c, s, FillMode::Replace, Filter::Predicate(None), false)))
                 .then(with_modes(argument("filter", ArgumentType::BlockPredicate), |c| Some(c.block_predicate("filter")))),
         )
-        .then(literal("keep").executes(|c, s: &mut S| fill_blocks(c, s, FillMode::Replace, Filter::Empty, false)));
+        .then(literal("keep").executes(|c, s: &mut S| editing(s, |s| fill_blocks(c, s, FillMode::Replace, Filter::Empty, false))));
     d.register(
         literal("fill")
             .requires(LEVEL_GAMEMASTERS)
@@ -304,7 +312,7 @@ fn destination_and_strict<S: Host + 'static>(source: DimFn<S>, target: DimFn<S>)
 
 /// `modeSuffix`: the default (replace, normal) and the `replace`/`masked`/`filtered` masks.
 fn mode_suffix<S: Host + 'static>(source: DimFn<S>, target: DimFn<S>, strict: bool, b: Builder<S>) -> Builder<S> {
-    b.executes(move |c, s: &mut S| clone_blocks(c, s, source, target, Mask::Replace, CloneMode::Normal, strict))
+    b.executes(move |c, s: &mut S| editing(s, |s| clone_blocks(c, s, source, target, Mask::Replace, CloneMode::Normal, strict)))
         .then(with_clone_modes(source, target, Mask::Replace, strict, literal("replace")))
         .then(with_clone_modes(source, target, Mask::Masked, strict, literal("masked")))
         .then(literal("filtered").then(with_clone_modes(
@@ -324,7 +332,7 @@ fn with_clone_modes<S: Host + 'static>(
     strict: bool,
     b: Builder<S>,
 ) -> Builder<S> {
-    let run = move |mode| move |c: &CommandContext<S>, s: &mut S| clone_blocks(c, s, source, target, mask, mode, strict);
+    let run = move |mode| move |c: &CommandContext<S>, s: &mut S| editing(s, |s| clone_blocks(c, s, source, target, mask, mode, strict));
     b.executes(run(CloneMode::Normal))
         .then(literal("force").executes(run(CloneMode::Force)))
         .then(literal("move").executes(run(CloneMode::Move)))

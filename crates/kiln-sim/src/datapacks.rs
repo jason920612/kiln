@@ -633,7 +633,7 @@ impl Sim {
         let previous = std::mem::replace(&mut self.commands.source, crate::commands::CommandSource::Console);
         let stack = SourceStack::new(Text::literal("Server"), crate::commands::OVERWORLD, self.spawn.map(|v| v as f64));
         let saved = std::mem::replace(&mut self.commands.stack, stack.clone());
-        if let Err(e) = kiln_command::vanilla::run_as_server(&dispatcher, self, f, stack) {
+        if let Err(e) = self.editing(|s| kiln_command::vanilla::run_as_server(&dispatcher, s, f, stack)) {
             warn!("Failed to execute function {}: {}", f.id, e.to_plain());
         }
         self.commands.stack = saved;

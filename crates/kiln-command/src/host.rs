@@ -773,6 +773,11 @@ pub trait Host: SelectorWorld {
     /// `Level.updateNeighboursOnBlockSet`: neighbour reactions to a change made without
     /// `strict`.
     fn update_neighbours(&mut self, _dimension: &str, _pos: [i32; 3], _old: u16) {}
+    /// A block command starts editing blocks (until [`Host::end_block_edits`]): nothing it
+    /// does changes the rules, time or players its block work sees, and the clients get its
+    /// changes once it is done (vanilla collects a tick's block changes per chunk section).
+    fn begin_block_edits(&mut self) {}
+    fn end_block_edits(&mut self) {}
     /// `Level.destroyBlock(pos, drop)`: breaks the block as a player would (particles, drops);
     /// returns whether there was a block (not air).
     fn destroy_block(&mut self, dimension: &str, pos: [i32; 3], drop: bool) -> bool;

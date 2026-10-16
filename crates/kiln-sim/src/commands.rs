@@ -469,7 +469,8 @@ impl Sim {
         let previous = std::mem::replace(&mut self.commands.source, source);
         let start = self.source_stack(source);
             let stack = std::mem::replace(&mut self.commands.stack, start);
-        if let Err(e) = dispatcher.execute(command, self) {
+        // (Its block edits go out together at its end, [`crate::edits`].)
+        if let Err(e) = self.editing(|s| dispatcher.execute(command, s)) {
             for line in e.chat_lines(command) {
                 self.reply(line);
             }
@@ -1197,7 +1198,7 @@ impl Host for Sim {
     }
 
     fn game_rule(&self, rule: &str) -> GameRuleValue {
-        self.commands.game_rules.get(rule).copied().unwrap_or(match kiln_data::game_rule_default(rule) {
+        self.commands.game_rules.get(rule).copied().unwrap_or_else(|| match kiln_data::game_rule_default(rule) {
             Some(kiln_data::GameRuleDefault::Int(v)) => GameRuleValue::Int(v),
             Some(kiln_data::GameRuleDefault::Bool(b)) => GameRuleValue::Bool(b),
             None => GameRuleValue::Bool(false),
@@ -1418,6 +1419,14 @@ impl Host for Sim {
         let at = block_pos(pos);
         let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
         self.with_level_in(dim, pos, |level| kiln_blocks::commands::update_neighbours_on_block_set(level, at, old));
+    }
+
+    fn begin_block_edits(&mut self) {
+        self.begin_edits(true);
+    }
+
+    fn end_block_edits(&mut self) {
+        self.end_edits(true);
     }
 
     fn destroy_block(&mut self, dimension: &str, pos: [i32; 3], drop: bool) -> bool {
