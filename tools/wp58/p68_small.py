@@ -9,7 +9,7 @@ ME = "KilnTest"
 def prep():
     if T == "V":
         sv("op KilnTest", show=False)
-    alive(a)
+    alive_auto(a)
     sv("gamerule spawn_mobs false", show=False)
     sv("gamerule mob_griefing true", show=False)
     sv("difficulty normal", show=False)
@@ -31,7 +31,7 @@ def summon(typ, nbt="{}", x=20.5, z=23.5, y=200):
 def reset():
     clear_area()
     if a.screen() == "DeathScreen" or a.state(0)["health"] <= 0:
-        alive(a)
+        alive_auto(a)
     sv(f"tp {ME} 20.5 200 20.5", show=False)
     a.release()
     time.sleep(0.6)

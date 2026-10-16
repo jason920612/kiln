@@ -507,8 +507,10 @@ impl Kind for Camel {
     fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {
         use kiln_data::entities::data;
         let s = st(m);
-        // `AbstractHorse` flags: tame.
-        d.set(data::abstract_horse::ID_FLAGS, &DataValue::Byte(2 | if s.eating { 16 } else { 0 }));
+        // `AbstractHorse` flags: a camel is never marked tame in its data (`Camel.isTamed` is always true), only grazing shows.
+        if s.eating {
+            d.set(data::abstract_horse::ID_FLAGS, &DataValue::Byte(16));
+        }
         d.set(data::camel::DASH, &DataValue::Boolean(s.dashing));
         d.set(data::camel::LAST_POSE_CHANGE_TICK, &DataValue::Long(s.last_pose_change));
         if sitting(m) {

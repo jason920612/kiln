@@ -204,3 +204,16 @@ def setup_two(x=20.5, y=200, z=20.5, mode="survival", resist=True):
 def alive2(a, b):
     alive(a)
     alive_b(b)
+
+
+def alive_auto(c):
+    """Respawn if dead: the Respawn button of the 960x540 actor window, or of the small 480x270 one (agent 26000)."""
+    small = int(os.environ.get("KILN_AGENT_PORT", "25999")) == 26000
+    for _ in range(4):
+        if c.screen() != "DeathScreen":
+            break
+        c.cmd("mousepos 240 149" if small else "mousepos 480 298")
+        time.sleep(1.5)
+        c.mouse("left", "tap")
+        time.sleep(2.5)
+    return c.state(0)["health"]

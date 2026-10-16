@@ -484,6 +484,23 @@ pub(crate) fn drop_item(stack: kiln_item::ItemStack, pos: [f64; 3], h: u64) -> S
 mod tests {
     use super::*;
 
+    /// A camel (and its husk) is tame by `isTamed()` alone: a vanilla server does not list the horse flags (field 18) for it
+    /// unless it is grazing, and Kiln sent the tame bit.
+    #[test]
+    fn a_camel_does_not_send_the_tame_flag() {
+        for name in ["minecraft:camel", "minecraft:camel_husk"] {
+            let tag = kiln_proto::nbt::Tag::Compound(vec![
+                ("id".into(), kiln_proto::nbt::Tag::String(name.into())),
+                ("UUID".into(), kiln_proto::nbt::Tag::IntArray(vec![1, 2, 3, 4])),
+                ("Pos".into(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::Double(0.5), kiln_proto::nbt::Tag::Double(64.0), kiln_proto::nbt::Tag::Double(0.5)])),
+            ]);
+            let spawn = Spawn::from_saved(&tag, 7, true).unwrap_or_else(|_| panic!("{name} loads"));
+            let crate::entities::Body::Loaded(e) = &spawn.body else { panic!("a loaded mob") };
+            let d = metadata(e, mob::data(e).unwrap());
+            assert!(!d.fields().iter().any(|f| f.0 == 18), "{name}: the horse flags are not sent: {:?}", d.fields());
+        }
+    }
+
     /// A client decodes an entity data entry by the serializer registered for its index on that entity type and
     /// disconnects on any other ("Invalid entity data item type for field 15 on entity ClientMannequin": a mannequin,
     /// which is no `Mob`, was sent the mob flags byte where its `Avatar` main hand belongs). Every mob type's entity

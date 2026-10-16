@@ -7,11 +7,10 @@ scenario("mounts")
 
 
 def pool():
-    """A water pool cut into the platform: stone box (29..39, 190..198), water y 191..198 inside (30..38), air at the platform level above it."""
-    sv("fill 29 190 29 39 198 39 minecraft:stone", show=False)
-    sv("fill 30 191 30 38 198 38 minecraft:water", show=False)
-    sv("fill 29 199 29 39 205 39 minecraft:air", show=False)
-    sv("fill 28 199 28 40 199 28 minecraft:stone", show=False)
+    """A big water pool cut into the platform: stone box (9..39, 188..198), water y 189..198 inside (10..38)."""
+    sv("fill 9 188 9 39 198 39 minecraft:stone", show=False)
+    sv("fill 10 189 10 38 198 38 minecraft:water", show=False)
+    sv("fill 9 199 9 39 205 39 minecraft:air", show=False)
     time.sleep(0.5)
 
 
@@ -32,9 +31,9 @@ def srv(typ, path):
 def nautilus_tame(typ="nautilus"):
     reset()
     pool()
-    sv(f"tp {ME} 34.5 200 27.5", show=False)
+    sv(f"tp {ME} 24.5 200 8.5", show=False)
     time.sleep(2.0)
-    sv(f"summon minecraft:{typ} 34.5 195 33.5 {{PersistenceRequired:1b}}", show=False)
+    sv(f"summon minecraft:{typ} 24.5 195 15.5 {{PersistenceRequired:1b}}", show=False)
     time.sleep(1.5)
     eid = eid_of(typ)
     F(typ, "summoned:", eid, a.cmd(f"entdata {eid}")[:100] if eid else None, "bb", [(e["bbw"], e["bbh"]) for e in ents_of(a, typ, 40)])
@@ -78,14 +77,19 @@ def nautilus_gear(typ="nautilus"):
 
 def nautilus_ride(typ="nautilus"):
     eid = eid_of(typ)
+    sv(f"item replace entity @e[type={typ},limit=1] saddle with minecraft:saddle", show=False)
     sv(f"data merge entity @e[type={typ},limit=1] {{NoAI:0b}}", show=False)
     time.sleep(0.5)
-    sv(f"tp @e[type={typ}] 34.5 195 33.5", show=False)
-    sv(f"tp {ME} 34.5 200 28.5", show=False)
+    sv(f"tp @e[type={typ}] 24.5 195 15.5", show=False)
+    sv(f"tp {ME} 24.5 200 12.5", show=False)
     time.sleep(1.5)
     ok = interact_ent(a, eid, button="right", tries=10, dy=0.3)
     time.sleep(1.0)
     F(typ, "ride ok", ok, "vehicle", a.state(0)["vehicle"], pos(a))
+    if not a.state(0)["vehicle"]:
+        sv(f"ride {ME} mount @e[type={typ},limit=1]", show=False)
+        time.sleep(1.0)
+        F(typ, "ride by command:", a.state(0)["vehicle"])
     if not a.state(0)["vehicle"]:
         return
     g0 = [e for e in ents_of(a, typ, 40) if e["id"] == eid][0]
