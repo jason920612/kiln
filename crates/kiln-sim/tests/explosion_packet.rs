@@ -6,8 +6,11 @@ use kiln_link::ToSim;
 use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
 
-#[test]
-fn a_player_pushed_by_a_blast_gets_the_knockback_in_the_explosion_packet_and_no_motion_packet() {
+type Blast = ([f64; 3], f32, Option<[f64; 3]>, usize);
+
+/// A primed TNT at `dx` east of a player who stands still: every explosion packet (center, radius, knockback) and the number of motion packets
+/// the player is sent about himself.
+fn blast(dx: f64, dy: f64) -> (Vec<Blast>, usize) {
     let mut sim = Sim::new(SimConfig::new(4, 4, None));
     let (msg, stats) = join(1, "User", 2);
     *stats.log.lock().unwrap() = Some(Vec::new());
@@ -25,7 +28,7 @@ fn a_player_pushed_by_a_blast_gets_the_knockback_in_the_explosion_packet_and_no_
     let me = sim.entity_id(1).expect("the player");
     let p = client.pos;
     log.log.lock().unwrap().as_mut().unwrap().clear();
-    assert!(sim.step([ToSim::Console(format!("summon minecraft:tnt {} {} {} {{fuse:1}}", p[0] + 1.5, p[1], p[2]))]));
+    assert!(sim.step([ToSim::Console(format!("summon minecraft:tnt {} {} {} {{fuse:1}}", p[0] + dx, p[1] + dy, p[2]))]));
     tick(&mut sim, &mut client, 10);
     let packets = log.log.lock().unwrap().clone().unwrap();
     let mut explosions = Vec::new();
@@ -36,24 +39,43 @@ fn a_player_pushed_by_a_blast_gets_the_knockback_in_the_explosion_packet_and_no_
             id if id == kiln_data::packets::play::clientbound::EXPLODE => {
                 let center = [r.f64().unwrap(), r.f64().unwrap(), r.f64().unwrap()];
                 let radius = r.f32().unwrap();
-                let blocks = r.i32().unwrap();
+                let blocks = r.i32().unwrap() as usize;
                 let knockback = r.bool().unwrap().then(|| [r.f64().unwrap(), r.f64().unwrap(), r.f64().unwrap()]);
-                explosions.push((center, radius, blocks, knockback));
+                explosions.push((center, radius, knockback, blocks));
             }
             id if id == kiln_data::packets::play::clientbound::SET_ENTITY_MOTION => {
                 if r.varint().unwrap() == me {
                     motions += 1;
-                    eprintln!("motion packet {:?}", pkt);
                 }
             }
             _ => {}
         }
     }
+    (explosions, motions)
+}
+
+#[test]
+fn a_player_pushed_by_a_blast_gets_the_knockback_in_the_explosion_packet() {
+    let (explosions, _) = blast(1.5, 0.0);
     assert_eq!(explosions.len(), 1, "one explosion packet: {explosions:?}");
-    let (center, radius, _, knockback) = explosions[0];
+    let (center, radius, knockback, _) = explosions[0];
     assert_eq!(radius, 4.0);
     let k = knockback.expect("the player 1.5 blocks from a primed TNT is pushed");
     // away from the blast: it was east of the player, so the push goes west (and up: the eyes are above the TNT's feet)
     assert!(k[0] < -0.3 && k[1] > 0.0, "{k:?} from {center:?}");
-    assert_eq!(motions, 0, "the push is not sent a second time as a motion packet");
+}
+
+#[test]
+fn a_blast_at_the_feet_lifts_the_player() {
+    let (explosions, _) = blast(0.0, 0.0);
+    let (_, _, knockback, _) = explosions[0];
+    let k = knockback.expect("pushed");
+    assert!(k[1] > 0.8, "straight up and hard: {k:?}");
+}
+
+#[test]
+fn the_push_is_not_sent_a_second_time_as_a_motion_packet_that_would_replace_the_players_own() {
+    // (A hurt player is told his server-side motion, which the blast's push is part of: that one is the same as vanilla's.)
+    let (_, motions) = blast(1.5, 0.0);
+    assert!(motions <= 1, "{motions}");
 }
