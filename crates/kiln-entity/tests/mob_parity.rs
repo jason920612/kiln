@@ -22,6 +22,8 @@ static GOLEMS: std::sync::Mutex<Vec<(String, i64)>> = std::sync::Mutex::new(Vec:
 static PANIC_BINS: std::sync::Mutex<[(u64, u64); 20]> = std::sync::Mutex::new([(0, 0); 20]);
 /// Per scenario: (villager-ticks with the zombie in the cell, panicking ones, golems).
 static PANIC_ALL: std::sync::Mutex<Vec<(String, u64, u64)>> = std::sync::Mutex::new(Vec::new());
+/// Idle occupancy: villagers by x offset (bin = floor(x) + 1), and their number.
+static XBINS: std::sync::Mutex<([u64; 12], u64)> = std::sync::Mutex::new(([0; 12], 0));
 
 fn production() -> bool {
     PRODUCTION.load(std::sync::atomic::Ordering::Relaxed)
@@ -712,7 +714,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         .collect();
     let want_hits: Vec<(i64, f64)> = s["hits"].as_array().unwrap().iter().map(|h| (h[0].as_i64().unwrap(), f(&h[1]))).collect();
     let mut got_hits: Vec<(i64, f64)> = Vec::new();
-    let trace = s["trace"].as_array().unwrap();
+    // (statistics scenarios record no trace: production mode runs `ticks` ticks anyway)
+    let silent: Vec<Value> = if production() && s["trace"].as_array().is_some_and(|t| t.is_empty()) { vec![Value::Array(Vec::new()); s["ticks"].as_u64().unwrap() as usize] } else { Vec::new() };
+    let trace = if silent.is_empty() { s["trace"].as_array().unwrap() } else { &silent };
     let initial = ids.len();
     // Vanilla numbers new entities on from the scenario's mobs (id parity paces the AI).
     level.set_next_entity_id(s.get("next_id").and_then(Value::as_i64).map_or_else(|| ids.iter().chain(&other_ids).copied().max().unwrap_or(0) + 1, |v| v as i32));
@@ -1081,6 +1085,20 @@ fn replay(s: &Value) -> Result<usize, String> {
             return Err(format!("tick {tick}: {} mobs (kiln) vs {} (vanilla)", ids.len(), expected.as_array().unwrap().len()));
         }
         if production() {
+            // idle occupancy (`MobVectors.Probe.xsample`): the villagers by x, every 20 ticks of the day between dt 300 and 11000
+            {
+                let dt = level.day_time % 24000;
+                if (300..11000).contains(&dt) && level.game_time % 20 == 0 && s["name"].as_str().is_some_and(|n| n.starts_with("farm69_idl_")) {
+                    let mut x = XBINS.lock().unwrap();
+                    for &id in &ids[..3] {
+                        if let Some(e) = level.entity(id) {
+                            let b = (e.position().x.floor() as i32 + 1).clamp(0, 11) as usize;
+                            x.0[b] += 1;
+                            x.1 += 1;
+                        }
+                    }
+                }
+            }
             // the zombie of a farm scenario is in the cell (x 10..12) by day, in its box (x 17) otherwise
             if ids.len() > 3 && level.entity(ids[3]).is_some_and(|z| (9.0..12.0).contains(&z.position().x)) {
                 let mut all = PANIC_ALL.lock().unwrap();
@@ -1331,6 +1349,12 @@ fn farm_stats() {
     none += text.lines().filter(|l| l.contains("\"name\":\"farm69_dawn_")).count() - by.len();
     for (n, a, b) in PANIC_ALL.lock().unwrap().iter() {
         println!("PANICALL {n}: villager-ticks with the zombie in the cell {a}, panicking {b} = {:.4}", *b as f64 / (*a).max(1) as f64);
+    }
+    {
+        let x = XBINS.lock().unwrap();
+        if x.1 > 0 {
+            println!("IDLE production mode: samples {} x 0..8: {:?}", x.1, (1..10).map(|i| (x.0[i] as f64 / x.1 as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
+        }
     }
     println!("PANIC per 100 ticks after the zombie: {:?}", PANIC_BINS.lock().unwrap().iter().map(|&(a, b)| (b as f64 / a.max(1) as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
     println!("FIRST (first golem after dt 300, bins of 100): {first:?}; scenarios without a golem: {none}; golems {total}");

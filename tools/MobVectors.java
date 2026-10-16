@@ -287,6 +287,8 @@ public class MobVectors {
         /// wp69: from this tick on (for 200 ticks) the first three mobs (villagers) are counted against the fourth (the zombie): per 10 ticks,
         /// villager-ticks within 8 blocks of it, moving fast (more than 0.15 blocks a tick) and in the panic activity. Summed over scenarios.
         int arrivalTick = -1;
+        /// wp69: the villagers are counted by x (`Probe.xsample`) every 20 ticks of the day between dt 300 and 11000.
+        boolean xsample;
         Scenario(String name) { this.name = name; }
     }
 
@@ -1141,6 +1143,7 @@ public class MobVectors {
                 if (!e.isRemoved() && !e.isPassenger()) tickNonPassenger(ad, e);
             }
             }
+            if (s.xsample) probe.xsample(level, 0.0, Math.floorMod(s.dayTime + 1 + tick, 24000));
             // wp28 creaking: `Level.tickBlockEntities` for the scenario's creaking hearts (their
             // ticker skips uprooted ones).
             for (BlockPos hp : s.hearts) {
@@ -7071,6 +7074,19 @@ public class MobVectors {
             s.ticks = 2100;
             s.arrivalTick = 1800;
             Action in = new Action(1800, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+            out.add(s);
+        }
+        // Idle only (statistics): the pen's three villagers all day, no zombie. Counted by x in the harness and, in production mode, by `farm_stats`.
+        for (int i = 0; i < (stats ? 40 : 0); i++) {
+            Scenario s = new Scenario("farm69_idl_" + i);
+            farm69Pen(s);
+            farm69Mobs(s, 69300L + 10L * i, 1000L - 11000L, null, true);
+            s.dayTime = 300;
+            s.levelSeed = 300 + i;
+            s.advanceDay = true;
+            s.noTrace = true;
+            s.xsample = true;
+            s.ticks = 10700;
             out.add(s);
         }
         // A crowd: three villagers slept last night, three did not. The golem's `golemDetected` is for every villager of the box (those that
