@@ -1423,37 +1423,27 @@ pub fn spawn_golem_if_needed(cx: &mut Cx, min: usize) {
     // The brain is out of the mob while it ticks: this villager's memories are in `cx.b`.
     let slept = cx.b.mem.long(Mem::LastSlept);
     let me = slept.is_some_and(|t| now - t < 24000) && !cx.b.mem.has(Mem::GolemDetectedRecently);
-    let dbg = std::env::var_os("KILN_GOLEM_DEBUG").is_some();
     if !me {
-        if dbg {
-            eprintln!("GOLEM t={now} id={} not_me slept={slept:?} detected={}", cx.e.id, cx.b.mem.has(Mem::GolemDetectedRecently));
-        }
         return;
     }
     let area = cx.e.bounding_box().inflate(10.0, 10.0, 10.0);
-    let mut wanting = vec![cx.e.id];
+    // `getEntitiesOfClass(Villager.class, area)`: this villager and every villager in the box; of them at most five that want a golem
+    // are counted (`limit(5)`), but all of them get the memory below.
+    let mut nearby = vec![cx.e.id];
+    let mut wanting = 1;
     for id in cx.level.entities_in(&area, crate::level::EntityFilter::Living, cx.e.id) {
-        if cx.level.entity(id).is_some_and(|o| o.type_name == "minecraft:villager") && cx.level.entity(id).and_then(mob::data).is_some_and(|d| wants_to_spawn_golem(d, now)) {
-            wanting.push(id);
+        if cx.level.entity(id).is_some_and(|o| o.type_name == "minecraft:villager") {
+            nearby.push(id);
+            wanting += cx.level.entity(id).and_then(mob::data).is_some_and(|d| wants_to_spawn_golem(d, now)) as usize;
         }
     }
-    wanting.truncate(5);
-    if wanting.len() < min {
-        if dbg {
-            eprintln!("GOLEM t={now} id={} wanting={} < {min}", cx.e.id, wanting.len());
-        }
+    if wanting.min(5) < min {
         return;
     }
     if !try_spawn_iron_golem(cx) {
-        if dbg {
-            eprintln!("GOLEM t={now} id={} placement failed (wanting {})", cx.e.id, wanting.len());
-        }
         return;
     }
-    if dbg {
-        eprintln!("GOLEM t={now} id={} spawned (wanting {})", cx.e.id, wanting.len());
-    }
-    for id in wanting {
+    for id in nearby {
         if id == cx.e.id {
             village::sensors::golem_detected(&mut cx.b.mem);
         } else if let Some(o) = cx.level.entity_mut(id)
@@ -1494,7 +1484,7 @@ fn try_spawn_iron_golem(cx: &mut Cx) -> bool {
             continue;
         }
         // `EntityType.create`: the block's centre, a yaw from the level's random (drawn whether or not the golem is then
-        // let in), and `finalizeSpawn` on the level's random too (the follow range bonuses and the left hand)..
+        // let in), and `finalizeSpawn` on the level's random too (the follow range bonus and the left hand).
         let id = cx.level.next_entity_id();
         let seed = cx.level.fresh_seed();
         let mut g = mob::new(mob::MobKind::IronGolem, id, 0, seed);

@@ -172,9 +172,6 @@ impl ShotBehavior for AcquirePoi {
             found.retain(|p| validate_bed_poi(cx, *p));
         }
         let path = find_path_to_pois(cx, &found);
-        if std::env::var_os("KILN_ACQ_DEBUG").is_some() {
-            eprintln!("ACQ t={} id={} at={:?} want={:?} found={:?} path={:?}", time, cx.e.id, cx.e.position(), self.poi, found, path.as_ref().map(|p| (p.reached, p.target)));
-        }
         match path {
             Some(p) if p.reached => {
                 let target = p.target;

@@ -6976,6 +6976,8 @@ public class MobVectors {
     }
 
     static void scenariosFarm69(List<Scenario> out) {
+        // (`MOB_FARM_STATS=1`: also the families that only count golems over days: statistics, no replay; and all the dawn seeds)
+        boolean stats = System.getenv("MOB_FARM_STATS") != null;
         // The morning: the villagers slept last night, a zombie they can see stands behind the fence.
         for (int variant = 0; variant < 2; variant++) {
             Scenario s = new Scenario("farm69_day_" + variant);
@@ -6988,9 +6990,30 @@ public class MobVectors {
             s.ticks = 3000;
             out.add(s);
         }
+        // A crowd: three villagers slept last night, three did not. The golem's `golemDetected` is for every villager of the box (those that
+        // do not want a golem too), and the three that want one are enough (`minVillagerAmount` 3 of at most 5 counted).
+        for (int variant = 0; variant < 2; variant++) {
+            Scenario s = new Scenario("farm69_crowd_" + variant);
+            farm69Pen(s);
+            farm69Mobs(s, 69970L + 20 * variant, 1000L - 11000L, null, true);
+            for (int i = 0; i < 3; i++) {
+                MobSpec m = new MobSpec("minecraft:villager", 5.5, BY, 1.5 + 3 * i, 30f + 70 * i, 69990L + 20 * variant + i);
+                m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b}";
+                s.mobs.add(m);
+            }
+            MobSpec z = new MobSpec("minecraft:zombie", 10.5, BY, 4.5, 90f, 69999L + 20 * variant);
+            z.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(z);
+            s.dayTime = 300;
+            s.levelSeed = 990 + variant;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 2500;
+            out.add(s);
+        }
         // The end of a night and the morning after (many seeds): the villagers go to bed and sleep, wake up at dawn; the zombie
         // comes to the cell 300 ticks into the day. When does the first golem come?
-        for (int i = 0; i < 40; i++) {
+        for (int i = 0; i < (stats ? 40 : 4); i++) {
             Scenario s = new Scenario("farm69_dawn_" + i);
             farm69Pen(s);
             for (int x = 15; x <= 19; x++)
@@ -7009,7 +7032,7 @@ public class MobVectors {
             out.add(s);
         }
         // The beds' tickets taken (what the villagers of the console runs did when they found their beds themselves): the pen is a village.
-        for (int variant = 0; variant < 4; variant++) {
+        for (int variant = 0; variant < (stats ? 4 : 1); variant++) {
             Scenario s = new Scenario("farm69_vday_" + variant);
             farm69Pen(s);
             farm69Mobs(s, 69980L + 20 * variant, 1000L - 11000L, new double[] {10.5, 4.5}, true);
@@ -7022,7 +7045,7 @@ public class MobVectors {
             out.add(s);
         }
         // The same on a flat world's ground (what the console runs of wp66 had on vanilla): a target for a fleeing villager inside the ground moves up out of it.
-        for (int variant = 0; variant < 4; variant++) {
+        for (int variant = 0; variant < (stats ? 4 : 1); variant++) {
             Scenario s = new Scenario("farm69_gday_" + variant);
             farm69Pen(s, true);
             farm69Mobs(s, 69950L + 20 * variant, 1000L - 11000L, new double[] {10.5, 4.5}, true);
@@ -7034,7 +7057,7 @@ public class MobVectors {
             out.add(s);
         }
         // Days of the farm (statistics only: no trace, no replay): 6 days of one pen, the zombie in the cell from dt 300 to 11000.
-        for (int i = 0; i < 16; i++) {
+        for (int i = 0; i < (stats ? 16 : 0); i++) {
             Scenario s = new Scenario("farm69_days_" + i);
             farm69Pen(s);
             for (int x = 15; x <= 19; x++)
@@ -7056,7 +7079,7 @@ public class MobVectors {
             }
             out.add(s);
         }
-        {
+        if (stats) {
             Scenario s = new Scenario("farm69_fulldbg");
             farm69Pen(s);
             farm69Mobs(s, 69900L, 1000L - 11000L, new double[] {10.5, 4.5}, true);
@@ -7067,20 +7090,20 @@ public class MobVectors {
             out.add(s);
         }
         // The console driver's farm, built and run by commands inside the harness (wp66 datapack: MOB_DATAPACK=tools/datapacks/wp66).
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < (stats ? 6 : 0); i++) {
             Scenario s = new Scenario("farm69_cmd_" + i);
             s.cmdPens = 4;
             s.cmdDays = 6;
             out.add(s);
         }
-        for (int i = 0; i < 12; i++) {
+        for (int i = 0; i < (stats ? 12 : 0); i++) {
             Scenario s = new Scenario("farm69_cmd1_" + i);
             s.cmdPens = 1;
             s.cmdDays = 6;
             out.add(s);
         }
         // The same through the server's own tick (statistics only).
-        for (int i = 0; i < 16; i++) {
+        for (int i = 0; i < (stats ? 16 : 0); i++) {
             Scenario s = new Scenario("farm69_srv_" + i);
             farm69Pen(s);
             for (int x = 15; x <= 19; x++)
@@ -7104,7 +7127,7 @@ public class MobVectors {
             out.add(s);
         }
         // The same with the level really ticking (statistics only).
-        for (int i = 0; i < 32; i++) {
+        for (int i = 0; i < (stats ? 32 : 0); i++) {
             Scenario s = new Scenario("farm69_full_" + i);
             farm69Pen(s);
             for (int x = 15; x <= 19; x++)
@@ -7128,7 +7151,7 @@ public class MobVectors {
         }
         // Variants of the full-tick days, each step nearer to what the console driver of wp66 does: (1) a zombie summoned each morning and killed at
         // dusk, (2) villagers that find their beds themselves (starting at dusk), (3) golems killed (the death animation) instead of removed.
-        String[] variants = {"v1", "v2", "v3", "v123"};
+        String[] variants = stats ? new String[] {"v1", "v2", "v3", "v123"} : new String[0];
         for (String v : variants) {
             for (int i = 0; i < 12; i++) {
                 Scenario s = new Scenario("farm69_" + v + "_" + i);
@@ -7182,7 +7205,7 @@ public class MobVectors {
             s.levelSeed = 71;
             s.advanceDay = true;
             s.removeGolems = true;
-            s.ticks = 27000;
+            s.ticks = 19500;
             // (the zombie, the fourth mob, starts in the box: it comes to the cell at tick 300 of a day, goes at dusk)
             Action in0 = new Action(0, "tp"); in0.mob = 3; in0.x = 10.5; in0.y = BY; in0.z = 4.5; s.actions.add(in0);
             Action out0 = new Action(5000, "tp"); out0.mob = 3; out0.x = 17.5; out0.y = BY; out0.z = 17.5; s.actions.add(out0);
