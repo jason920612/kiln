@@ -173,7 +173,8 @@ fn the_farm_in_the_simulation() {
         if d == 0 {
             break;
         }
-        want -= d;
+        // (the tick that applies the command also takes the game time one on)
+        want = want - d + 1;
     }
     assert_eq!((sim.day_time() - sim.game_time()).rem_euclid(100), 0);
     let mut seen = std::collections::HashSet::new();
