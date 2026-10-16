@@ -40,8 +40,11 @@ def hydrate():
     give("KilnTest", "minecraft:water_bucket", 1)
     time.sleep(0.5)
     a.select("minecraft:dried_ghast")
+    sv("tp KilnTest 20.5 200 20.5", show=False)
+    time.sleep(1.5)
     a.lookat(21.5, 199.99, 23.5)
-    time.sleep(0.5)
+    time.sleep(0.8)
+    F("aim:", a.state(0).get("hit"), pos(a))
     a.mouse("right", "tap")
     time.sleep(0.8)
     hits = a.find("dried_ghast", 8, 4)
@@ -56,12 +59,14 @@ def hydrate():
     time.sleep(0.8)
     F("after the bucket:", blk(a, x, y, z), "around:", [blk(a, x + dx, y, z + dz) for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))])
     rec_start(a)
-    # hydration steps (5000 ticks each) then the spawn
-    for step in range(5):
+    sv("gamerule random_tick_speed 3000", show=False)
+    # hydration steps (5000 ticks each, started by a random tick) then the spawn
+    for step in range(8):
         sprint_ticks(5005)
         F("hydration step", step, blk(a, x, y, z), "ghasts:", len(ents_of(a, "happy_ghast", 30)))
         if ents_of(a, "happy_ghast", 30):
             break
+    sv("gamerule random_tick_speed 3", show=False)
     ls = lines()
     F("hydration lines:", [l[:90] for l in ls if "sound" in l or "particle" in l][:10])
     gs = ents_of(a, "happy_ghast", 30)
@@ -148,7 +153,7 @@ def dismount(eid):
 def lead():
     kill_all_mobs()
     sv("tp KilnTest 26.5 200 22.5", show=False)
-    sv("summon minecraft:happy_ghast 26.5 201 26.5 {}", show=False)
+    sv("summon minecraft:happy_ghast 26.5 201 24.5 {NoAI:1b}", show=False)
     time.sleep(1.5)
     g = ents_of(a, "happy_ghast", 30)[0]
     sv("setblock 28 200 26 minecraft:oak_fence", show=False)

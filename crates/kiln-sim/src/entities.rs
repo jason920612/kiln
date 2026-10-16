@@ -81,6 +81,8 @@ pub(crate) struct Entity {
     section: Option<[i32; 3]>,
     /// A mob's entity data and equipment as its viewers last got them.
     meta_sent: Vec<u8>,
+    /// The entity data last sent (what the next change is worked out against; `None`: the viewers got it with the pairing).
+    meta_prev: Option<EntityData>,
     /// Hash of a mob's syncable attributes as its viewers last got them (0: none yet).
     attrs_sent: u64,
     /// Passengers as viewers last got them (Set Passengers).
@@ -377,6 +379,7 @@ impl Entity {
             seen_by: Vec::new(),
             section: None,
             meta_sent: Vec::new(),
+            meta_prev: None,
             attrs_sent: 0,
             passengers_sent: Vec::new(),
             equipment_sent: Vec::new(),
@@ -437,6 +440,7 @@ impl Entity {
         self.tracker = MovementTracker::new(self.id, self.kind.update_interval, &self.move_state());
         self.sent_vel = self.vel;
         self.meta_sent = Vec::new();
+        self.meta_prev = None;
         self.attrs_sent = 0;
         self.passengers_sent = Vec::new();
         self.equipment_sent = Vec::new();
@@ -3980,12 +3984,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
     {
         let mut meta = EntityData::new();
         x.entity_data(phys, &mut meta);
-        if meta.entries() != e.meta_sent.as_slice() {
-            if !e.meta_sent.is_empty() {
-                packets.push(entity::set_entity_data(e.id, &meta));
-            }
-            e.meta_sent = meta.entries().to_vec();
-        }
+        push_dirty_data(e.id, meta, &mut e.meta_sent, &mut e.meta_prev, &mut packets, false);
     }
     // An extension entity that wears things (an armor stand): the equipment packet when it changes.
     if let Some(phys) = e.phys.as_deref()
@@ -4010,12 +4009,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
         && let EntityKind::Mob(m) = &phys.kind
     {
         let meta = crate::mobs::metadata(phys, m);
-        if meta.entries() != e.meta_sent.as_slice() {
-            if !e.meta_sent.is_empty() {
-                packets.push(entity::set_entity_data(e.id, &meta));
-            }
-            e.meta_sent = meta.entries().to_vec();
-        }
+        push_dirty_data(e.id, meta, &mut e.meta_sent, &mut e.meta_prev, &mut packets, false);
         // `ServerEntity.sendDirtyEntityData`: attributes that changed (effects, babies, taming, `/attribute`).
         let hash = crate::mobs::attributes_hash(m);
         if hash != e.attrs_sent {
@@ -4044,12 +4038,8 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
     // Arrows: crit and in-ground flags change in flight (extension entities: above).
     if e.phys.as_deref().is_some_and(|p| matches!(p.kind, EntityKind::Arrow(_))) {
         let meta = e.metadata();
-        if meta.entries() != e.meta_sent.as_slice() {
-            if !e.meta_sent.is_empty() || e.age > 1 {
-                packets.push(entity::set_entity_data(e.id, &meta));
-            }
-            e.meta_sent = meta.entries().to_vec();
-        }
+        let late = e.age > 1;
+        push_dirty_data(e.id, meta, &mut e.meta_sent, &mut e.meta_prev, &mut packets, late);
     }
     if let Some(phys) = e.phys.as_deref()
         && phys.passengers != e.passengers_sent
@@ -4181,4 +4171,31 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
 fn _assert_sync() {
     fn f<T: Sync>() {}
     f::<SimLevel<'static, 'static, 'static>>();
+}
+
+
+/// `ServerEntity.sendDirtyEntityData`: when the entity's data differs from what its viewers hold, a packet with the entries
+/// that changed (and, for a value that went back to its default, that default - the data here lists non-default values only,
+/// so an entry that is gone must be reset). The first look at an entity only records what its pairing packet carried, unless
+/// `send_when_unprimed`.
+fn push_dirty_data(id: i32, meta: EntityData, sent: &mut Vec<u8>, prev: &mut Option<EntityData>, packets: &mut Vec<Bytes>, send_when_unprimed: bool) {
+    let changed = meta.entries() != sent.as_slice();
+    match prev {
+        None => {
+            if changed && send_when_unprimed && !meta.is_empty() {
+                packets.push(entity::set_entity_data(id, &meta));
+            }
+        }
+        Some(p) => {
+            if !changed {
+                return;
+            }
+            let d = meta.dirty_since(p);
+            if !d.is_empty() {
+                packets.push(entity::set_entity_data(id, &d));
+            }
+        }
+    }
+    *sent = meta.entries().to_vec();
+    *prev = Some(meta);
 }

@@ -266,6 +266,22 @@ impl DataValue {
     }
 }
 
+/// The encoded default of a field as vanilla defines it (`SynchedEntityData.define(accessor, default)`), for the
+/// serializers whose default is always the same: false, 0, standing, empty, no list. The air supply (field 1) is the
+/// exception that matters, 300. `None` for the others (a variant, an item, a block state...): no default to go back to.
+pub fn default_value(index: u8, serializer: i32) -> Option<Vec<u8>> {
+    let mut b = BytesMut::new();
+    match (index, serializer) {
+        (1, s::INT) => b.put_varint(300),
+        (_, s::BOOLEAN) => b.put_bool(false),
+        (_, s::BYTE) => b.put_i8(0),
+        (_, s::INT) | (_, s::POSE) | (_, s::OPTIONAL_UNSIGNED_INT) | (_, s::OPTIONAL_BLOCK_STATE) | (_, s::PARTICLES) => b.put_varint(0),
+        (_, s::OPTIONAL_COMPONENT) | (_, s::OPTIONAL_BLOCK_POS) | (_, s::OPTIONAL_LIVING_ENTITY_REFERENCE) | (_, s::OPTIONAL_GLOBAL_POS) => b.put_bool(false),
+        _ => return None,
+    }
+    Some(b.to_vec())
+}
+
 fn put_particle(b: &mut BytesMut, p: &Particle) {
     b.put_varint(p.kind);
     b.put_slice(&p.options);
@@ -277,6 +293,8 @@ pub struct EntityData {
     buf: BytesMut,
     /// The (index, serializer id) of every entry set, in order (what a test needs to check against the type's fields).
     fields: Vec<(u8, i32)>,
+    /// Where each entry's value lies in `buf`.
+    spans: Vec<(usize, usize)>,
 }
 
 impl EntityData {
@@ -292,14 +310,52 @@ impl EntityData {
         assert!(value.fits(field.serializer), "{value:?} does not fit serializer {}", field.serializer);
         self.buf.put_u8(field.index);
         self.buf.put_varint(field.serializer);
+        let start = self.buf.len();
         value.write(&mut self.buf);
         self.fields.push((field.index, field.serializer));
+        self.spans.push((start, self.buf.len()));
         self
     }
 
     /// The (index, serializer id) of the entries, in order.
     pub fn fields(&self) -> &[(u8, i32)] {
         &self.fields
+    }
+
+    fn value_of(&self, index: u8) -> Option<&[u8]> {
+        let i = self.fields.iter().position(|f| f.0 == index)?;
+        Some(&self.buf[self.spans[i].0..self.spans[i].1])
+    }
+
+    /// `SynchedEntityData.packDirty`: what a viewer who holds `old` needs to hold `self` - the entries that are new or
+    /// changed, and for each entry of `old` that `self` lacks (a value that went back to its default is not an entry
+    /// here, as in a pairing packet) that field's default, so the viewer does not keep the old value. In id order.
+    pub fn dirty_since(&self, old: &EntityData) -> EntityData {
+        let mut entries: Vec<(u8, i32, Vec<u8>)> = Vec::new();
+        for (i, &(index, serializer)) in self.fields.iter().enumerate() {
+            let now = &self.buf[self.spans[i].0..self.spans[i].1];
+            if old.value_of(index) != Some(now) {
+                entries.push((index, serializer, now.to_vec()));
+            }
+        }
+        for &(index, serializer) in &old.fields {
+            if self.value_of(index).is_none()
+                && let Some(default) = default_value(index, serializer)
+            {
+                entries.push((index, serializer, default));
+            }
+        }
+        entries.sort_by_key(|e| e.0);
+        let mut d = EntityData::new();
+        for (index, serializer, value) in entries {
+            d.buf.put_u8(index);
+            d.buf.put_varint(serializer);
+            let start = d.buf.len();
+            d.buf.put_slice(&value);
+            d.fields.push((index, serializer));
+            d.spans.push((start, d.buf.len()));
+        }
+        d
     }
 
     pub fn is_empty(&self) -> bool {
@@ -348,6 +404,26 @@ mod tests {
         let mut want = vec![14, 11, 1];
         want.extend_from_slice(&((1i64 << 38) | (3 << 12) | 2).to_be_bytes());
         assert_eq!(encode(sleeping, DataValue::OptionalBlockPos(Some([1, 2, 3]))), want);
+    }
+
+    #[test]
+    fn a_value_back_at_its_default_is_reset_in_the_dirty_entries() {
+        let mut old = EntityData::new();
+        old.set(data::ageable_mob::BABY, &DataValue::Boolean(true));
+        old.set(data::entity::AIR_SUPPLY, &DataValue::Int(120));
+        old.set(data::living_entity::HEALTH, &DataValue::Float(10.0));
+        let mut now = EntityData::new();
+        now.set(data::living_entity::HEALTH, &DataValue::Float(10.0));
+        now.set(data::entity::SILENT, &DataValue::Boolean(true));
+        // The baby flag and the air supply are gone (back to false and 300), the silent flag is new, the health did not change.
+        let mut want = EntityData::new();
+        want.set(data::entity::AIR_SUPPLY, &DataValue::Int(300));
+        want.set(data::entity::SILENT, &DataValue::Boolean(true));
+        want.set(data::ageable_mob::BABY, &DataValue::Boolean(false));
+        let d = now.dirty_since(&old);
+        assert_eq!(d.fields(), [(1, s::INT), (4, s::BOOLEAN), (16, s::BOOLEAN)]);
+        assert_eq!(d.entries(), [1, 1, 0xac, 0x02, 4, 8, 1, 16, 8, 0]);
+        let _ = want;
     }
 
     #[test]
