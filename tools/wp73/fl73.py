@@ -30,9 +30,9 @@ CASES = [
     ("wp70 d 100", "forceload add 288 288 447 447", "setblock 447 300 447 stone"),
     # the per-command limit, twice, away from everything else
     ("256 e", "forceload add 2000 2000 2255 2255", "setblock 2255 300 2255 stone"),
-    ("256 f", "forceload add -3000 1000 -2745 1255", "setblock -2745 300 1255 stone"),
+    ("256 f", "forceload add -3008 1008 -2753 1263", "setblock -2753 300 1263 stone"),
     # over the limit: refused
-    ("257 g", "forceload add 5000 5000 5271 5239", None),
+    ("272 g", "forceload add 5008 5008 5279 5263", None),
     # loaded already: nothing changes
     ("again e", "forceload add 2000 2000 2255 2255", None),
 ]

@@ -1222,6 +1222,9 @@ impl Dim {
         let started = Instant::now();
         let mut missing: Vec<ChunkPos> = wanted.iter().copied().filter(|&pos| !self.request_urgent(pos)).collect();
         let generated = missing.len();
+        if generated > 0 {
+            self.generation.as_ref().unwrap().waited_on(true);
+        }
         while !missing.is_empty() {
             let pool = self.generation.as_mut().unwrap();
             pool.collect();
@@ -1244,6 +1247,7 @@ impl Dim {
             }
         }
         if generated > 0 {
+            self.generation.as_ref().unwrap().waited_on(false);
             debug!("{} chunks of {} loaded now, {generated} generated, in {:?}", wanted.len(), self.key, started.elapsed());
         }
     }
