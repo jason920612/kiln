@@ -7,7 +7,7 @@ tools="$(cd "$(dirname "$0")" && pwd)"
 c=~/wp70/K/console
 sleep 8
 for l in "difficulty peaceful" "gamerule spawn_mobs false" "gamerule advance_time false" "gamerule advance_weather false" \
-         "forceload add 0 0 111 95" "forceload add 192 192 239 239"; do echo "$l" > $c; done
+         "forceload add 0 0 111 95" "forceload add 96 96 143 127" "forceload add 192 192 239 239"; do echo "$l" > $c; done
 setsid nohup ~/wt/wp70-command-perf/target/release/kiln-bot --addr 127.0.0.1:25590 --count 1 --behavior idle --duration 600 \
   --name-prefix Bench --report-interval 3600 > ~/wp70/bot_prof.log 2>&1 < /dev/null &
 sleep 6
