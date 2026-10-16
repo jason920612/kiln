@@ -93,7 +93,8 @@ def step(n, timeout=3600):
 
 def advance(n, timeout=7200):
     """n ticks as fast as the server goes: `tick sprint`, then freeze again."""
-    if n <= 40:
+    if n <= 40 or os.environ.get("STEPONLY"):
+        # (STEPONLY=1: never `tick sprint`: `tick step` at the tick rate the driver set)
         return step(n)
     g0 = gametime()
     run([f"tick sprint {n}"])
