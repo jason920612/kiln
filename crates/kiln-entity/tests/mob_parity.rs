@@ -14,6 +14,15 @@ use kiln_entity::mob::{self, DamageSource, MobKind};
 use serde_json::Value;
 use std::path::PathBuf;
 
+/// wp69: replay in production mode (`farm_stats`): each mob draws its AI from its own stream (not the recording's shared one), nothing is compared;
+/// the day time of every new iron golem is logged.
+static PRODUCTION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static GOLEMS: std::sync::Mutex<Vec<(String, i64)>> = std::sync::Mutex::new(Vec::new());
+
+fn production() -> bool {
+    PRODUCTION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn f(v: &Value) -> f64 {
     v.as_f64().unwrap_or_else(|| panic!("not a number: {v}"))
 }
@@ -466,7 +475,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     // Recordings since wp29 pin a rider that appears during its vehicle's tick before it ticks.
     let early_pin = s.get("pin_passengers").and_then(Value::as_bool) == Some(true);
     let mut level = MemoryLevel::new(-64, s["level_seed"].as_i64().unwrap());
-    level.share_ai_random = true;
+    level.share_ai_random = !production();
     level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
     level.sky_darken = s["sky_darken"].as_i64().unwrap() as i32;
     // wp28: the overworld clock (villagers' schedule).
@@ -566,7 +575,7 @@ fn replay(s: &Value) -> Result<usize, String> {
         let kind = MobKind::by_name(spec["type"].as_str().unwrap()).expect("mob type");
         let id = spec["id"].as_i64().unwrap() as i32;
         // (wp28: a uuid of its own, for the memories that hold entities by uuid: anger.)
-        let mut e = mob::new(kind, id, id as u128 + 0x5eed_0000, 0);
+        let mut e = mob::new(kind, id, id as u128 + 0x5eed_0000, if production() { spec["seed"].as_i64().unwrap() } else { 0 });
         let yaw = f(&spec["yaw"]) as f32;
         e.set_pos(vec3(&spec["pos"]));
         e.y_rot = yaw;
@@ -619,10 +628,12 @@ fn replay(s: &Value) -> Result<usize, String> {
         e.random = kiln_javamath::random::LegacyRandom::new(spec["seed"].as_i64().unwrap());
         // A brain mob's random for what vanilla draws from the level's: the recording's level
         // random, seeded per scenario; the sensors and gates pinned as `MobVectors.pinBrain` does.
-        if let Some(m) = mob::data_mut(&mut e) {
-            m.brain_random = kiln_javamath::random::LegacyRandom::new(s["level_seed"].as_i64().unwrap());
+        if !production() {
+            if let Some(m) = mob::data_mut(&mut e) {
+                m.brain_random = kiln_javamath::random::LegacyRandom::new(s["level_seed"].as_i64().unwrap());
+            }
+            kiln_entity::mob::brain::pin(&mut e);
         }
-        kiln_entity::mob::brain::pin(&mut e);
         ids.push(id);
         level.insert(e);
         // wp28 creaking: the heart holding this creaking (`setCreakingInfo(creaking)`).
@@ -1060,6 +1071,17 @@ fn replay(s: &Value) -> Result<usize, String> {
         if !spawners.is_empty() && ids.len() != expected.as_array().unwrap().len() {
             return Err(format!("tick {tick}: {} mobs (kiln) vs {} (vanilla)", ids.len(), expected.as_array().unwrap().len()));
         }
+        if production() {
+            for &id in &ids[initial..] {
+                if let Some(e) = level.entity(id)
+                    && e.type_name == "minecraft:iron_golem"
+                    && e.tick_count == 0
+                {
+                    GOLEMS.lock().unwrap().push((s["name"].as_str().unwrap().to_owned(), level.day_time));
+                }
+            }
+            continue;
+        }
         for (k, want) in expected.as_array().unwrap().iter().enumerate() {
             let want = want.as_array().unwrap();
             let want_goals = want.last().unwrap().as_str().unwrap();
@@ -1245,4 +1267,35 @@ fn mobs_match_vanilla() {
     }
     eprintln!("mob parity: {pass} passed, {fail} failed, {states} mob states identical");
     assert_eq!(fail, 0, "{fail} scenarios differ from vanilla");
+}
+
+/// wp69: the golem farm's dawn in production mode (each mob its own random stream, as in the server), many seeds: when does the first golem
+/// of the day come? `KILN_MOB_VECTORS=.../farm69_dawn.jsonl cargo test --release -p kiln-entity --test mob_parity farm_stats -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn farm_stats() {
+    let Some(path) = vectors() else { return };
+    let text = std::fs::read_to_string(&path).unwrap();
+    PRODUCTION.store(true, std::sync::atomic::Ordering::Relaxed);
+    for line in text.lines() {
+        let s: Value = serde_json::from_str(line).unwrap();
+        if !s["name"].as_str().is_some_and(|n| n.starts_with("farm69_")) {
+            continue;
+        }
+        let _ = replay(&s);
+    }
+    let log = GOLEMS.lock().unwrap();
+    let mut by: std::collections::BTreeMap<String, Vec<i64>> = std::collections::BTreeMap::new();
+    for (n, t) in log.iter() {
+        by.entry(n.clone()).or_default().push(t % 24000);
+    }
+    let mut first: std::collections::BTreeMap<i64, usize> = std::collections::BTreeMap::new();
+    let (mut none, mut total) = (0, 0);
+    for (n, v) in &by {
+        println!("{n}: {v:?}");
+        total += v.len();
+        *first.entry((v.iter().copied().filter(|&t| t >= 300).min().unwrap_or(0) - 300) / 100 * 100).or_default() += 1;
+    }
+    none += text.lines().filter(|l| l.contains("\"name\":\"farm69_dawn_")).count() - by.len();
+    println!("FIRST (first golem after dt 300, bins of 100): {first:?}; scenarios without a golem: {none}; golems {total}");
 }
