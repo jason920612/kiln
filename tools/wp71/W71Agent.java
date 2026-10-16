@@ -13,7 +13,9 @@ import java.lang.instrument.Instrumentation;
 /** wp71: a java agent for the real vanilla 26.3 server: calls {@link W71Hook#afterTick} at the end of every ServerLevel.tick. */
 public final class W71Agent {
     public static void premain(String args, Instrumentation inst) {
-        inst.addTransformer((loader, name, cls, pd, bytes) -> {
+        inst.addTransformer(new java.lang.instrument.ClassFileTransformer() {
+            @Override
+            public byte[] transform(ClassLoader loader, String name, Class<?> cls, java.security.ProtectionDomain pd, byte[] bytes) {
             if (!"net/minecraft/server/level/ServerLevel".equals(name)) return null;
             ClassFile cf = ClassFile.of();
             return cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(
@@ -25,6 +27,7 @@ public final class W71Agent {
                         }
                         b.with(e);
                     }));
+            }
         });
     }
 }

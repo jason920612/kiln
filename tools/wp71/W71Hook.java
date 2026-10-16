@@ -13,7 +13,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.Brain;
 import net.minecraft.world.level.Level;
@@ -53,9 +52,9 @@ public final class W71Hook {
             List<Entity> villagers = new ArrayList<>(), zombies = new ArrayList<>();
             for (Entity e : level.getAllEntities()) {
                 if (e.isRemoved()) continue;
-                if (e.getType() == EntityType.VILLAGER && e.entityTags().contains("wp66")) villagers.add(e);
-                else if (e.getType() == EntityType.ZOMBIE && e.entityTags().contains("wp66z")) zombies.add(e);
-                else if (e.getType() == EntityType.IRON_GOLEM && GOLEMS.add(e.getId())) add("golem");
+                if (e instanceof net.minecraft.world.entity.npc.villager.Villager && e.entityTags().contains("wp66")) villagers.add(e);
+                else if (e instanceof net.minecraft.world.entity.monster.zombie.Zombie && e.entityTags().contains("wp66z")) zombies.add(e);
+                else if (e instanceof net.minecraft.world.entity.animal.golem.IronGolem && GOLEMS.add(e.getId())) add("golem");
             }
             Map<Integer, List<Entity>> zombiesByPen = new HashMap<>();
             for (Entity z : zombies) zombiesByPen.computeIfAbsent(pen(z.getZ()), k -> new ArrayList<>()).add(z);
