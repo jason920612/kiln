@@ -6688,6 +6688,26 @@ public class MobVectors {
             s.ticks = 3000;
             out.add(s);
         }
+        // The end of a night and the morning after (many seeds): the villagers go to bed and sleep, wake up at dawn; the zombie
+        // comes to the cell 300 ticks into the day. When does the first golem come?
+        for (int i = 0; i < 40; i++) {
+            Scenario s = new Scenario("farm69_dawn_" + i);
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69400L + 10L * i, 1000L - 8000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 22500;
+            s.levelSeed = 400 + i;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 4000;
+            Action in = new Action(1800, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+            out.add(s);
+        }
         // A day, a night and the next morning: the zombie goes at dusk (into a closed box) and comes back the next morning.
         {
             Scenario s = new Scenario("farm69_cycle");
