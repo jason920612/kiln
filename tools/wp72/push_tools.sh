@@ -1,3 +1,5 @@
 #!/bin/bash
-# push the playthrough tools from the Windows worktree to the VM's ~/wp72
-cd "$(dirname "$0")/../wp58" && scp -q -o BatchMode=yes *.py *.sh ClientCtl.java ../wp72/*.sh ../wp72/*.py test@192.168.1.169:wp72/ && ssh -n -o BatchMode=yes test@192.168.1.169 'sed -i "s/\r$//" ~/wp72/*.py ~/wp72/*.sh'
+# push the playthrough tools from the Windows worktree to the VM's ~/wp72 (wp58 tools first, the wp72 ones (same names) on top)
+T="$(cd "$(dirname "$0")/.." && pwd)"
+H=test@192.168.1.169
+scp -q -o BatchMode=yes "$T"/wp58/*.py "$T"/wp58/ClientCtl.java $H:wp72/ && scp -q -o BatchMode=yes "$T"/wp72/*.sh "$T"/wp72/*.py $H:wp72/ && ssh -n -o BatchMode=yes $H 'cd ~/wp72; rm -f *68*.sh; sed -i "s/\r$//" *.py *.sh; chmod +x *.sh'
