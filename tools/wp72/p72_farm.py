@@ -6,6 +6,7 @@ import re, sys, threading, json, math
 from lock import *
 
 SEED = int(os.environ.get("FARM_SEED", "72"))
+ROOM_H = int(os.environ.get("ROOM_H", "3"))  # height of the rooms of the slime farm
 ME = "KilnTest"
 
 
@@ -141,8 +142,9 @@ def scen_slime(f, control=False):
     for cx, cz in chunks:
         x0, z0 = cx * 16, cz * 16
         f.cmd(f"fill {x0 - 1} -1 {z0 - 1} {x0 + 16} 40 {z0 + 16} minecraft:stone")
-        for i in range(13):
-            f.cmd(f"fill {x0 + 1} {3 * i + 1} {z0 + 1} {x0 + 14} {3 * i + 2} {z0 + 14} minecraft:air")
+        step_y = ROOM_H + 1
+        for i in range(37 // step_y):
+            f.cmd(f"fill {x0 + 1} {step_y * i + 1} {z0 + 1} {x0 + 14} {step_y * i + ROOM_H} {z0 + 14} minecraft:air")
     f.cmd(f"tp {ME} 8.5 120 8.5")
     f.cmd("kill @e[type=!player]")
     return f.run(["slime", "zombie", "skeleton", "creeper", "spider"], (-120, 0, -120, 240, 40, 240))
