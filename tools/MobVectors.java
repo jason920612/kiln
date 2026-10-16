@@ -6785,7 +6785,7 @@ public class MobVectors {
             out.add(s);
         }
         // The same with the level really ticking (statistics only).
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 32; i++) {
             Scenario s = new Scenario("farm69_full_" + i);
             farm69Pen(s);
             for (int x = 15; x <= 19; x++)
