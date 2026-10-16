@@ -13,8 +13,13 @@ fn console(sim: &mut Sim, cmds: impl IntoIterator<Item = String>) {
     assert!(sim.step(cmds.into_iter().map(ToSim::Console)));
 }
 
+/// `FARM_X0`: where the pens' west side is (0: on a chunk boundary, as the console driver's 4000 is; 4: well inside a chunk).
+fn x0() -> i32 {
+    std::env::var("FARM_X0").ok().and_then(|v| v.parse().ok()).unwrap_or(0)
+}
+
 fn at(pen: i32, dx: i32, dy: i32, dz: i32) -> String {
-    format!("{} {} {}", dx, F + dy, pen * PEN_DZ + dz)
+    format!("{} {} {}", dx + x0(), F + dy, pen * PEN_DZ + dz)
 }
 
 fn build(sim: &mut Sim, pens: i32) {
@@ -26,7 +31,7 @@ fn build(sim: &mut Sim, pens: i32) {
             "gamerule minecraft:mob_drops false".into(),
             "difficulty normal".into(),
             "weather clear 1000000".into(),
-            format!("forceload add -16 -16 32 {}", pens * PEN_DZ + 24),
+            format!("forceload add {} -16 {} {}", x0() - 16, x0() + 32, pens * PEN_DZ + 24),
         ],
     );
     // Chunks load over a few ticks.
@@ -56,7 +61,8 @@ fn build(sim: &mut Sim, pens: i32) {
     for pen in 0..pens {
         for i in 0..3 {
             cmds.push(format!(
-                "summon minecraft:villager 6.5 {} {}.5 {{VillagerData:{{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1}},PersistenceRequired:1b}}",
+                "summon minecraft:villager {}.5 {} {}.5 {{VillagerData:{{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1}},PersistenceRequired:1b}}",
+                x0() + 6,
                 F + 1,
                 pen * PEN_DZ + 3 + i * 2
             ));
@@ -72,7 +78,7 @@ fn zombies(sim: &mut Sim, pens: i32, on: bool) {
     }
     console(
         sim,
-        (0..pens).map(|pen| format!("summon minecraft:zombie 10.5 {} {}.5 {{PersistenceRequired:1b}}", F + 1, pen * PEN_DZ + 4)).collect::<Vec<_>>(),
+        (0..pens).map(|pen| format!("summon minecraft:zombie {}.5 {} {}.5 {{PersistenceRequired:1b}}", x0() + 10, F + 1, pen * PEN_DZ + 4)).collect::<Vec<_>>(),
     );
 }
 
