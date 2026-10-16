@@ -20,6 +20,8 @@ static PRODUCTION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 static GOLEMS: std::sync::Mutex<Vec<(String, i64)>> = std::sync::Mutex::new(Vec::new());
 /// Per 100 ticks after dt 300: (villager-ticks, panicking ones).
 static PANIC_BINS: std::sync::Mutex<[(u64, u64); 20]> = std::sync::Mutex::new([(0, 0); 20]);
+/// Per scenario: (villager-ticks with the zombie in the cell, panicking ones, golems).
+static PANIC_ALL: std::sync::Mutex<Vec<(String, u64, u64)>> = std::sync::Mutex::new(Vec::new());
 
 fn production() -> bool {
     PRODUCTION.load(std::sync::atomic::Ordering::Relaxed)
@@ -1079,6 +1081,19 @@ fn replay(s: &Value) -> Result<usize, String> {
             return Err(format!("tick {tick}: {} mobs (kiln) vs {} (vanilla)", ids.len(), expected.as_array().unwrap().len()));
         }
         if production() {
+            // the zombie of a farm scenario is in the cell (x 10..12) by day, in its box (x 17) otherwise
+            if ids.len() > 3 && level.entity(ids[3]).is_some_and(|z| (9.0..12.0).contains(&z.position().x)) {
+                let mut all = PANIC_ALL.lock().unwrap();
+                let name = s["name"].as_str().unwrap().to_owned();
+                if all.last().is_none_or(|l| l.0 != name) {
+                    all.push((name, 0, 0));
+                }
+                let last = all.last_mut().unwrap();
+                for &id in &ids[..3] {
+                    last.1 += 1;
+                    last.2 += level.entity(id).and_then(mob::data).is_some_and(|m| m.brain_trace().iter().any(|t| t == "act:panic")) as u64;
+                }
+            }
             let dt = level.day_time % 24000;
             if (300..2300).contains(&dt) {
                 let mut bins = PANIC_BINS.lock().unwrap();
@@ -1314,6 +1329,9 @@ fn farm_stats() {
         *first.entry((v.iter().copied().filter(|&t| t >= 300).min().unwrap_or(0) - 300) / 100 * 100).or_default() += 1;
     }
     none += text.lines().filter(|l| l.contains("\"name\":\"farm69_dawn_")).count() - by.len();
+    for (n, a, b) in PANIC_ALL.lock().unwrap().iter() {
+        println!("PANICALL {n}: villager-ticks with the zombie in the cell {a}, panicking {b} = {:.4}", *b as f64 / (*a).max(1) as f64);
+    }
     println!("PANIC per 100 ticks after the zombie: {:?}", PANIC_BINS.lock().unwrap().iter().map(|&(a, b)| (b as f64 / a.max(1) as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
     println!("FIRST (first golem after dt 300, bins of 100): {first:?}; scenarios without a golem: {none}; golems {total}");
 }
