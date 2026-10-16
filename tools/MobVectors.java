@@ -812,7 +812,7 @@ public class MobVectors {
             player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
             player.snapTo(0, 300, 0, 0f, 0f);
         }
-        level.getRandom().setSeed(s.levelSeed);
+        if (System.getenv("MOB_NATURAL_RANDOM") == null) level.getRandom().setSeed(s.levelSeed);
         // wp69 debugging aid: `MOB_TRACE_LEVEL=<scenario>` makes the level's random log every draw (with its callers) of the ticks
         // `MOB_TRACE_FROM`..`MOB_TRACE_TO` to <cwd>/dbg.txt.
         if (s.name.equals(System.getenv("MOB_TRACE_LEVEL"))) set(level, "random", new TracingRandom(s.levelSeed));
@@ -881,7 +881,7 @@ public class MobVectors {
                 // Debugging aid: the mob's (`MOB_TRACE_INDEX`, the first by default) random logs who draws from it (to <cwd>/dbg.txt).
                 set(m, "random", new TracingRandom(spec.seed));
             }
-            m.getRandom().setSeed(spec.seed);
+            if (System.getenv("MOB_NATURAL_RANDOM") == null) m.getRandom().setSeed(spec.seed);
             pinCubeMoveYaw(m);
             // wp49 bees: the constructor draws the flower-search cooldown and the validate goals' cooldowns from
             // the mob's unseeded random: recorded, and set in the replay.
