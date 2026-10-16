@@ -119,6 +119,42 @@ fn count_panic(sim: &Sim, panic: &mut Panic, dawn: bool) {
     }
 }
 
+/// `FARM_ARRIVAL`: where the villagers are against the zombie of their pen in the 200 ticks after it comes (the counters of `MobVectors.arrivalSample`):
+/// per 10 ticks (villager-ticks, within 8 blocks of the zombie, moving fast (> 0.15 blocks a tick), panicking).
+static ARRIVAL: std::sync::Mutex<([[u64; 4]; 20], std::collections::HashMap<i32, [f64; 2]>, Option<i64>)> =
+    std::sync::Mutex::new(([[0; 4]; 20], std::collections::HashMap::new(), None));
+
+fn arrival_sample(sim: &Sim) {
+    let mut a = ARRIVAL.lock().unwrap();
+    let Some(from) = a.2 else { return };
+    let t = sim.game_time() - from;
+    if !(0..200).contains(&t) {
+        if t >= 200 {
+            a.2 = None;
+            a.1.clear();
+        }
+        return;
+    }
+    let mobs = sim.mobs();
+    for pen in 0..64 {
+        let zone = |z: f64| ((z + 20.0) / 40.0).floor() as i32 == pen;
+        let Some(zombie) = mobs.iter().find(|m| m.1 == "minecraft:zombie" && zone(m.2[2])) else { continue };
+        for m in mobs.iter().filter(|m| m.1 == "minecraft:villager" && zone(m.2[2])) {
+            let panic = sim.mob_brain(m.0).is_some_and(|b| b.iter().any(|x| x == "act:panic"));
+            let d2 = (m.2[0] - zombie.2[0]).powi(2) + (m.2[1] - zombie.2[1]).powi(2) + (m.2[2] - zombie.2[2]).powi(2);
+            let fast = a.1.get(&m.0).is_some_and(|p| ((m.2[0] - p[0]).powi(2) + (m.2[2] - p[1]).powi(2)).sqrt() > 0.15);
+            let b = &mut a.0[(t / 10) as usize];
+            b[0] += 1;
+            b[1] += (d2 <= 64.0) as u64;
+            b[2] += fast as u64;
+            b[3] += panic as u64;
+        }
+    }
+    let prev: Vec<(i32, [f64; 2])> = mobs.iter().filter(|m| m.1 == "minecraft:villager").map(|m| (m.0, [m.2[0], m.2[2]])).collect();
+    a.1.clear();
+    a.1.extend(prev);
+}
+
 /// Runs `n` ticks, logging new golems (and killing them in the tick after).
 fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log: &mut Vec<(i64, i64, [f64; 3])>, panic: &mut Panic) {
     let mut kill = false;
@@ -128,6 +164,9 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
             kill = false;
         } else {
             assert!(sim.step([]));
+        }
+        if std::env::var_os("FARM_ARRIVAL").is_some() {
+            arrival_sample(sim);
         }
         if let Ok(v) = std::env::var("FARM_PANIC") {
             count_panic(sim, panic, v == "dawn");
@@ -191,6 +230,7 @@ fn the_farm_in_the_simulation() {
             break;
         }
         zombies(&mut sim, pens, true);
+        ARRIVAL.lock().unwrap().2 = Some(sim.game_time());
         let dt = sim.day_time() % 24000;
         advance(&mut sim, 11000 - dt, &mut seen, &mut log, &mut panic);
         eprintln!("day {day}: {} golems so far [{:.0}s]", log.len(), t0.elapsed().as_secs_f64());
@@ -207,6 +247,10 @@ fn the_farm_in_the_simulation() {
     println!("PANIC villager-ticks {} panicking {:.4} opps {} any {:.4}", panic.ticks, panic.panicking as f64 / panic.ticks.max(1) as f64, panic.opps, panic.opps_any as f64 / panic.opps.max(1) as f64);
     println!("BINS {:?}", panic.bins.iter().map(|&(a, b)| (b as f64 / a.max(1) as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
     println!("PHASE {:?}", panic.by_phase.iter().map(|&(a, b)| (b as f64 / a.max(1) as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
+    if std::env::var_os("FARM_ARRIVAL").is_some() {
+        let a = ARRIVAL.lock().unwrap();
+        println!("ARRIVAL {:?}", a.0);
+    }
     println!("TOTAL {} golems in {days} days, {pens} pens", log.len());
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
