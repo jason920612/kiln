@@ -3310,6 +3310,12 @@ fn carry_out(
             };
             let sound = fx.map_or("minecraft:entity.generic.explode", |f| f.sound);
             let (Some(particle), Some(sound)) = (kiln_data::builtin_id("minecraft:particle_type", particle), kiln_data::builtin_id("minecraft:sound_event", sound)) else { return };
+            // (`Entity.push`: the server's own motion of the player takes it too, and so does the motion packet a hurt player is sent.)
+            for (id, v) in &knockbacks {
+                if let Some(p) = players.iter_mut().find(|p| p.entity_id == *id) {
+                    p.vel = [p.vel[0] + v.x, p.vel[1] + v.y, p.vel[2] + v.z];
+                }
+            }
             for p in players.iter_mut().filter(|p| dist2(p.pos, at) < 64.0 * 64.0) {
                 let knockback = knockbacks.iter().find(|(id, _)| *id == p.entity_id).filter(|_| p.game_mode != 3 && !(p.game_mode == 1 && p.flying)).map(|(_, v)| arr(*v));
                 let pkt = world_fx::explode(
