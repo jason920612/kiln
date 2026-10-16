@@ -508,6 +508,17 @@ public class MobVectors {
     /// wp69 (`MOB_PROBE=1`): per tick, what the villagers' brains hold while a zombie is in the world (counts of villager-ticks).
     static final class Probe {
         long ticks, panic, hostile, trigger, near, opps, oppsTrigger, oppsPanic, villagerTicks;
+        /// Villagers by x offset from the pen's corner (floor): every 20 ticks of the day between dt 300 and 11000 (as the datapack's `sample` counts), whether a zombie is about or not.
+        final long[] xbins = new long[12];
+        long xsamples;
+        void xsample(ServerLevel level, double x0, long dt) {
+            if (dt < 300 || dt >= 11000 || level.getGameTime() % 20 != 0) return;
+            for (Entity e : level.getEntities((Entity) null, new AABB(-5000, -70, -5000, 5000, 320, 5000), e -> e instanceof net.minecraft.world.entity.npc.villager.Villager v && v.isAlive())) {
+                int b = (int) Math.floor(e.getX() - x0);
+                xbins[Math.max(0, Math.min(11, b + 1))]++;
+                xsamples++;
+            }
+        }
         void sample(ServerLevel level) {
             var zs = level.getEntities((Entity) null, new AABB(-5000, -70, -5000, 5000, 320, 5000), e -> e instanceof net.minecraft.world.entity.monster.zombie.Zombie && e.isAlive());
             if (zs.isEmpty()) return;
@@ -529,7 +540,7 @@ public class MobVectors {
             if (opp) { opps++; oppsTrigger += anyTrigger ? 1 : 0; oppsPanic += anyPanic ? 1 : 0; }
         }
         String json() {
-            return String.format(Locale.ROOT, "{\"ticks\":%d,\"villager_ticks\":%d,\"panic\":%d,\"hostile\":%d,\"trigger\":%d,\"near\":%d,\"opps\":%d,\"opps_trigger\":%d,\"opps_panic\":%d}", ticks, villagerTicks, panic, hostile, trigger, near, opps, oppsTrigger, oppsPanic);
+            return String.format(Locale.ROOT, "{\"xbins\":%s,\"xsamples\":%d,\"ticks\":%d,\"villager_ticks\":%d,\"panic\":%d,\"hostile\":%d,\"trigger\":%d,\"near\":%d,\"opps\":%d,\"opps_trigger\":%d,\"opps_panic\":%d}", java.util.Arrays.toString(xbins), xsamples, ticks, villagerTicks, panic, hostile, trigger, near, opps, oppsTrigger, oppsPanic);
         }
     }
 
@@ -592,6 +603,8 @@ public class MobVectors {
         boolean javaGolem = System.getenv("MOB_CMD_JAVAGOLEM") != null;
         List<Long> golemTimes = new ArrayList<>();
         java.util.Set<Integer> seenGolems = new java.util.HashSet<>();
+        final long[] g0Holder = {0};
+        final long[] dt0Holder = {0};
         java.util.function.IntConsumer ticks = n -> {
             try {
                 for (int i = 0; i < n; i++) {
@@ -604,6 +617,7 @@ public class MobVectors {
                     tickServerMethod.invoke(server, HAS_TIME);
                     runServerTasks(server);
                     if (PROBE) probe.sample(level);
+                    if (PROBE) probe.xsample(level, X0, Math.floorMod(dt0Holder[0] + (level.getGameTime() - g0Holder[0]), 24000));
                 }
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -668,10 +682,13 @@ public class MobVectors {
         cmd(server, "scoreboard players set #n wp66 0");
         cmd(server, "gamerule minecraft:advance_time true");
         long g0 = level.getGameTime();
+        g0Holder[0] = g0;
+        dt0Holder[0] = dt0;
         // dt = 11500 + ticks since now: the zombies come at dt 300 of each day and go at dt 11000
         for (int day = 0; day < s.cmdDays; day++) {
             long arrive = (24000 - dt0) + 300 + 24000L * day, leave = arrive + 10700;
             ticks.accept((int) (arrive - (level.getGameTime() - g0)));
+            if (System.getenv("MOB_CMD_NOZOMBIE") != null) { ticks.accept((int) (leave - (level.getGameTime() - g0))); continue; }
             boolean javaZombies = "java".equals(System.getenv("MOB_CMD_ZOMBIE"));
             if (!javaZombies) cmd(server, "kill @e[type=minecraft:zombie,tag=wp66z]");
             for (int pen = 0; pen < pens; pen++) {
