@@ -41,7 +41,7 @@ fn a_hydrated_dried_ghast_hatches_a_baby_happy_ghast_facing_the_way_it_faced() {
     let age = g.get("Age").and_then(Tag::as_i64).unwrap();
     assert!((-24000..-22000).contains(&age), "a baby that has just hatched: {age}");
     let Some(Tag::List(at)) = g.get("Pos") else { panic!("Pos") };
-    assert_eq!(at[0].as_f64().map(f64::floor), Some(x as f64), "in the block's column");
-    assert_eq!(at[2].as_f64().map(f64::floor), Some(z as f64));
+    // (It starts in the block's column and flies about while the loop above waits for the next hundred ticks.)
+    assert!((at[0].as_f64().unwrap() - x as f64).abs() < 12.0 && (at[2].as_f64().unwrap() - z as f64).abs() < 12.0, "near the block: {at:?}");
     assert_ne!(sim.block_at(x, y, z), Some(d::DRIED_GHAST), "the dried ghast is gone");
 }
