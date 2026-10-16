@@ -18,9 +18,16 @@ for l in "${pre[@]}"; do echo "$l" > $c; sleep 1; done
 sleep 20
 pid=$(pgrep -x kiln-run70)
 sudo -n perf record -F ${FREQ:-999} --call-graph dwarf,16384 -p "$pid" -o ~/wp70/$name.data -- sleep "$secs" > /dev/null 2>&1 &
+perfpid=$!
 sleep 1
-echo "$cmd" > $c
-wait %1
+# ALT: a second command; the two take turns while recording (each run changes the blocks again)
+end=$((SECONDS + secs - 1))
+while [ $SECONDS -lt $end ]; do
+  echo "$cmd" > $c; sleep ${GAP:-1}
+  [ -n "$ALT" ] && { echo "$ALT" > $c; sleep ${GAP:-1}; }
+  [ -z "$ALT" ] && break
+done
+wait $perfpid
 "$tools/wp70_servers.sh" K stop
 pkill -f "name-prefix Bench --report-interval 3600" 2>/dev/null
 sudo -n chown test ~/wp70/$name.data
