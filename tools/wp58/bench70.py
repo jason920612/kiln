@@ -20,7 +20,7 @@ from pathlib import Path
 HOME = Path.home()
 W = HOME / "wp70"
 TOOLS = Path(__file__).resolve().parent
-P99 = re.compile(r"P50: ([\d.]+) ms P95: ([\d.]+) ms P99: ([\d.]+) ms")
+P99 = re.compile(r"P50: ([\d.]+) ?ms P95: ([\d.]+) ?ms P99: ([\d.]+) ?ms")
 AVG = re.compile(r"Average time per tick: ([\d.]+)ms")
 
 # name, setup commands (not measured), measured command, blocks it touches (per-block cost)
