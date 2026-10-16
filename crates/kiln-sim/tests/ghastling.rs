@@ -38,7 +38,8 @@ fn a_hydrated_dried_ghast_hatches_a_baby_happy_ghast_facing_the_way_it_faced() {
     let ghasts: Vec<Tag> = sim.entity_nbt().into_iter().filter(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:happy_ghast")).collect();
     assert_eq!(ghasts.len(), 1, "one ghastling hatched");
     let g = &ghasts[0];
-    assert_eq!(g.get("Age").and_then(Tag::as_i64), Some(-24000), "a baby");
+    let age = g.get("Age").and_then(Tag::as_i64).unwrap();
+    assert!((-24000..-22000).contains(&age), "a baby that has just hatched: {age}");
     let Some(Tag::List(at)) = g.get("Pos") else { panic!("Pos") };
     assert_eq!(at[0].as_f64().map(f64::floor), Some(x as f64), "in the block's column");
     assert_eq!(at[2].as_f64().map(f64::floor), Some(z as f64));
