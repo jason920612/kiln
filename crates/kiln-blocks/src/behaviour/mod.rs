@@ -21,6 +21,7 @@ pub mod piston;
 pub mod portal;
 pub mod rail;
 pub mod sculk;
+pub mod shelf;
 pub mod shulker;
 pub mod speleothem;
 pub mod spread;
@@ -72,6 +73,7 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::NoteBlock => devices::note_neighbor_changed(level, s, pos),
         C::TntBlock => devices::tnt_neighbor_changed(level, pos),
         C::BellBlock => bell::neighbor_changed(level, s, pos),
+        C::ShelfBlock => shelf::neighbor_changed(level, s, pos),
         C::FrostedIceBlock => spread::frosted_neighbor_changed(level, s, pos, source),
         C::SpongeBlock => wet::sponge_try_absorb(level, pos),
         C::FenceGateBlock => misc::powered_open_neighbor_changed(level, s, pos),
@@ -276,6 +278,7 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::TntBlock => devices::tnt_on_place(level, s, pos, old),
         C::PistonBaseBlock => piston::on_place(level, s, pos, old),
         C::HopperBlock => container::hopper_on_place(level, s, pos, old),
+        C::ShelfBlock => shelf::on_place(level, s, pos, old),
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_on_place(level, s, pos, old),
         // `SnifferEggBlock.onPlace` runs for every change of the state: the crack to the next crack is scheduled from here
         // (the egg's own `tick` only changes the state), so an egg guarded to the first placement stopped at the first crack.
@@ -323,6 +326,7 @@ pub fn affect_neighbors_after_removal<L: Level>(level: &mut L, s: u16, pos: Bloc
         C::PistonHeadBlock => piston::head_removed(level, s, pos),
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_removed(level, s, pos),
         C::LecternBlock => lectern::removed(level, s, pos),
+        C::ShelfBlock => shelf::removed(level, s, pos),
         _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_removed(level, s, pos, moved_by_piston),
         _ if logic::is_instance(s, C::BaseRailBlock) => rail::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
         _ => {}

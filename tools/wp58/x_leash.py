@@ -1,0 +1,17 @@
+from p68_small import *
+sv("kill @e[tag=nai]", show=False)
+sv(f"tp {ME} 20.5 200 36.5", show=False)
+time.sleep(1.5)
+sv("summon minecraft:cow 22.5 200 36.5 {NoAI:1b,Tags:[\"nai\"]}", show=False)
+time.sleep(1)
+give(ME, "minecraft:lead", 1)
+cow = ents_of(a, "cow", 6)
+print("cows", len(cow))
+ok = use_on_entity(a, cow[0]["id"], "minecraft:lead", dy=0.5)
+print("leashed", ok, re.findall(r"leash: [^}]*\}|leash: \[[^\]]*\]", sv("data get entity @e[type=cow,tag=nai,limit=1]", show=False, wait=0.4)))
+for dx in (6, 8, 9):
+    sv(f"tp {ME} {20.5-dx} 200 36.5", show=False)
+    time.sleep(1.5)
+    o = sv("data get entity @e[type=cow,tag=nai,limit=1]", show=False, wait=0.4)
+    print(dx, re.findall(r"Motion: \[[^\]]*\]|Pos: \[[^\]]*\]|leash", o))
+sv("kill @e[tag=nai]", show=False)

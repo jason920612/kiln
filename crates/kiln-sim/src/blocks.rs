@@ -730,7 +730,10 @@ impl Level for RegionLevel<'_> {
         chunk.set_block_entity(x, pos.y, z, be);
     }
 
-    fn block_entity_analog(&self, pos: BlockPos, state: u16, _dir: Direction) -> i32 {
+    fn block_entity_analog(&self, pos: BlockPos, state: u16, dir: Direction) -> i32 {
+        if kiln_data::block_logic::block_class(state) == kiln_data::block_logic::BlockClass::ShelfBlock {
+            return crate::shelf::analog(self, pos, state, dir);
+        }
         if let Some(v) = crate::sculk::analog(self, pos, state) {
             return v;
         }

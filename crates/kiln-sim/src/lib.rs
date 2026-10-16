@@ -44,6 +44,7 @@ mod frames;
 mod structure_block;
 mod cushion;
 mod bookshelf;
+mod shelf;
 mod use_item;
 mod ranged;
 mod spear;

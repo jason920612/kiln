@@ -1516,7 +1516,9 @@ fn use_on_block(
         kiln_data::block_logic::block_class(level.block(bp)),
         kiln_data::block_logic::BlockClass::CopperGolemStatueBlock | kiln_data::block_logic::BlockClass::WeatheringCopperGolemStatueBlock
     );
-    if !(p.sneaking && have_something) && (!held.is_empty() || statue) {
+    // (A shelf reacts to an empty hand too: `useItemOn` takes the stack from the slot.)
+    let shelf = kiln_data::block_logic::block_class(level.block(bp)) == kiln_data::block_logic::BlockClass::ShelfBlock;
+    if !(p.sneaking && have_something) && (!held.is_empty() || statue || shelf) {
         let used = held.clone();
         if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, cursor, !main_hand, spawns) {
             let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
