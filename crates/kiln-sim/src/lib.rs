@@ -2061,6 +2061,13 @@ impl Sim {
         self.dims[OVERWORLD_ID].regions.get_block(x, y, z)
     }
 
+    /// Block and sky light at a position in the overworld, if its chunk is loaded (for tests).
+    pub fn light_at(&self, x: i32, y: i32, z: i32) -> Option<(u8, u8)> {
+        use kiln_world::chunk::LightLayer;
+        let r = &self.dims[OVERWORLD_ID].regions;
+        Some((r.light_at(LightLayer::Block, x, y, z)?, r.light_at(LightLayer::Sky, x, y, z)?))
+    }
+
     /// The state of the random tick position generator (`Level.randValue`) of the overworld cell
     /// that holds chunk `cx`, `cz`, once a chunk of it has had random ticks (for tests).
     pub fn random_tick_state(&self, cx: i32, cz: i32) -> Option<i32> {
