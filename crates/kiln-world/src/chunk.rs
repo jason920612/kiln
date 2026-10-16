@@ -103,6 +103,12 @@ pub struct Chunk {
     inhabited_time: i64,
     /// What `inhabited_time` was when the chunk was loaded or last saved.
     inhabited_saved: i64,
+    /// Generated and lit on its own already ([`crate::light::light_alone`]): placing it next
+    /// to its neighbours only adds the light that crosses its borders.
+    lit_alone: bool,
+    /// The piece boxes of the structure starts in `structures`, read from it once
+    /// ([`Chunk::structure_start_boxes`]).
+    start_boxes: std::sync::OnceLock<Vec<(String, Box<[[i32; 6]]>)>>,
 }
 
 /// A chunk is written again for its inhabited time alone once it grew this much (a minute of
@@ -170,6 +176,8 @@ impl Chunk {
             pois: self.pois.clone(),
             inhabited_time: self.inhabited_time,
             inhabited_saved: self.inhabited_saved,
+            lit_alone: self.lit_alone,
+            start_boxes: std::sync::OnceLock::new(),
         }
     }
 
@@ -199,6 +207,8 @@ impl Chunk {
             pois: None,
             inhabited_time: 0,
             inhabited_saved: 0,
+            lit_alone: false,
+            start_boxes: std::sync::OnceLock::new(),
         };
         for x in 0..16 {
             for z in 0..16 {
@@ -300,6 +310,42 @@ impl Chunk {
     /// Generated here and never saved (not read from a save).
     pub fn is_new(&self) -> bool {
         self.saved_version == u32::MAX
+    }
+
+    /// The bounding boxes (`BB`) of the pieces of structure `id`'s start in this chunk (`structures`:
+    /// `starts.<id>.Children`), none without a start or without pieces. Read from the NBT the first time anything
+    /// asks (a fortress has hundreds of pieces, and the natural spawner asks for every position it tries);
+    /// `structures` is set when the chunk is made or loaded and does not change afterwards.
+    pub fn structure_start_boxes(&self, id: &str) -> Option<&[[i32; 6]]> {
+        let all = self.start_boxes.get_or_init(|| {
+            let Some(kiln_proto::nbt::Tag::Compound(starts)) = self.structures.as_deref().and_then(|s| s.get("starts")) else {
+                return Vec::new();
+            };
+            starts
+                .iter()
+                .filter_map(|(id, start)| {
+                    let Some(kiln_proto::nbt::Tag::List(children)) = start.get("Children") else { return None };
+                    let boxes: Box<[[i32; 6]]> = children
+                        .iter()
+                        .filter_map(|piece| match piece.get("BB") {
+                            Some(kiln_proto::nbt::Tag::IntArray(bb)) if bb.len() == 6 => Some([bb[0], bb[1], bb[2], bb[3], bb[4], bb[5]]),
+                            _ => None,
+                        })
+                        .collect();
+                    (!boxes.is_empty()).then(|| (id.clone(), boxes))
+                })
+                .collect()
+        });
+        all.iter().find(|(i, _)| i == id).map(|(_, b)| &b[..])
+    }
+
+    /// See [`crate::light::light_alone`].
+    pub fn lit_alone(&self) -> bool {
+        self.lit_alone
+    }
+
+    pub fn set_lit_alone(&mut self, on: bool) {
+        self.lit_alone = on;
     }
 
     /// Sky light of light section `li` (0 = below the world) from the surface heights.
@@ -616,6 +662,20 @@ impl Chunk {
         l.get((((y - self.min_y) & 15) as usize) << 8 | (z << 4) | x)
     }
 
+    /// The light of the whole section holding `y`, when it is uniform (all 0 or all 15).
+    pub fn uniform_light(&self, layer: LightLayer, y: i32) -> Option<u8> {
+        let li = self.light_section(y)?;
+        let l = match layer {
+            LightLayer::Sky => &self.sky[li],
+            LightLayer::Block => &self.block[li],
+        };
+        match l {
+            Light::Zero => Some(0),
+            Light::Full => Some(15),
+            Light::Nibbles(_) => None,
+        }
+    }
+
     /// Sets a light level; returns whether it changed.
     pub fn set_light(&mut self, layer: LightLayer, x: usize, y: i32, z: usize, v: u8) -> bool {
         let Some(li) = self.light_section(y) else { return false };
@@ -679,6 +739,31 @@ impl Chunk {
         let p = kiln_proto::packets::level_chunk_with_light(x, z, &body);
         self.cached_packet = Some((self.version, p.clone()));
         p
+    }
+
+    /// The packet [`Chunk::packet`] would make now, when it has none for the chunk as it is:
+    /// made through a shared reference, so several chunks' packets can be made side by side;
+    /// [`Chunk::keep_packet`] then stores it, and [`Chunk::packet`] hands it out.
+    pub fn make_packet(&self, x: i32, z: i32, biome_count: usize) -> Option<Bytes> {
+        if matches!(&self.cached_packet, Some((v, _)) if *v == self.version) {
+            return None;
+        }
+        let body = match &self.cached {
+            Some((v, body)) if *v == self.version => body.clone(),
+            _ => self.encode(biome_count),
+        };
+        Some(kiln_proto::packets::level_chunk_with_light(x, z, &body))
+    }
+
+    /// Whether [`Chunk::packet`] has the packet for the chunk as it is now.
+    pub fn has_packet(&self) -> bool {
+        matches!(&self.cached_packet, Some((v, _)) if *v == self.version)
+    }
+
+    /// Stores a packet [`Chunk::make_packet`] made for the chunk as it is now.
+    pub fn keep_packet(&mut self, packet: Bytes) {
+        self.cached = None;
+        self.cached_packet = Some((self.version, packet));
     }
 
     fn encode(&self, biome_count: usize) -> Bytes {

@@ -113,6 +113,14 @@ impl Cell {
         self.chunks[pos.cell_index()].take()
     }
 
+    /// Puts back a chunk taken out with [`Cell::remove`] for a moment, counted as handed out
+    /// mutably ([`Cell::take_touched`]).
+    pub fn put_back(&mut self, pos: ChunkPos, chunk: Box<Chunk>) {
+        let i = pos.cell_index();
+        self.touched |= 1 << i;
+        self.chunks[i] = Some(chunk);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.chunks.iter().all(Option::is_none)
     }
@@ -218,6 +226,9 @@ pub enum StartLoad {
     /// Load it with [`ChunkSource::load`] (the source does not load in the background, or not
     /// this chunk now).
     Unsupported,
+    /// Not now: a copy of the chunk is still on its way to storage (being encoded, or its region
+    /// file being written). Ask again in a later tick rather than wait for it.
+    Busy,
 }
 
 /// Generates chunks, e.g. vanilla's noise-based generation (`kiln-worldgen`). Called for

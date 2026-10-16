@@ -273,6 +273,16 @@ pub fn start_sprinting(b: &mut BytesMut, entity_id: i32, on: bool) {
     b.put_varint(0);
 }
 
+/// `ServerboundPlayerCommandPacket.Action.START_FALL_FLYING` in 26.x.
+pub const START_FALL_FLYING: i32 = 6;
+
+pub fn player_command(b: &mut BytesMut, entity_id: i32, action: i32) {
+    b.put_varint(ids::play::serverbound::PLAYER_COMMAND);
+    b.put_varint(entity_id);
+    b.put_varint(action);
+    b.put_varint(0);
+}
+
 pub fn perform_respawn(b: &mut BytesMut) {
     b.put_varint(ids::play::serverbound::CLIENT_COMMAND);
     b.put_varint(0);

@@ -68,6 +68,10 @@ struct Background {
     encoded_rx: std::sync::mpsc::Receiver<(ChunkPos, std::sync::Arc<[u8]>)>,
     encoding: std::collections::HashSet<ChunkPos>,
     writer: BackgroundWriter,
+    /// The regions that have a file: listed when the threads start, then the ones the writer wrote. Whether a
+    /// chunk could be stored is answered from here, without touching the file system on the tick thread (a lookup
+    /// in the directory the writer renames files in can wait tens of milliseconds).
+    files: std::collections::HashSet<(i32, i32)>,
 }
 
 impl Background {
@@ -127,7 +131,16 @@ impl Background {
                 })
                 .expect("spawning a chunk encoding thread");
         }
-        Background { load_tx, loaded_rx, encode_tx, encoded_rx, encoding: Default::default(), writer: BackgroundWriter::start("kiln-write") }
+        let files = std::fs::read_dir(&region_dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| {
+                let name = e.ok()?.file_name();
+                let mut parts = name.to_str()?.strip_prefix("r.")?.strip_suffix(".mca")?.split('.');
+                Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+            })
+            .collect();
+        Background { load_tx, loaded_rx, encode_tx, encoded_rx, encoding: Default::default(), writer: BackgroundWriter::start("kiln-write"), files }
     }
 }
 
@@ -378,6 +391,7 @@ impl AnvilSource {
         // Written regions are new files: their read handles go.
         for key in bg.writer.written() {
             self.regions.remove(&key);
+            bg.files.insert(key);
         }
     }
 
@@ -441,8 +455,12 @@ impl ChunkSource for AnvilSource {
         if self.background.is_none() || (dim.min_y, dim.height) != (self.dimension.min_y, self.dimension.height) {
             return StartLoad::Unsupported;
         }
-        // A copy still with the encoder is waited for (it is newer than anything stored).
-        self.collect(Some(pos), false);
+        // A copy still with the encoder is newer than anything stored: asked for again once it
+        // is back (the tick does not wait for the encoders' queue).
+        self.collect(None, false);
+        if self.background.as_ref().is_some_and(|bg| bg.encoding.contains(&pos)) {
+            return StartLoad::Busy;
+        }
         let key = (pos.x >> 5, pos.z >> 5);
         let local = ((pos.x & 31) as usize, (pos.z & 31) as usize);
         let bg = self.background.as_ref().unwrap();
@@ -454,20 +472,20 @@ impl ChunkSource for AnvilSource {
         }
         if bg.writer.writing(key) {
             // The region file is being replaced: read it once it is.
-            return StartLoad::Unsupported;
+            return StartLoad::Busy;
         }
-        let dir = &self.region_dir;
-        let region = self.regions.entry(key).or_insert_with(|| {
-            let path = dir.join(format!("r.{}.{}.mca", key.0, key.1));
-            path.exists().then(|| RegionFile::open(&path)).and_then(Result::ok)
-        });
-        match region.as_ref() {
-            Some(r) if r.contains(local.0, local.1) => {
-                let _ = self.background.as_ref().unwrap().load_tx.send((pos, None));
-                StartLoad::Started
-            }
-            _ => StartLoad::Missing,
+        // No file for the region: nothing stored. A region file open already says whether it has the chunk;
+        // otherwise a loader opens it (and a chunk it does not find comes back as none, to be generated).
+        if !bg.files.contains(&key) {
+            return StartLoad::Missing;
         }
+        if let Some(Some(r)) = self.regions.get(&key)
+            && !r.contains(local.0, local.1)
+        {
+            return StartLoad::Missing;
+        }
+        let _ = bg.load_tx.send((pos, None));
+        StartLoad::Started
     }
 
     fn poll_loads(&mut self) -> Vec<(ChunkPos, Option<Chunk>, std::time::Duration)> {
@@ -526,6 +544,7 @@ impl ChunkSource for AnvilSource {
         if let Some(bg) = self.background.as_mut() {
             for key in bg.writer.wait() {
                 self.regions.remove(&key);
+                bg.files.insert(key);
             }
         }
         Ok(())

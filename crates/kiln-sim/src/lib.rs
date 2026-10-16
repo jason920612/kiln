@@ -381,13 +381,16 @@ const HOTBAR_START: usize = 36;
 const INVENTORY_SLOTS: usize = 46;
 /// Chunks loaded or generated per tick at most (requests beyond wait for later ticks).
 const CHUNK_LOADS_PER_TICK: usize = 256;
-/// Tick time spent installing generated chunks per level at most (the chunks players stand in
-/// do not wait); the rest are installed in the next ticks.
-const INSTALL_BUDGET: Duration = Duration::from_micros(1500);
-/// Generated chunks installed per level per tick at most (players' own chunks aside): each
-/// costs its region the light of a new chunk and, once its neighbours are in, its generation
-/// leftovers (160 a second, more than the generation threads make).
-const GENERATED_PER_TICK: usize = 8;
+/// Generated chunks installed per region per tick at most (players' own chunks aside): each
+/// costs its region the light across its borders, its first mobs and, once its neighbours are
+/// in, its generation leftovers, so a burst (players arriving somewhere new) spreads over a few
+/// ticks of that region (160 a second per region, more than the generation threads make;
+/// regions take theirs side by side). Counts, not a time budget: how many ticks later a chunk
+/// goes in must not depend on how loaded the machine is.
+const GENERATED_INSTALLS_PER_TICK: usize = 8;
+/// Chunks read from storage installed per region per tick at most (players' own chunks aside):
+/// cheaper than generated ones (no light to make), so more of them.
+const LOADED_INSTALLS_PER_TICK: usize = 32;
 
 struct Player {
     conn: ConnId,
@@ -488,6 +491,9 @@ struct Player {
     /// Whether the first pack went out: until then a viewer is paired with the data as it stands (`ServerEntity`
     /// starts with the non-default values of the new entity), and the first pack repeats them to everyone.
     meta_primed: bool,
+    /// The shared flags go out with the next pack even if they did not change (`stopFallFlying` sets the gliding flag
+    /// and clears it again, which marks it dirty: a client that started gliding on its own is told it is not).
+    flags_resend: bool,
     /// `Player.getScore`: the experience points gained (the death screen shows it).
     score: i32,
     /// `LivingEntity.getArrowCount` / `getStingerCount` (entity data 12 and 13): the arrows and bee stingers stuck in
@@ -919,8 +925,9 @@ struct Dim {
     loaded: BTreeMap<ChunkPos, Chunk>,
     /// Chunks players wait for (their own): installed whatever the tick's budget.
     urgent: HashSet<ChunkPos>,
-    /// Tick time spent installing chunks this tick (with background generation only).
-    install_spent: Duration,
+    /// Chunks installed this tick by the region that took them: generated ones
+    /// ([`GENERATED_INSTALLS_PER_TICK`]) and ones read from storage ([`LOADED_INSTALLS_PER_TICK`]).
+    installed_now: smallvec::SmallVec<[(RegionId, [usize; 2]); 8]>,
     /// A save handed its chunks to the encoders: they go to the writer once all are encoded.
     flush_when_encoded: bool,
     /// Generated chunks installed and not lit yet (with background generation): their regions
@@ -1034,7 +1041,7 @@ impl Dim {
             loading: HashSet::new(),
             loaded: BTreeMap::new(),
             urgent: HashSet::new(),
-            install_spent: Duration::ZERO,
+            installed_now: smallvec::SmallVec::new(),
             flush_when_encoded: false,
             unlit: Vec::new(),
             game_time,
@@ -1138,6 +1145,8 @@ impl Dim {
                 return self.generation.as_mut().is_some_and(|p| p.request(pos));
             }
             kiln_world::StartLoad::Unsupported => {}
+            // Asked for again next tick (it is still a request: not loaded, not loading).
+            kiln_world::StartLoad::Busy => return true,
         }
         match self.provider.load(pos) {
             Some(chunk) => {
@@ -1209,10 +1218,10 @@ impl Dim {
         r
     }
 
-    /// Installs the chunks generation finished: those players stand in (`first`, sorted) at
-    /// once, the rest in position order within [`INSTALL_BUDGET`], so that a burst of finished
-    /// chunks spreads over a few ticks instead of holding one up; the others wait, still
-    /// counted as in flight.
+    /// Installs the chunks generation finished and the ones read from storage: those players stand
+    /// in (`first`, sorted) at once, the rest in position order, a few a tick per region
+    /// ([`Dim::install_slot`]), so that a burst spreads over a few ticks instead of holding one up;
+    /// the others wait, still counted as in flight.
     fn install_generated(&mut self, first: &[ChunkPos]) {
         let Some(pool) = &mut self.generation else { return };
         pool.collect();
@@ -1228,8 +1237,17 @@ impl Dim {
                     chunkstats::max_ns(&chunkstats::DISK_MAX_NS, took);
                     self.loaded.insert(pos, chunk);
                 }
+                // Not stored after all (the region has a file, but not this chunk): generated, ahead of
+                // the others only if a player waits for it.
                 None => {
-                    self.generation.as_mut().map(|p| p.request_urgent(pos));
+                    let urgent = self.urgent.contains(&pos);
+                    if let Some(p) = self.generation.as_mut() {
+                        if urgent {
+                            p.request_urgent(pos);
+                        } else {
+                            p.request(pos);
+                        }
+                    }
                 }
             }
         }
@@ -1239,22 +1257,15 @@ impl Dim {
         }
         let mut ready: Vec<ChunkPos> = pool.ready().chain(self.loaded.keys().copied()).collect();
         ready.sort_unstable();
-        let started = Instant::now();
         let (now, later): (Vec<ChunkPos>, Vec<ChunkPos>) = ready.into_iter().partition(|p| first.binary_search(p).is_ok());
-        let mut generated = 0;
         for pos in now.into_iter().chain(later) {
             let own = first.binary_search(&pos).is_ok();
-            if !own && self.install_spent + started.elapsed() >= INSTALL_BUDGET {
-                break;
-            }
-            // Generated chunks are lit by their region's next run: a few a tick, so that a burst
-            // (players arriving somewhere new) spreads over ticks instead of one region's tick.
+            // Generated chunks are lit by their region's next run: a few a tick per region, so
+            // that a burst (players arriving somewhere new) spreads over ticks instead of one
+            // region's tick.
             let from_disk = self.loaded.contains_key(&pos);
-            if !own && !from_disk && generated >= GENERATED_PER_TICK {
+            if !self.install_slot(pos, own, from_disk) {
                 continue;
-            }
-            if !from_disk {
-                generated += 1;
             }
             let chunk = match self.loaded.remove(&pos) {
                 Some(c) => Some(c),
@@ -1266,7 +1277,27 @@ impl Dim {
                 self.timed_install(pos, chunk);
             }
         }
-        self.install_spent += started.elapsed();
+    }
+
+    /// Whether a chunk at `pos` may go into its region this tick ([`GENERATED_INSTALLS_PER_TICK`]
+    /// generated or [`LOADED_INSTALLS_PER_TICK`] read from storage, per region; chunks players
+    /// stand in always may); counts it if so.
+    fn install_slot(&mut self, pos: ChunkPos, own: bool, from_disk: bool) -> bool {
+        // (A cell without a region yet keeps its chunks pending: counted when they leave.)
+        let Some(region) = self.regions.owner(pos.cell()) else { return true };
+        let i = match self.installed_now.iter().position(|(r, _)| *r == region) {
+            Some(i) => i,
+            None => {
+                self.installed_now.push((region, [0, 0]));
+                self.installed_now.len() - 1
+            }
+        };
+        let (kind, cap) = if from_disk { (1, LOADED_INSTALLS_PER_TICK) } else { (0, GENERATED_INSTALLS_PER_TICK) };
+        if !own && self.installed_now[i].1[kind] >= cap {
+            return false;
+        }
+        self.installed_now[i].1[kind] += 1;
+        true
     }
 
     /// Saves and drops chunks the regions released; cells left empty are vacated. Returns
@@ -1323,16 +1354,16 @@ impl Dim {
                 }
             }
         } else if !self.pending.is_empty() {
-            // Chunks that arrived before their cell had a region go in within the tick's
-            // install budget (a new region's whole first view at once would hold the tick up),
-            // the chunks players wait for first; the rest stay pending, counted as loaded.
-            let started = Instant::now();
+            // Chunks that arrived before their cell had a region go in a few a tick like the others
+            // (a new region's whole first view at once would hold the tick up), the chunks players
+            // wait for first; the rest stay pending, counted as loaded.
             let mut todo: Vec<ChunkPos> = self.pending.keys().copied().collect();
             todo.sort_unstable_by_key(|p| (!self.urgent.contains(p), *p));
             for pos in todo {
                 let urgent = self.urgent.contains(&pos);
-                if !urgent && self.install_spent + started.elapsed() >= INSTALL_BUDGET {
-                    break;
+                let from_disk = !self.pending[&pos].is_new();
+                if !self.install_slot(pos, urgent, from_disk) {
+                    continue;
                 }
                 let chunk = self.pending.remove(&pos).unwrap();
                 match self.put(pos, chunk) {
@@ -1345,7 +1376,6 @@ impl Dim {
                     }
                 }
             }
-            self.install_spent += started.elapsed();
         }
         for d in &deltas {
             debug!("regions: {d:?}");
@@ -1736,9 +1766,9 @@ impl Sim {
         let dt = Instant::now();
         let packets = self.independent_b0(packets, !joins.is_empty() || !leaves.is_empty() || !console.is_empty());
         self.track_idle(&packets);
-        let dt = diag::lap("b0.idle", dt);
+        let dt = diag::lap_slow("b0.idle", dt);
         self.maintain_chunks();
-        let dt = diag::lap("b0.chunks", dt);
+        let dt = diag::lap_slow("b0.chunks", dt);
         self.rendezvous_for_topology();
         // A join enters the level at once, as in vanilla; the chunk it stands in is loaded now or,
         // if it has to be generated, ahead of everything else while the player waits for it
@@ -1748,16 +1778,16 @@ impl Sim {
             self.dims[jn.dim].request_urgent(player_chunk(jn.pos));
         }
         let changed = self.apply_topology();
-        let dt = diag::lap("b0.topology", dt);
+        let dt = diag::lap_slow("b0.topology", dt);
         self.plugins_b0();
         for (jn, j) in joining {
             let conn = j.conn;
             self.join(j, jn);
             self.plugins_joined(conn);
         }
-        let dt = diag::lap("b0.joins", dt);
+        let dt = diag::lap_slow("b0.joins", dt);
         self.update_membership(changed);
-        diag::lap("b0.membership", dt);
+        diag::lap_slow("b0.membership", dt);
         lap(&mut self.stats, "b0");
 
         // P: region-local packets in parallel.
@@ -1880,6 +1910,9 @@ impl Sim {
 
         for (name, d) in diag::take() {
             self.stats.phase(name, d);
+        }
+        for (name, d) in diag::take_slow() {
+            self.stats.tick_part(name, d);
         }
         self.record_tick_time(start.elapsed().as_nanos() as i64);
         if let Some(ms) = stats::slow_print_ms() {
@@ -2872,15 +2905,18 @@ impl Sim {
             let dt = Instant::now();
             let unloads = std::mem::take(&mut self.dims[dim].unloads);
             let unloaded = if unloads.is_empty() { Vec::new() } else { self.dims[dim].unload(unloads, &keep.iter().copied().collect()) };
+            let dt = diag::lap_slow("ch.unload_chunks", dt);
             if !unloaded.is_empty() {
                 debug!("unloaded {} chunks of {}", unloaded.len(), self.dims[dim].key);
                 let owners = self.owner_uuids();
                 let gone = self.dims[dim].store_entities(&unloaded, false, &owners);
+                let dt = diag::lap_slow("ch.unload_entities", dt);
                 self.forget_entities(gone);
+                diag::lap_slow("ch.unload_forget", dt);
             }
-            let dt = diag::lap("ch.unload", dt);
+            let dt = Instant::now();
             let d = &mut self.dims[dim];
-            d.install_spent = Duration::ZERO;
+            d.installed_now.clear();
             // Encoded saves go to the writer every 30 s (a background writer: no tick time), and
             // a save's chunks once they are all encoded.
             if self.game_time % 600 == 0 {
@@ -2892,13 +2928,13 @@ impl Sim {
                 info!("chunks of the save of {} handed to the writer", d.key);
             }
             d.install_generated(&keep);
-            let dt = diag::lap("ch.install_generated", dt);
+            let dt = diag::lap_slow("ch.install_generated", dt);
             // Every player's own chunk, uncapped: each player must stand in an owned cell (or
             // waits for it while it is generated).
             for pos in keep {
                 d.request_urgent(pos);
             }
-            let dt = diag::lap("ch.own", dt);
+            let dt = diag::lap_slow("ch.own", dt);
             // Then the requests, players interleaved (everyone's nearest chunk first), in an
             // order that does not depend on how regions split them.
             let mut wanted = std::mem::take(&mut d.requests);
@@ -2927,7 +2963,7 @@ impl Sim {
                 }
                 loads += 1;
             }
-            diag::lap("ch.requests", dt);
+            diag::lap_slow("ch.requests", dt);
         }
     }
 
@@ -3681,6 +3717,7 @@ impl Sim {
             spin_pose: false,
             meta_sent: players::synched_defaults(),
             meta_primed: false,
+            flags_resend: false,
             score: joining.score,
             arrow_count: 0,
             stinger_count: 0,

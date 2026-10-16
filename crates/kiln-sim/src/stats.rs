@@ -91,6 +91,13 @@ impl TickStats {
         }
     }
 
+    /// Adds time to this tick's slow-tick line only (`KILN_SLOW_PRINT`), not to the reports.
+    pub fn tick_part(&mut self, name: &'static str, d: Duration) {
+        if slow_print_ms().is_some() {
+            self.tick.push((name, d));
+        }
+    }
+
     /// This tick's phases (`KILN_SLOW_PRINT`), as `name ms | ...`; clears them.
     pub fn take_tick(&mut self) -> String {
         let out: Vec<String> =

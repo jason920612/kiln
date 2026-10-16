@@ -31,10 +31,16 @@ impl Player {
         !(self.on_ground || self.has_effect("minecraft:levitation")) && SLOTS.iter().any(|&s| can_glide_using(self.worn(s), s))
     }
 
-    /// The start-gliding player command: glides when able, otherwise the flag is cleared.
+    /// The start-gliding player command (`tryToStartFallFlying`, else `stopFallFlying`): glides when able, otherwise
+    /// the flag is cleared, and sent again even when it was clear already (vanilla sets it and clears it, which marks
+    /// it dirty): the client starts gliding on its own when it sends the command, and has to be told it does not.
     pub(crate) fn try_start_fall_flying(&mut self, in_liquid: bool) {
-        let start = !self.fall_flying && self.can_glide() && !in_liquid;
-        self.set_fall_flying(start);
+        if !self.fall_flying && self.can_glide() && !in_liquid {
+            self.set_fall_flying(true);
+        } else {
+            self.set_fall_flying(false);
+            self.flags_resend = true;
+        }
     }
 
     fn set_fall_flying(&mut self, on: bool) {

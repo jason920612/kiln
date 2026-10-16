@@ -580,6 +580,20 @@ impl Level for RegionLevel<'_> {
         self.cells.get_block(pos.x, pos.y, pos.z).unwrap_or(kiln_data::blocks::default_state::VOID_AIR)
     }
 
+    fn neighbours(&self, pos: BlockPos) -> [u16; 6] {
+        // Inside its chunk, all six from one chunk lookup.
+        let (lx, lz) = (pos.x & 15, pos.z & 15);
+        if (1..15).contains(&lx) && (1..15).contains(&lz)
+            && let Some(chunk) = self.cells.chunk(ChunkPos::of_block(pos.x, pos.z))
+        {
+            return Direction::ALL.map(|d| {
+                let p = pos.relative(d);
+                chunk.get((p.x & 15) as usize, p.y, (p.z & 15) as usize)
+            });
+        }
+        Direction::ALL.map(|d| self.block(pos.relative(d)))
+    }
+
     fn set_raw(&mut self, pos: BlockPos, state: u16, flags: u32) -> Option<u16> {
         let old = self.cells.set_block(pos.x, pos.y, pos.z, state)?;
         if old == state {
@@ -1138,7 +1152,7 @@ fn find_lightning_rod(level: &RegionLevel, center: BlockPos) -> Option<BlockPos>
 /// has the chunk; Kiln may have sent it already, so clients hear about the change.
 /// Chunks whose generation leftovers run per tick at most (the rest wait a tick). A count, not a time: how many tick
 /// later a chunk's leftovers apply must not depend on how loaded the machine is.
-const GENERATED_PER_TICK: usize = 16;
+const GENERATED_LEFTOVERS_PER_TICK: usize = 16;
 
 fn apply_generated(level: &mut RegionLevel) {
     if level.blocks.generated.is_empty() {
@@ -1152,7 +1166,7 @@ fn apply_generated(level: &mut RegionLevel) {
     let mut applied = 0;
     for (c, updates) in pending {
         let ready = (-1..=1).all(|dx| (-1..=1).all(|dz| level.cells.chunk(ChunkPos::new(c.x + dx, c.z + dz)).is_some()));
-        if !ready || applied >= GENERATED_PER_TICK {
+        if !ready || applied >= GENERATED_LEFTOVERS_PER_TICK {
             later.push((c, updates));
             continue;
         }

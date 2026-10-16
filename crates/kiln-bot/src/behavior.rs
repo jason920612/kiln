@@ -27,6 +27,9 @@ pub enum Behavior {
     /// Survival players with roles (explorer, miner, builder, redstone engineer); the radius
     /// is unused. They need operator permission for `/item replace` and `/tp`.
     Survival,
+    /// Elytra flight with firework rockets in a straight line (see the `flight` module); needs
+    /// operator permission for its setup commands.
+    Fly,
 }
 
 impl Behavior {
@@ -38,7 +41,7 @@ impl Behavior {
             Behavior::Circle => 16.0,
             Behavior::Crowd => 6.0,
             Behavior::Spread => 256.0,
-            Behavior::Survival => 0.0,
+            Behavior::Survival | Behavior::Fly => 0.0,
         }
     }
 }
@@ -117,7 +120,7 @@ impl Mover {
             Behavior::Circle => Plan::Circle { dir: if rng.unit() < 0.5 { 1.0 } else { -1.0 } },
             Behavior::Crowd => Plan::Crowd { target: None, pause: 0 },
             Behavior::Spread => Plan::Spread { target: Some(rng.in_disc(origin, radius)) },
-            Behavior::Survival => Plan::Idle,
+            Behavior::Survival | Behavior::Fly => Plan::Idle,
         };
         Self {
             rng,

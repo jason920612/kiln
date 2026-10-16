@@ -18,8 +18,15 @@ fn has_leaf_distance(s: u16) -> bool {
     state::has(s, "distance") && logic::is_instance(s, BlockClass::LeavesBlock)
 }
 
-/// `LeavesBlock.getDistanceAt`.
+/// `LeavesBlock.getDistanceAt`, looked up in a table made once (every leaf tick reads six of
+/// them, and a new forest has thousands of leaves ticking).
 fn distance_at(s: u16) -> i32 {
+    static TABLE: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| (0..kiln_data::blocks::STATE_COUNT as u16).map(|s| distance_at_uncached(s) as u8).collect());
+    table.get(s as usize).map_or_else(|| distance_at_uncached(s), |&d| d as i32)
+}
+
+fn distance_at_uncached(s: u16) -> i32 {
     if tags::is(s, "minecraft:prevents_nearby_leaf_decay") {
         0
     } else if has_leaf_distance(s) {
@@ -31,14 +38,29 @@ fn distance_at(s: u16) -> i32 {
 
 /// `LeavesBlock.updateDistance`.
 pub fn leaves_distance<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> u16 {
-    let mut d = 7;
-    for dir in Direction::ALL {
-        d = d.min(distance_at(level.block(pos.relative(dir))) + 1);
-        if d == 1 {
-            break;
-        }
+    let d = level.neighbours(pos).iter().map(|&n| distance_at(n) + 1).fold(7, i32::min);
+    with_distance(s, d)
+}
+
+/// `s` with its leaves' `distance` set to `d` (1..=7): from the state with distance 1 and the
+/// property's stride, looked up in a table made once.
+fn with_distance(s: u16, d: i32) -> u16 {
+    static TABLE: std::sync::OnceLock<Box<[(u16, u16)]>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        (0..kiln_data::blocks::STATE_COUNT as u16)
+            .map(|s| {
+                if !has_leaf_distance(s) {
+                    return (0, 0);
+                }
+                let one = state::set_int(s, "distance", 1);
+                (one, state::set_int(s, "distance", 2) - one)
+            })
+            .collect()
+    });
+    match table.get(s as usize) {
+        Some(&(one, stride)) if stride != 0 && (1..=7).contains(&d) => one + (d as u16 - 1) * stride,
+        _ => state::set_int(s, "distance", d),
     }
-    state::set_int(s, "distance", d)
 }
 
 /// `LeavesBlock.updateShape`: re-check distance next tick when a neighbour could change it.
@@ -52,7 +74,10 @@ pub fn leaves_update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, neigh
 
 pub fn leaves_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     let new = leaves_distance(level, s, pos);
-    set_block_and_update(level, pos, new);
+    // (Setting the same state changes nothing: most leaves of a new forest keep theirs.)
+    if new != s {
+        set_block_and_update(level, pos, new);
+    }
 }
 
 /// `LeavesBlock.randomTick`: far from logs and not player-placed, leaves decay.
@@ -256,5 +281,15 @@ mod frogspawn_tests {
         frogspawn_tick(&mut level, spawn);
         assert!(is_air(level.block(spawn)));
         assert!(!level.effects.iter().any(|e| matches!(e, Effect::HatchFrogspawn { .. })));
+    }
+
+    #[test]
+    fn leaf_distance_tables_match_the_properties() {
+        for s in 0..kiln_data::blocks::STATE_COUNT as u16 {
+            assert_eq!(super::distance_at(s), super::distance_at_uncached(s), "state {s}");
+            for d in 0..=8 {
+                assert_eq!(super::with_distance(s, d), state::set_int(s, "distance", d), "state {s}, distance {d}");
+            }
+        }
     }
 }

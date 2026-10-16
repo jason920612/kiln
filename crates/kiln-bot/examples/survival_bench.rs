@@ -117,6 +117,27 @@ struct Args {
     /// Where logs and the JSON result go.
     #[arg(long, default_value = "bench-out")]
     out: PathBuf,
+    /// Elytra flyers (`kiln-bot --behavior fly`), besides the `--count` survival bots (which may
+    /// be 0): they glide with rockets in straight lines from `--fly-center`, `--fly-spacing`
+    /// blocks apart sideways; the measured stretch starts `--warmup` seconds after all of them
+    /// (and the survival bots) are under way.
+    #[arg(long, default_value_t = 0)]
+    flyers: usize,
+    #[arg(long, default_value = "minecraft:overworld")]
+    fly_dim: String,
+    /// Start of the first flight, "x,z".
+    #[arg(long, default_value = "9000,0")]
+    fly_center: String,
+    /// Direction of the flights, "x,z".
+    #[arg(long, default_value = "1,0")]
+    fly_heading: String,
+    #[arg(long, default_value_t = 1024.0)]
+    fly_spacing: f64,
+    #[arg(long, default_value_t = 150.0)]
+    fly_altitude: f64,
+    /// Blocks per second (wp65: 32.8 with rockets).
+    #[arg(long, default_value_t = 32.8)]
+    fly_speed: f64,
     /// Tag for file names.
     #[arg(long, default_value = "run")]
     tag: String,
@@ -312,11 +333,21 @@ mod cpu {
 #[cfg(not(windows))]
 mod cpu {
     use std::process::Child;
-    pub fn process(_: &Child) -> Option<f64> {
-        None
+
+    /// CPU seconds (user + system) the process has used (Linux `/proc`, clock ticks of 10 ms).
+    pub fn process(child: &Child) -> Option<f64> {
+        let stat = std::fs::read_to_string(format!("/proc/{}/stat", child.id())).ok()?;
+        let rest: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
+        Some((rest.get(11)?.parse::<f64>().ok()? + rest.get(12)?.parse::<f64>().ok()?) / 100.0)
     }
+
+    /// (busy, total) CPU seconds of all cores since boot.
     pub fn system() -> Option<(f64, f64)> {
-        None
+        let stat = std::fs::read_to_string("/proc/stat").ok()?;
+        let v: Vec<f64> = stat.lines().next()?.split_whitespace().skip(1).filter_map(|w| w.parse().ok()).collect();
+        let total: f64 = v.iter().take(8).sum();
+        let idle = v.get(3)? + v.get(4)?;
+        Some(((total - idle) / 100.0, total / 100.0))
     }
 }
 
@@ -352,8 +383,8 @@ impl Server {
             ("KILN_GENERATOR".into(), "noise".into()),
             ("KILN_SEED".into(), a.seed.to_string()),
             ("KILN_DATAPACK".into(), a.datapack.to_string_lossy().into_owned()),
-            ("KILN_OPS".into(), "SB*".into()),
-            ("KILN_MAX_PLAYERS".into(), (a.count + 20).to_string()),
+            ("KILN_OPS".into(), "SB*,FB*".into()),
+            ("KILN_MAX_PLAYERS".into(), (a.count + a.flyers + 20).to_string()),
             ("KILN_WORLD".into(), world.to_string_lossy().into_owned()),
             ("KILN_VIEW_DISTANCE".into(), a.view_distance.to_string()),
             ("KILN_SIMULATION_DISTANCE".into(), a.simulation_distance.to_string()),
@@ -577,6 +608,67 @@ fn dir_size(p: &Path) -> u64 {
 
 // ---- one run ----------------------------------------------------------------------------------------------
 
+/// A bot process with its output collected.
+struct Bots {
+    child: Child,
+    out: Arc<Mutex<String>>,
+    err: Arc<Mutex<String>>,
+}
+
+impl Bots {
+    fn start(a: &Args, mut cmd: Command) -> Result<Bots> {
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(priority_flag(&a.priority));
+        }
+        let mut child = cmd.spawn().with_context(|| format!("starting {}", a.bot.display()))?;
+        let (out, err) = (Arc::new(Mutex::new(String::new())), Arc::new(Mutex::new(String::new())));
+        for (stream, buf) in [
+            (Box::new(child.stdout.take().unwrap()) as Box<dyn std::io::Read + Send>, out.clone()),
+            (Box::new(child.stderr.take().unwrap()), err.clone()),
+        ] {
+            std::thread::spawn(move || {
+                for l in BufReader::new(stream).lines().map_while(Result::ok) {
+                    let mut b = buf.lock().unwrap();
+                    b.push_str(&l);
+                    b.push('\n');
+                }
+            });
+        }
+        Ok(Bots { child, out, err })
+    }
+
+    /// The last progress line's count of bots under way.
+    fn arrived(&self) -> Option<usize> {
+        self.out.lock().unwrap().lines().rev().find_map(|l| {
+            let (_, rest) = l.split_once(" arrived ")?;
+            rest.split_whitespace().next()?.parse::<usize>().ok()
+        })
+    }
+
+    fn stop(&mut self) {
+        if let Some(stdin) = self.child.stdin.as_mut() {
+            let _ = writeln!(stdin, "stop");
+            let _ = stdin.flush();
+        }
+    }
+
+    fn done(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
+    /// Waits for the process; its JSON report.
+    fn finish(mut self, log: &Path) -> Result<Value> {
+        let _ = self.child.wait();
+        std::thread::sleep(Duration::from_millis(300));
+        let out = self.out.lock().unwrap().clone();
+        std::fs::write(log, format!("{out}\n--- stderr ---\n{}", self.err.lock().unwrap()))?;
+        Ok(out.find("\n{\n").and_then(|i| serde_json::from_str(&out[i + 1..]).ok()).unwrap_or(Value::Null))
+    }
+}
+
 fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
     std::fs::create_dir_all(&a.out)?;
     // The trace is written by the server, on its machine: next to the world there.
@@ -621,37 +713,30 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
             addr.to_string()
         }
     };
-    let mut bot_cmd = Command::new(&a.bot);
-    bot_cmd
-        .args(["--addr", &connect, "--count", &a.count.to_string(), "--rate", &a.rate.to_string()])
-        .args(["--behavior", "survival", "--duration", "86400", "--stdin-control", "--name-prefix", "SB"])
-        .args(["--group-size", &a.group_size.to_string(), "--group-spacing", &a.spacing.to_string()])
-        .args(if a.roam > 0.0 { vec!["--radius".to_string(), a.roam.to_string()] } else { Vec::new() })
-        .args(["--view-distance", &a.view_distance.to_string(), "--roles", &a.roles])
-        .args(["--chat-interval", &a.chat_interval.to_string(), "--seed", &a.seed.to_string()])
-        .args(["--report-interval", "10", "--json", "--center", "0,0", "--join-timeout", "900"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        bot_cmd.creation_flags(priority_flag(&a.priority));
-    }
     let bots_started = now_ms();
-    let mut bots = bot_cmd.spawn().with_context(|| format!("starting {}", a.bot.display()))?;
-    let (out_buf, err_buf) = (Arc::new(Mutex::new(String::new())), Arc::new(Mutex::new(String::new())));
-    for (stream, buf) in [
-        (Box::new(bots.stdout.take().unwrap()) as Box<dyn std::io::Read + Send>, out_buf.clone()),
-        (Box::new(bots.stderr.take().unwrap()), err_buf.clone()),
-    ] {
-        std::thread::spawn(move || {
-            for l in BufReader::new(stream).lines().map_while(Result::ok) {
-                let mut b = buf.lock().unwrap();
-                b.push_str(&l);
-                b.push('\n');
-            }
-        });
+    let mut survivors = None;
+    if a.count > 0 {
+        let mut bot_cmd = Command::new(&a.bot);
+        bot_cmd
+            .args(["--addr", &connect, "--count", &a.count.to_string(), "--rate", &a.rate.to_string()])
+            .args(["--behavior", "survival", "--duration", "86400", "--stdin-control", "--name-prefix", "SB"])
+            .args(["--group-size", &a.group_size.to_string(), "--group-spacing", &a.spacing.to_string()])
+            .args(if a.roam > 0.0 { vec!["--radius".to_string(), a.roam.to_string()] } else { Vec::new() })
+            .args(["--view-distance", &a.view_distance.to_string(), "--roles", &a.roles])
+            .args(["--chat-interval", &a.chat_interval.to_string(), "--seed", &a.seed.to_string()])
+            .args(["--report-interval", "10", "--json", "--center", "0,0", "--join-timeout", "900"]);
+        survivors = Some(Bots::start(a, bot_cmd)?);
+    }
+    let mut flyers = None;
+    if a.flyers > 0 {
+        let mut cmd = Command::new(&a.bot);
+        cmd.args(["--addr", &connect, "--count", &a.flyers.to_string(), "--rate", "2"])
+            .args(["--behavior", "fly", "--duration", "86400", "--stdin-control", "--name-prefix", "FB"])
+            .args(["--center", &a.fly_center, "--group-spacing", &a.fly_spacing.to_string(), "--speed", &a.fly_speed.to_string()])
+            .args(["--fly-dim", &a.fly_dim, "--fly-heading", &a.fly_heading, "--fly-altitude", &a.fly_altitude.to_string()])
+            .args(["--fly-warmup", &a.warmup.to_string(), "--view-distance", &a.view_distance.to_string()])
+            .args(["--report-interval", "10", "--json", "--join-timeout", "900", "--seed", &a.seed.to_string()]);
+        flyers = Some(Bots::start(a, cmd)?);
     }
 
     // Wait for the arrival, then sample CPU while the measured stretch runs.
@@ -667,11 +752,10 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
     loop {
         let t = now_ms();
         if arrived_at.is_none() {
-            let arrived = out_buf.lock().unwrap().lines().rev().find_map(|l| {
-                let (_, rest) = l.split_once(" arrived ")?;
-                rest.split_whitespace().next()?.parse::<usize>().ok()
-            });
-            if arrived.is_some_and(|n| n as f64 >= a.count as f64 * 0.95) || t >= arrive_limit {
+            let arrived = survivors.as_ref().map_or(Some(0), Bots::arrived);
+            let flying = flyers.as_ref().map_or(Some(a.flyers), Bots::arrived);
+            let ready = arrived.is_some_and(|n| n as f64 >= a.count as f64 * 0.95) && flying.is_some_and(|n| n >= a.flyers);
+            if ready || t >= arrive_limit {
                 arrived_at = Some(t);
                 measure_from = t + (a.warmup * 1000.0) as u128;
                 measure_to = measure_from + (a.measure * 1000.0) as u128;
@@ -687,20 +771,20 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         }
         if !stop_sent && t >= measure_to.saturating_add(2000) {
             stop_sent = true;
-            if let Some(stdin) = bots.stdin.as_mut() {
-                let _ = writeln!(stdin, "stop");
-                let _ = stdin.flush();
-            }
+            survivors.iter_mut().chain(flyers.iter_mut()).for_each(Bots::stop);
         }
+        let bots_cpu = |s: &Option<Bots>, f: &Option<Bots>| {
+            s.iter().chain(f.iter()).map(|b| cpu::process(&b.child).unwrap_or(0.0)).sum::<f64>()
+        };
         if at_from.is_none() && t >= measure_from {
             let (sp, sys) = host.server_cpu(&server);
-            at_from = Some((sp.unwrap_or(0.0), cpu::process(&bots).unwrap_or(0.0), sys));
+            at_from = Some((sp.unwrap_or(0.0), bots_cpu(&survivors, &flyers), sys));
         }
         if at_to.is_none() && t >= measure_to {
             let (sp, sys) = host.server_cpu(&server);
-            at_to = Some((sp.unwrap_or(0.0), cpu::process(&bots).unwrap_or(0.0), sys));
+            at_to = Some((sp.unwrap_or(0.0), bots_cpu(&survivors, &flyers), sys));
         }
-        if let Ok(Some(_)) = bots.try_wait() {
+        if survivors.iter_mut().chain(flyers.iter_mut()).all(Bots::done) {
             break;
         }
         if Instant::now() >= next_note {
@@ -716,21 +800,21 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    let _ = bots.wait();
     if let Some(mut t) = tunnel {
         let _ = t.kill();
         let _ = t.wait();
     }
     std::thread::sleep(Duration::from_secs(1));
     let stopped_clean = server.stop(Duration::from_secs(180));
-    let bot_out = out_buf.lock().unwrap().clone();
-    std::fs::write(&bot_log, format!("{bot_out}\n--- stderr ---\n{}", err_buf.lock().unwrap()))?;
-
-    // Bot report: the JSON block after the progress lines.
-    let report: Value = bot_out
-        .find("\n{\n")
-        .and_then(|i| serde_json::from_str(&bot_out[i + 1..]).ok())
-        .unwrap_or(Value::Null);
+    // Bot reports: the JSON block after the progress lines.
+    let report = match survivors {
+        Some(b) => b.finish(&bot_log)?,
+        None => Value::Null,
+    };
+    let fly_report = match flyers {
+        Some(b) => b.finish(&a.out.join(format!("{}-{label}.flyers.log", a.tag)))?,
+        None => Value::Null,
+    };
 
     // Tick trace: ticks of the measured stretch (and of the whole run, for comparison).
     let text = host.read(&trace);
@@ -759,6 +843,28 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
     }
     let lines = server.snapshot();
     let in_window = |t: u128| t >= measure_from && t < measure_to;
+    // Where the slow ticks of the measured stretch went (`KILN_SLOW_PRINT`): phases summed over them.
+    let mut spike_phases: BTreeMap<String, f64> = BTreeMap::new();
+    let mut spikes = 0;
+    for (_, l) in lines.iter().filter(|(t, _)| in_window(*t)) {
+        let Some((_, rest)) = l.split_once("slow tick ") else { continue };
+        spikes += 1;
+        let Some((_, phases)) = rest.split_once("): ") else { continue };
+        for p in phases.split(" | ") {
+            if let Some((name, v)) = p.rsplit_once(' ')
+                && let Ok(v) = v.parse::<f64>()
+            {
+                *spike_phases.entry(name.to_string()).or_default() += v;
+            }
+        }
+    }
+    let mut spike_phases: Vec<(String, f64)> = spike_phases.into_iter().map(|(n, v)| (n, v / spikes.max(1) as f64)).collect();
+    spike_phases.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let edges = [2.0, 5.0, 10.0, 15.0, 25.0, 50.0];
+    let mut hist = vec![0usize; edges.len() + 1];
+    for &ms in &measured {
+        hist[edges.iter().position(|&e| ms < e).unwrap_or(edges.len())] += 1;
+    }
     let reports: Vec<Report> = lines.iter().filter_map(|(t, l)| parse_report(*t, l)).collect();
     // 30 s windows ending inside the measured stretch (the last one may straddle its start).
     let window: Vec<&Report> = reports.iter().filter(|r| r.unix_ms > measure_from + 15_000 && r.unix_ms <= measure_to + 15_000).collect();
@@ -838,6 +944,8 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         "label": label,
         "format": format,
         "count": a.count,
+        "flyers": a.flyers,
+        "fly_dim": a.fly_dim,
         "view_distance": a.view_distance,
         "all_bots_in_after_s": full_at.map(|t| (t.saturating_sub(bots_started)) as f64 / 1000.0),
         "bots_arrived_after_s": arrived_at.map(|t| (t.saturating_sub(bots_started)) as f64 / 1000.0),
@@ -852,6 +960,9 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         "chunks": chunk,
         "cpu": cpu_json,
         "bots": report,
+        "flyers": fly_report,
+        "mspt_histogram": { "edges_ms": edges, "ticks": hist },
+        "slow_ticks": { "count": spikes, "mean_phases_ms": spike_phases.iter().take(24).map(|(n, v)| json!({n: v})).collect::<Vec<_>>() },
         "server_stopped_cleanly": stopped_clean,
         "world_size_mb": host.dir_size(world) as f64 / 1e6,
         "server_host": a.ssh.clone().unwrap_or_else(|| "local".into()),
@@ -941,6 +1052,27 @@ fn print_summary(r: &Value) {
         f(&r["cpu"], "server_cores"), f(&r["cpu"], "bots_cores"), f(&r["cpu"], "server_machine_utilisation") * 100.0,
         f(&r["cpu"], "background_cores"), f(&r["cpu"], "server_machine_cores")
     );
+    let fl = &r["flyers"];
+    if !fl.is_null() {
+        let t = &fl["traffic"];
+        let (l, ah) = (&fl["fly_chunk_latency"], &fl["fly_ahead_blocks"]);
+        println!(
+            "flyers {:.0} in the air; {:.0} ticks, {:.0} blocks, {:.0} rockets, {:.0} corrections; ready ahead mean {:.0} p50 {:.0} blocks, {:.0} ticks under 32 blocks, {:.0} held at the edge of the terrain; arrival after entering the view n {:.0} mean {:.0} p50 {:.0} p99 {:.0} max {:.0} ms",
+            f(fl, "arrived"), f(t, "fly_ticks"), f(t, "fly_dm") / 10.0, f(t, "rockets"), f(t, "fly_corrections"), f(ah, "mean_ms"), f(ah, "p50_ms"),
+            f(t, "fly_short_ticks"), f(t, "fly_missing_ticks"), f(l, "n"), f(l, "mean_ms"), f(l, "p50_ms"), f(l, "p99_ms"), f(l, "max_ms")
+        );
+        if let Some(p) = fl["disconnect_reasons"].as_array() {
+            for x in p.iter().take(6) {
+                println!("flyers ended {} x {}", x[1], x[0].as_str().unwrap_or(""));
+            }
+        }
+    }
+    println!("mspt histogram (edges {}) {}", r["mspt_histogram"]["edges_ms"], r["mspt_histogram"]["ticks"]);
+    let sp: Vec<String> = r["slow_ticks"]["mean_phases_ms"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|o| o.as_object()?.iter().next().map(|(k, v)| format!("{k} {:.2}", v.as_f64().unwrap_or(0.0)))).collect())
+        .unwrap_or_default();
+    println!("slow ticks {} (mean ms per slow tick) {}", r["slow_ticks"]["count"], sp.join(" | "));
     if let Some(p) = b["problems"].as_array() {
         for x in p.iter().take(12) {
             println!("problem {} x {}", x[1], x[0].as_str().unwrap_or(""));

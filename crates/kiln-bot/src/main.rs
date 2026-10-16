@@ -76,6 +76,18 @@ struct Args {
     /// Print the final report as JSON.
     #[arg(long)]
     json: bool,
+    /// Flyers: dimension of the flights.
+    #[arg(long, default_value = "minecraft:overworld")]
+    fly_dim: String,
+    /// Flyers: direction "x,z" of the flights.
+    #[arg(long, value_parser = kiln_bot::parse_center, default_value = "1,0")]
+    fly_heading: [f64; 2],
+    /// Flyers: lowest altitude (they climb over higher terrain in the overworld).
+    #[arg(long, default_value_t = 150.0)]
+    fly_altitude: f64,
+    /// Flyers: seconds of flight before the measurements count.
+    #[arg(long, default_value_t = 20.0)]
+    fly_warmup: f64,
     /// Stop (and print the report) when a line `stop` arrives on standard input.
     #[arg(long)]
     stdin_control: bool,
@@ -107,6 +119,12 @@ fn main() -> Result<()> {
         group_size: a.group_size,
         join_timeout: secs(a.join_timeout, "join timeout")?,
         roles: a.roles.unwrap_or_else(|| Config::default().roles),
+        fly: kiln_bot::FlyConfig {
+            dim: a.fly_dim,
+            heading: a.fly_heading,
+            altitude: a.fly_altitude,
+            warmup: secs(a.fly_warmup, "fly warmup")?,
+        },
         ..Config::default()
     };
 

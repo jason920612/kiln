@@ -121,15 +121,15 @@ impl SpawnTable {
     /// nether bricks inside a fortress, else the list of a structure the position is in
     /// (`ChunkGenerator.getMobsAt`), else the biome's.
     pub(crate) fn mobs_at<'a>(&'a self, level: &RegionLevel, biome: u16, category: Category, pos: KBlockPos) -> &'a [SpawnerData] {
-        let structures = |c: ChunkPos| level.cells.chunk(c).and_then(|ch| ch.structures.as_deref());
+        let structures = crate::structure_spawns::ChunkStructures(|c: ChunkPos| level.cells.chunk(c));
         let bricks = || kiln_data::blocks_types::block_of(level.block(pos.below())).name == "minecraft:nether_bricks";
         self.mobs_in(&structures, bricks, biome, category, [pos.x, pos.y, pos.z])
     }
 
     /// [`SpawnTable::mobs_at`] over the loaded chunks' `structures` data.
-    pub(crate) fn mobs_in<'a, 'c, F>(&'a self, structures: &F, nether_bricks_below: impl FnOnce() -> bool, biome: u16, category: Category, at: [i32; 3]) -> &'a [SpawnerData]
+    pub(crate) fn mobs_in<'a, 'c, S>(&'a self, structures: &S, nether_bricks_below: impl FnOnce() -> bool, biome: u16, category: Category, at: [i32; 3]) -> &'a [SpawnerData]
     where
-        F: Fn(ChunkPos) -> Option<&'c kiln_proto::nbt::Tag>,
+        S: crate::structure_spawns::Structures<'c> + ?Sized,
     {
         if self.structures.is_empty() {
             return self.list(biome, category);
@@ -898,7 +898,7 @@ pub(crate) fn monster_light_rules(dim: usize) -> (i32, i32, i32) {
 /// Whether `at` is inside a piece of a `#minecraft:cats_spawn_as_black` structure (a swamp hut).
 pub(crate) fn black_cat_structure(level: &RegionLevel, at: [i32; 3]) -> bool {
     let Some(ids) = crate::world_state::worldgen_tag("worldgen/structure", "minecraft:cats_spawn_as_black") else { return false };
-    let structures = |c: ChunkPos| level.cells.chunk(c).and_then(|ch| ch.structures.as_deref());
+    let structures = crate::structure_spawns::ChunkStructures(|c: ChunkPos| level.cells.chunk(c));
     crate::structure_spawns::piece_at(&structures, at, &ids)
 }
 
@@ -992,16 +992,60 @@ pub(crate) fn initial_mobs(level: &RegionLevel, pending: &[ChunkPos], spawns: &m
     }
 }
 
-/// The biome `WorldGenRegion.getBiome` finds at a block: the zoomed lookup over the noise biomes.
+/// The biome `WorldGenRegion.getBiome` finds at a block: the zoomed lookup over the noise biomes,
+/// read from the chunks that have them (`ChunkAccess.getNoiseBiome`), computed for the others.
 fn zoomed_biome_at(level: &RegionLevel, x: i32, y: i32, z: i32) -> u16 {
     if let Some(p) = &level.env.pipeline {
         let world = p.world().clone();
-        let mut gs = kiln_worldgen::generator::GenScratch::default();
         // (`ChunkAccess.getNoiseBiome` clamps the height to the chunk's.)
         let (lo, hi) = (level.env.min_y >> 2, ((level.env.min_y + level.env.height) >> 2) - 1);
-        return kiln_worldgen::generator::zoomed_biome(world.generator.zoom_seed, x, y, z, &mut |qx, qy, qz| gs.noise_biome(&world.generator, qx, qy.clamp(lo, hi), qz));
+        return kiln_worldgen::generator::zoomed_biome(world.generator.zoom_seed, x, y, z, &mut |qx, qy, qz| {
+            let qy = qy.clamp(lo, hi);
+            match level.cells.chunk(ChunkPos::new(qx >> 2, qz >> 2)) {
+                Some(chunk) => stored_quart_biome(chunk, level.env.min_y, qx, qy, qz),
+                // (As `to_chunk` stores it: the network id of the generator's biome.)
+                None => {
+                    let i = unloaded_noise_biome(&world, qx, qy, qz);
+                    kiln_data::synced_id("minecraft:worldgen/biome", &world.generator.biomes[i as usize].name).unwrap_or(0) as u16
+                }
+            }
+        });
     }
     biome_at(level, KBlockPos::new(x, y, z))
+}
+
+/// The biome a chunk that is not loaded stores at a quart, computed as its generation did. The
+/// neighbours of new chunks are asked for again by the next new chunks, so each thread keeps the
+/// last few it computed (up to [`UNLOADED_BIOME_CHUNKS`], then it starts over).
+fn unloaded_noise_biome(world: &std::sync::Arc<kiln_worldgen::Worldgen>, qx: i32, qy: i32, qz: i32) -> u16 {
+    use std::cell::RefCell;
+    thread_local! {
+        static CACHE: RefCell<Option<(usize, usize, kiln_worldgen::generator::GenScratch)>> = const { RefCell::new(None) };
+    }
+    let generator = std::sync::Arc::as_ptr(world) as usize;
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        let fresh = !matches!(&*c, Some((g, n, _)) if *g == generator && *n < UNLOADED_BIOME_CHUNKS);
+        if fresh {
+            *c = Some((generator, 0, kiln_worldgen::generator::GenScratch::default()));
+        }
+        let (_, n, gs) = c.as_mut().unwrap();
+        *n += 1;
+        gs.noise_biome(&world.generator, qx, qy, qz)
+    })
+}
+
+/// Chunks of biomes a thread keeps for [`unloaded_noise_biome`] (3 KB each) before it starts over.
+const UNLOADED_BIOME_CHUNKS: usize = 64;
+
+/// A loaded chunk's stored biome at a quart (`qy` within the chunk).
+fn stored_quart_biome(chunk: &kiln_world::chunk::Chunk, min_y: i32, qx: i32, qy: i32, qz: i32) -> u16 {
+    let ry = qy - (min_y >> 2);
+    match chunk.sections.get((ry >> 2) as usize).map(|s| &s.biomes) {
+        Some(kiln_world::section::Biomes::Single(b)) => *b,
+        Some(kiln_world::section::Biomes::Cells(cells)) => cells[(((ry & 3) << 4) | ((qz & 3) << 2) | (qx & 3)) as usize],
+        None => 0,
+    }
 }
 
 /// `NaturalSpawner.getTopNonCollidingPos`.
