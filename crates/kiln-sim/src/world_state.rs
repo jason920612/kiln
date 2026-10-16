@@ -14,7 +14,6 @@ use kiln_command::{Text, tr};
 use kiln_javamath::random::{RandomSource, Seed128, XoroshiroRandom};
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets::world_fx as fx;
-use kiln_world::spawn::LoadChunks;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// `MinecraftServer.getAbsoluteMaxWorldSize` (the `max-world-size` default).

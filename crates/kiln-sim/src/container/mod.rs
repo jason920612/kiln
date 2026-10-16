@@ -34,7 +34,7 @@ use kiln_proto::nbt::Tag;
 use kiln_world::{Blocks, ChunkPos};
 use kiln_world::block_entity::{BlockEntity, type_name};
 use kiln_world::chunk::Chunk;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// Which container block entity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -857,14 +857,24 @@ impl kiln_inventory::Container for ContainerBe {
 #[derive(Default)]
 pub(crate) struct Containers {
     map: BTreeMap<BlockPos, ContainerBe>,
-    /// Where the dispensers and droppers among them are (the region tick asks every tick; scanning
-    /// every container for them cost ~10% of an idle tick with thousands of chests). Kept by
-    /// [`Containers::insert`] and [`Containers::remove`], the only ways in and out of `map`.
-    dispensers: BTreeSet<BlockPos>,
+    /// The ones the region tick looks for every tick (dispensers, droppers, bells and the block
+    /// entities that tick), by position: scanning every container for them each tick cost ~10% of
+    /// an idle tick with thousands of chests. Kept by [`Containers::insert`] and
+    /// [`Containers::remove`], the only ways in and out of `map`.
+    index: BTreeMap<BlockPos, BeKind>,
 }
 
-fn is_dispenser(c: &ContainerBe) -> bool {
-    matches!(c.kind, BeKind::Dispenser | BeKind::Dropper)
+/// The block entities that tick (`Level.tickBlockEntities`).
+fn ticks(kind: BeKind) -> bool {
+    matches!(
+        kind,
+        BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Beehive | BeKind::Vault | BeKind::Crafter
+    )
+}
+
+/// Whether [`Containers::index`] keeps the kind.
+fn indexed(kind: BeKind) -> bool {
+    ticks(kind) || matches!(kind, BeKind::Dispenser | BeKind::Dropper | BeKind::Bell)
 }
 
 fn chunk_of(pos: BlockPos) -> ChunkPos {
@@ -883,28 +893,37 @@ fn kind_of(be: &BlockEntity) -> Option<BeKind> {
 impl Containers {
     /// Where the region's dispensers and droppers are.
     pub fn dispensers(&self) -> Vec<BlockPos> {
-        self.dispensers.iter().copied().collect()
+        self.of_kind(|k| matches!(k, BeKind::Dispenser | BeKind::Dropper)).map(|(p, _)| p).collect()
+    }
+
+    /// The indexed containers ([`indexed`]) whose kind passes `keep`, in position order.
+    pub fn of_kind(&self, keep: impl Fn(BeKind) -> bool) -> impl Iterator<Item = (BlockPos, BeKind)> {
+        self.index.iter().filter(move |(_, k)| keep(**k)).map(|(p, k)| (*p, *k))
     }
 
     pub fn insert(&mut self, pos: BlockPos, c: ContainerBe) {
-        if is_dispenser(&c) {
-            self.dispensers.insert(pos);
+        if indexed(c.kind) {
+            self.index.insert(pos, c.kind);
         } else {
-            self.dispensers.remove(&pos);
+            self.index.remove(&pos);
         }
         self.map.insert(pos, c);
     }
 
     pub fn remove(&mut self, pos: &BlockPos) -> Option<ContainerBe> {
         let c = self.map.remove(pos)?;
-        if is_dispenser(&c) {
-            self.dispensers.remove(pos);
+        if indexed(c.kind) {
+            self.index.remove(pos);
         }
         Some(c)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&BlockPos, &ContainerBe)> {
         self.map.iter()
+    }
+
+    pub fn range(&self, r: std::ops::RangeInclusive<BlockPos>) -> impl Iterator<Item = (&BlockPos, &ContainerBe)> {
+        self.map.range(r)
     }
 
     /// A chunk entered the region: its containers are decoded.
@@ -1003,7 +1022,7 @@ impl Containers {
 
     /// Moves the containers of chunks `owner` assigns elsewhere into `parts`.
     pub fn split_into(&mut self, parts: &mut [&mut Containers], owner: impl Fn(ChunkPos) -> usize) {
-        self.dispensers.clear();
+        self.index.clear();
         for (p, c) in std::mem::take(&mut self.map) {
             parts[owner(chunk_of(p))].insert(p, c);
         }
@@ -1011,7 +1030,7 @@ impl Containers {
 
     pub fn merge(&mut self, from: Containers) {
         self.map.extend(from.map);
-        self.dispensers.extend(from.dispensers);
+        self.index.extend(from.index);
     }
 
     pub fn len(&self) -> usize {
@@ -1139,15 +1158,7 @@ pub(crate) fn scheduled_tick(level: &mut RegionLevel, pos: BlockPos, s: u16) {
 
 /// `Level.tickBlockEntities` for hoppers and furnaces in ticking chunks, in position order.
 pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hopper::ItemEntities, ticking: &crate::blocks::Ticking) {
-    let due: Vec<(BlockPos, BeKind)> = level
-        .blocks
-        .containers
-        .map
-        .iter()
-        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Beehive | BeKind::Vault | BeKind::Crafter))
-        .filter(|(p, _)| ticking.contains(chunk_of(**p)))
-        .map(|(p, c)| (*p, c.kind))
-        .collect();
+    let due: Vec<(BlockPos, BeKind)> = level.blocks.containers.of_kind(ticks).filter(|(p, _)| ticking.contains(chunk_of(*p))).collect();
     for (pos, kind) in due {
         // Removed by an earlier tick this phase.
         if level.blocks.containers.get(pos).is_none_or(|c| c.kind != kind) {

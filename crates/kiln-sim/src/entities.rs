@@ -1421,7 +1421,6 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         Some(
             l.blocks
                 .containers
-                .map
                 .range(lo..=hi)
                 .filter(|(p, c)| p.z >> 4 == cz && matches!(c.kind, BeKind::Chest | BeKind::TrappedChest))
                 .map(|(p, _)| BlockPos::new(p.x, p.y, p.z))
