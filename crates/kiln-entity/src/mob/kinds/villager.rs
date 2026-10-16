@@ -1481,7 +1481,7 @@ fn try_spawn_iron_golem(cx: &mut Cx) -> bool {
             continue;
         }
         // `EntityType.create`: the block's centre, a yaw from the level's random (drawn whether or not the golem is then
-        // let in: `finalizeSpawn` follows, on the golem's own random).
+        // let in), and `finalizeSpawn` on the level's random too (the follow range bonuses and the left hand)..
         let id = cx.level.next_entity_id();
         let seed = cx.level.fresh_seed();
         let mut g = mob::new(mob::MobKind::IronGolem, id, 0, seed);
@@ -1497,9 +1497,7 @@ fn try_spawn_iron_golem(cx: &mut Cx) -> bool {
             m.y_body_rot_o = yaw;
         }
         let ctx = mob::SpawnContext { biome: None, moon_brightness: 1.0, special_multiplier: 0.0, effective_difficulty: cx.level.effective_difficulty(p), hard: cx.level.difficulty() == 3, halloween: false };
-        let mut own = g.random.clone();
-        mob::finalize_spawn(&mut g, &mut own, &ctx, &mut mob::GroupData::default(), false);
-        g.random = own;
+        mob::finalize_spawn(&mut g, cx.rng(), &ctx, &mut mob::GroupData::default(), false);
         if !iron_golem_check_spawn_obstruction(cx, p) {
             continue;
         }
