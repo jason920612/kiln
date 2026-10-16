@@ -2207,6 +2207,11 @@ impl Sim {
         self.players.get(&conn).map(|p| (DIMENSIONS[p.dim].0, p.pos))
     }
 
+    /// Generated chunks in regions that wait for their region's next run to be lit (for tests).
+    pub fn unlit_chunks(&self) -> usize {
+        self.dims.iter().map(|d| d.unlit.len()).sum()
+    }
+
     /// Loaded chunks per level, in [`DIMENSIONS`] order (for tests and tools).
     pub fn loaded_chunks(&self) -> Vec<usize> {
         self.dims.iter().map(|d| d.regions.loaded_chunks()).collect()

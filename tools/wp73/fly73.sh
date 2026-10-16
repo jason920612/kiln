@@ -6,7 +6,7 @@ bin="$1"; tag="$2"; case_="$3"; shift 3
 out="$HOME/wp73/out"; mkdir -p "$out"
 world="/tmp/wp73-world-$tag"; rm -rf "$world"
 common=(--server "$bin/kiln" --bot "$bin/kiln-bot" --datapack /home/test/kiln/work/generated --world "$world" --phase gen
-        --port 25590 --slow-print 10 --out "$out" --tag "$tag")
+        --port 25590 --slow-print ${SLOW:-10} --out "$out" --tag "$tag")
 case "$case_" in
   ow1) args=(--count 0 --flyers 1 --fly-dim minecraft:overworld --fly-center 9000,0 --fly-heading 1,0 --fly-altitude 150 --warmup 20 --measure 150) ;;
   nether1) args=(--count 0 --flyers 1 --fly-dim minecraft:the_nether --fly-center 2000,0 --fly-heading 1,0 --fly-altitude 180 --warmup 20 --measure 150) ;;

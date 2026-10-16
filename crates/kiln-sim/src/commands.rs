@@ -470,6 +470,12 @@ impl Sim {
         self.execute_as(CommandSource::Console, command);
     }
 
+    /// [`Sim::run_console_command`] between ticks, to look at the world right after a command
+    /// returns (for tests).
+    pub fn console_now(&mut self, command: &str) {
+        self.run_console_command(command);
+    }
+
     fn execute_as(&mut self, source: CommandSource, command: &str) {
         let dispatcher = self.commands.dispatcher.clone();
         let previous = std::mem::replace(&mut self.commands.source, source);
