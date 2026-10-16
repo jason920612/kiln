@@ -481,7 +481,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     // Recordings since wp29 pin a rider that appears during its vehicle's tick before it ticks.
     let early_pin = s.get("pin_passengers").and_then(Value::as_bool) == Some(true);
     let mut level = MemoryLevel::new(-64, s["level_seed"].as_i64().unwrap());
-    level.share_ai_random = !production();
+    level.share_ai_random = !production() || std::env::var_os("KILN_PROD_SHARED").is_some();
     level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
     level.sky_darken = s["sky_darken"].as_i64().unwrap() as i32;
     // wp28: the overworld clock (villagers' schedule).

@@ -3,6 +3,19 @@
 use super::{Control, Cx, Mem, Status};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
 
+/// The seed of gate `k` of a brain whose gates were seeded from `base`: consecutive (`KILN_GATE_MIX` unset) or mixed (an experiment of wp69).
+fn gate_seed(base: i64, k: i64) -> i64 {
+    static MIX: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *MIX.get_or_init(|| std::env::var_os("KILN_GATE_MIX").is_some()) {
+        let mut z = (base as u64).wrapping_add((k as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        (z ^ (z >> 31)) as i64
+    } else {
+        base + k
+    }
+}
+
 /// `GateBehavior.OrderPolicy`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OrderPolicy {
@@ -169,7 +182,7 @@ impl Control for Gate {
         if std::env::var_os("KILN_GATE_DEBUG").is_some() {
             eprintln!("GATE {}: {}", *k, self.list.entries.iter().map(|(b, w, _)| format!("{}/{}", b.name(), w)).collect::<Vec<_>>().join(" "));
         }
-        self.list.seed(base + *k);
+        self.list.seed(gate_seed(base, *k));
         *k += 1;
         for (b, _, _) in self.list.entries.iter_mut() {
             b.seed_gates(base, k);
@@ -229,7 +242,7 @@ impl Control for TriggerGate {
         if std::env::var_os("KILN_GATE_DEBUG").is_some() {
             eprintln!("GATE {} (trigger): {}", *k, self.list.entries.iter().map(|(b, w, _)| format!("{}/{}", b.name(), w)).collect::<Vec<_>>().join(" "));
         }
-        self.list.seed(base + *k);
+        self.list.seed(gate_seed(base, *k));
         *k += 1;
         for (b, _, _) in self.list.entries.iter_mut() {
             b.seed_gates(base, k);
