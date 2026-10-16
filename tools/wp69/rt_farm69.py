@@ -10,6 +10,9 @@ from p69rt import *
 
 X0 = int(os.environ.get("GX", "4000")); Z0 = int(os.environ.get("GZ", "4000")); F = -61
 PEN_DZ = 40
+# SAMPLE=1: the datapack's sample function counts, every 20 ticks of the zombie days, the villagers by x offset (b0..b9, bm below 0) and those with the zombie within 8 blocks (near)
+SAMPLE = bool(os.environ.get("SAMPLE"))
+SAMPLE_NAMES = ["bm", "b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9", "near", "samples"]
 
 
 def at(pen, dx, dy, dz):
@@ -103,6 +106,8 @@ if __name__ == "__main__":
             gt = gametime()
             run([f"time set {11500 + gt % 100}"])
             assert (day_time() - gametime()) % 100 == 0, (day_time(), gametime())
+        if SAMPLE:
+            run(["scoreboard players set #20 wp66 20", f"scoreboard players set #x0 wp66 {X0}", "scoreboard players set #on wp66 0"] + [f"scoreboard players set #{n} wp66 0" for n in SAMPLE_NAMES])
         run(["gamerule advance_time true"])
         t0 = time.time()
         g_start = gametime()
@@ -120,12 +125,23 @@ if __name__ == "__main__":
             if day == days:
                 break
             zombies(pens, True)
+            if SAMPLE:
+                run(["scoreboard players set #on wp66 1"])
             dt = day_time()
             advance(11000 - dt)
+            if SAMPLE:
+                run(["scoreboard players set #on wp66 0"])
             timeline.append(("dusk", day, gametime(), state(pens)))
             run([f"say wp66 day {day} done"])
         out = run(["data get storage wp66:log golems", "scoreboard players get #n wp66"], timeout=600)
         rows = pattern_rows(" ".join(out))
-        res = {"target": T, "days": days, "pens": pens, "g_start": g_start, "g_end": gametime(), "golems": rows, "timeline": timeline, "raw_tail": out[-1][:200]}
+        bins = None
+        if SAMPLE:
+            outb = run([f"scoreboard players get #{x} wp66" for x in SAMPLE_NAMES])
+            bins = {}
+            for nme, l in zip(SAMPLE_NAMES, outb):
+                m = re.search(r"has (\d+)|, (\d+), \[", l)
+                bins[nme] = int(m.group(1) or m.group(2)) if m else None
+        res = {"target": T, "bins": bins, "days": days, "pens": pens, "g_start": g_start, "g_end": gametime(), "golems": rows, "timeline": timeline, "raw_tail": out[-1][:200]}
         json.dump(res, open(outp, "w"))
         print(f"TARGET={T}: {len(rows)} golems in {res['g_end']-g_start} ticks ({days} days, {pens} pens) [{time.time()-t0:.0f}s]; count score: {out[-1][:80]}")
