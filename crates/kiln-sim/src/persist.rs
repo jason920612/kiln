@@ -895,6 +895,7 @@ impl crate::Dim {
         }
         chunks.sort_unstable_by_key(|c| (c.x, c.z));
         chunks.dedup();
+        let unloaded: HashSet<ChunkPos> = unloaded.iter().copied().collect();
         for c in chunks {
             let mut list = groups.remove(&c).unwrap_or_default();
             let was_unloaded = unloaded.contains(&c);

@@ -1365,6 +1365,8 @@ impl Dim {
         let mut unloaded = Vec::new();
         // (Block machinery, points of interest, chunk storage.)
         let mut times = [Duration::ZERO; 3];
+        // The batch's chunks by region (some block machinery lists are cleaned once per batch).
+        let mut by_region: BTreeMap<RegionId, (ChunkPos, HashSet<ChunkPos>)> = BTreeMap::new();
         for pos in chunks {
             if keep.contains(&pos) {
                 continue;
@@ -1393,11 +1395,21 @@ impl Dim {
                 times[1] += t2 - t1;
                 times[2] += t3 - t2;
                 unloaded.push(pos);
+                if let Some(r) = self.regions.owner(pos.cell()) {
+                    by_region.entry(r).or_insert_with(|| (pos, HashSet::new())).1.insert(pos);
+                }
             }
             if cell.is_empty() {
                 self.emptied.push(pos.cell());
             }
         }
+        let t0 = Instant::now();
+        for (_, (any, gone)) in by_region {
+            if let Some(region) = self.regions.at_mut(any.cell()) {
+                region.part_mut().1.chunks_unloaded(&gone);
+            }
+        }
+        times[0] += t0.elapsed();
         for (name, t) in ["uc.blocks", "uc.poi", "uc.save"].into_iter().zip(times) {
             diag::add_slow(name, t);
         }
