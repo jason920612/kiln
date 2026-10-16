@@ -466,6 +466,17 @@ public class MobVectors {
         throw new IllegalStateException("server did not start");
     }
 
+    static java.lang.reflect.Method runAllTasks;
+
+    /// `BlockableEventLoop.runAllTasks` (protected): what the server's own loop runs between ticks.
+    static void runServerTasks(MinecraftServer server) throws Exception {
+        if (runAllTasks == null) {
+            runAllTasks = net.minecraft.util.thread.BlockableEventLoop.class.getDeclaredMethod("runAllTasks");
+            runAllTasks.setAccessible(true);
+        }
+        runAllTasks.invoke(server);
+    }
+
     static void prepare(MinecraftServer server) {
         ServerLevel level = server.overworld();
         level.tickRateManager().setFrozen(true);
@@ -832,7 +843,7 @@ public class MobVectors {
             if (s.fullTick) {
                 level.tick(() -> true);
                 // (what the server thread's loop runs between ticks: chunk status changes, entity sections going live)
-                level.getServer().runAllTasks();
+                runServerTasks(level.getServer());
             }
             else {
             repinBrains(tracked);
