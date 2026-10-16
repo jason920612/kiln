@@ -2260,8 +2260,10 @@ pub(crate) fn tick(
     ride_players(&mut sim);
     let SimLevel { level, list, proxies, events, spawns, players, deaths, .. } = sim;
     let level = level.into_region();
-    // Explosion knockback reaches the pushed player's client (it owns its movement).
-    for pr in proxies.iter().filter_map(Proxy::made).filter(|e| e.delta != Vec3::ZERO) {
+    // A push that is not an explosion's reaches the pushed player's client (it owns its movement); an explosion's is in its packet
+    // (the client adds it to its motion, which a motion packet would replace).
+    let blasted: Vec<i32> = events.iter().flat_map(|e| if let Event::Explosion { knockbacks, .. } = e { knockbacks.iter().map(|k| k.0).collect() } else { Vec::new() }).collect();
+    for pr in proxies.iter().filter_map(Proxy::made).filter(|e| e.delta != Vec3::ZERO && !blasted.contains(&e.id)) {
         if let Some(p) = players.iter_mut().find(|p| p.entity_id == pr.id)
             && !(p.game_mode == 1 && p.flying)
         {
@@ -3295,34 +3297,32 @@ fn carry_out(
                 }
             }
         }
-        Event::Explosion { pos, power, fx, .. } => {
-            // `ServerLevel.explode` sends the explosion (sound and particle) to players within 64
-            // blocks; the removed blocks reach clients as block updates.
+        Event::Explosion { pos, power, blocks, keep, knockbacks, fx, .. } => {
+            // `ServerLevel.explode` sends the explosion packet to the players within 64 blocks: the particle and sound it names (the client
+            // plays them), the blocks it took and the knockback this player takes (the client adds it to its motion). The removed blocks
+            // reach clients as block updates.
             let at = arr(pos);
             let particle = match fx {
-                Some(fx) if power < 2.0 => fx.small_particle,
+                Some(fx) if power < 2.0 || keep => fx.small_particle,
                 Some(fx) => fx.large_particle,
-                None if power < 2.0 => "minecraft:explosion",
+                None if power < 2.0 || keep => "minecraft:explosion",
                 None => "minecraft:explosion_emitter",
             };
-            if let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", particle) {
-                let pkt = world_fx::level_particles(&world_fx::LevelParticles {
-                    particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
-                    override_limiter: true,
-                    always_show: false,
-                    pos: at,
-                    offset: [0.0; 3],
-                    max_speed: [1.0, 0.0, 0.0],
-                    count: 0,
-                    randomization: world_fx::ParticleRandomization::Default,
-                });
-                for p in players.iter_mut().filter(|p| dist2(p.pos, at) < 64.0 * 64.0) {
-                    p.send(pkt.clone());
-                }
+            let sound = fx.map_or("minecraft:entity.generic.explode", |f| f.sound);
+            let (Some(particle), Some(sound)) = (kiln_data::builtin_id("minecraft:particle_type", particle), kiln_data::builtin_id("minecraft:sound_event", sound)) else { return };
+            for p in players.iter_mut().filter(|p| dist2(p.pos, at) < 64.0 * 64.0) {
+                let knockback = knockbacks.iter().find(|(id, _)| *id == p.entity_id).filter(|_| p.game_mode != 3 && !(p.game_mode == 1 && p.flying)).map(|(_, v)| arr(*v));
+                let pkt = world_fx::explode(
+                    at,
+                    power,
+                    blocks.len() as i32,
+                    knockback,
+                    &world_fx::Particle { kind: particle, options: world_fx::ParticleOptions::None },
+                    &world_fx::Sound::Registered(sound),
+                    true,
+                );
+                p.send(pkt);
             }
-            let r = level.random();
-            let pitch = (1.0 + (r.next_float() - r.next_float()) * 0.2) * 0.7;
-            send_sound(players, env, n, at, fx.map_or("minecraft:entity.generic.explode", |f| f.sound), world_fx::SoundSource::Blocks, 4.0, pitch);
         }
         Event::MobHurt { entity: id, kind, attacker, direct } => {
             // `broadcastDamageEvent`: the hurt tilt and sound for the mob's viewers.
