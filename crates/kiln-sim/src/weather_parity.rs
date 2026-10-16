@@ -158,7 +158,7 @@ fn precipitation(v: &Value, sea_level: i32, zoom_seed: i64, report: &mut impl Fn
         });
         climates.climate(b, sea_level, pos)
     }));
-    level.weather = kiln_blocks::weather::Weather { raining: true, thundering: false, max_snow_height: v["max_snow"].as_i64().unwrap() as i32 };
+    level.weather = kiln_blocks::weather::Weather { raining: true, thundering: false, weather_layer: true, max_snow_height: v["max_snow"].as_i64().unwrap() as i32 };
     let set = |level: &mut TestLevel, x: i32, y: i32, z: i32, s: &str| {
         level.set_raw(BlockPos::new(x0 + x, y, z0 + z), state_id(s), 0);
     };
