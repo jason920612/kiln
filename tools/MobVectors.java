@@ -545,8 +545,22 @@ public class MobVectors {
         for (String c : new String[] {"gamerule minecraft:spawn_mobs false", "gamerule minecraft:advance_weather false", "gamerule minecraft:advance_time false", "gamerule minecraft:mob_drops false",
                 "difficulty normal", "weather clear 1000000", "time set 11500", "kill @e[type=!player]"}) cmd(server, c);
         ticks.accept(2);
+        boolean javaBlocks = "java".equals(System.getenv("MOB_CMD_BLOCKS"));
         for (int pen = 0; pen < pens; pen++) {
             int z0 = Z0 + pen * DZ;
+            if (javaBlocks) {
+                // (the pen as the harness's own scenarios have it: blocks put with the harness' flags, the points of interest added by hand)
+                Scenario tmp = new Scenario("tmp");
+                farm69Pen(tmp);
+                for (var b : tmp.blocks.entrySet()) {
+                    BlockPos p = b.getKey().offset(X0, F + 1 - BY, z0);
+                    level.setBlock(p, b.getValue(), FLAGS);
+                    var poi = net.minecraft.world.entity.ai.village.poi.PoiTypes.forState(b.getValue());
+                    if (poi.isPresent()) level.getPoiManager().add(p, poi.get());
+                }
+                awaitLight(level);
+                continue;
+            }
             java.util.function.BiFunction<int[], Integer, String> at = (d, dummy) -> (X0 + d[0]) + " " + (F + d[1]) + " " + (z0 + d[2]);
             cmd(server, "fill " + (X0 - 12) + " " + F + " " + (z0 - 12) + " " + (X0 + 24) + " " + F + " " + (z0 + 20) + " minecraft:stone");
             cmd(server, "fill " + (X0 - 12) + " " + (F + 1) + " " + (z0 - 12) + " " + (X0 + 24) + " " + (F + 8) + " " + (z0 + 20) + " minecraft:air");
@@ -562,8 +576,22 @@ public class MobVectors {
                 cmd(server, "setblock " + at.apply(new int[] {4, 1, z}, 0) + " minecraft:red_bed[facing=east,part=foot]");
             }
         }
+        boolean javaVillagers = "java".equals(System.getenv("MOB_CMD_VILLAGERS"));
         for (int pen = 0; pen < pens; pen++)
             for (int i = 0; i < 3; i++)
+                if (javaVillagers) {
+                    Mob m = (Mob) BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse("minecraft:villager")).create(level, EntitySpawnReason.COMMAND);
+                    m.snapTo(X0 + 6.5, F + 1, Z0 + pen * DZ + 3.5 + i * 2, 0f, 0f);
+                    var tag = net.minecraft.nbt.TagParser.parseCompoundFully("{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b,Tags:[\"wp66\"]}");
+                    var in = net.minecraft.world.level.storage.TagValueInput.create(net.minecraft.util.ProblemReporter.DISCARDING, level.registryAccess(), tag);
+                    java.lang.reflect.Method read = null;
+                    for (Class<?> c = m.getClass(); c != null && read == null; c = c.getSuperclass())
+                        for (java.lang.reflect.Method mm : c.getDeclaredMethods()) if (mm.getName().equals("readAdditionalSaveData") && mm.getParameterCount() == 1) read = mm;
+                    read.setAccessible(true);
+                    read.invoke(m, in);
+                    m.addTag("wp66");
+                    level.addFreshEntity(m);
+                } else
                 cmd(server, "summon minecraft:villager " + (X0 + 6) + ".5 " + (F + 1) + " " + (Z0 + pen * DZ + 3 + i * 2) + ".5 {VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1},PersistenceRequired:1b,Tags:[\"wp66\"]}");
         cmd(server, "data remove storage wp66:log golems");
         cmd(server, "scoreboard players set #n wp66 0");
