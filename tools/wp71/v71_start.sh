@@ -24,6 +24,8 @@ pause-when-empty-seconds=-1
 white-list=false
 level-seed=65
 PROP
+# VOID=1: nothing but a layer of bedrock (wp69's "bedrock only" world; checked in wp71: the setting does take effect) instead of the flat world's dirt and grass
+[ -n "$VOID" ] && echo 'generator-settings={"layers"\:[{"block"\:"minecraft\:bedrock","height"\:1}],"biome"\:"minecraft\:plains"}' >> server.properties
 mkdir -p world/datapacks && cp -r "${DP:-$HOME/wt/wp71-farm-rng/tools/datapacks/wp66}" world/datapacks/wp66
 rm -f console; mkfifo console
 (sleep 100000000 > console &)
