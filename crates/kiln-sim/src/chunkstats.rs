@@ -107,6 +107,7 @@ pub(crate) fn rss_mb() -> u64 {
 pub(crate) fn line(gen_threads: usize) -> String {
     let (n, mean, p50, p99, max) = GEN_LATENCY.summary();
     let wait = CHUNK_WAIT.summary();
+    let pipeline = kiln_worldgen::pipeline::timing();
     let mut s = String::new();
     let ms = |c: &AtomicU64| c.load(Relaxed) as f64 / 1e6;
     let _ = write!(
@@ -116,7 +117,7 @@ pub(crate) fn line(gen_threads: usize) -> String {
          disk_hits={} disk_ms={:.1} disk_max_ms={:.2} disk_misses={} disk_miss_ms={:.1} \
          installed={} install_ms={:.1} install_max_ms={:.2} sync_loads={} sync_ms={:.1} sync_max_ms={:.1} \
          chunk_wait_n={} chunk_wait_mean_ms={:.1} chunk_wait_p99_ms={} chunk_wait_max_ms={} \
-         gen_held={} rss_mb={}",
+         gen_held={} gen_terrain_ms={:.0} gen_decorate_ms={:.0} gen_wait_ms={:.0} rss_mb={}",
         GEN_DONE.load(Relaxed),
         ms(&GEN_BUSY_NS),
         DISK_HITS.load(Relaxed),
@@ -135,6 +136,9 @@ pub(crate) fn line(gen_threads: usize) -> String {
         wait.3,
         wait.4,
         GEN_HELD.load(Relaxed),
+        pipeline.0.as_secs_f64() * 1e3,
+        pipeline.1.as_secs_f64() * 1e3,
+        pipeline.2.as_secs_f64() * 1e3,
         rss_mb(),
     );
     s

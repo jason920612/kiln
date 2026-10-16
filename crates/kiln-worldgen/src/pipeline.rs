@@ -36,7 +36,9 @@ use crate::structure::{ChunkStarts, StartCache, Structures};
 use kiln_proto::nbt::Tag;
 use std::collections::{HashMap, HashSet};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 /// Everything overworld generation needs, shared by all generation threads.
 pub struct Worldgen {
@@ -110,6 +112,23 @@ pub struct PipelineStats {
 
 /// Terrain prefetch radius around a requested chunk (see [`Pipeline::wait_or_help`]).
 const PREFETCH: i32 = 3;
+
+/// Thread time spent generating terrain, decorating and waiting for other threads (nanoseconds,
+/// summed over every pipeline and thread), for load tools: how much of the generation threads'
+/// time is work.
+static TERRAIN_NS: AtomicU64 = AtomicU64::new(0);
+static DECORATE_NS: AtomicU64 = AtomicU64::new(0);
+static WAIT_NS: AtomicU64 = AtomicU64::new(0);
+
+/// `(terrain, decorate, wait)` thread time so far.
+pub fn timing() -> (Duration, Duration, Duration) {
+    let d = |a: &AtomicU64| Duration::from_nanos(a.load(Relaxed));
+    (d(&TERRAIN_NS), d(&DECORATE_NS), d(&WAIT_NS))
+}
+
+fn add(a: &AtomicU64, since: Instant) {
+    a.fetch_add(since.elapsed().as_nanos() as u64, Relaxed);
+}
 
 /// The chunk generation scheduler. `Sync`: share it (`Arc`) between generation threads, each
 /// with its own [`GenScratch`].
@@ -269,6 +288,13 @@ impl Pipeline {
 
     /// BIOMES and TERRAIN (with the chunk's beardifier when structures generate).
     fn generate_terrain(&self, gs: &mut GenScratch, x: i32, z: i32) -> Box<ProtoChunk> {
+        let started = Instant::now();
+        let chunk = self.generate_terrain_untimed(gs, x, z);
+        add(&TERRAIN_NS, started);
+        chunk
+    }
+
+    fn generate_terrain_untimed(&self, gs: &mut GenScratch, x: i32, z: i32) -> Box<ProtoChunk> {
         let beard = self.world.generate_structures.then(|| {
             let starts = ChunkStarts::new(&self.world.structures, &self.world.generator, &self.starts, &mut gs.structures, x, z);
             Beardifier::for_chunk(&self.world.structures, &starts, x, z)
@@ -291,7 +317,10 @@ impl Pipeline {
             self.wake.notify_all();
             return s;
         }
-        self.wake.wait(s).unwrap()
+        let started = Instant::now();
+        let s = self.wake.wait(s).unwrap();
+        add(&WAIT_NS, started);
+        s
     }
 
     /// FEATURES for one chunk, after the chunks that must precede it in canonical order.
@@ -334,10 +363,12 @@ impl Pipeline {
         let starts = self.world.generate_structures.then(|| {
             ChunkStarts::new(&self.world.structures, &self.world.generator, &self.starts, &mut gs.structures, x, z)
         });
+        let started = Instant::now();
         let mut region = Region::new(window, x, z, &self.world.generator, gs);
         let structures = starts.as_ref().map(|s| (&self.world.structures, s));
         self.world.decorator.decorate(&mut region, structures, &mut ());
         let chunks = region.into_chunks();
+        add(&DECORATE_NS, started);
         let mut s = self.state.lock().unwrap();
         for (i, mut c) in chunks.into_iter().enumerate() {
             if i == 4 {
