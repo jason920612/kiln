@@ -841,6 +841,8 @@ public class MobVectors {
             }
             float healthBefore = player.getHealth();
             if (s.fullTick) {
+                // (the server's own loop calls `tickRateManager.tick()` each tick, which sets this: the harness is that loop)
+                set(level.tickRateManager(), "runGameElements", true);
                 level.tick(() -> true);
                 // (what the server thread's loop runs between ticks: chunk status changes, entity sections going live)
                 runServerTasks(level.getServer());
