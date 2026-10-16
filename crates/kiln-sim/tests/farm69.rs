@@ -84,6 +84,7 @@ struct Panic {
     panicking: u64,
     opps: u64,
     opps_any: u64,
+    by_phase: [(u64, u64); 20],
 }
 
 fn count_panic(sim: &Sim, panic: &mut Panic, dawn: bool) {
@@ -99,6 +100,9 @@ fn count_panic(sim: &Sim, panic: &mut Panic, dawn: bool) {
         let p = sim.mob_brain(id).is_some_and(|b| b.iter().any(|t| t == "act:panic"));
         panic.ticks += 1;
         panic.panicking += p as u64;
+        let ph = (sim.game_time() % 100 / 5) as usize;
+        panic.by_phase[ph].0 += 1;
+        panic.by_phase[ph].1 += p as u64;
         *pens.entry(((pos[2] + 20.0) / 40.0).floor() as i32).or_default() |= p;
     }
     if sim.game_time() % 100 == 0 {
@@ -173,6 +177,7 @@ fn the_farm_in_the_simulation() {
         println!("GOLEM {g} {} {:.1} {:.1} {:.1}", dt % 24000, p[0], p[1], p[2]);
     }
     println!("PANIC villager-ticks {} panicking {:.4} opps {} any {:.4}", panic.ticks, panic.panicking as f64 / panic.ticks.max(1) as f64, panic.opps, panic.opps_any as f64 / panic.opps.max(1) as f64);
+    println!("PHASE {:?}", panic.by_phase.iter().map(|&(a, b)| (b as f64 / a.max(1) as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
     println!("TOTAL {} golems in {days} days, {pens} pens", log.len());
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
