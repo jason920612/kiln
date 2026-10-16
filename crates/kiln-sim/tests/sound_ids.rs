@@ -44,7 +44,7 @@ fn every_sound_id_in_the_sources_exists() {
                 rest = &tail[end + 1..];
                 let path = &id["minecraft:".len()..];
                 let family = path.split('.').next().unwrap_or("");
-                if !path.contains('.') || id.ends_with('.') || prefixes.contains(&id) {
+                if !path.contains('.') || id.ends_with('.') || id.contains('{') || prefixes.contains(&id) {
                     continue;
                 }
                 if !["entity", "item", "block", "ui", "music", "ambient", "weather", "event"].contains(&family) {
