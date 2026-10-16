@@ -41,6 +41,12 @@ fn st_mut(m: &mut MobData) -> &mut IllagerState {
 }
 
 impl Kind for Pillager {
+    /// `PatrollingMonster.checkPatrollingMonsterSpawnRules` (the pillager alone uses it): no block light above 8 (a torch next to the spot), then
+    /// `checkMobSpawnRules`; the darkness a monster needs (`isDarkEnoughToSpawn`) is not asked for, so outposts spawn pillagers in daylight too.
+    fn check_spawn_rules(&self, view: &dyn ext::SpawnView, pos: BlockPos, _r: &mut kiln_javamath::random::LegacyRandom) -> Option<bool> {
+        Some(view.difficulty() != 0 && view.block_light(pos) <= 8 && super::slime::check_mob_spawn_rules(view, pos))
+    }
+
     /// `getWalkTargetValue` is 0.
     fn spawn_walk_target(&self, _view: &dyn ext::SpawnView, _pos: crate::math::BlockPos) -> Option<f32> {
         Some(0.0)
