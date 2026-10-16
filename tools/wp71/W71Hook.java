@@ -28,6 +28,9 @@ public final class W71Hook {
     static final Map<Integer, double[]> PREV = new HashMap<>();
     static final Map<Integer, Set<String>> PREV_RUN = new HashMap<>();
     static final Set<Integer> GOLEMS = new HashSet<>();
+    static final Map<Integer, String> PREV_WALK = new HashMap<>();
+    static final Map<Integer, Boolean> PREV_CANT = new HashMap<>();
+    static final Map<Integer, Object[]> PENDING = new HashMap<>();
     static Field memories;
     static long lastGt = -1, lastDump = 0;
     static boolean hooked;
@@ -80,6 +83,46 @@ public final class W71Hook {
                 }
                 Set<String> before = PREV_RUN.getOrDefault(v.getId(), Set.of());
                 for (String n : run) if (!before.contains(n)) add("start|" + ph + "|" + cls + "|" + n);
+                // The funnel of walk targets: each new one (by value) with its distance, and what came of it in the next ticks.
+                boolean sinkStarted = run.contains("MoveToTargetSink") && !before.contains("MoveToTargetSink");
+                boolean cant = brain.hasMemoryValue(net.minecraft.world.entity.ai.memory.MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE);
+                boolean wasCant = PREV_CANT.getOrDefault(v.getId(), false);
+                PREV_CANT.put(v.getId(), cant);
+                var wopt = brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.WALK_TARGET);
+                String key = "";
+                String sig = null;
+                double[] at = null;
+                if (wopt.isPresent()) {
+                    var w = wopt.get();
+                    var tp = w.getTarget().currentPosition();
+                    boolean ent = w.getTarget() instanceof net.minecraft.world.entity.ai.behavior.EntityTracker;
+                    at = new double[] {tp.x, tp.y, tp.z};
+                    key = String.format("%b|%.2f|%.2f|%.2f|%s|%d", ent, tp.x, tp.y, tp.z, Float.toString(w.getSpeedModifier()), w.getCloseEnoughDist());
+                    sig = (ent ? "E" : "B") + "s" + String.format("%.2f", w.getSpeedModifier()) + "c" + w.getCloseEnoughDist();
+                }
+                String prevKey = PREV_WALK.put(v.getId(), key);
+                if (prevKey == null) prevKey = "";
+                if (sig != null && !key.equals(prevKey)) {
+                    add("wt|" + ph + "|" + cls + "|" + sig);
+                    add("wtd|" + ph + "|" + cls + "|" + sig + "|" + Math.min(15, (int) Math.hypot(at[0] - x0v(v), at[2] - z0v(v))));
+                    if (run.contains("MoveToTargetSink")) {
+                        add("wtR|" + ph + "|" + cls + "|" + sig);
+                        PENDING.remove(v.getId());
+                    } else {
+                        PENDING.put(v.getId(), new Object[] {sig, 4});
+                    }
+                } else {
+                    Object[] pend = PENDING.remove(v.getId());
+                    if (pend != null) {
+                        String psig = (String) pend[0];
+                        int ttl = (Integer) pend[1];
+                        if (key.isEmpty()) add("wtX|" + ph + "|" + cls + "|" + psig);
+                        else if (sinkStarted) add("wtS|" + ph + "|" + cls + "|" + psig);
+                        else if (cant && !wasCant) add("wtC|" + ph + "|" + cls + "|" + psig);
+                        else if (ttl > 1) PENDING.put(v.getId(), new Object[] {psig, ttl - 1});
+                        else add("wtN|" + ph + "|" + cls + "|" + psig);
+                    }
+                }
                 PREV_RUN.put(v.getId(), run);
                 for (var en : ((Map<?, ?>) memories.get(brain)).entrySet()) {
                     Object slot = en.getValue();
@@ -110,6 +153,14 @@ public final class W71Hook {
         } catch (Throwable t) {
             t.printStackTrace();
         }
+    }
+
+    static double x0v(Entity v) {
+        return v.getX();
+    }
+
+    static double z0v(Entity v) {
+        return v.getZ();
     }
 
     static int pen(double z) {

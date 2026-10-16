@@ -194,6 +194,10 @@ struct Stats {
     counts: std::collections::BTreeMap<String, u64>,
     prev_pos: std::collections::HashMap<i32, [f64; 2]>,
     prev_run: std::collections::HashMap<i32, std::collections::HashSet<String>>,
+    /// Per villager: the walk target of the tick before (as a key string) and the new one waiting for its outcome (signature, ticks left).
+    prev_walk: std::collections::HashMap<i32, String>,
+    prev_cant: std::collections::HashMap<i32, bool>,
+    pending: std::collections::HashMap<i32, (String, i32)>,
 }
 
 static STATS: std::sync::Mutex<Option<Stats>> = std::sync::Mutex::new(None);
@@ -241,6 +245,42 @@ fn stats_sample(sim: &Sim) {
         for r in &run {
             if !before.contains(r) {
                 *c.entry(format!("start|{ph}|{cls}|{r}")).or_default() += 1;
+            }
+        }
+        // The funnel of walk targets: each new one (by value) with its distance, and what came of it in the next ticks.
+        let sink_started = run.contains("MoveToTargetSink") && !before.contains("MoveToTargetSink");
+        let cant = trace.iter().any(|t| t.starts_with("m:minecraft:cant_reach_walk_target_since"));
+        let was_cant = st.prev_cant.insert(*id, cant).unwrap_or(false);
+        let walk = sim.mob_walk(*id).map(|(ent, at, speed, close)| {
+            let at = ent.and_then(|e| mobs.iter().find(|m| m.0 == e).map(|m| m.2)).unwrap_or(at);
+            (ent.is_some(), at, speed, close)
+        });
+        let key = walk.map(|(e, at, speed, close)| format!("{e}|{:.2}|{:.2}|{:.2}|{speed}|{close}", at[0], at[1], at[2])).unwrap_or_default();
+        let prev_key = st.prev_walk.insert(*id, key.clone()).unwrap_or_default();
+        if let Some((ent, at, speed, close)) = walk
+            && key != prev_key
+        {
+            let sig = format!("{}s{speed:.2}c{close}", if ent { "E" } else { "B" });
+            *c.entry(format!("wt|{ph}|{cls}|{sig}")).or_default() += 1;
+            let dist = (at[0] - pos[0]).hypot(at[2] - pos[2]);
+            *c.entry(format!("wtd|{ph}|{cls}|{sig}|{}", (dist as i32).min(15))).or_default() += 1;
+            if run.contains("MoveToTargetSink") {
+                *c.entry(format!("wtR|{ph}|{cls}|{sig}")).or_default() += 1;
+                st.pending.remove(id);
+            } else {
+                st.pending.insert(*id, (sig, 4));
+            }
+        } else if let Some((sig, ttl)) = st.pending.remove(id) {
+            if key.is_empty() {
+                *c.entry(format!("wtX|{ph}|{cls}|{sig}")).or_default() += 1;
+            } else if sink_started {
+                *c.entry(format!("wtS|{ph}|{cls}|{sig}")).or_default() += 1;
+            } else if cant && !was_cant {
+                *c.entry(format!("wtC|{ph}|{cls}|{sig}")).or_default() += 1;
+            } else if ttl > 1 {
+                st.pending.insert(*id, (sig, ttl - 1));
+            } else {
+                *c.entry(format!("wtN|{ph}|{cls}|{sig}")).or_default() += 1;
             }
         }
         st.prev_run.insert(*id, run);
