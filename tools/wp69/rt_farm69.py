@@ -38,14 +38,32 @@ def build(pens):
             cmds.append(f"setblock {at(pen,4,1,z)} minecraft:red_bed[facing=east,part=foot]")
         run(cmds, timeout=3600)
     cmds = []
+    if os.environ.get("ZTP"):
+        # the zombies live in a closed box away from the pen and are put into the cell by day (tp), instead of being summoned and killed
+        for pen in range(pens):
+            cmds.append(f"fill {at(pen,15,1,15)} {at(pen,19,4,19)} minecraft:stone_bricks")
+            cmds.append(f"fill {at(pen,16,1,16)} {at(pen,18,3,18)} minecraft:air")
+    homes = os.environ.get("HOMES")
+    gt = gametime() if homes else 0
     for pen in range(pens):
         for i in range(3):
-            cmds.append(f'summon minecraft:villager {X0+6}.5 {F+1} {Z0+pen*PEN_DZ+3+i*2}.5 {{VillagerData:{{type:"minecraft:plains",profession:"minecraft:none",level:1}},PersistenceRequired:1b,Tags:["wp66"]}}')
+            mem = ""
+            if homes:
+                mem = f',Brain:{{memories:{{"minecraft:last_slept":{{value:{gt - 8000}L}},"minecraft:home":{{value:{{dimension:"minecraft:overworld",pos:[I;{X0+3},{F+1},{Z0+pen*PEN_DZ+2+2*i}]}}}}}}}}'
+            cmds.append(f'summon minecraft:villager {X0+6}.5 {F+1} {Z0+pen*PEN_DZ+3+i*2}.5 {{VillagerData:{{type:"minecraft:plains",profession:"minecraft:none",level:1}},PersistenceRequired:1b,Tags:["wp66"]{mem}}}')
     run(cmds)
+    if os.environ.get("ZTP"):
+        run([f'summon minecraft:zombie {X0+17}.5 {F+1} {Z0+pen*PEN_DZ+17}.5 {{PersistenceRequired:1b,Tags:["wp66z","wp66z{pen}"]}}' for pen in range(pens)])
     run(["data remove storage wp66:log golems", "scoreboard players set #n wp66 0"])
 
 
 def zombies(pens, on):
+    if os.environ.get("ZTP"):
+        if on:
+            run([f"execute as @e[type=minecraft:zombie,tag=wp66z{pen}] run tp @s {X0+10}.5 {F+1} {Z0+pen*PEN_DZ+4}.5" for pen in range(pens)])
+        else:
+            run([f"execute as @e[type=minecraft:zombie,tag=wp66z{pen}] run tp @s {X0+17}.5 {F+1} {Z0+pen*PEN_DZ+17}.5" for pen in range(pens)])
+        return
     if not on:
         run(["kill @e[type=minecraft:zombie,tag=wp66z]"])
         return
