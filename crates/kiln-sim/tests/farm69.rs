@@ -85,11 +85,14 @@ struct Panic {
     opps: u64,
     opps_any: u64,
     by_phase: [(u64, u64); 20],
+    /// Per 100 ticks after dt 300: (villager-ticks, panicking ones).
+    bins: [(u64, u64); 20],
 }
 
 fn count_panic(sim: &Sim, panic: &mut Panic, dawn: bool) {
     let dt = sim.day_time() % 24000;
-    if !(300..if dawn { 1500 } else { 11000 }).contains(&dt) {
+    let in_bins = (300..2300).contains(&dt);
+    if !(300..if dawn { 1500 } else { 11000 }).contains(&dt) && !in_bins {
         return;
     }
     let mut pens: std::collections::BTreeMap<i32, bool> = std::collections::BTreeMap::new();
@@ -98,6 +101,11 @@ fn count_panic(sim: &Sim, panic: &mut Panic, dawn: bool) {
             continue;
         }
         let p = sim.mob_brain(id).is_some_and(|b| b.iter().any(|t| t == "act:panic"));
+        if in_bins {
+            let b = &mut panic.bins[((dt - 300) / 100) as usize];
+            b.0 += 1;
+            b.1 += p as u64;
+        }
         panic.ticks += 1;
         panic.panicking += p as u64;
         let ph = (sim.game_time() % 100 / 5) as usize;
@@ -179,6 +187,7 @@ fn the_farm_in_the_simulation() {
         println!("GOLEM {g} {} {:.1} {:.1} {:.1}", dt % 24000, p[0], p[1], p[2]);
     }
     println!("PANIC villager-ticks {} panicking {:.4} opps {} any {:.4}", panic.ticks, panic.panicking as f64 / panic.ticks.max(1) as f64, panic.opps, panic.opps_any as f64 / panic.opps.max(1) as f64);
+    println!("BINS {:?}", panic.bins.iter().map(|&(a, b)| (b as f64 / a.max(1) as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
     println!("PHASE {:?}", panic.by_phase.iter().map(|&(a, b)| (b as f64 / a.max(1) as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
     println!("TOTAL {} golems in {days} days, {pens} pens", log.len());
     drop(sim);
