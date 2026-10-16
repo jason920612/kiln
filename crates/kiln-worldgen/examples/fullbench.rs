@@ -3,10 +3,13 @@
 //! usage: cargo run --release -p kiln-worldgen --example fullbench [-- <side> <threads>... [--no-structures]]
 //! Each run generates a fresh `side`×`side` square of FULL chunks (default 16×16) with a new
 //! pipeline shared by the given thread counts (default 1 and all cores), threads taking chunks
-//! in row order from a shared counter. Datapack from `$KILN_WORK/generated`.
+//! in row order from a shared counter. Datapack from `$KILN_WORK/generated`. Each run ends
+//! with a hash of what it made (blocks, biomes, heights, block entities, entities and pending
+//! updates of every chunk), equal between runs and builds that generate the same chunks.
 
 use kiln_worldgen::generator::GenScratch;
 use kiln_worldgen::{Datapack, Pipeline, Worldgen};
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -31,21 +34,27 @@ fn main() {
         let targets: Vec<(i32, i32)> = (0..side * side).map(|i| (origin.0 + i % side, origin.1 + i / side)).collect();
         let pipeline = Arc::new(Pipeline::new(world.clone()));
         let next = Arc::new(AtomicUsize::new(0));
+        let made = std::sync::Mutex::new(Vec::new());
         let start = Instant::now();
         std::thread::scope(|s| {
             for _ in 0..t {
-                let (pipeline, next, targets) = (pipeline.clone(), next.clone(), &targets);
+                let (pipeline, next, targets, made) = (pipeline.clone(), next.clone(), &targets, &made);
                 s.spawn(move || {
                     let mut gs = GenScratch::default();
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         let Some(&(x, z)) = targets.get(i) else { break };
-                        std::hint::black_box(pipeline.full(&mut gs, x, z));
+                        let c = pipeline.full(&mut gs, x, z);
+                        made.lock().unwrap().push(((x - origin.0, z - origin.1), digest(&c)));
                     }
                 });
             }
         });
         let secs = start.elapsed().as_secs_f64();
+        let mut made = made.into_inner().unwrap();
+        made.sort_unstable();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        made.hash(&mut h);
         let stats = pipeline.stats();
         let (terrain, decorate, wait) = kiln_worldgen::pipeline::timing();
         let (terrain, decorate, wait) = (terrain - timed.0, decorate - timed.1, wait - timed.2);
@@ -58,15 +67,30 @@ fn main() {
             secs * t as f64 - (terrain + decorate + wait).as_secs_f64()
         );
         println!(
-            "{t:>3} threads: {} FULL chunks in {secs:.2} s = {:.1} chunks/s ({:.1} ms/chunk per thread); {} decorated, {} held",
+            "{t:>3} threads: {} FULL chunks in {secs:.2} s = {:.1} chunks/s ({:.1} ms/chunk per thread); {} decorated, {} held; hash {:016x}",
             targets.len(),
             targets.len() as f64 / secs,
             secs * 1e3 * t as f64 / targets.len() as f64,
             stats.decorated,
-            stats.held
+            stats.held,
+            h.finish()
         );
     }
     let gaps = world.decorator.features.gaps();
+    if threads.len() > 1 {
+        println!("(the runs cover different squares: compare a hash with the same run of another build)");
+    }
     println!("unimplemented feature types hit (skipped): {:?}", gaps.keys().collect::<Vec<_>>());
     println!("unimplemented structure types hit (skipped): {:?}", world.structures.gaps().keys().collect::<Vec<_>>());
+}
+
+/// What a FULL chunk holds, hashed.
+fn digest(c: &kiln_worldgen::ProtoChunk) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    c.blocks.hash(&mut h);
+    c.biomes.hash(&mut h);
+    format!("{:?}", c.block_entities).hash(&mut h);
+    format!("{:?}", c.entities).hash(&mut h);
+    format!("{:?}{:?}{:?}", c.post_processing, c.block_ticks, c.fluid_ticks).hash(&mut h);
+    h.finish()
 }
