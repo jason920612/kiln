@@ -277,6 +277,8 @@ public class MobVectors {
         boolean fullTick;
         /// wp69: the golems of the tick before are killed (death animation, 20 ticks) instead of discarded.
         boolean killGolems;
+        /// wp69: with `fullTick`, the server's own `tickServer` (functions, clocks, levels, connections, player list) instead of the level alone.
+        boolean serverTick;
         Scenario(String name) { this.name = name; }
     }
 
@@ -481,7 +483,7 @@ public class MobVectors {
         throw new IllegalStateException("server did not start");
     }
 
-    static java.lang.reflect.Method runAllTasks;
+    static java.lang.reflect.Method runAllTasks, tickServerMethod;
 
     /// `BlockableEventLoop.runAllTasks` (protected): what the server's own loop runs between ticks.
     static void runServerTasks(MinecraftServer server) throws Exception {
@@ -859,7 +861,14 @@ public class MobVectors {
                 if (a.tick == tick) act(level, player, tracked, a);
             }
             float healthBefore = player.getHealth();
-            if (s.fullTick) {
+            if (s.fullTick && s.serverTick) {
+                if (tickServerMethod == null) {
+                    tickServerMethod = net.minecraft.server.MinecraftServer.class.getDeclaredMethod("tickServer", java.util.function.BooleanSupplier.class);
+                    tickServerMethod.setAccessible(true);
+                }
+                tickServerMethod.invoke(level.getServer(), (java.util.function.BooleanSupplier) () -> true);
+                runServerTasks(level.getServer());
+            } else if (s.fullTick) {
                 // (the server's own loop calls `tickRateManager.tick()` each tick, which sets this: the harness is that loop)
                 set(level.tickRateManager(), "runGameElements", true);
                 // (`MinecraftServer.tickChildren`: the clocks first, then the levels)
@@ -6827,6 +6836,30 @@ public class MobVectors {
             s.fullTick = true;
             s.diverges = true;
             s.ticks = 600;
+            out.add(s);
+        }
+        // The same through the server's own tick (statistics only).
+        for (int i = 0; i < 16; i++) {
+            Scenario s = new Scenario("farm69_srv_" + i);
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69850L + 10L * i, 1000L - 11000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 300;
+            s.levelSeed = 850 + i;
+            s.noTrace = true;
+            s.fullTick = true;
+            s.serverTick = true;
+            s.removeGolems = true;
+            s.ticks = 6 * 24000;
+            for (int d = 0; d < 6; d++) {
+                Action in = new Action(d == 0 ? 0 : 24000 * d - 1, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+                Action off = new Action(24000 * d + 10699, "tp"); off.mob = 3; off.x = 17.5; off.y = BY; off.z = 17.5; s.actions.add(off);
+            }
             out.add(s);
         }
         // The same with the level really ticking (statistics only).
