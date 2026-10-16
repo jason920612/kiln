@@ -1,0 +1,18 @@
+from p68 import *
+a = C(25999); b = C(26000)
+key = "minecraft:trial_key"
+st = b.state(0)
+print({k: v for k, v in st.items() if k not in ("slots", "entities", "inv")})
+print(b.inv())
+b.select(key)
+time.sleep(0.5)
+st = b.state(0)
+print("sel", st.get("selected"), st.get("hand"), [e for e in st.get("inv", []) if e.get("slot", 99) < 9][:4])
+b.lookat(20.5, 200.5, 18.5)
+time.sleep(0.5)
+rec_start(b)
+b.mouse("right", "tap")
+time.sleep(1.5)
+print(json.loads(b.cmd("spylog clear"))[:10])
+print(sv("data get entity Obs SelectedItem", show=False, wait=0.5)[-200:])
+print(sv("data get entity Obs SelectedItemSlot", show=False, wait=0.5)[-100:])
