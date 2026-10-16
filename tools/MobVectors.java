@@ -1360,7 +1360,15 @@ public class MobVectors {
                 for (Object e : (List<?>) get(sl, "entries")) dbg.append(' ').append(get(e, "data").getClass().getSimpleName()).append('/').append(get(e, "weight"));
                 Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
             }
-            set(sl, "random", net.minecraft.util.RandomSource.create(base + k[0]++));
+            // (wp69: `MOB_GATE_SEED=mix` gives each gate a seed of its own, a mix of base and number, instead of the consecutive ones the parity vectors pin: statistics runs)
+            long gateSeed = base + k[0]++;
+            if ("mix".equals(System.getenv("MOB_GATE_SEED"))) {
+                long z = (base + (k[0] - 1) * 0x9E3779B97F4A7C15L);
+                z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+                z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+                gateSeed = z ^ (z >>> 31);
+            }
+            set(sl, "random", net.minecraft.util.RandomSource.create(gateSeed));
             for (Object e : (List<?>) get(sl, "entries")) seedShuffles(get(e, "data"), base, k, seen);
             return;
         }
