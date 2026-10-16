@@ -119,7 +119,7 @@ def gen(rng, palette):
     return cmds
 
 
-CHECK = [1, 3, 8, 20]
+CHECK = [int(x) for x in os.environ.get('P72_CHECK', '1,3,8,20').split(',')]  # steps between the checkpoints (1,1,1,... = every tick)
 ACT = [0]
 
 
