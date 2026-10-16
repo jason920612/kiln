@@ -105,6 +105,8 @@ VM（12 vCPU）上的 profile，基準版 = main `2f90e2c7`：
 - **command_diff**：**1956/1956**（基準版 1954：多出的兩行一行是時間相關的血量回復；另一行是本包順帶修的——同一個箱子、同樣的名字 `setblock` 兩次，原版第二次是「Could not set the block」：`BlockInput.place` 載入資料，再比較載入前後 `saveWithoutMetadata` 是否不同；Kiln 拿「預設值＋給的欄位」去比，現在改成套用後比較 chunk 裡的存檔副本）。另外有一次完整執行時 `execute on controller` 的 3 行不符，重跑後相符、基準版的完整執行也相符——是有 AI 的馬的時間問題，不是這一包。
 - **新測試**（`crates/kiln-sim/tests/block_commands.rs`）：fill 的變更每個 section 只送一次、客戶端重建出的方塊與伺服器相同；三個 fill 一起算的光 = 一格一格 setblock 的光（整個區域逐格）；hollow／outline／keep／replace 過濾器／destroy 的結果與計數，strict 的沙子不掉、一般的會掉；clone 帶箱子內容、clone move 留下空氣；一個 `execute` 指令裡的 setblock 光照在指令結束時就好了。
 
+- **最終驗證**（最終程式碼）：workspace 測試不帶 datapack 1327 通過 / 0 失敗；帶 `KILN_DATAPACK` 1325 通過、2 失敗——都是 `kiln-plugin-host` 的 `examples`（當時另一個 session 也在跑整套測試，負載 6.3），單獨重跑 16/16 通過（已知在高負載下不穩）；determinism 6/6、crowd_golden 4/4（雜湊不變）、mob_parity（`mobs_match_vanilla`，含 1462 個 m6 情境）通過；`tools/parity_suites.py --skip-workspace` **102/102 個 suite 全部 exit 0**；command_diff 1956/1956；最終版 vs 基準版的狀態比對只有 1 個差異：一個 trial chamber 的 vault 的 `server_data.state_updating_resumes_at` 23 vs 24——vault 第一次 tick 時記下「遊戲時間 + 20」，負載高時凍結前多跑了一個 tick，跟指令無關（之前兩次新版比對都是 0）。
+
 ## 還沒做的
 
 - **光照仍在 tick 執行緒上**：原版在光照執行緒算，不計入 tick。最大的 fill 裡光照約佔 15%；蓋住大片天空的指令（例如在高空鋪大平台）光照的比例更高。要搬到別的執行緒就得讓光照資料可以併發讀寫，或像原版一樣讓光照晚幾個 tick 才好（要用次數而不是時間，維持可重現）。
