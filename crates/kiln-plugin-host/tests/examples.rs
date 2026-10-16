@@ -40,8 +40,11 @@ fn registries() -> Arc<Registries> {
 /// out now and then when the whole workspace ran in parallel with other builds on a loaded VM.
 const GENEROUS: Duration = Duration::from_secs(5);
 
+/// No test here is about the per-tick budget: with the default 10 ms of wall clock, a loaded VM
+/// spent it on the first call (or on two of the three timed-out calls) and the next calls were
+/// skipped, so `pets` stayed at 1 and the third strike never came.
 fn config(call_budget: Duration) -> RuntimeConfig {
-    RuntimeConfig { spawn: SPAWN, call_budget, registries: registries(), ..RuntimeConfig::default() }
+    RuntimeConfig { spawn: SPAWN, call_budget, tick_budget: Duration::from_secs(3600), registries: registries(), ..RuntimeConfig::default() }
 }
 
 /// Tests run in parallel with compilations; a generous budget keeps preemption from turning
