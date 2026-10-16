@@ -6701,7 +6701,21 @@ public class MobVectors {
     /// The pen of `tools/wp58/rt_golem.py` (x from 0, z from 0, the floor at BY - 1): walls and a roof of stone bricks,
     /// a room 0..8 x 0..8 with three beds, a fence at x = 9 and a cell 10..11 x 0..8 for the zombie.
     static void farm69Pen(Scenario s) {
-        floor(s, 20, "minecraft:stone");
+        farm69Pen(s, false);
+    }
+
+    /// `ground`: the world around is a flat world's ground (two layers of dirt and bedrock below the floor, grass beyond the pen's stone floor, 40 blocks out)
+    /// instead of nothing below and around a floor of 20 blocks.
+    static void farm69Pen(Scenario s, boolean ground) {
+        if (ground) {
+            for (int x = -40; x <= 40; x++)
+                for (int z = -40; z <= 40; z++) {
+                    block(s, x, BY - 1, z, Math.abs(x) <= 12 && z >= -12 && z <= 20 ? "minecraft:stone" : "minecraft:grass_block");
+                    block(s, x, BY - 2, z, "minecraft:dirt");
+                    block(s, x, BY - 3, z, "minecraft:dirt");
+                    block(s, x, BY - 4, z, "minecraft:bedrock");
+                }
+        } else floor(s, 20, "minecraft:stone");
         for (int x = -1; x <= 12; x++)
             for (int z = -1; z <= 9; z++)
                 for (int y = BY; y <= BY + 2; y++) {
@@ -6768,6 +6782,18 @@ public class MobVectors {
             s.removeGolems = true;
             s.ticks = 4000;
             Action in = new Action(1800, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
+            out.add(s);
+        }
+        // The same on a flat world's ground (what the console runs of wp66 had on vanilla): a target for a fleeing villager inside the ground moves up out of it.
+        for (int variant = 0; variant < 4; variant++) {
+            Scenario s = new Scenario("farm69_gday_" + variant);
+            farm69Pen(s, true);
+            farm69Mobs(s, 69950L + 20 * variant, 1000L - 11000L, new double[] {10.5, 4.5}, true);
+            s.dayTime = 300;
+            s.levelSeed = 950 + variant;
+            s.advanceDay = true;
+            s.removeGolems = true;
+            s.ticks = 3000;
             out.add(s);
         }
         // Days of the farm (statistics only: no trace, no replay): 6 days of one pen, the zombie in the cell from dt 300 to 11000.
