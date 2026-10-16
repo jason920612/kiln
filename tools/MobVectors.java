@@ -6749,6 +6749,16 @@ public class MobVectors {
             }
             out.add(s);
         }
+        {
+            Scenario s = new Scenario("farm69_fulldbg");
+            farm69Pen(s);
+            farm69Mobs(s, 69900L, 1000L - 11000L, new double[] {10.5, 4.5}, true);
+            s.dayTime = 300;
+            s.fullTick = true;
+            s.diverges = true;
+            s.ticks = 600;
+            out.add(s);
+        }
         // The same with the level really ticking (statistics only).
         for (int i = 0; i < 8; i++) {
             Scenario s = new Scenario("farm69_full_" + i);
