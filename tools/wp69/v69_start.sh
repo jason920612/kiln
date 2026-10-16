@@ -25,6 +25,8 @@ pause-when-empty-seconds=-1
 white-list=false
 level-seed=65
 PROP
+# VOID=1: nothing but a layer of bedrock (the world of the parity harness) instead of the flat world's dirt and grass
+[ -n "$VOID" ] && echo 'generator-settings={"layers"\:[{"block"\:"minecraft\:bedrock","height"\:1}],"biome"\:"minecraft\:plains"}' >> server.properties
 mkdir -p world/datapacks && cp -r "${DP:-$HOME/wt/wp69-iron-farm/tools/datapacks/wp66}" world/datapacks/wp66
 rm -f console; mkfifo console
 (sleep 100000000 > console &)
