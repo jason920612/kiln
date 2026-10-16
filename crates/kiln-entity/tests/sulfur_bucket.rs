@@ -56,7 +56,7 @@ fn an_empty_bucket_takes_a_cube_with_its_body_and_the_bucket_lets_it_out_again()
     let saved = kiln_entity::persist::save(&back, &|_| None);
     assert_eq!(saved.get("from_bucket").and_then(Tag::as_i64), Some(1));
     assert_eq!(saved.get("Health").and_then(Tag::as_f64), Some(7.0));
-    assert_eq!(saved.get("Size").and_then(Tag::as_i64), Some(2));
+    assert_eq!(saved.get("Size").and_then(Tag::as_i64), Some(1), "Size is the size minus one: an adult cube is size 2");
     assert_eq!(saved.get("CustomName"), Some(&Tag::String("Cubey".into())));
     let Some(Tag::Compound(eq)) = saved.get("equipment") else { panic!("the body: {saved:?}") };
     assert!(eq.iter().any(|(k, v)| k == "body" && v.get("id").and_then(Tag::as_str) == Some("minecraft:stone")));
