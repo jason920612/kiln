@@ -1439,8 +1439,29 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                     spawns.push(Spawn { kind: &kiln_data::entities::types::TURTLE, pos: at, vel: [0.0; 3], body: entities::Body::Ready(Box::new(e)) });
                 }
             }
-            // `DriedGhastBlock.spawnGhastling`: the happy ghast is not a mob Kiln has yet.
-            Effect::HatchGhastling { .. } => {}
+            // `DriedGhastBlock.spawnGhastling`: a baby happy ghast at the block's bottom center, facing the block's way,
+            // and its spawn sound (a sound that follows the new entity).
+            Effect::HatchGhastling { pos, yaw } => {
+                let h = effect_hash(env, pos, 0x6768);
+                let mut e = kiln_entity::mob::new(kiln_entity::mob::MobKind::HappyGhast, 0, 0, h as i64);
+                if let Some(mut md) = kiln_entity::mob::data(&e).cloned() {
+                    kiln_entity::mob::set_age(&mut e, &mut md, -24000);
+                    md.y_head_rot = yaw;
+                    md.y_body_rot = yaw;
+                    if let Some(slot) = kiln_entity::mob::data_mut(&mut e) {
+                        *slot = md;
+                    }
+                }
+                let at = [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5];
+                e.set_pos(kiln_entity::math::Vec3::new(at[0], at[1], at[2]));
+                e.y_rot = yaw;
+                e.x_rot = 0.0;
+                e.set_old_pos_and_rot();
+                spawns.push(Spawn { kind: &kiln_data::entities::types::HAPPY_GHAST, pos: at, vel: [0.0; 3], body: entities::Body::Ready(Box::new(e)) });
+                if let Some(pkt) = sound_packet("minecraft:entity.ghastling.spawn", world_fx::SoundSource::Blocks, pos, 1.0, 1.0, env, i) {
+                    send_near(players, pos, 16.0, &pkt, |_| true);
+                }
+            }
             Effect::PrimedTnt { pos } => spawns.push(Spawn {
                 kind: &kiln_data::entities::types::TNT,
                 pos: [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5],

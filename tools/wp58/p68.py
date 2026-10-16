@@ -173,3 +173,33 @@ def use_on_entity(c, eid, item, button="right", dy=0.6, tries=8):
 
 def ents_of(c, t, rng=30):
     return [e for e in c.state(rng)["entities"] if e["t"] == t]
+
+
+# ---- wp68: two real clients ----
+def two():
+    return C(25999), C(26000)
+
+def setup_two(x=20.5, y=200, z=20.5, mode="survival", resist=True):
+    """Platform 0..40, both players in survival with resistance (so a stray mob does not end the run)."""
+    if T == "V":
+        sv("op KilnTest", show=False)
+        sv("op Obs", show=False)
+    sv("gamerule spawn_mobs false", show=False)
+    sv("gamerule mob_griefing true", show=False)
+    sv("difficulty normal", show=False)
+    sv("time set day", show=False)
+    sv("weather clear", show=False)
+    platform(0, 0, 40, 40, y=199, clear=40)
+    for nm in ("KilnTest", "Obs"):
+        sv(f"clear {nm}", show=False)
+        sv(f"effect clear {nm}", show=False)
+        sv(f"gamemode {mode} {nm}", show=False)
+        if resist:
+            sv(f"effect give {nm} minecraft:resistance 99999 4 true", show=False)
+    sv(f"tp KilnTest {x} {y} {z}", show=False)
+    sv(f"tp Obs {x+2} {y} {z}", show=False)
+    time.sleep(2.5)
+
+def alive2(a, b):
+    alive(a)
+    alive_b(b)
