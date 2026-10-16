@@ -277,7 +277,9 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::PistonBaseBlock => piston::on_place(level, s, pos, old),
         C::HopperBlock => container::hopper_on_place(level, s, pos, old),
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_on_place(level, s, pos, old),
-        C::SnifferEggBlock if !state::same_block(old, s) => misc::sniffer_egg_on_place(level, s, pos),
+        // `SnifferEggBlock.onPlace` runs for every change of the state: the crack to the next crack is scheduled from here
+        // (the egg's own `tick` only changes the state), so an egg guarded to the first placement stopped at the first crack.
+        C::SnifferEggBlock => misc::sniffer_egg_on_place(level, s, pos),
         C::FrogspawnBlock => misc::frogspawn_on_place(level, s, pos),
         // `BrushableBlock.onPlace`: the brushing and the fall are checked in 2 ticks.
         C::BrushableBlock => crate::level::schedule_block_tick(level, pos, BlockId::of(s), 2, crate::ticks::TickPriority::Normal),
