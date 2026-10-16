@@ -59,7 +59,9 @@ fn adults_and_villagers_are_not_locked() {
     let mut adult = mob::new(MobKind::Cow, 5, 0, 12);
     assert!(!mob::interact::interact(&mut adult, &mut level, &who(), &dandelion).success);
     let mut villager = baby(MobKind::Villager);
-    assert!(!mob::interact::interact(&mut villager, &mut level, &who(), &dandelion).success, "`#cannot_be_age_locked`");
+    // (A baby villager shakes its head at any click; it is not locked, and keeps the dandelion.)
+    let out = mob::interact::interact(&mut villager, &mut level, &who(), &dandelion);
+    assert_ne!(out.held, HeldChange::Consume(1), "`#cannot_be_age_locked`");
     assert_eq!(saved(&villager).get("AgeLocked").and_then(Tag::as_i64).unwrap_or(0), 0);
 }
 
