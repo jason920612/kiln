@@ -744,7 +744,9 @@ fn spawn_category_for_chunk(
                 continue;
             }
             let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
-            if !no_collision(level, [fx, y as f64, fz], t.width, t.height) {
+            // `EntityType.getSpawnAABB`: slimes and magma cubes look for room for a size-4 one (four times their box).
+            let scale = kiln_entity::spawner::spawn_dimensions_scale(t.name);
+            if !no_collision(level, [fx, y as f64, fz], t.width * scale, t.height * scale) {
                 continue;
             }
             let yaw = r.next_float() * 360.0;

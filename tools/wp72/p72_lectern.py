@@ -52,7 +52,7 @@ def main():
                 both_(f"setblock {x} {y} {z} {LECT if place else 'minecraft:air'}")
             elapsed = 0
             done = {"K": {}, "V": {}}
-            while elapsed < 2400 and any(len(done[t]) < CELLS for t in "KV"):
+            while elapsed < 400 and any(len(done[t]) < CELLS for t in "KV"):
                 step(STEP)
                 elapsed += STEP
                 for t in "KV":

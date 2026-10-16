@@ -122,34 +122,30 @@ def F(*a):
 # ------------------------------------------------------------------ scenarios
 
 def scen_slime(f, control=False):
-    """A sealed 14x14x4 room at y 1..4 in a slime chunk (or, as a control, in a chunk that is not one), the player 100 blocks above it."""
-    cx = cz = None
-    for r in range(0, 12):
-        for x in range(-r, r + 1):
-            for z in range(-r, r + 1):
-                if max(abs(x), abs(z)) != r:
-                    continue
-                if is_slime_chunk(SEED, x, z) != control:
-                    cx, cz = x + 8, z + 8  # keep away from the spawn chunks' edge effects
-                    break
-            if cx is not None:
-                break
-        if cx is not None:
-            break
-    cx, cz = cx - 8, cz - 8
-    x0, z0 = cx * 16, cz * 16
-    F(f.t, "chunk", cx, cz, "slime chunk" if not control else "NOT a slime chunk")
+    """Sealed rooms (13 flat floors, 2 high, a floor every 3 blocks up to y 38) in NCH slime chunks around the origin, or, as a control, in
+    chunks that are not slime chunks. The player stands 100 blocks above the middle. Every slime of y 0..40 is counted."""
+    nch = int(os.environ.get("NCH", "9"))
+    chunks = []
+    for r in range(0, 8):
+        for cx in range(-r, r + 1):
+            for cz in range(-r, r + 1):
+                if max(abs(cx), abs(cz)) == r and is_slime_chunk(SEED, cx, cz) != control and len(chunks) < nch and (abs(cx) > 1 or abs(cz) > 1):
+                    chunks.append((cx, cz))
+    F(f.t, "chunks", chunks, "slime chunks" if not control else "NOT slime chunks")
     f.prep(time_of_day=6000)
-    f.tp("overworld", x0 + 8.5, 100, z0 + 8.5)
+    f.tp("overworld", 8.5, 100, 8.5)
     time.sleep(0.5)
     f.cmd(f"effect give {ME} minecraft:slow_falling 99999 0 true")
-    f.cmd(f"forceload add {x0} {z0} {x0 + 15} {z0 + 15}")
-    f.wait_chunks(25)
-    f.cmd(f"fill {x0 - 1} -1 {z0 - 1} {x0 + 16} 6 {z0 + 16} minecraft:stone")
-    f.cmd(f"fill {x0 + 1} 1 {z0 + 1} {x0 + 14} 4 {z0 + 14} minecraft:air")
-    f.cmd(f"tp {ME} {x0 + 8.5} 120 {z0 + 8.5}")
+    f.cmd("forceload add -112 -112 127 127")
+    f.wait_chunks(40)
+    for cx, cz in chunks:
+        x0, z0 = cx * 16, cz * 16
+        f.cmd(f"fill {x0 - 1} -1 {z0 - 1} {x0 + 16} 40 {z0 + 16} minecraft:stone")
+        for i in range(13):
+            f.cmd(f"fill {x0 + 1} {3 * i + 1} {z0 + 1} {x0 + 14} {3 * i + 2} {z0 + 14} minecraft:air")
+    f.cmd(f"tp {ME} 8.5 120 8.5")
     f.cmd("kill @e[type=!player]")
-    return f.run(["slime"], (x0 + 1, 1, z0 + 1, x0 + 15, 5, z0 + 15))
+    return f.run(["slime", "zombie", "skeleton", "creeper", "spider"], (-120, 0, -120, 240, 40, 240))
 
 
 def scen_creeper(f):

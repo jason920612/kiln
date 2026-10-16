@@ -5,7 +5,7 @@ from lock import *
 
 PAIRS = int(sys.argv[1]) if len(sys.argv) > 1 else 12
 TICKS = int(sys.argv[2]) if len(sys.argv) > 2 else 6000
-SAMPLE = 300
+SAMPLE = int(os.environ.get("SAMPLE", "300"))
 Y = 200
 
 
