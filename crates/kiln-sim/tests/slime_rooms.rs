@@ -36,6 +36,13 @@ fn run(height: i32, chunks: &[(i32, i32)], ticks: usize) -> Vec<usize> {
         assert!(sim.step(cmds.map(ToSim::Console)));
     }
     tick(&mut sim, &mut client, ticks);
+    if std::env::var_os("SLIME_DEBUG").is_some() {
+        let mut kinds = std::collections::BTreeMap::new();
+        for (t, _) in sim.entities() {
+            *kinds.entry(t).or_insert(0) += 1;
+        }
+        eprintln!("height {height}: {kinds:?}, player {:?}", client.pos);
+    }
     chunks
         .iter()
         .map(|&(cx, cz)| {
