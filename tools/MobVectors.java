@@ -284,6 +284,9 @@ public class MobVectors {
         /// wp69: the farm of wp66 built and run with console commands (the way the console driver does), the server ticking through `tickServer`, for this many pens;
         /// `cmdDays` days of zombie. Statistics only: the golems the datapack logged are recorded.
         int cmdPens, cmdDays;
+        /// wp69: from this tick on (for 200 ticks) the first three mobs (villagers) are counted against the fourth (the zombie): per 10 ticks,
+        /// villager-ticks within 8 blocks of it, moving fast (more than 0.15 blocks a tick) and in the panic activity. Summed over scenarios.
+        int arrivalTick = -1;
         Scenario(String name) { this.name = name; }
     }
 
@@ -532,6 +535,37 @@ public class MobVectors {
 
     // (wp69: `MOB_HAS_TIME=false`: the server's tick is told it has no time left, as the real loop does while it is behind or sprinting)
     static final java.util.function.BooleanSupplier HAS_TIME = "false".equals(System.getenv("MOB_HAS_TIME")) ? () -> false : () -> true;
+    /// wp69: `Scenario.arrivalTick`'s counters: [10-tick bin][villager-ticks, near, fast, panic].
+    static final long[][] arrival = new long[20][4];
+    static double[][] arrivalPrev;
+
+    static void arrivalSample(Scenario s, List<Entity> tracked, int tick) {
+        int t = tick - s.arrivalTick;
+        if (t < 0 || t >= 200) { arrivalPrev = null; return; }
+        Entity z = tracked.get(3);
+        double[][] cur = new double[3][2];
+        for (int i = 0; i < 3; i++) {
+            Mob v = (Mob) tracked.get(i);
+            cur[i][0] = v.getX();
+            cur[i][1] = v.getZ();
+            long[] b = arrival[t / 10];
+            b[0]++;
+            if (z.distanceToSqr(v) <= 64) b[1]++;
+            if (arrivalPrev != null && Math.hypot(cur[i][0] - arrivalPrev[i][0], cur[i][1] - arrivalPrev[i][1]) > 0.15) b[2]++;
+            if (v.getBrain().isActive(net.minecraft.world.entity.schedule.Activity.PANIC)) b[3]++;
+        }
+        arrivalPrev = cur;
+    }
+
+    static String arrivalJson() {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < arrival.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(java.util.Arrays.toString(arrival[i]));
+        }
+        return sb.append(']').toString();
+    }
+
     static final Probe probe = new Probe();
     static final boolean PROBE = System.getenv("MOB_PROBE") != null;
 
@@ -1064,6 +1098,7 @@ public class MobVectors {
                 tickServerMethod.invoke(level.getServer(), (java.util.function.BooleanSupplier) () -> true);
                 runServerTasks(level.getServer());
                 if (PROBE) probe.sample(level);
+                if (s.arrivalTick >= 0) arrivalSample(s, tracked, tick);
             } else if (s.fullTick) {
                 // (the server's own loop calls `tickRateManager.tick()` each tick, which sets this: the harness is that loop)
                 set(level.tickRateManager(), "runGameElements", true);
@@ -1265,8 +1300,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp, Float.toString(s.playerHealth));
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"advance_day\":%b,\"remove_golems\":%b,\"probe\":%s,\"taken_pois\":%s,\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"esound_trace\":[%s],\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, s.advanceDay, s.removeGolems, probe.json(), takenPoisJson(s), nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, entitySoundTrace, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"advance_day\":%b,\"remove_golems\":%b,\"arrival\":%s,\"probe\":%s,\"taken_pois\":%s,\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"chests\":[%s],\"chest_trace\":[%s],\"equip_trace\":[%s],\"sound_trace\":[%s],\"esound_trace\":[%s],\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, s.advanceDay, s.removeGolems, arrivalJson(), probe.json(), takenPoisJson(s), nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, chestsJson, chestTrace, equipTrace, soundTrace, entitySoundTrace, trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
@@ -6988,6 +7023,28 @@ public class MobVectors {
             s.advanceDay = true;
             s.removeGolems = true;
             s.ticks = 3000;
+            out.add(s);
+        }
+        // The dawns again, many seeds and no trace (statistics): where the villagers are against the zombie in the 200 ticks after it comes.
+        for (int i = 0; i < (stats ? 200 : 0); i++) {
+            Scenario s = new Scenario("farm69_arr_" + i);
+            farm69Pen(s);
+            for (int x = 15; x <= 19; x++)
+                for (int z = 15; z <= 19; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean in = x >= 16 && x <= 18 && z >= 16 && z <= 18 && y <= BY + 2;
+                        if (!in) block(s, x, y, z, "minecraft:stone_bricks");
+                    }
+            farm69Mobs(s, 69400L + 10L * i, 1000L - 8000L, new double[] {17.5, 17.5}, true);
+            s.dayTime = 22500;
+            s.levelSeed = 400 + i;
+            s.noTrace = true;
+            s.fullTick = true;
+            s.serverTick = true;
+            s.removeGolems = true;
+            s.ticks = 2100;
+            s.arrivalTick = 1800;
+            Action in = new Action(1800, "tp"); in.mob = 3; in.x = 10.5; in.y = BY; in.z = 4.5; s.actions.add(in);
             out.add(s);
         }
         // A crowd: three villagers slept last night, three did not. The golem's `golemDetected` is for every villager of the box (those that
