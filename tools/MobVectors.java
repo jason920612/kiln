@@ -530,6 +530,8 @@ public class MobVectors {
         }
     }
 
+    // (wp69: `MOB_HAS_TIME=false`: the server's tick is told it has no time left, as the real loop does while it is behind or sprinting)
+    static final java.util.function.BooleanSupplier HAS_TIME = "false".equals(System.getenv("MOB_HAS_TIME")) ? () -> false : () -> true;
     static final Probe probe = new Probe();
     static final boolean PROBE = System.getenv("MOB_PROBE") != null;
 
@@ -565,7 +567,7 @@ public class MobVectors {
                             ge.discard();
                         }
                     }
-                    tickServerMethod.invoke(server, (java.util.function.BooleanSupplier) () -> true);
+                    tickServerMethod.invoke(server, HAS_TIME);
                     runServerTasks(server);
                     if (PROBE) probe.sample(level);
                 }
