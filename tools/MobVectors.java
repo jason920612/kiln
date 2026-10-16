@@ -633,11 +633,24 @@ public class MobVectors {
         for (int day = 0; day < s.cmdDays; day++) {
             long arrive = (24000 - 11500) + 300 + 24000L * day, leave = arrive + 10700;
             ticks.accept((int) (arrive - (level.getGameTime() - g0)));
-            cmd(server, "kill @e[type=minecraft:zombie,tag=wp66z]");
-            for (int pen = 0; pen < pens; pen++)
+            boolean javaZombies = "java".equals(System.getenv("MOB_CMD_ZOMBIE"));
+            if (!javaZombies) cmd(server, "kill @e[type=minecraft:zombie,tag=wp66z]");
+            for (int pen = 0; pen < pens; pen++) {
+                if (javaZombies) {
+                    // (as the harness' `summon` action: created, made persistent, finalized, added)
+                    Mob zz = (Mob) BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse("minecraft:zombie")).create(level, EntitySpawnReason.COMMAND);
+                    zz.snapTo(X0 + 10.5, F + 1, Z0 + pen * DZ + 4.5, 0f, 0f);
+                    zz.setPersistenceRequired();
+                    zz.addTag("wp66z");
+                    zz.finalizeSpawn(level, level.getCurrentDifficultyAt(zz.blockPosition()), EntitySpawnReason.COMMAND, null);
+                    level.addFreshEntityWithPassengers(zz);
+                } else
                 cmd(server, "summon minecraft:zombie " + (X0 + 10) + ".5 " + (F + 1) + " " + (Z0 + pen * DZ + 4) + ".5 {PersistenceRequired:1b,Tags:[\"wp66z\"]}");
+            }
             ticks.accept((int) (leave - (level.getGameTime() - g0)));
-            cmd(server, "kill @e[type=minecraft:zombie,tag=wp66z]");
+            if (javaZombies) {
+                for (Entity ke : level.getEntities((Entity) null, new AABB(X0 - 100, F - 10, Z0 - 100, X0 + 100, F + 60, Z0 + pens * DZ + 100), e -> e instanceof net.minecraft.world.entity.monster.zombie.Zombie)) ke.discard();
+            } else cmd(server, "kill @e[type=minecraft:zombie,tag=wp66z]");
         }
         // the golems the datapack logged
         var log = javaGolem ? "" : server.getCommandStorage().get(Identifier.parse("wp66:log")).toString();
