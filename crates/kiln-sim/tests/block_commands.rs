@@ -22,7 +22,8 @@ fn joined() -> (Sim, Client, Arc<SinkStats>, [i32; 3]) {
     let mut sim = Sim::new(SimConfig::new(4, 4, None));
     let (msg, stats) = join(1, "Builder", 3);
     *stats.log.lock().unwrap() = Some(Vec::new());
-    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into()), ToSim::Console("gamemode creative Builder".into())]));
+    let setup = ["gamerule minecraft:spawn_mobs false", "gamerule minecraft:random_tick_speed 0", "gamemode creative Builder"];
+    assert!(sim.step(std::iter::once(msg).chain(setup.map(|c| ToSim::Console(c.into())))));
     let mut client = Client::new(1, stats.clone());
     settle(&mut sim, &mut client, 5);
     let p = client.pos;
@@ -156,9 +157,9 @@ fn modes_place_what_vanilla_places() {
     let lines = sim.take_console();
     let counts: Vec<&String> = lines.iter().filter(|l| l.contains("commands.fill.success") || l.contains("Successfully filled")).collect();
     assert_eq!(counts.len(), 5, "{lines:?}");
-    assert!(counts[0].contains("125"), "hollow counts the whole box: {counts:?}");
-    assert!(counts[1].contains("98"), "outline counts the shell: {counts:?}");
-    assert!(counts[2].contains("27"), "keep counts the air it filled: {counts:?}");
+    // (Vanilla counts the blocks that changed: the hollow box's inside was air already.)
+    let n: Vec<&str> = counts.iter().map(|l| l.trim_end_matches(']').rsplit('[').next().unwrap()).collect();
+    assert_eq!(n, ["98", "98", "27", "98", "125"], "{counts:?}");
     // strict: no neighbour reactions and no onPlace, so sand stays up; without it, it falls.
     let s1 = [x + 2, y + 12, z + 2];
     let s2 = [x + 6, y + 12, z + 2];
