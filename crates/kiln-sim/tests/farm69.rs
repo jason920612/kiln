@@ -40,7 +40,9 @@ fn build(sim: &mut Sim, pens: i32) {
     }
     for pen in 0..pens {
         let mut cmds = vec![
-            format!("fill {} {} minecraft:stone", at(pen, -12, 0, -12), at(pen, 24, 0, 20)),
+            // `FARM_DEEP=n` (default 3): n more layers of solid ground below the pen, as the vanilla farm has (a flat world's dirt). wp71: with nothing below the pen
+            // the villagers' stroll targets are found a third as often and the farm makes 14 % fewer golems, in vanilla as well.
+            format!("fill {} {} minecraft:stone", at(pen, -12, -std::env::var("FARM_DEEP").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(3), -12), at(pen, 24, 0, 20)),
             format!("fill {} {} minecraft:air", at(pen, -12, 1, -12), at(pen, 24, 8, 20)),
             format!("fill {} {} minecraft:stone_bricks", at(pen, -1, 1, -1), at(pen, 12, 3, 9)),
             format!("fill {} {} minecraft:air", at(pen, 0, 1, 0), at(pen, 8, 2, 8)),
@@ -57,6 +59,11 @@ fn build(sim: &mut Sim, pens: i32) {
         console(sim, cmds);
     }
     console(sim, ["kill @e[type=!player]".to_string()]);
+    // `FARM_SHIFT=n`: n ticks pass first, so the villagers (whose random streams are seeded from the game time they are summoned at) get other
+    // streams: another sample of the same farm.
+    for _ in 0..std::env::var("FARM_SHIFT").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0) {
+        assert!(sim.step([]));
+    }
     let mut cmds = Vec::new();
     for pen in 0..pens {
         for i in 0..3 {
@@ -181,6 +188,225 @@ fn idle_sample(sim: &Sim) {
     }
 }
 
+
+/// `FARM_STATS=path`: what `tools/wp71/W71Hook.java` counts on the real vanilla server (per tick, per villager: the zombie in the pen or not, the activity class (panic, rest,
+/// idle, other), the brain tokens, the starts of behaviours, the position in the pen, the speed and the distance to the zombie), written there as key TAB count lines.
+#[derive(Default)]
+struct Stats {
+    counts: std::collections::BTreeMap<String, u64>,
+    prev_pos: std::collections::HashMap<i32, [f64; 2]>,
+    prev_run: std::collections::HashMap<i32, std::collections::HashSet<String>>,
+    /// Per villager: the walk target of the tick before (as a key string) and the new one waiting for its outcome (signature, ticks left).
+    prev_walk: std::collections::HashMap<i32, String>,
+    prev_cant: std::collections::HashMap<i32, bool>,
+    pending: std::collections::HashMap<i32, (String, i32)>,
+    trace_prev: std::collections::HashMap<i32, String>,
+    prev_inter: std::collections::HashMap<i32, bool>,
+    prev_rc: std::collections::HashMap<i32, i32>,
+    prev_state: std::collections::HashMap<i32, String>,
+    prev_rest: std::collections::HashMap<i32, bool>,
+    zombie_since: Option<i64>,
+    trace_from: Option<i64>,
+}
+
+static STATS: std::sync::Mutex<Option<Stats>> = std::sync::Mutex::new(None);
+
+fn pen_of(z: f64) -> i32 {
+    ((z.floor() as i32) + 20).div_euclid(PEN_DZ)
+}
+
+fn stats_sample(sim: &Sim) {
+    kiln_entity::mob::random_pos::COUNT_LAND.store(true, std::sync::atomic::Ordering::Relaxed);
+    let mut guard = STATS.lock().unwrap();
+    let st = guard.get_or_insert_with(Stats::default);
+    let mobs = sim.mobs();
+    let mut zombies: std::collections::HashMap<i32, Vec<[f64; 3]>> = std::collections::HashMap::new();
+    for (_, kind, pos, _) in &mobs {
+        if *kind == "minecraft:zombie" {
+            zombies.entry(pen_of(pos[2])).or_default().push(*pos);
+        }
+    }
+    let mut panic_by_pen: std::collections::HashMap<i32, bool> = std::collections::HashMap::new();
+    for (id, kind, pos, _) in &mobs {
+        if *kind != "minecraft:villager" {
+            continue;
+        }
+        let Some(trace) = sim.mob_brain(*id) else { continue };
+        let acts: Vec<&str> = trace.iter().filter_map(|t| t.strip_prefix("act:")).collect();
+        let cls = if acts.contains(&"panic") { "P" } else if acts.contains(&"rest") { "R" } else if acts.contains(&"idle") { "I" } else { "O" };
+        let pen = pen_of(pos[2]);
+        let zs = zombies.get(&pen);
+        let ph = if zs.is_none() { "N" } else { "Z" };
+        *panic_by_pen.entry(pen).or_default() |= cls == "P";
+        let c = &mut st.counts;
+        *c.entry(format!("ticks|{ph}|{cls}")).or_default() += 1;
+        {
+            let dt = sim.day_time().rem_euclid(24000);
+            let bin = dt / 500;
+            *c.entry(format!("dt|{cls}|{bin}")).or_default() += 1;
+            if trace.iter().any(|t| t.starts_with("m:minecraft:golem_detected_recently")) {
+                *c.entry(format!("dtgd|{cls}|{bin}")).or_default() += 1;
+            }
+            let rest = acts.contains(&"rest");
+            if rest && !st.prev_rest.get(id).copied().unwrap_or(false) {
+                *c.entry(format!("reststart|{}", dt / 100)).or_default() += 1;
+            }
+            st.prev_rest.insert(*id, rest);
+        }
+        let mut run = std::collections::HashSet::new();
+        for t in &trace {
+            if let Some(a) = t.strip_prefix("act:") {
+                *c.entry(format!("tok|{ph}|{cls}|act:{a}")).or_default() += 1;
+            } else if let Some(r) = t.strip_prefix("run:") {
+                run.insert(r.to_owned());
+                *c.entry(format!("tok|{ph}|{cls}|run:{r}")).or_default() += 1;
+            } else if let Some(m) = t.strip_prefix("m:") {
+                *c.entry(format!("tok|{ph}|{cls}|m:{}", m.split('@').next().unwrap())).or_default() += 1;
+            }
+        }
+        let before = st.prev_run.remove(id).unwrap_or_default();
+        for r in &run {
+            if !before.contains(r) {
+                *c.entry(format!("start|{ph}|{cls}|{r}")).or_default() += 1;
+            }
+        }
+        // The funnel of walk targets: each new one (by value) with its distance, and what came of it in the next ticks.
+        let sink_started = run.contains("MoveToTargetSink") && !before.contains("MoveToTargetSink");
+        let cant = trace.iter().any(|t| t.starts_with("m:minecraft:cant_reach_walk_target_since"));
+        let was_cant = st.prev_cant.insert(*id, cant).unwrap_or(false);
+        let walk = sim.mob_walk(*id).map(|(ent, at, speed, close)| {
+            let at = ent.and_then(|e| mobs.iter().find(|m| m.0 == e).map(|m| m.2)).unwrap_or(at);
+            (ent.is_some(), at, speed, close)
+        });
+        let key = sim
+            .mob_walk(*id)
+            .map(|(ent, at, speed, close)| match ent {
+                Some(e) => format!("E|{e}|{speed}|{close}"),
+                None => format!("B|{:.2}|{:.2}|{:.2}|{speed}|{close}", at[0], at[1], at[2]),
+            })
+            .unwrap_or_default();
+        let prev_key = st.prev_walk.insert(*id, key.clone()).unwrap_or_default();
+        if let Some((ent, at, speed, close)) = walk
+            && key != prev_key
+        {
+            let sig = format!("{}s{speed:.2}c{close}", if ent { "E" } else { "B" });
+            *c.entry(format!("wt|{ph}|{cls}|{sig}")).or_default() += 1;
+            let dist = (at[0] - pos[0]).hypot(at[2] - pos[2]);
+            *c.entry(format!("wtd|{ph}|{cls}|{sig}|{}", (dist as i32).min(15))).or_default() += 1;
+            if run.contains("MoveToTargetSink") {
+                *c.entry(format!("wtR|{ph}|{cls}|{sig}")).or_default() += 1;
+                st.pending.remove(id);
+            } else {
+                st.pending.insert(*id, (sig, 4));
+            }
+        } else if let Some((sig, ttl)) = st.pending.remove(id) {
+            if key.is_empty() {
+                *c.entry(format!("wtX|{ph}|{cls}|{sig}")).or_default() += 1;
+            } else if sink_started {
+                *c.entry(format!("wtS|{ph}|{cls}|{sig}")).or_default() += 1;
+            } else if cant && !was_cant {
+                *c.entry(format!("wtC|{ph}|{cls}|{sig}")).or_default() += 1;
+            } else if ttl > 1 {
+                st.pending.insert(*id, (sig, ttl - 1));
+            } else {
+                *c.entry(format!("wtN|{ph}|{cls}|{sig}")).or_default() += 1;
+            }
+        }
+        if let Some(from) = st.trace_from
+            && pen == 0
+            && (from..from + 1500).contains(&sim.game_time())
+        {
+            let mut sb = String::new();
+            for a in &acts {
+                sb.push_str(&format!("{a} "));
+            }
+            let mut rs: Vec<&String> = run.iter().collect();
+            rs.sort();
+            for r in rs {
+                sb.push_str(&format!("run:{r} "));
+            }
+            let mut ms: Vec<String> = trace.iter().filter_map(|t| t.strip_prefix("m:minecraft:")).map(|m| m.split('@').next().unwrap().to_owned()).collect();
+            ms.sort();
+            for m in ms {
+                sb.push_str(&format!("{m} "));
+            }
+            let w = walk.map(|(ent, at, speed, close)| format!(" W{}s{speed:.2}c{close}@{:.1},{:.1}", if ent { "E" } else { "B" }, at[0], at[2])).unwrap_or_default();
+            let wsig = walk.map(|(ent, _, speed, close)| format!(" W{}s{speed:.2}c{close}", if ent { "E" } else { "B" })).unwrap_or_default();
+            let no_pos = format!("{sb}{wsig}");
+            if st.trace_prev.insert(*id, no_pos.clone()).as_deref() != Some(no_pos.as_str()) {
+                println!("TRACE {} v{id} {sb} | {:.2} {:.2}{w}", sim.game_time() - from, pos[0], pos[2]);
+            }
+        }
+        // The gates starting (a RunOne more than the tick before) and what came out of it.
+        let rc = trace.iter().filter(|t| *t == "run:RunOne").count() as i32;
+        let inter = trace.iter().any(|t| t.starts_with("m:minecraft:interaction_target"));
+        let was_inter = st.prev_inter.insert(*id, inter).unwrap_or(false);
+        let new_walk_key = walk.is_some() && key != prev_key;
+        if let Some(pst) = st.prev_state.get(id) {
+            *c.entry(format!("hzN|{ph}|{cls}|{pst}")).or_default() += 1;
+            if new_walk_key {
+                *c.entry(format!("{}|{ph}|{cls}|{pst}", if walk.unwrap().0 { "hzE" } else { "hzB" })).or_default() += 1;
+            }
+        }
+        let lk = trace.iter().any(|t| t.starts_with("m:minecraft:look_target"));
+        st.prev_state.insert(*id, format!("w{}r{rc}i{}l{}s{}c{}", walk.is_some() as i32, inter as i32, lk as i32, run.contains("MoveToTargetSink") as i32, cant as i32));
+        let prc = st.prev_rc.insert(*id, rc).unwrap_or(0);
+        if rc > prc {
+            let new_walk = walk.is_some() && key != prev_key;
+            let out = if new_walk {
+                if inter && !was_inter { "interact".to_owned() } else { format!("{}walk", if walk.unwrap().0 { "E" } else { "B" }) }
+            } else if inter && !was_inter {
+                "interact-only".to_owned()
+            } else {
+                "none".to_owned()
+            };
+            *c.entry(format!("gs|{ph}|{cls}|{out}")).or_default() += 1;
+        }
+        st.prev_run.insert(*id, run);
+        let dx = (((pos[0] - x0() as f64).floor() as i32) + 1).clamp(0, 12);
+        let dz = (((pos[2] - (pen * PEN_DZ) as f64).floor() as i32) + 1).clamp(0, 10);
+        *c.entry(format!("grid|{ph}|{cls}|{dx}|{dz}")).or_default() += 1;
+        if let Some(p) = st.prev_pos.get(id) {
+            let bin = (((pos[0] - p[0]).hypot(pos[2] - p[1])) / 0.01) as i32;
+            *c.entry(format!("speed|{ph}|{cls}|{}", bin.min(50))).or_default() += 1;
+        }
+        st.prev_pos.insert(*id, [pos[0], pos[2]]);
+        if let Some(zs) = zs {
+            let best = zs.iter().map(|z| ((pos[0] - z[0]).powi(2) + (pos[1] - z[1]).powi(2) + (pos[2] - z[2]).powi(2)).sqrt()).fold(1e9, f64::min);
+            *c.entry(format!("zd|{cls}|{}", ((best / 0.5) as i32).min(48))).or_default() += 1;
+        }
+    }
+    if std::env::var_os("FARM_TRACE_WALK").is_some() {
+        if zombies.contains_key(&0) {
+            let since = *st.zombie_since.get_or_insert(sim.game_time());
+            if st.trace_from.is_none() && sim.game_time() - since >= 2000 {
+                st.trace_from = Some(sim.game_time());
+            }
+        } else {
+            st.zombie_since = None;
+        }
+    }
+    if sim.game_time() % 100 == 0 {
+        for pen in zombies.keys() {
+            *st.counts.entry("opp|all".into()).or_default() += 1;
+            if panic_by_pen.get(pen).copied().unwrap_or(false) {
+                *st.counts.entry("opp|any".into()).or_default() += 1;
+            }
+        }
+    }
+}
+
+fn stats_dump(path: &str, golems: usize) {
+    let mut guard = STATS.lock().unwrap();
+    let st = guard.get_or_insert_with(Stats::default);
+    st.counts.insert("golem".into(), golems as u64);
+    st.counts.insert("land|calls".into(), kiln_entity::mob::random_pos::LAND_STATS[0].load(std::sync::atomic::Ordering::Relaxed));
+    st.counts.insert("land|none".into(), kiln_entity::mob::random_pos::LAND_STATS[1].load(std::sync::atomic::Ordering::Relaxed));
+    let text: String = st.counts.iter().map(|(k, v)| format!("{k}	{v}
+")).collect();
+    std::fs::write(path, text).unwrap();
+}
+
 /// Runs `n` ticks, logging new golems (and killing them in the tick after).
 fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log: &mut Vec<(i64, i64, [f64; 3])>, panic: &mut Panic) {
     let mut kill = false;
@@ -197,8 +423,26 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
         if std::env::var_os("FARM_IDLE").is_some() {
             idle_sample(sim);
         }
+        if std::env::var_os("FARM_STATS").is_some() {
+            stats_sample(sim);
+        }
         if let Ok(v) = std::env::var("FARM_PANIC") {
             count_panic(sim, panic, v == "dawn");
+        }
+        // `FARM_GD=dt`: at that time of day, every villager's golem_detected_recently (with its ticks left) and activity.
+        if let Some((from, to)) = std::env::var("FARM_GD").ok().and_then(|v| v.split_once('-').map(|(a, b)| (a.parse::<i64>().unwrap(), b.parse::<i64>().unwrap())))
+            && (from..to).contains(&(sim.day_time() % 24000))
+        {
+            let at = sim.day_time() % 24000;
+            let mobs_all = sim.mobs();
+            for (id, kind, pos, _) in sim.mobs() {
+                if kind == "minecraft:villager" && pos[2] < 12.0 || kind == "minecraft:iron_golem" {
+                    let b = sim.mob_brain(id).unwrap_or_default();
+                    let pick: Vec<&String> = b.iter().filter(|t| t.starts_with("m:minecraft:golem_detected") || t.starts_with("act:") || t.starts_with("m:minecraft:last_slept") || t.starts_with("m:minecraft:home")).collect();
+                    let near: Vec<String> = sim.mob_nearby(id).iter().map(|n| format!("{n}:{}", mobs_all.iter().find(|m| m.0 == *n).map_or("gone", |m| m.1.trim_start_matches("minecraft:")))).collect();
+                    println!("GD {} dt {at} v{id} {:.1},{:.1},{:.1} {pick:?} near {near:?}", sim.game_time(), pos[0], pos[1], pos[2]);
+                }
+            }
         }
         // `FARM_TRACE=from,to`: where the villagers of the first pens are, every 20 ticks of the day between.
         if let Some((from, to)) = std::env::var("FARM_TRACE").ok().and_then(|v| v.split_once(',').map(|(a, b)| (a.parse::<i64>().unwrap(), b.parse::<i64>().unwrap()))) {
@@ -219,6 +463,10 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
             }
         }
     }
+    // (wp71: a golem that came in the last tick of the segment is killed too; it used to stay for good, and the villagers next to it kept "detecting" it, so their pen made no more golems.)
+    if kill {
+        console(sim, ["kill @e[type=minecraft:iron_golem]".to_string()]);
+    }
 }
 
 #[test]
@@ -228,7 +476,7 @@ fn the_farm_in_the_simulation() {
     // `FARM_ARRIVE`: the day time at which the zombies come (300 as in wp66).
     let arrive: i64 = std::env::var("FARM_ARRIVE").ok().and_then(|v| v.parse().ok()).unwrap_or(299);
     let pens: i32 = std::env::var("FARM_PENS").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
-    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("farm69");
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("farm69-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let mut sim = Sim::new(SimConfig::new(8, 4, Some(dir.clone())));
     build(&mut sim, pens);
@@ -282,7 +530,11 @@ fn the_farm_in_the_simulation() {
     }
     if std::env::var_os("FARM_IDLE").is_some() {
         let a = IDLE.lock().unwrap();
+        println!("IDS {:?}", sim.mobs().iter().take(4).map(|m| m.0).collect::<Vec<_>>());
         println!("IDLE samples {} x 0..8: {:?}", a.1, (1..10).map(|i| (a.0[i] as f64 / a.1 as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
+    }
+    if let Ok(path) = std::env::var("FARM_STATS") {
+        stats_dump(&path, log.len());
     }
     println!("TOTAL {} golems in {days} days, {pens} pens", log.len());
     drop(sim);

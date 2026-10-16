@@ -2282,6 +2282,25 @@ impl Sim {
         Some(kiln_entity::mob::data(e.phys.as_deref()?)?.brain_trace())
     }
 
+    /// The ids a brain mob remembers as `NEAREST_LIVING_ENTITIES`, for tests and tools.
+    pub fn mob_nearby(&self, id: i32) -> Vec<i32> {
+        let list = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter());
+        list.clone()
+            .find(|e| e.id == id)
+            .and_then(|e| kiln_entity::mob::data(e.phys.as_deref()?)?.brain.as_ref().map(|b| b.st.mem.entities(kiln_entity::mob::brain::Mem::NearestLivingEntities).to_vec()))
+            .unwrap_or_default()
+    }
+
+    /// A brain mob's walk target (`WALK_TARGET`): (the target is an entity, its id or the centre of the block, speed modifier, close enough distance), for tests and tools.
+    pub fn mob_walk(&self, id: i32) -> Option<(Option<i32>, [f64; 3], f32, i32)> {
+        let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id)?;
+        let w = kiln_entity::mob::data(e.phys.as_deref()?)?.brain.as_ref()?.st.mem.walk_target()?;
+        Some(match w.target {
+            kiln_entity::mob::brain::memory::Tracker::Block { center, .. } => (None, [center.x, center.y, center.z], w.speed, w.close_enough),
+            kiln_entity::mob::brain::memory::Tracker::Entity { id, .. } => (Some(id), [0.0; 3], w.speed, w.close_enough),
+        })
+    }
+
     /// A mob's combat state, as `tools/CombatVectors.java` records it (for tests and tools).
     pub fn mob_state(&self, id: i32) -> Option<MobState> {
         let list = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter());

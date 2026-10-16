@@ -169,7 +169,7 @@ impl Control for Gate {
         if std::env::var_os("KILN_GATE_DEBUG").is_some() {
             eprintln!("GATE {}: {}", *k, self.list.entries.iter().map(|(b, w, _)| format!("{}/{}", b.name(), w)).collect::<Vec<_>>().join(" "));
         }
-        self.list.seed(base + *k);
+        self.list.seed(super::gate_seed(base, *k));
         *k += 1;
         for (b, _, _) in self.list.entries.iter_mut() {
             b.seed_gates(base, k);
@@ -229,7 +229,7 @@ impl Control for TriggerGate {
         if std::env::var_os("KILN_GATE_DEBUG").is_some() {
             eprintln!("GATE {} (trigger): {}", *k, self.list.entries.iter().map(|(b, w, _)| format!("{}/{}", b.name(), w)).collect::<Vec<_>>().join(" "));
         }
-        self.list.seed(base + *k);
+        self.list.seed(super::gate_seed(base, *k));
         *k += 1;
         for (b, _, _) in self.list.entries.iter_mut() {
             b.seed_gates(base, k);
