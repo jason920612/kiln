@@ -61,6 +61,9 @@ def build(pens):
 
 
 def zombies(pens, on):
+    if os.environ.get("NOZOMBIE"):
+        # (no zombie at all: what the villagers do by themselves; SAMPLE still counts them by x)
+        return
     if os.environ.get("ZTP"):
         if on:
             run([f"execute as @e[type=minecraft:zombie,tag=wp66z{pen}] run tp @s {X0+10}.5 {F+1} {Z0+pen*PEN_DZ+4}.5" for pen in range(pens)])
