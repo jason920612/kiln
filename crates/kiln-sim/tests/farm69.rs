@@ -463,6 +463,10 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
             }
         }
     }
+    // (wp71: a golem that came in the last tick of the segment is killed too; it used to stay for good, and the villagers next to it kept "detecting" it, so their pen made no more golems.)
+    if kill {
+        console(sim, ["kill @e[type=minecraft:iron_golem]".to_string()]);
+    }
 }
 
 #[test]
