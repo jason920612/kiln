@@ -104,8 +104,8 @@ if __name__ == "__main__":
         build(pens)
         if os.environ.get("ALIGN"):
             gt = gametime()
-            run([f"time set {11500 + gt % 100}"])
-            assert (day_time() - gametime()) % 100 == 0, (day_time(), gametime())
+            run([f"time set {11500 + gt % 100 + int(os.environ.get('PHASE', '0'))}"])
+            assert (day_time() - gametime()) % 100 == int(os.environ.get('PHASE', '0')) % 100, (day_time(), gametime())
         if SAMPLE:
             run(["scoreboard players set #20 wp66 20", f"scoreboard players set #x0 wp66 {X0}", "scoreboard players set #on wp66 0"] + [f"scoreboard players set #{n} wp66 0" for n in SAMPLE_NAMES])
         run(["gamerule advance_time true"])
