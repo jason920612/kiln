@@ -55,11 +55,13 @@ fn none_of(level: &MemoryLevel, n: i64) -> i64 {
 #[test]
 fn with_solid_ground_below_the_pen_a_stroll_nearly_always_finds_a_target() {
     let none = none_of(&pen(3), 4000);
+    eprintln!("solid ground below: {none} of 4000 asks found nothing");
     assert!(none < 4000 * 6 / 100, "{none} of 4000 asks found nothing (vanilla: 2 in 100)");
 }
 
 #[test]
 fn with_nothing_below_the_pen_a_stroll_often_finds_none() {
     let none = none_of(&pen(0), 4000);
+    eprintln!("nothing below: {none} of 4000 asks found nothing");
     assert!((4000 * 15 / 100..4000 * 45 / 100).contains(&none), "{none} of 4000 asks found nothing (vanilla: 29 in 100)");
 }
