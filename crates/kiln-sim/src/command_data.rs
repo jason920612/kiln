@@ -1165,6 +1165,7 @@ impl Sim {
                     raider,
                     attacker: None,
                     components: self.entity_mut(target).and_then(|e| e.phys.as_deref()).and_then(kiln_entity::mob::data).map(kiln_entity::mob::variant_components).unwrap_or_default(),
+                    specific: crate::mobs::TypeSpecific::of(self.entity_mut(target).and_then(|e| e.phys.as_deref()).and_then(kiln_entity::mob::data)),
                 };
                 self.roll_table(&kiln_command::host::LootTableArg::Id(table), &ctx)?
             }

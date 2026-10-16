@@ -363,6 +363,28 @@ pub(crate) struct DeathContext {
     /// The dying mob's own components `entity_properties` of `this` match (a chicken's variant
     /// decides the colour of its egg).
     pub components: Vec<kiln_item::Component>,
+    /// The `type_specific` facts of the dying mob that loot tables ask for: a sheep's `sheared` and a slime's or cube's `size`.
+    pub specific: TypeSpecific,
+}
+
+/// `EntitySubPredicate`s that depend on the entity's class (`type_specific/sheep`, `type_specific/cube_mob`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct TypeSpecific {
+    pub sheared: Option<bool>,
+    pub cube_size: Option<i32>,
+}
+
+impl TypeSpecific {
+    /// The facts of `m`, when it is a sheep or a cube mob (a slime, magma cube, sulfur cube).
+    pub(crate) fn of(m: Option<&MobData>) -> TypeSpecific {
+        let Some(m) = m else { return TypeSpecific::default() };
+        let sheared = match &m.species {
+            Species::Sheep { sheared, .. } => Some(*sheared),
+            _ => None,
+        };
+        let cube_size = matches!(m.kind, MobKind::Slime | MobKind::MagmaCube | MobKind::SulfurCube).then(|| kiln_entity::mob::kinds::slime::size(m));
+        TypeSpecific { sheared, cube_size }
+    }
 }
 
 /// The killer as a `source_entity` predicate sees it.
@@ -432,6 +454,9 @@ impl kiln_loot::LootContext for DeathContext {
                 self.raider.is_some() && has_raid.is_none_or(|h| h == raid) && is_captain.is_none_or(|c| c == captain)
             }
             P::Components(cs) => cs.iter().all(|c| self.components.contains(c)),
+            // `SheepPredicate` / `CubeMobPredicate`: only for a mob of the class.
+            P::Sheep { sheared } => self.specific.sheared.is_some_and(|s| sheared.is_none_or(|w| w == s)),
+            P::CubeMob { size } => self.specific.cube_size.is_some_and(|c| size.min.is_none_or(|m| c >= m) && size.max.is_none_or(|m| c <= m)),
             P::Flags(f) if f.is_baby.is_some() => f.is_baby == Some(self.baby) && {
                 let mut f2 = f.clone();
                 f2.is_baby = None;

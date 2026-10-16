@@ -119,7 +119,7 @@ def nautilus_ride(typ="nautilus"):
 
 def camel_husk():
     reset()
-    sv("fill 18 200 18 30 204 30 minecraft:air", show=False)
+    platform(0, 0, 40, 40, y=199, clear=12)
     sv(f"tp {ME} 22.5 200 22.5", show=False)
     time.sleep(1.5)
     sv("summon minecraft:camel_husk 25.5 200 25.5 {PersistenceRequired:1b,NoAI:1b}", show=False)
@@ -171,7 +171,7 @@ def camel_husk():
 
 def parched():
     reset()
-    sv("fill 18 200 18 30 204 30 minecraft:air", show=False)
+    platform(0, 0, 40, 40, y=199, clear=12)
     sv(f"tp {ME} 20.5 200 20.5", show=False)
     sv(f"effect clear {ME}", show=False)
     time.sleep(1.5)
@@ -182,7 +182,7 @@ def parched():
     if es:
         F("parched equipment:", a.cmd(f"ent {es[0]['id']}")[:260])
     rec_start(a)
-    sv(f"effect give {ME} minecraft:resistance 99999 0 true", show=False)
+    sv(f"effect give {ME} minecraft:resistance 99999 4 true", show=False)
     t0 = time.time()
     arrows = 0
     hit_effects = None
