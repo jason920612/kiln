@@ -18,6 +18,8 @@ use std::path::PathBuf;
 /// the day time of every new iron golem is logged.
 static PRODUCTION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static GOLEMS: std::sync::Mutex<Vec<(String, i64)>> = std::sync::Mutex::new(Vec::new());
+/// Per 100 ticks after dt 300: (villager-ticks, panicking ones).
+static PANIC_BINS: std::sync::Mutex<[(u64, u64); 20]> = std::sync::Mutex::new([(0, 0); 20]);
 
 fn production() -> bool {
     PRODUCTION.load(std::sync::atomic::Ordering::Relaxed)
@@ -1072,6 +1074,16 @@ fn replay(s: &Value) -> Result<usize, String> {
             return Err(format!("tick {tick}: {} mobs (kiln) vs {} (vanilla)", ids.len(), expected.as_array().unwrap().len()));
         }
         if production() {
+            let dt = level.day_time % 24000;
+            if (300..2300).contains(&dt) {
+                let mut bins = PANIC_BINS.lock().unwrap();
+                for &id in &ids[..3] {
+                    let p = level.entity(id).and_then(mob::data).is_some_and(|m| m.brain_trace().iter().any(|t| t == "act:panic"));
+                    let b = &mut bins[((dt - 300) / 100) as usize];
+                    b.0 += 1;
+                    b.1 += p as u64;
+                }
+            }
             for &id in &ids[initial..] {
                 if let Some(e) = level.entity(id)
                     && e.type_name == "minecraft:iron_golem"
@@ -1297,5 +1309,6 @@ fn farm_stats() {
         *first.entry((v.iter().copied().filter(|&t| t >= 300).min().unwrap_or(0) - 300) / 100 * 100).or_default() += 1;
     }
     none += text.lines().filter(|l| l.contains("\"name\":\"farm69_dawn_")).count() - by.len();
+    println!("PANIC per 100 ticks after the zombie: {:?}", PANIC_BINS.lock().unwrap().iter().map(|&(a, b)| (b as f64 / a.max(1) as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
     println!("FIRST (first golem after dt 300, bins of 100): {first:?}; scenarios without a golem: {none}; golems {total}");
 }
