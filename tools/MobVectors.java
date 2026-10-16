@@ -511,7 +511,9 @@ public class MobVectors {
     /// wp69: `tools/wp69/rt_farm69.py` inside the harness: the same commands, the server's own tick (functions included: the wp66 datapack logs the golems).
     static String farmByCommands(ServerLevel level, ServerPlayer player, Scenario s) throws Exception {
         var server = level.getServer();
-        final int X0 = 4000, Z0 = 4000, F = -61, DZ = 40, pens = s.cmdPens;
+        // (MOB_CMD_AT=x,y,z: where the first pen's corner and floor are: 4000,-61,4000 as the console driver has them; 0,99,0 is where the harness's own scenarios stand)
+        String[] at0 = System.getenv().getOrDefault("MOB_CMD_AT", "4000,-61,4000").split(",");
+        final int X0 = Integer.parseInt(at0[0]), F = Integer.parseInt(at0[1]), Z0 = Integer.parseInt(at0[2]), DZ = 40, pens = s.cmdPens;
         if (tickServerMethod == null) {
             tickServerMethod = net.minecraft.server.MinecraftServer.class.getDeclaredMethod("tickServer", java.util.function.BooleanSupplier.class);
             tickServerMethod.setAccessible(true);
