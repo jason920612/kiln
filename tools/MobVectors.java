@@ -364,7 +364,7 @@ public class MobVectors {
         player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
         player.snapTo(0, 300, 0, 0f, 0f);
         var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
-        levelData.setGameTime(1000L);
+        levelData.setGameTime(1000L + Long.parseLong(System.getenv().getOrDefault("MOB_GT_PHASE", "0")));
         if (hard) {
             server.setDifficulty(net.minecraft.world.Difficulty.HARD, true);
             level.getChunkAt(new net.minecraft.core.BlockPos(0, BY, 0)).setInhabitedTime(4_000_000L);
@@ -864,7 +864,7 @@ public class MobVectors {
         // The world age is pinned before the mobs are made (wp28: brains read it when they are built:
         // a villager's schedule, `lastScheduleUpdate`).
         var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
-        levelData.setGameTime(1000L);
+        levelData.setGameTime(1000L + Long.parseLong(System.getenv().getOrDefault("MOB_GT_PHASE", "0")));
         // wp28: points of interest (`PoiManager.add`: the level queues it for later, which never comes
         // while this task runs).
         for (var b : s.blocks.entrySet()) {
@@ -1012,7 +1012,7 @@ public class MobVectors {
         }
         int nextId = pinId;
         // The world age is pinned too: some of the mobs' math depends on it.
-        levelData.setGameTime(1000L);
+        levelData.setGameTime(1000L + Long.parseLong(System.getenv().getOrDefault("MOB_GT_PHASE", "0")));
         long startTime = level.getGameTime();
         Adopt ad = new Adopt(tracked, pinned, spawned, s);
         if (s.fullTick) {
