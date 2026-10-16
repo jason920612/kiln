@@ -594,6 +594,68 @@ mod tests {
         w
     }
 
+    /// Changes lit one by one, and the same changes made without light and lit together,
+    /// leave the same light everywhere.
+    #[test]
+    fn changes_lit_together_match_changes_lit_one_by_one() {
+        let palette = [
+            b::AIR, b::AIR, b::AIR, b::STONE, b::STONE, b::GLASS, b::OAK_LEAVES, b::WATER, b::TORCH, b::GLOWSTONE, b::SEA_LANTERN,
+            b::COBWEB, b::ICE, b::OAK_SLAB, b::SMOOTH_STONE_SLAB, b::OAK_STAIRS, b::SNOW, b::JACK_O_LANTERN, b::HONEY_BLOCK, b::SLIME_BLOCK,
+            b::DIRT_PATH, b::BEACON, b::LAVA,
+        ];
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        for round in 0..6 {
+            let (mut one, mut together) = (world(), world());
+            // Something to change: a lumpy build in the middle chunks, lit as it is built.
+            for _ in 0..1500 {
+                let (x, y, z) = (next(40) as i32 - 20, -60 + next(24) as i32, next(40) as i32 - 20);
+                let s = palette[next(palette.len())];
+                one.set_block(x, y, z, s);
+                together.set_block(x, y, z, s);
+            }
+            // A fill (the box of one round, scattered blocks in the next), then the light.
+            let mut changes = Vec::new();
+            if round % 2 == 0 {
+                let s = palette[next(palette.len())];
+                for z in -9..9 {
+                    for y in -58..-46 {
+                        for x in -12..10 {
+                            changes.push((x, y, z, if next(5) == 0 { palette[next(palette.len())] } else { s }));
+                        }
+                    }
+                }
+            } else {
+                for _ in 0..3000 {
+                    changes.push((next(44) as i32 - 22, -61 + next(30) as i32, next(44) as i32 - 22, palette[next(palette.len())]));
+                }
+            }
+            let mut unlit = Vec::new();
+            for &(x, y, z, s) in &changes {
+                one.set_block(x, y, z, s);
+                let old = together.set_block_unlit(x, y, z, s).unwrap();
+                if old != s && super::affects_light(old, s) {
+                    unlit.push([x, y, z]);
+                }
+            }
+            together.relight(&unlit);
+            for layer in [Block, Sky] {
+                for x in -40..40 {
+                    for z in -40..40 {
+                        for y in -64..-20 {
+                            assert_eq!(one.light_at(layer, x, y, z), together.light_at(layer, x, y, z), "round {round} {layer:?} at {x} {y} {z}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn torch_lights_and_unlights_surroundings() {
         let mut w = world();
