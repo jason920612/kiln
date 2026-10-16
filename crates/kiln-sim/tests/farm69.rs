@@ -72,6 +72,9 @@ fn build(sim: &mut Sim, pens: i32) {
 }
 
 fn zombies(sim: &mut Sim, pens: i32, on: bool) {
+    if std::env::var_os("FARM_IDLE").is_some() {
+        return;
+    }
     if !on {
         console(sim, ["kill @e[type=minecraft:zombie]".to_string()]);
         return;
@@ -160,6 +163,24 @@ fn arrival_sample(sim: &Sim) {
     a.1.extend(prev);
 }
 
+/// `FARM_IDLE`: no zombies; the villagers counted by x offset (bins of one block from the pen's west side), every 20 ticks of the day between dt 300 and 11000.
+static IDLE: std::sync::Mutex<([u64; 12], u64)> = std::sync::Mutex::new(([0; 12], 0));
+
+fn idle_sample(sim: &Sim) {
+    let dt = sim.day_time() % 24000;
+    if !(300..11000).contains(&dt) || sim.game_time() % 20 != 0 {
+        return;
+    }
+    let mut a = IDLE.lock().unwrap();
+    for (_, kind, pos, _) in sim.mobs() {
+        if kind == "minecraft:villager" {
+            let b = ((pos[0] - x0() as f64).floor() as i32 + 1).clamp(0, 11) as usize;
+            a.0[b] += 1;
+            a.1 += 1;
+        }
+    }
+}
+
 /// Runs `n` ticks, logging new golems (and killing them in the tick after).
 fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log: &mut Vec<(i64, i64, [f64; 3])>, panic: &mut Panic) {
     let mut kill = false;
@@ -172,6 +193,9 @@ fn advance(sim: &mut Sim, n: i64, seen: &mut std::collections::HashSet<i32>, log
         }
         if std::env::var_os("FARM_ARRIVAL").is_some() {
             arrival_sample(sim);
+        }
+        if std::env::var_os("FARM_IDLE").is_some() {
+            idle_sample(sim);
         }
         if let Ok(v) = std::env::var("FARM_PANIC") {
             count_panic(sim, panic, v == "dawn");
@@ -255,6 +279,10 @@ fn the_farm_in_the_simulation() {
     if std::env::var_os("FARM_ARRIVAL").is_some() {
         let a = ARRIVAL.lock().unwrap();
         println!("ARRIVAL {:?}", a.0);
+    }
+    if std::env::var_os("FARM_IDLE").is_some() {
+        let a = IDLE.lock().unwrap();
+        println!("IDLE samples {} x 0..8: {:?}", a.1, (1..10).map(|i| (a.0[i] as f64 / a.1 as f64 * 1000.0).round() / 1000.0).collect::<Vec<_>>());
     }
     println!("TOTAL {} golems in {days} days, {pens} pens", log.len());
     drop(sim);
