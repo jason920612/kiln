@@ -731,22 +731,28 @@ fn spawn_category_for_chunk(
             }
             let d_ = data.clone().unwrap();
             let Some(kind) = d_.kind else { continue };
+            let dbg = kind == MobKind::Witch || kind == MobKind::ZombieVillager;
+            if dbg { eprintln!("SPAWNDBG picked {:?} at {} {} {}", kind, px, y, pz); }
             // `isValidSpawnPostitionForType`.
             // The nearest player within the despawn distance.
             if !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
+                if dbg { eprintln!("SPAWNDBG  no player within despawn distance"); }
                 continue;
             }
             // `canSpawnMobAt`: what was picked is among what spawns at this very place.
             if !here.iter().any(|e| *e == d_) {
+                if dbg { eprintln!("SPAWNDBG  not in list here"); }
                 continue;
             }
             if !placement_ok(level, pos, kind) || !check_spawn_rules(level, pos, kind, r) {
+                if dbg { eprintln!("SPAWNDBG  placement {} rules {}", placement_ok(level, pos, kind), "?"); }
                 continue;
             }
             let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
             // `EntityType.getSpawnAABB`: slimes and magma cubes look for room for a size-4 one (four times their box).
             let scale = kiln_entity::spawner::spawn_dimensions_scale(t.name);
             if !no_collision(level, [fx, y as f64, fz], t.width * scale, t.height * scale) {
+                if dbg { eprintln!("SPAWNDBG  collision"); }
                 continue;
             }
             let yaw = r.next_float() * 360.0;
@@ -762,8 +768,10 @@ fn spawn_category_for_chunk(
             let ignores_light = kind.ext().is_some_and(|k| k.spawn_ignores_light());
             let liquid_ok = kind.ext().is_some_and(|k| k.spawn_in_liquids());
             if (walk < 0.0 && !ignores_light) || (!liquid_ok && contains_liquid(level, [fx, y as f64, fz], t.width, t.height)) {
+                if dbg { eprintln!("SPAWNDBG  walk {walk} ignores_light {ignores_light}"); }
                 continue;
             }
+            if dbg { eprintln!("SPAWNDBG  SPAWNS"); }
             // `finalizeSpawn` draws from the chunk's random.
             let inhabited = inhabited_at(&*level.cells, fx.floor() as i32, fz.floor() as i32);
             let mut ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, inhabited, moon_brightness(env.mobs.day_time));

@@ -151,20 +151,24 @@ def scen_slime(f, control=False):
 
 
 def scen_creeper(f):
-    """A dark 15x15 platform in the sky (floor at y 200, a roof at y 203, walls) with the player above."""
+    """Dark sealed 14x14x4 platforms at y 200 in a grid of NPLAT x NPLAT chunks, the player 60 blocks above the middle."""
+    n = int(os.environ.get("NPLAT", "3"))
+    bx = 288  # chunk 18
+    mid = bx + 8 * n
     f.prep(time_of_day=18000)
-    f.tp("overworld", 300.5, 260, 300.5)
-    f.cmd(f"forceload add 288 288 318 318")
-    f.wait_chunks(25)
-    f.cmd(f"fill 291 199 291 309 205 309 minecraft:air")
-    f.cmd(f"fill 291 199 291 309 199 309 minecraft:stone")
-    f.cmd(f"fill 291 204 291 309 204 309 minecraft:stone")
-    f.cmd(f"fill 291 200 291 309 203 291 minecraft:stone")
-    f.cmd(f"fill 291 200 309 309 203 309 minecraft:stone")
-    f.cmd(f"fill 291 200 291 291 203 309 minecraft:stone")
-    f.cmd(f"fill 309 200 291 309 203 309 minecraft:stone")
+    f.tp("overworld", mid + 0.5, 261, mid + 0.5)
+    f.cmd(f"forceload add {bx} {bx} {bx + 16 * n - 1} {bx + 16 * n - 1}")
+    f.wait_chunks(25 + 6 * n)
+    f.cmd(f"fill {mid - 2} 259 {mid - 2} {mid + 2} 260 {mid + 2} minecraft:glass")  # the player stands high above the platforms
+    for i in range(n):
+        for k in range(n):
+            x0, z0 = bx + 16 * i, bx + 16 * k
+            f.cmd(f"fill {x0} 199 {z0} {x0 + 15} 205 {z0 + 15} minecraft:air")
+            f.cmd(f"fill {x0} 199 {z0} {x0 + 15} 204 {z0 + 15} minecraft:stone outline")
+            f.cmd(f"fill {x0 + 1} 200 {z0 + 1} {x0 + 14} 203 {z0 + 14} minecraft:air")
+    f.tp("overworld", mid + 0.5, 261, mid + 0.5)
     f.cmd("kill @e[type=!player]")
-    return f.run(["creeper", "zombie", "skeleton", "spider", "enderman", "witch", "slime", "cave_spider"], (292, 200, 292, 308, 203, 308))
+    return f.run(["creeper", "zombie", "skeleton", "spider", "enderman", "witch", "slime", "cave_spider"], (bx, 200, bx, bx + 16 * n, 203, bx + 16 * n))
 
 
 def scen_structure(f, struct, types, dim="overworld", half=12, up=10, time_of_day=18000):
@@ -185,10 +189,11 @@ def scen_gold(f):
     """A nether-roof farm: a 15x15 slab floor at y 129 on the bedrock roof, the player 50 blocks away above it."""
     x0, z0 = 600, 600
     f.prep(time_of_day=18000)
-    f.tp("the_nether", x0 + 0.5, 140, z0 + 0.5)
-    f.cmd(f"effect give {ME} minecraft:slow_falling 99999 0 true")
+    f.tp("the_nether", x0 + 0.5, 191, z0 + 0.5)
     f.cmd(f"execute in minecraft:the_nether run forceload add {x0 - 16} {z0 - 16} {x0 + 32} {z0 + 32}")
     f.wait_chunks(30)
+    f.cmd(f"execute in minecraft:the_nether run fill {x0 - 2} 189 {z0 - 2} {x0 + 2} 190 {z0 + 2} minecraft:glass")  # the player stands high above the farm
+    f.tp("the_nether", x0 + 0.5, 191, z0 + 0.5)
     f.cmd(f"execute in minecraft:the_nether run fill {x0 - 7} 128 {z0 - 7} {x0 + 7} 133 {z0 + 7} minecraft:air")
     f.cmd(f"execute in minecraft:the_nether run fill {x0 - 7} 128 {z0 - 7} {x0 + 7} 128 {z0 + 7} minecraft:stone")
     f.cmd(f"execute in minecraft:the_nether run fill {x0 - 8} 129 {z0 - 8} {x0 + 8} 132 {z0 - 8} minecraft:stone")
@@ -205,10 +210,11 @@ def scen_enderman(f):
     f.prep(time_of_day=6000)
     # the outer island ring around 1000, 1000 (end_midlands or end_highlands): 7x7 platform
     x0, z0 = 1200, 0
-    f.tp("the_end", x0 + 0.5, 120, z0 + 0.5)
-    f.cmd(f"effect give {ME} minecraft:slow_falling 99999 0 true")
+    f.tp("the_end", x0 + 0.5, 101, z0 + 0.5)
     f.cmd(f"execute in minecraft:the_end run forceload add {x0 - 16} {z0 - 16} {x0 + 32} {z0 + 32}")
     f.wait_chunks(30)
+    f.cmd(f"execute in minecraft:the_end run fill {x0 - 2} 99 {z0 - 2} {x0 + 2} 100 {z0 + 2} minecraft:glass")  # the player stands 55 blocks above the farm
+    f.tp("the_end", x0 + 0.5, 101, z0 + 0.5)
     f.cmd(f"execute in minecraft:the_end run fill {x0 - 7} 40 {z0 - 7} {x0 + 7} 46 {z0 + 7} minecraft:air")
     f.cmd(f"execute in minecraft:the_end run fill {x0 - 7} 40 {z0 - 7} {x0 + 7} 40 {z0 + 7} minecraft:stone")
     f.cmd("kill @e[type=!player]")
