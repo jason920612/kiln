@@ -818,7 +818,7 @@ public class MobVectors {
         // before it (the entity id counter is static).
         // (from a base of the scenario's name, so that a scenario's entities cannot meet the
         // still-tracked ones of the one before)
-        int pinId = 2 + (s.name.hashCode() & 0xFFFFF) * 64;
+        int pinId = 2 + (s.name.hashCode() & 0xFFFFF) * 64 + Integer.parseInt(System.getenv().getOrDefault("MOB_ID_SHIFT", "0"));
         for (MobSpec spec : s.mobs) {
             EntityType<?> type = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(spec.type));
             Mob m = (Mob) type.create(level, EntitySpawnReason.COMMAND);
