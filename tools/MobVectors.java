@@ -829,7 +829,11 @@ public class MobVectors {
                 if (a.tick == tick) act(level, player, tracked, a);
             }
             float healthBefore = player.getHealth();
-            if (s.fullTick) level.tick(() -> true);
+            if (s.fullTick) {
+                level.tick(() -> true);
+                // (what the server thread's loop runs between ticks: chunk status changes, entity sections going live)
+                level.getServer().runAllTasks();
+            }
             else {
             repinBrains(tracked);
             for (Entity e : new ArrayList<>(tracked)) {
