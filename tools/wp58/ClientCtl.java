@@ -657,8 +657,6 @@ public class ClientCtl {
                         double scale = mc.getWindow().getGuiScale();
                         setField(mc.mouseHandler, "xpos", (lp.getInt(c) + s.x + 8) * scale);
                         setField(mc.mouseHandler, "ypos", (tp.getInt(c) + s.y + 8) * scale);
-                        // let the screen see the move, as the window's cursor callback would
-                        mc.mouseHandler.onMove(mc.getWindow().handle(), (lp.getInt(c) + s.x + 8) * scale, (tp.getInt(c) + s.y + 8) * scale);
                         return "ok";
                     } catch (Exception e) {
                         return "ERR " + e;
