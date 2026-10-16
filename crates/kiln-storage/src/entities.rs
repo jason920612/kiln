@@ -5,10 +5,11 @@ use crate::anvil::DATA_VERSION;
 use crate::region::RegionFile;
 use kiln_proto::nbt::{self, Tag};
 use kiln_world::ChunkPos;
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::encoder::{Encoder, encode};
+use std::collections::{HashMap, HashSet};
 use crate::native::{ENTITIES, FORM_NBT, NativeStore};
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use tracing::warn;
 
 /// A pending update: the compressed chunk, or `None` to delete it (vanilla stores `null` for
@@ -30,107 +31,6 @@ pub struct EntityStore {
     warned_version: bool,
     /// Encoding on a thread of its own, once [`Self::set_background`] asked.
     encoder: Option<Encoder>,
-}
-
-/// A chunk's entity data (`DataVersion`, `Entities`, `Position`) handed to the encoder.
-struct Job {
-    pos: ChunkPos,
-    seq: u64,
-    root: Arc<Tag>,
-}
-
-/// The jobs the encoder thread has not taken yet, and whether the store is gone.
-type Queue = (Mutex<(VecDeque<Job>, bool)>, Condvar);
-
-/// Entity chunks encoded (NBT, compressed for region files) on a thread of its own: unloading
-/// chunks hands their entities over and goes on (encoding and compressing them cost the tick
-/// 14–18 ms on a flight, 73 ms when many players left at once). Until a chunk's encoding is
-/// back, its newest entities are the handed-over ones, and loads read them from there: nothing
-/// ever waits for the thread, which may get no core for a while. A flush encodes what is still
-/// out itself.
-struct Encoder {
-    queue: Arc<Queue>,
-    done: std::sync::mpsc::Receiver<(ChunkPos, u64, Vec<u8>)>,
-    /// Chunks handed over and not back: the newest job's number and data (older jobs of the
-    /// chunk, still out, come back to nothing).
-    out: HashMap<ChunkPos, (u64, Arc<Tag>)>,
-    next: u64,
-}
-
-/// A chunk's entities as stored: plain NBT for a native store, compressed for region files.
-fn encode(root: &Tag, compress: bool) -> Vec<u8> {
-    let mut buf = bytes::BytesMut::new();
-    root.write_named("", &mut buf);
-    if compress { crate::region::compress_chunk(&buf) } else { buf.to_vec() }
-}
-
-impl Encoder {
-    fn start(compress: bool) -> Encoder {
-        let queue: Arc<Queue> = Arc::default();
-        let (tx, done) = std::sync::mpsc::channel();
-        let q = queue.clone();
-        std::thread::Builder::new()
-            .name("kiln-encode-entities".into())
-            .spawn(move || {
-                loop {
-                    let job = {
-                        let mut jobs = q.0.lock().unwrap();
-                        loop {
-                            if let Some(job) = jobs.0.pop_front() {
-                                break job;
-                            }
-                            if jobs.1 {
-                                return;
-                            }
-                            jobs = q.1.wait(jobs).unwrap();
-                        }
-                    };
-                    if tx.send((job.pos, job.seq, encode(&job.root, compress))).is_err() {
-                        return;
-                    }
-                }
-            })
-            .expect("spawning the entity encoding thread");
-        Encoder { queue, done, out: HashMap::new(), next: 0 }
-    }
-
-    fn submit(&mut self, pos: ChunkPos, root: Tag) {
-        self.next += 1;
-        let root = Arc::new(root);
-        self.out.insert(pos, (self.next, root.clone()));
-        self.queue.0.lock().unwrap().0.push_back(Job { pos, seq: self.next, root });
-        self.queue.1.notify_one();
-    }
-
-    /// The finished encodings that are still the newest of their chunk.
-    fn finished(&mut self) -> Vec<(ChunkPos, Vec<u8>)> {
-        let mut got = Vec::new();
-        for (pos, seq, payload) in self.done.try_iter() {
-            if self.out.get(&pos).is_some_and(|(s, _)| *s == seq) {
-                self.out.remove(&pos);
-                got.push((pos, payload));
-            }
-        }
-        got
-    }
-
-    /// Everything still out, encoded here: jobs the thread has not taken leave its queue, and one
-    /// it is in the middle of is encoded again (its result comes back to nothing).
-    fn drain(&mut self, compress: bool) -> Vec<(ChunkPos, Vec<u8>)> {
-        let mut got = self.finished();
-        self.queue.0.lock().unwrap().0.clear();
-        let mut rest: Vec<(ChunkPos, Arc<Tag>)> = self.out.drain().map(|(pos, (_, root))| (pos, root)).collect();
-        rest.sort_unstable_by_key(|(p, _)| (p.x, p.z));
-        got.extend(rest.into_iter().map(|(pos, root)| (pos, encode(&root, compress))));
-        got
-    }
-}
-
-impl Drop for Encoder {
-    fn drop(&mut self) {
-        self.queue.0.lock().unwrap().1 = true;
-        self.queue.1.notify_all();
-    }
 }
 
 impl EntityStore {
@@ -187,7 +87,7 @@ impl EntityStore {
             return Vec::new();
         }
         // Handed to the encoder and not back: the newest there is.
-        if let Some((_, root)) = self.encoder.as_ref().and_then(|e| e.out.get(&pos)) {
+        if let Some(root) = self.encoder.as_ref().and_then(|e| e.newest(pos)) {
             return root.get("Entities").and_then(Tag::as_list).unwrap_or(&[]).iter().map(|t| t.unwrap_list_element().clone()).collect();
         }
         self.collect();
@@ -233,7 +133,7 @@ impl EntityStore {
             }
             // (Newer than whatever is still with the encoder.)
             if let Some(e) = self.encoder.as_mut() {
-                e.out.remove(&pos);
+                e.forget(pos);
             }
             self.put(pos, None);
             return;
@@ -291,7 +191,7 @@ impl EntityStore {
             self.writer = Some(crate::region::BackgroundWriter::start("kiln-write-entities"));
         }
         if on && self.encoder.is_none() {
-            self.encoder = Some(Encoder::start(self.native.is_none()));
+            self.encoder = Some(Encoder::start("kiln-encode-entities", self.native.is_none()));
         }
     }
 
@@ -311,9 +211,8 @@ impl EntityStore {
 
     pub fn flush(&mut self) -> std::io::Result<usize> {
         // Everything still with the encoder, encoded here (no waiting for its thread).
-        let compress = self.native.is_none();
         if let Some(e) = self.encoder.as_mut() {
-            for (pos, encoded) in e.drain(compress) {
+            for (pos, encoded) in e.drain() {
                 self.put(pos, Some(encoded));
             }
         }

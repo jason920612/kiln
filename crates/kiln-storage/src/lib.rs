@@ -2,6 +2,7 @@
 //! player data.
 
 pub mod anvil;
+mod encoder;
 pub mod entities;
 pub mod level;
 pub mod native;
