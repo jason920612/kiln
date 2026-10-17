@@ -30,7 +30,8 @@ def room():
     sv("kill @e[type=!player]", show=False)
     sv(f"clear {ME}", show=False)
     sv(f"effect clear {ME}", show=False)
-    sv(f"effect give {ME} minecraft:regeneration 99999 4 true", show=False)
+    sv(f"effect give {ME} minecraft:resistance 99999 3 true", show=False)
+    sv("gamerule natural_health_regeneration false", show=False)
     sv(f"tp {ME} {NX + 12}.5 {NY} {NZ + 12}.5", show=False)
     time.sleep(2)
 
@@ -40,14 +41,20 @@ def brain(sel):
     return o
 
 
-def watch(label, selector, secs=6):
+def watch(label, selector, secs=8):
+    """Health of the player every second after it was set to 20: a mob that attacks takes it down."""
+    alive_auto(a)
+    N(f"fill {NX} {NY - 1} {NZ} {NX + 25} {NY - 1} {NZ + 25} minecraft:netherrack")
+    sv(f"execute in minecraft:the_nether run tp {ME} {NX + 12}.5 {NY} {NZ + 12}.5", show=False)
+    sv(f"effect give {ME} minecraft:resistance 99999 3 true", show=False)
+    sv(f"effect give {ME} minecraft:instant_health 1 10 true", show=False)
+    time.sleep(1.5)
+    say("   player at", me(a))
     rows = []
     for s in range(secs):
-        hp = a.state(0)["health"]
-        b = brain(selector)
-        rows.append((round(hp, 1), "angry_at" in b or "attack_target" in b, "avoid_target" in b))
+        rows.append(round(a.state(0)["health"], 1))
         time.sleep(1)
-    say(label, rows)
+    say(label, "health per second:", rows, "-> damage", round(rows[0] - min(rows), 1))
     return rows
 
 
@@ -69,7 +76,7 @@ def main():
     sv("kill @e[type=!player]", show=False)
     say("== 2. golden helmet")
     sv(f"item replace entity {ME} armor.head with minecraft:golden_helmet", show=False)
-    sv(f"effect give {ME} minecraft:resistance 99999 4 true", show=False)
+    sv(f"effect give {ME} minecraft:resistance 99999 3 true", show=False)
     fresh_piglins()
     time.sleep(0.5)
     watch("gold helmet", "@e[type=piglin,limit=1]")
@@ -78,12 +85,17 @@ def main():
     time.sleep(1)
     a.lookat(NX + 12.5, NY + 0.5, NZ + 14.5)
     time.sleep(0.6)
-    a.mouse("right", "tap")
-    time.sleep(1.0)
-    say("screen", a.screen())
-    for s in range(5):
-        say("  t+%ds" % s, brain("@e[type=piglin,limit=1]")[-200:].replace("\n", " "))
+    for _ in range(3):
+        a.mouse("right", "tap")
+        time.sleep(1.2)
+        if a.screen():
+            break
+    say("screen", a.screen(), "(the chest was opened if it is a container screen)")
+    rows = []
+    for s in range(8):
+        rows.append(round(a.state(0)["health"], 1))
         time.sleep(1)
+    say("after the chest (gold helmet on) health per second:", rows, "-> damage", round(rows[0] - min(rows), 1), "| piglin brain:", brain("@e[type=piglin,limit=1]")[-150:].replace(chr(10), " "))
     try:
         a.key("esc", "tap")
     except Exception:
@@ -112,14 +124,7 @@ def main():
         sv(f"execute in minecraft:the_nether run summon minecraft:hoglin {NX + 6}.5 {NY} {NZ + 12}.5 {{PersistenceRequired:1b,IsImmuneToZombification:1b}}", show=False)
         N(f"setblock {NX + 9} {NY} {NZ + 12} {block}")
         sv(f"tp {ME} {NX + 14}.5 {NY} {NZ + 12}.5", show=False)
-        pos0 = None
-        rows = []
-        for s in range(8):
-            ents = [e for e in a.state(30)["entities"] if e["t"] == "hoglin"]
-            if ents:
-                rows.append((round(ents[0]["x"] - (NX + 14.5), 1), round(a.state(0)["health"], 1)))
-            time.sleep(1)
-        say("hoglin", label, "dx to player per second:", rows)
+        watch(f"hoglin, {label}", "@e[type=hoglin,limit=1]", secs=8)
         N(f"setblock {NX + 9} {NY} {NZ + 12} minecraft:air")
 
 

@@ -22,9 +22,11 @@ def go(t, out):
         w(t, "gamerule " + g)
     w(t, "difficulty normal"); w(t, "weather clear"); w(t, f"gamemode creative {ME}")
     w(t, f"forceload add {X0 - 4} {Z0 - 4} {X0 + 60} {Z0 + 30}")
-    w(t, f"tp {ME} {X0 + 20} {Y0 + 12} {Z0 + 10}")
+    w(t, f"execute in minecraft:overworld run tp {ME} {X0 + 20} {Y0 + 12} {Z0 + 10}")
     w(t, f"effect give {ME} minecraft:slow_falling 99999 0 true")
-    time.sleep(15)
+    wait_loaded(t, X0 + 60, Y0, Z0 + 30)
+    wait_loaded(t, X0 - 2, Y0, Z0 - 2)
+    time.sleep(2)
     w(t, f"fill {X0 - 2} {Y0 - 1} {Z0 - 2} {X0 + 60} {Y0 + 6} {Z0 + 30} minecraft:air")
     w(t, f"fill {X0 - 2} {Y0 - 1} {Z0 - 2} {X0 + 60} {Y0 - 1} {Z0 + 30} minecraft:stone")
     w(t, "kill @e[type=!player]")
@@ -51,9 +53,10 @@ def go(t, out):
         if emp == N:
             break
     out[t + "_claim"] = rows
+
     # sold-out offers
     w(t, "time set 1000")
-    w(t, "execute as @e[type=villager] run data modify entity @s Offers.Recipes[].uses set value 99")
+    w(t, 'execute as @e[type=villager] run data merge entity @s {Offers:{Recipes:[{buy:{id:"minecraft:emerald",count:1},sell:{id:"minecraft:bread",count:1},uses:99,maxUses:12,xp:1,priceMultiplier:0.05f,demand:0,specialPrice:0,rewardExp:1b}]}}')
     time.sleep(0.5)
     base = count(t, "@e[type=villager,nbt={Offers:{Recipes:[{uses:99}]}}]")
     rows = []
@@ -64,6 +67,24 @@ def go(t, out):
         rows.append((1000 * (k + 1), sold, rs))
     out[t + "_restock"] = {"villagers still sold out at the start": base, "(tick, still sold out, RestocksToday=0/1/2 counts)": rows}
 
+    # part C: stealing. A 12x12 room, 3 workstations and 6 jobless villagers: after 3000 ticks how many are employed, which job sites are taken twice
+    sx, sz = X0 + 20, Z0 + 12
+    trials = []
+    for trial in range(6):
+        w(t, "kill @e[type=villager]")
+        w(t, f"fill {sx - 1} {Y0} {sz - 1} {sx + 12} {Y0 + 4} {sz + 12} minecraft:stone hollow")
+        w(t, f"fill {sx} {Y0} {sz} {sx + 11} {Y0 + 3} {sz + 11} minecraft:air")
+        for k, (dx, dz, blk) in enumerate(((1, 1, "lectern"), (10, 1, "composter"), (5, 10, "barrel"))):
+            w(t, f"setblock {sx + dx} {Y0} {sz + dz} minecraft:{blk}")
+        time.sleep(0.5)
+        for k in range(6):
+            w(t, f"summon minecraft:villager {sx + 2 + 2 * (k % 4)}.5 {Y0} {sz + 4 + 3 * (k // 4)}.5 {{PersistenceRequired:1b,Tags:[\"steal\"],VillagerData:{{profession:\"minecraft:none\",level:1,type:\"minecraft:plains\"}}}}")
+        row = []
+        for r in range(6):
+            sprint(t, 500)
+            row.append(count(t, '@e[type=villager,tag=steal,nbt=!{VillagerData:{profession:"minecraft:none"}}]'))
+        trials.append(row)
+    out[t + "_steal"] = trials
 
 if __name__ == "__main__":
     out = {}

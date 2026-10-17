@@ -7,7 +7,7 @@ from lock import *
 NV = int(sys.argv[1]) if len(sys.argv) > 1 else 4
 ROUNDS = int(sys.argv[2]) if len(sys.argv) > 2 else 12
 RT = int(sys.argv[3]) if len(sys.argv) > 3 else 2000
-SPOTS = [(0, 0), (3000, 0), (0, 3000), (-3000, 0), (0, -3000), (3000, 3000), (-3000, -3000), (6000, 0)]
+SPOTS = [(9000, 0), (0, 9000), (-9000, 0), (0, -9000), (9000, 9000), (-9000, 9000), (9000, -9000), (-9000, -9000), (14000, 0), (0, 14000)]
 ME = "KilnTest"
 
 
@@ -36,7 +36,9 @@ def go(t, res):
         w(t, f"execute in minecraft:overworld run tp {ME} {x} 140 {z}")
         w(t, f"effect give {ME} minecraft:slow_falling 99999 0 true")
         w(t, f"forceload add {x - 48} {z - 48} {x + 48} {z + 48}")
-        time.sleep(25)
+        wait_loaded(t, x + 40, 100, z + 40)
+        wait_loaded(t, x - 40, 100, z - 40)
+        time.sleep(5)
         rows = []
         for r in range(ROUNDS):
             sprint(t, RT)

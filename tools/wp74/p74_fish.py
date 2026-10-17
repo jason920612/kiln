@@ -40,6 +40,8 @@ time.sleep(2.5)
 p61.FISH_AT = (16.5, 199.5, 16.5)
 t0 = time.time()
 res = p61.fish(a, N, rate=RATE, maxwait=30)
+if os.environ.get("DEBUG") or N <= 10:
+    print("PERCAST", res, flush=True)
 cnt = collections.Counter()
 for hooked, d in res:
     for k, v in d.items():

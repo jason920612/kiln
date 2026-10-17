@@ -69,7 +69,7 @@ class Farm:
         t = self.t
         if t == "V":
             w(t, f"op {ME}")
-        for g in ("spawn_mobs true", "spawn_monsters true", "do_daylight_cycle false", "do_weather_cycle false", "spawn_phantoms false", "mob_griefing false", "random_tick_speed 3", "spawn_wardens false"):
+        for g in ("spawn_mobs true", "spawn_monsters true", "advance_time false", "advance_weather false", "spawn_phantoms false", "mob_griefing false", "random_tick_speed 3", "spawn_wardens false"):
             w(t, "gamerule " + g)
         w(t, "difficulty normal")
         w(t, "weather clear")
@@ -99,7 +99,18 @@ class Farm:
             # children of what was just killed (slimes, magma cubes) are dead on the next ticks
         return counts
 
-    def run(self, types, box, clear_all=True):
+    def killblock(self, box, dim):
+        """A repeating command block that kills everything outside the box every tick (keeps the mob cap free for the farm's own spawns)."""
+        bx0, by0, bz0, bx1, by1, bz1 = (min(box[0], box[3]), min(box[1], box[4]), min(box[2], box[5]), max(box[0], box[3]), max(box[1], box[4]), max(box[2], box[5]))
+        self.cmd("gamerule command_block_output false")
+        self.cmd("gamerule log_admin_commands false")
+        self.cmd(f'execute in minecraft:{dim} run setblock {bx0 - 12} {by1 + 8} {bz0} minecraft:repeating_command_block{{auto:1b,TrackOutput:0b,Command:"execute as @e[type=!player] unless entity @s[x={bx0},y={by0},z={bz0},dx={bx1 - bx0},dy={by1 - by0},dz={bz1 - bz0}] run kill @s"}}')
+        F(self.t, "kill block", self.cmd(f"execute in minecraft:{dim} run data get block {bx0 - 12} {by1 + 8} {bz0} auto")[-60:])
+        self.kb = (dim, bx0 - 12, by1 + 8, bz0)
+
+    def run(self, types, box, clear_all=True, dim="overworld"):
+        if os.environ.get("KILLBLOCK"):
+            self.killblock(box, dim)
         for r in range(self.rounds):
             sprint(self.t, self.round_ticks)
             counts = self.measure(types, box)
@@ -111,6 +122,11 @@ class Farm:
                 self.cmd(f"kill @e[type=!player,type=!item]", wait=0.2)
             self.counts.append(counts)
             F(self.t, self.name, "round", r, {k: v for k, v in counts.items() if v})
+        if getattr(self, "kb", None):
+            # the kill block (and the forced chunks that keep it running) must not outlive the run: it kills in every dimension
+            d, kx, ky, kz = self.kb
+            self.cmd(f"execute in minecraft:{d} run setblock {kx} {ky} {kz} minecraft:air")
+            self.cmd(f"execute in minecraft:{d} run forceload remove all")
         total = {ty: sum(c.get(ty, 0) for c in self.counts) for ty in types}
         F(self.t, self.name, "TOTAL", json.dumps(total))
         return total
@@ -189,14 +205,7 @@ def scen_structure(f, struct, types, dim="overworld", half=12, up=10, time_of_da
     f.wait_chunks(40)
     f.cmd("kill @e[type=!player]")
     box = tuple(int(v) for v in os.environ["BOX"].split(",")) if os.environ.get("BOX") else (x - half, -60 if dim == "overworld" else 0, z - half, x + half, 150, z + half)
-    if os.environ.get("KILLBLOCK"):
-        # a repeating command block that kills everything outside the box every tick (keeps the mob cap free for the farm's own spawns)
-        bx0, by0, bz0, bx1, by1, bz1 = box
-        f.cmd("gamerule command_block_output false")
-        f.cmd("gamerule log_admin_commands false")
-        f.cmd(f'execute in minecraft:{dim} run setblock {bx0 - 12} {by0 + 8} {bz0} minecraft:repeating_command_block{{auto:1b,TrackOutput:0b,Command:"execute as @e[type=!player] unless entity @s[x={bx0},y={by0},z={bz0},dx={bx1 - bx0},dy={by1 - by0},dz={bz1 - bz0}] run kill @s"}}')
-        F(f.t, "kill block", f.cmd(f"execute in minecraft:{dim} run data get block {bx0 - 12} {by0 + 8} {bz0} auto")[-60:])
-    return f.run(types, box)
+    return f.run(types, box, dim=dim)
 
 
 def scen_gold(f):
@@ -220,7 +229,7 @@ def scen_gold(f):
     f.cmd("kill @e[type=!player]")
     F(f.t, "biome at the farm", f.cmd(f"execute in minecraft:the_nether run locate biome minecraft:nether_wastes", wait=3)[-120:])
     box = (x0 - 7, 129, z0 - 7, x0 + 7, 132, z0 + 7) if os.environ.get("GOLDBOX") != "big" else (x0 - 120, 0, z0 - 120, x0 + 120, 255, z0 + 120)
-    return f.run(["zombified_piglin", "piglin", "ghast", "magma_cube", "enderman", "hoglin", "strider", "skeleton", "wither_skeleton", "blaze"], box)
+    return f.run(["zombified_piglin", "piglin", "ghast", "magma_cube", "enderman", "hoglin", "strider", "skeleton", "wither_skeleton", "blaze"], box, dim="the_nether")
 
 
 def scen_enderman(f):
@@ -235,7 +244,7 @@ def scen_enderman(f):
     f.cmd(f"execute in minecraft:the_end run fill {x0 - 7} 40 {z0 - 7} {x0 + 7} 46 {z0 + 7} minecraft:air")
     f.cmd(f"execute in minecraft:the_end run fill {x0 - 7} 40 {z0 - 7} {x0 + 7} 40 {z0 + 7} minecraft:stone")
     f.cmd("kill @e[type=!player]")
-    return f.run(["enderman", "endermite", "shulker"], (x0 - 7, 41, z0 - 7, x0 + 7, 46, z0 + 7))
+    return f.run(["enderman", "endermite", "shulker"], (x0 - 7, 41, z0 - 7, x0 + 7, 46, z0 + 7), dim="the_end")
 
 
 def main():

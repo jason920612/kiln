@@ -39,8 +39,8 @@ def endermite(t, trials, out):
 
 def turtles(t, pairs, out):
     prep(t)
-    w(t, f"fill {X0} {Y0 - 3} {Z0} {X0 + 119} {Y0 + 6} {Z0 + 119} minecraft:air")
-    w(t, f"fill {X0} {Y0 - 3} {Z0} {X0 + 119} {Y0 - 1} {Z0 + 119} minecraft:stone")
+    w(t, f"fill {X0} {Y0 - 6} {Z0} {X0 + 119} {Y0 + 6} {Z0 + 119} minecraft:air")
+    w(t, f"fill {X0} {Y0 - 5} {Z0} {X0 + 119} {Y0 - 1} {Z0 + 119} minecraft:stone")
     cells = [(X0 + 5 + 18 * (i % 6), Z0 + 5 + 18 * (i // 6)) for i in range(pairs)]
     for (x, z) in cells:
         # a 7x7 sand beach (y Y0-1) with a 5x5 pond (depth 2) cut in the middle, the turtles start in the pond
@@ -50,14 +50,14 @@ def turtles(t, pairs, out):
     time.sleep(1)
     for (x, z) in cells:
         for dx in (0, 1):
-            w(t, f"summon minecraft:turtle {x + dx - 0}.5 {Y0 - 2} {z}.5 {{PersistenceRequired:1b,InLove:2400,Age:0}}")
+            w(t, f"summon minecraft:turtle {x + dx - 0}.5 {Y0 - 2} {z}.5 {{PersistenceRequired:1b,InLove:2400,Age:0,home_pos:[I;{x},{Y0 - 1},{z}]}}")
     laid = []
     t_first = {}
-    for r in range(24):
+    for r in range(30):
         sprint(t, 100)
         n = 0
         for (x, z) in cells:
-            n += count(t, f"@e[type=turtle,x={x - 6},y={Y0 - 4},z={z - 6},dx=12,dy=8,dz=12,nbt={{HasEgg:1b}}]")
+            n += count(t, f"@e[type=turtle,x={x - 6},y={Y0 - 4},z={z - 6},dx=12,dy=8,dz=12,nbt={{has_egg:1b}}]")
         eggs = 0
         for (x, z) in cells:
             o = ask(t, f"fill {x - 6} {Y0 - 1} {z - 6} {x + 6} {Y0 + 1} {z + 6} minecraft:air replace minecraft:turtle_egg", wait=0.15)

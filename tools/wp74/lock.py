@@ -142,3 +142,26 @@ def locate_xz(t, what, x=0, z=0, dim="overworld", wait=6):
     for m in re.finditer(r"\[(-?\d+), (-?\d+|~), (-?\d+)\]", out):
         pass
     return (int(m.group(1)), int(m.group(3))) if m else None
+
+
+def wait_loaded(t, x, y, z, dim="overworld", secs=120):
+    """Block until a setblock at x y z works (the chunk is loaded)."""
+    t0 = time.time()
+    while time.time() - t0 < secs:
+        o = ask(t, f"execute in minecraft:{dim} run setblock {x} {y} {z} minecraft:stone", wait=0.5)
+        if "unloaded" not in o and "not_loaded" not in o and "not loaded" not in o and "outside" not in o and "failed" not in o.lower().replace("commands.setblock.failed", "") :
+            return True
+        if "commands.setblock.failed" in o or "Could not set the block" in o:
+            return True  # already stone: the chunk is loaded
+        time.sleep(1)
+    return False
+
+
+def back_to_overworld():
+    """Both players alive, in the overworld, in creative."""
+    respawn_all()
+    for t in "KV":
+        w(t, "gamemode creative KilnTest")
+        w(t, "execute in minecraft:overworld run tp KilnTest 0 100 0")
+        w(t, "effect give KilnTest minecraft:slow_falling 99999 0 true")
+    time.sleep(3)

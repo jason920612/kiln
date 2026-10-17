@@ -880,6 +880,26 @@ fn wither_skeletons_wither_their_target() {
     assert!(withered, "a wither skeleton's hit withers");
 }
 
+/// wp74: with a real client, vanilla piglins turn on a player in gold armour who opens a chest in their sight (`PiglinAi.angerNearbyPiglins`,
+/// called by chests, ender chests, barrels and shulker boxes; the player took 8.9 damage in 8 seconds); Kiln's did nothing.
+#[test]
+fn piglins_turn_on_a_player_who_opens_a_chest() {
+    let mut w = World::new();
+    w.console("difficulty normal");
+    w.console("gamemode survival Hunter");
+    w.console("item replace entity Hunter armor.head with minecraft:golden_helmet");
+    let p = w.pos().map(|v| v.floor() as i32);
+    let chest = [p[0] + 2, p[1], p[2]];
+    w.console(&format!("setblock {} {} {} minecraft:chest[facing=west]", chest[0], chest[1], chest[2]));
+    w.summon("minecraft:piglin", [-6.0, 0.0, 0.0], "{PersistenceRequired:1b,IsImmuneToZombification:1b,HandItems:[{id:\"minecraft:golden_sword\",count:1},{}]}");
+    w.ticks(100);
+    assert_eq!(w.health(), 20.0, "a player in gold armour is left alone");
+    let pkt = PlayIn::UseItemOn { hand: 0, pos: [chest[0], chest[1], chest[2]], face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: 1 };
+    assert!(w.sim.step([ToSim::Packet(1, pkt)]));
+    w.ticks(200);
+    assert!(w.health() < 20.0, "the piglin attacked after the chest was opened (health {})", w.health());
+}
+
 /// wp74: a hazard matrix against vanilla found that mobs took nothing from lit campfires, wither roses and powder snow. Vanilla (a frozen reading
 /// after 200 ticks, NoAI mobs standing in the block): a cow in powder snow loses 2 (1 every 40 ticks once fully frozen), a blaze 10 (5 each), a
 /// polar bear nothing (`#freeze_immune_entity_types`); a cow in a lit campfire or a wither rose dies, a blaze in the campfire (fire immune) lives.
