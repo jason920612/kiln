@@ -720,7 +720,8 @@ class Scenarios {
             "minecraft:magma_block", "minecraft:piston[extended=false,facing=up]", "minecraft:piston[extended=true,facing=up]",
             "minecraft:sticky_piston[extended=false,facing=north]", "minecraft:piston_head[facing=up,short=false,type=normal]",
             "minecraft:piston_head[facing=north,short=true,type=sticky]", "minecraft:moving_piston[facing=up,type=normal]",
-            "minecraft:oak_slab[type=top]", "minecraft:farmland[moisture=7]", "minecraft:hopper[enabled=true,facing=down]"};
+            "minecraft:oak_slab[type=top]", "minecraft:farmland[moisture=7]"};
+        // (Not a hopper: its suction is block entity logic of the level, compared with the container vectors, not by the entity harness.)
         for (int k = 0; k < floors.length * 3; k++) {
             String floor = floors[k % floors.length];
             var s = new EntityVectors.Scenario("item_rest/" + floor + "/" + k / floors.length, r.nextLong());

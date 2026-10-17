@@ -20,6 +20,13 @@ fn vanilla_names(list: &Value) -> Vec<String> {
     v
 }
 
+/// What a mob's random equipment adds (a piglin's gold boots in one world and none in another): the armor attributes come with a worn
+/// piece, whose draw is not the same here and in the vector's world, so they are left out of the comparison after a tick.
+fn without_armor(mut v: Vec<String>) -> Vec<String> {
+    v.retain(|n| n != "minecraft:armor" && n != "minecraft:armor_toughness");
+    v
+}
+
 #[test]
 fn mob_attribute_instances_match_vanilla() {
     let Some(path) = std::env::var_os("KILN_ATTR_VECTORS") else {
@@ -62,8 +69,8 @@ fn mob_attribute_instances_match_vanilla() {
                 seen = e.phys.as_deref().and_then(mob::data).map(names_of);
             }
         }
-        let want = vanilla_names(&v["ticks"][0]);
-        match seen {
+        let want = without_armor(vanilla_names(&v["ticks"][0]));
+        match seen.map(without_armor) {
             Some(s) if s == want => ok += 1,
             Some(s) => failed.push(format!("{ty}: after a tick {s:?}, vanilla {want:?}")),
             None => {}
