@@ -1194,7 +1194,7 @@ public class ContainerVectors {
             int n = 1 + r.nextInt(3);
             for (int i = 0; i < n; i++) {
                 double ox, oy, oz;
-                switch (r.nextInt(3)) {
+                switch (front != null ? 1 + r.nextInt(2) : r.nextInt(3)) {
                     case 0 -> { ox = f[0] + 0.15 + r.nextDouble() * 0.7; oy = f[1] + 0.0 + r.nextDouble() * 0.1; oz = f[2] + 0.15 + r.nextDouble() * 0.7; }
                     case 1 -> { ox = f[0] + 0.15 + r.nextDouble() * 0.7; oy = f[1] + 1.0 + r.nextDouble() * 0.5; oz = f[2] + 0.15 + r.nextDouble() * 0.7; }
                     default -> { ox = 2 * f[0] + 0.15 + r.nextDouble() * 0.7; oy = 2 * f[1] + r.nextDouble() * 0.5; oz = 2 * f[2] + 0.15 + r.nextDouble() * 0.7; }
