@@ -408,12 +408,16 @@ impl Entity {
 
     /// Copies what the rest of the simulation reads from the vanilla state.
     pub(crate) fn sync(&mut self) {
-        let p = self.phys();
-        let (pos, vel, on_ground, removed) = (arr(p.position()), arr(p.delta), p.on_ground, p.is_removed());
-        self.pos = pos;
-        self.vel = vel;
-        self.on_ground = on_ground;
-        self.removed |= removed;
+        let s = Synced::of(self.phys());
+        self.sync_from(s);
+    }
+
+    /// [`Entity::sync`] with what was read of the vanilla state beforehand.
+    pub(crate) fn sync_from(&mut self, s: Synced) {
+        self.pos = s.pos;
+        self.vel = s.vel;
+        self.on_ground = s.on_ground;
+        self.removed |= s.removed;
     }
 
     /// `teleportSetPosition` of a command or portal teleport: the entity stands at `pos` (facing
@@ -605,6 +609,21 @@ impl Entity {
     }
 }
 
+/// What [`Entity::sync`] copies out of the vanilla state.
+#[derive(Clone, Copy)]
+pub(crate) struct Synced {
+    pos: [f64; 3],
+    vel: [f64; 3],
+    on_ground: bool,
+    removed: bool,
+}
+
+impl Synced {
+    pub(crate) fn of(p: &kiln_entity::Entity) -> Synced {
+        Synced { pos: arr(p.position()), vel: arr(p.delta), on_ground: p.on_ground, removed: p.is_removed() }
+    }
+}
+
 /// A region's entities in id order, which is spawn order (vanilla's tick order is insertion
 /// order); merges interleave by id, splits go by each entity's cell.
 #[derive(Default)]
@@ -724,7 +743,7 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     poi_writes: u32,
     /// While an entity's turn runs in place of its speculation: the entities it reached with
     /// `entity_mut`, with their box and whether they were alive before.
-    touched: Option<Vec<(i32, Aabb, bool)>>,
+    touched: Option<Touched>,
     /// The type and position of the entity whose state is out of the list for this turn, for
     /// what it does to players meanwhile (thorns damage names it as the attacker).
     current_info: Option<(&'static str, [f64; 3])>,
@@ -889,13 +908,14 @@ impl SimLevel<'_, '_, '_> {
 
     /// Logs `id` for [`SimLevel::touched`] (once, with its box and liveness as they were).
     fn note_touched(&mut self, id: i32) {
-        if self.touched.as_ref().is_some_and(|t| t.iter().any(|&(t, _, _)| t == id)) {
+        if self.touched.as_ref().is_some_and(|t| t.seen.contains(&id)) {
             return;
         }
         let Some(e) = self.entity(id) else { return };
         let (b, alive) = (e.bounding_box(), e.is_alive());
         if let Some(t) = self.touched.as_mut() {
-            t.push((id, b, alive));
+            t.seen.insert(id);
+            t.list.push((id, b, alive));
         }
     }
 
@@ -956,6 +976,13 @@ impl SimLevel<'_, '_, '_> {
         // (Read in place: moving the inline array out costs more than the search.)
         found.iter().map(|&(_, id)| id).collect()
     }
+}
+
+/// [`SimLevel::touched`]: the entities a turn reached, in the order it reached them (a merging item reaches hundreds).
+#[derive(Default)]
+pub(crate) struct Touched {
+    pub list: Vec<(i32, Aabb, bool)>,
+    seen: std::collections::HashSet<i32, std::hash::BuildHasherDefault<kiln_entity::memory::FastHasher>>,
 }
 
 /// Vanilla iterates entity sections by x, then by the packed (z, y) section key.
@@ -2455,8 +2482,14 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
 /// After entity `i`'s tick: its outer state follows the vanilla state, its section and cell
 /// follow its position.
 fn settle(sim: &mut SimLevel, i: usize) {
+    let s = Synced::of(sim.list[i].phys());
+    settle_from(sim, i, s);
+}
+
+/// [`settle`] with what was read of entity `i`'s vanilla state beforehand.
+fn settle_from(sim: &mut SimLevel, i: usize, s: Synced) {
     let e = &mut sim.list[i];
-    e.sync();
+    e.sync_from(s);
     let pos = e.pos;
     sim.grid.moved(i, pos);
     let e = &mut sim.list[i];

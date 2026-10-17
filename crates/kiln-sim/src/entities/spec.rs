@@ -88,6 +88,11 @@ pub(super) struct Spec {
     log: Log,
     seeds: u64,
     rng: LegacyRandom,
+    /// The entity's box and life before and after, and what the list copies out of it: read here, on the worker that
+    /// has the entity in its cache, not in the serial commit.
+    before: Option<(Aabb, bool)>,
+    after: Option<(Aabb, bool)>,
+    synced: Synced,
 }
 
 /// The level a speculative turn sees: the phase's start through `base` (read only), its own
@@ -685,6 +690,7 @@ fn speculate(sim: &SimLevel, i: usize, ticking: &blocks::Ticking, any_player: bo
     }
     let env = sim.level.env();
     let _enchanting = crate::enchant::install_enchanter(env.loot.as_ref());
+    let before = Some((base.bounding_box(), base.is_alive()));
     let mut phys = Box::new(base.clone());
     let mut lvl = SpecLevel {
         base: sim,
@@ -711,7 +717,8 @@ fn speculate(sim: &SimLevel, i: usize, ticking: &blocks::Ticking, any_player: bo
         phys.tick(&mut lvl);
     }
     let SpecLevel { overlays, spawns, events, packets, log, seeds, rng, .. } = lvl;
-    Some(Spec { phys, overlays, spawns, events, packets, log: log.into_inner(), seeds, rng })
+    let (after, synced) = (Some((phys.bounding_box(), phys.is_alive())), Synced::of(&phys));
+    Some(Spec { phys, overlays, spawns, events, packets, log: log.into_inner(), seeds, rng, before, after, synced })
 }
 
 /// What changed so far this phase, by turns kept or run in place.
@@ -882,16 +889,14 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
         match spec {
             Some(s) => {
                 kept += 1;
-                let own = |sim: &SimLevel| sim.list[i].phys.as_deref().map(|e| (e.bounding_box(), e.is_alive()));
-                let before = own(sim);
+                // (Its state is the phase's start: `before` is what the list holds.)
                 let e = &mut sim.list[i];
                 e.age += 1;
                 garbage.extend(e.phys.replace(s.phys));
                 (sim.current, sim.seeds, sim.rng) = (me, s.seeds, s.rng);
                 sim.current_source = None;
-                settle(sim, i);
-                let after = own(sim);
-                dirty.changed(me, before, after);
+                settle_from(sim, i, s.synced);
+                dirty.changed(me, s.before, s.after);
                 for o in s.overlays {
                     let (id, before) = (o.id, Some((o.before, o.alive)));
                     if o.stand_in {
@@ -925,9 +930,9 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
                     near.extend(p.passengers.iter().copied());
                 }
                 let before: Vec<(i32, Option<(Aabb, bool)>)> = near.iter().map(|&id| (id, shape(sim, id))).collect();
-                sim.touched = Some(Vec::new());
+                sim.touched = Some(Touched::default());
                 tick_turn(sim, i, ticking, any_player);
-                let touched = sim.touched.take().unwrap_or_default();
+                let touched = sim.touched.take().unwrap_or_default().list;
                 for (id, b) in before {
                     let after = shape(sim, id);
                     dirty.changed(id, b, after);
