@@ -11,6 +11,7 @@ ENV["PATH"] = os.path.expanduser("~/.cargo/bin") + ":" + ENV["PATH"]
 ENV.setdefault("KILN_DATAPACK", os.path.expanduser("~/kiln/work/generated"))
 
 SIM = ["test", "--release", "-p", "kiln-sim"]
+VEC = os.path.expanduser("~/kiln/work/wp75")
 # name: ([(file, old, new)], [cargo args])
 CASES = {
     "tick_order": ([("crates/kiln-sim/src/container/mod.rs", "self.ticking.values().map(|p| (*p, self.index[p]))", "self.index.iter().filter(|(_, k)| ticks(**k)).map(|(p, k)| (*p, *k))")], SIM + ["--test", "hopper_order"]),
@@ -30,6 +31,15 @@ CASES = {
     "same_tick_projectile": ([("crates/kiln-sim/src/entities.rs", "let never_looked_at = e.removed && e.section.is_none() && e.kind.tracking_range != 0;", "let never_looked_at = false;")], SIM + ["--test", "player_sync", "a_projectile_gone_in_its_first_tick"]),
     "raid_bar": ([("crates/kiln-sim/src/raid.rs", "            if loaded {\n                self.update_bar_progress(dim, id);\n            }", "")], SIM + ["--test", "raids", "a_raid_in_progress"]),
     "spawner_rewrite": ([("crates/kiln-sim/src/mob_spawner.rs", "        e.dirty = !is_saved_as(&e.save(), nbt);", "        e.dirty = false;")], SIM + ["--lib", "a_spawner_missing_its_defaults_is_rewritten"]),
+    # With the vanilla vectors (they print how many scenarios still agree):
+    "tick_order_vectors": ([("crates/kiln-sim/src/container/mod.rs", "self.ticking.values().map(|p| (*p, self.index[p]))", "self.index.iter().filter(|(_, k)| ticks(**k)).map(|(p, k)| (*p, *k))")], SIM + ["--lib", "container_parity", "--", "--nocapture"], {"KILN_CONTAINER_VECTORS": VEC + "/containers/hc.jsonl"}),
+    "piston_old_progress_vectors": ([("crates/kiln-sim/src/entities/piston.rs", "            m.progress = push.piston.progress;", "            m.progress = push.progress;")], SIM + ["--lib", "container_parity", "--", "--nocapture"], {"KILN_CONTAINER_VECTORS": VEC + "/containers/pi.jsonl"}),
+    "summon_order_vectors": ([("crates/kiln-sim/src/lib.rs", "            batch.append(&mut d.serial_spawns);", "            batch.append(&mut d.serial_spawns);
+            batch = entities::canonical(batch);")], SIM + ["--lib", "container_parity", "--", "--nocapture"], {"KILN_CONTAINER_VECTORS": VEC + "/containers/pi.jsonl"}),
+    "load_vectors_blocks": ([("crates/kiln-item/src/stack.rs", "        let count = if (1..=99).contains(&count) { count } else { 1 };", "")], SIM + ["--lib", "load_parity", "--", "--nocapture"], {"KILN_LOAD_VECTORS": VEC + "/load/ld.jsonl"}),
+    "attr_vectors": ([("crates/kiln-entity/src/mob/attributes.rs", "        i.created = true;
+        Some(i)", "        i.created = false;
+        Some(i)")], SIM + ["--lib", "attr_parity", "--", "--nocapture"], {"KILN_ATTR_VECTORS": VEC + "/attrs/at.jsonl"}),
 }
 
 
@@ -41,7 +51,8 @@ def main():
     names = sys.argv[1:] or list(CASES)
     sh("git", "checkout", "-q", "-f", ".")
     for name in names:
-        edits, cargo = CASES[name]
+        edits, cargo, *extra = CASES[name]
+        extra_env = extra[0] if extra else {}
         ok = True
         for rel, old, new in edits:
             path = os.path.join(ROOT, rel)
@@ -54,8 +65,11 @@ def main():
         if ok:
             log = f"/tmp/neg75_{name}.log"
             with open(log, "w") as f:
-                r = sh("cargo", *cargo, stdout=f, stderr=subprocess.STDOUT)
+                r = subprocess.run(["cargo", *cargo], cwd=ROOT, env=dict(ENV, **extra_env), stdout=f, stderr=subprocess.STDOUT)
             body = open(log, encoding="utf-8", errors="replace").read()
+            for line in body.splitlines():
+                if re.search(r"scenarios pass|match vanilla|instances: ", line):
+                    print("    " + line.strip()[:200])
             if r.returncode == 0:
                 print(f"NEGATIVE {name}: the test PASSED without the fix (BAD)")
             elif re.search(r"test result: FAILED|panicked", body):
