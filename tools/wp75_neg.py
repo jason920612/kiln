@@ -30,19 +30,14 @@ CASES = {
     "damage_event_order": ([("crates/kiln-sim/src/players.rs", "    packets.append(&mut target.pending_sounds);\n", "")], SIM + ["--test", "player_sync", "the_damage_event_comes_before_the_hurt_sound"]),
     "same_tick_projectile": ([("crates/kiln-sim/src/entities.rs", "let never_looked_at = e.removed && e.section.is_none() && e.kind.tracking_range != 0;", "let never_looked_at = false;")], SIM + ["--test", "player_sync", "a_projectile_gone_in_its_first_tick"]),
     "raid_bar": ([("crates/kiln-sim/src/raid.rs", "            if loaded {\n                self.update_bar_progress(dim, id);\n            }", "")], SIM + ["--test", "raids", "a_raid_in_progress"]),
-    "removed_in_tick": ([("crates/kiln-sim/src/entities.rs", "        if !e.removed && e.phys.as_deref().is_some_and(|p| p.is_removed()) {
-            e.sync();", "        if false {
-            e.sync();")], SIM + ["--test", "removed_in_tick"]),
+    "removed_in_tick": ([("crates/kiln-sim/src/entities.rs", "        if !e.removed && e.phys.as_deref().is_some_and(|p| p.is_removed()) {\n            e.sync();", "        if false {\n            e.sync();")], SIM + ["--test", "removed_in_tick"]),
     "spawner_rewrite": ([("crates/kiln-sim/src/mob_spawner.rs", "        e.dirty = !is_saved_as(&e.save(), nbt);", "        e.dirty = false;")], SIM + ["--lib", "a_spawner_missing_its_defaults_is_rewritten"]),
     # With the vanilla vectors (they print how many scenarios still agree):
     "tick_order_vectors": ([("crates/kiln-sim/src/container/mod.rs", "self.ticking.values().map(|p| (*p, self.index[p]))", "self.index.iter().filter(|(_, k)| ticks(**k)).map(|(p, k)| (*p, *k))")], SIM + ["--lib", "container_parity", "--", "--nocapture"], {"KILN_CONTAINER_VECTORS": VEC + "/containers/hc.jsonl"}),
     "piston_old_progress_vectors": ([("crates/kiln-sim/src/entities/piston.rs", "            m.progress = push.piston.progress;", "            m.progress = push.progress;")], SIM + ["--lib", "container_parity", "--", "--nocapture"], {"KILN_CONTAINER_VECTORS": VEC + "/containers/pi.jsonl"}),
-    "summon_order_vectors": ([("crates/kiln-sim/src/lib.rs", "            batch.append(&mut d.serial_spawns);", "            batch.append(&mut d.serial_spawns);
-            batch = entities::canonical(batch);")], SIM + ["--lib", "container_parity", "--", "--nocapture"], {"KILN_CONTAINER_VECTORS": VEC + "/containers/pi.jsonl"}),
+    "summon_order_vectors": ([("crates/kiln-sim/src/lib.rs", "            batch.append(&mut d.serial_spawns);", "            batch.append(&mut d.serial_spawns);\n            batch = entities::canonical(batch);")], SIM + ["--lib", "container_parity", "--", "--nocapture"], {"KILN_CONTAINER_VECTORS": VEC + "/containers/pi.jsonl"}),
     "load_vectors_blocks": ([("crates/kiln-item/src/stack.rs", "        let count = if (1..=99).contains(&count) { count } else { 1 };", "")], SIM + ["--lib", "load_parity", "--", "--nocapture"], {"KILN_LOAD_VECTORS": VEC + "/load/ld.jsonl"}),
-    "attr_vectors": ([("crates/kiln-entity/src/mob/attributes.rs", "        i.created = true;
-        Some(i)", "        i.created = false;
-        Some(i)")], SIM + ["--lib", "attr_parity", "--", "--nocapture"], {"KILN_ATTR_VECTORS": VEC + "/attrs/at.jsonl"}),
+    "attr_vectors": ([("crates/kiln-entity/src/mob/attributes.rs", "        i.created = true;\n        Some(i)", "        i.created = false;\n        Some(i)")], SIM + ["--lib", "attr_parity", "--", "--nocapture"], {"KILN_ATTR_VECTORS": VEC + "/attrs/at.jsonl"}),
 }
 
 
