@@ -384,6 +384,109 @@ impl Spawner<'_> {
     }
 }
 
+/// Counters of the natural spawner's decisions, the same keys the java agent of `tools/wp74/agent` writes for a vanilla server
+/// (`NaturalSpawner.getRandomSpawnMobAt`, `isValidSpawnPostitionForType`, `isValidPositionForMob`, `canSpawnForCategoryGlobal`,
+/// `getFilteredSpawningCategories`), to compare spawn decisions on identical worlds. Off unless `KILN_SPAWN_COUNTERS=<file>` is set (the
+/// file is rewritten every 100 ticks; `KILN_SPAWN_BOX=x0,y0,z0,x1,y1,z1` adds the `IN-BOX` counts of `validPosition`). While on, the
+/// speculative pass is skipped so every attempt is counted once.
+pub mod stats {
+    use std::collections::BTreeMap;
+    use std::sync::{Mutex, OnceLock};
+
+    struct Config {
+        file: std::path::PathBuf,
+        bounds: Option<[i32; 6]>,
+    }
+
+    static CONFIG: OnceLock<Option<Config>> = OnceLock::new();
+    static COUNTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+
+    fn config() -> Option<&'static Config> {
+        CONFIG
+            .get_or_init(|| {
+                let file = std::env::var_os("KILN_SPAWN_COUNTERS").filter(|f| !f.is_empty())?;
+                let bounds = std::env::var("KILN_SPAWN_BOX").ok().and_then(|b| {
+                    let v: Vec<i32> = b.split(',').filter_map(|n| n.trim().parse().ok()).collect();
+                    <[i32; 6]>::try_from(v).ok()
+                });
+                Some(Config { file: file.into(), bounds })
+            })
+            .as_ref()
+    }
+
+    /// Whether the counters are on.
+    pub fn enabled() -> bool {
+        config().is_some()
+    }
+
+    pub(crate) fn add(key: String) {
+        *COUNTS.lock().unwrap().entry(key).or_insert(0) += 1;
+    }
+
+    /// `validPosition` of the vanilla agent: per type, and per type for positions in the box.
+    pub(crate) fn valid_position(type_name: &str, pos: [i32; 3], ok: bool) {
+        let Some(c) = config() else { return };
+        let name = type_name.strip_prefix("minecraft:").unwrap_or(type_name);
+        add(format!("validPosition {name} -> {ok}"));
+        if let Some(b) = c.bounds
+            && (0..3).all(|a| pos[a] >= b[a] && pos[a] <= b[a + 3])
+        {
+            add(format!("validPosition IN-BOX {name} -> {ok}"));
+        }
+    }
+
+    pub(crate) fn valid_mob(type_name: &str, ok: bool) {
+        if enabled() {
+            add(format!("validMob {} -> {ok}", type_name.strip_prefix("minecraft:").unwrap_or(type_name)));
+        }
+    }
+
+    pub(crate) fn pick(type_name: Option<&str>) {
+        if enabled() {
+            add(format!("pick {}", type_name.map_or("(none)", |n| n.strip_prefix("minecraft:").unwrap_or(n))));
+        }
+    }
+
+    /// The vanilla enum name of a category.
+    pub(crate) fn category_name(c: kiln_entity::mob::Category) -> &'static str {
+        use kiln_entity::mob::Category::*;
+        match c {
+            Monster => "MONSTER",
+            Creature => "CREATURE",
+            Misc => "MISC",
+            Ambient => "AMBIENT",
+            Axolotls => "AXOLOTLS",
+            UndergroundWaterCreature => "UNDERGROUND_WATER_CREATURE",
+            WaterCreature => "WATER_CREATURE",
+            WaterAmbient => "WATER_AMBIENT",
+        }
+    }
+
+    pub(crate) fn global(c: kiln_entity::mob::Category, chunks: i32, count: i32, ok: bool) {
+        if enabled() && matches!(c, kiln_entity::mob::Category::Creature | kiln_entity::mob::Category::Monster) {
+            add(format!("global {} chunks={chunks} count={count} -> {ok}", category_name(c)));
+        }
+    }
+
+    pub(crate) fn categories(list: &[kiln_entity::mob::Category]) {
+        if enabled() {
+            add(format!("categories [{}]", list.iter().map(|c| category_name(*c)).collect::<Vec<_>>().join(", ")));
+        }
+    }
+
+    /// The counters so far.
+    pub fn snapshot() -> BTreeMap<String, u64> {
+        COUNTS.lock().unwrap().clone()
+    }
+
+    /// Writes the counters to the file (`key<TAB>count` per line).
+    pub(crate) fn dump() {
+        let Some(c) = config() else { return };
+        let text: String = COUNTS.lock().unwrap().iter().map(|(k, v)| format!("{k}\t{v}\n")).collect();
+        let _ = std::fs::write(&c.file, text);
+    }
+}
+
 /// What `canSpawnForCategoryGlobal` reads for a whole level: the mobs `createState` counts per category and `getNaturalSpawnChunkCount`.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SpawnTotals {
@@ -511,6 +614,9 @@ pub(crate) fn tick(
         },
     };
     let global_ok: [bool; N] = std::array::from_fn(|i| totals.counts[i] < CATEGORIES[i].max_instances() * totals.chunks / 289);
+    if stats::enabled() && env.game_time % 100 == 0 {
+        stats::dump();
+    }
     let dt = crate::diag::lap("s.b_caps", dt);
     let mut s = Spawner {
         pos: players.clone(),
@@ -544,8 +650,17 @@ pub(crate) fn tick(
     // `getFilteredSpawningCategories`.
     let categories: Vec<Category> = CATEGORIES
         .into_iter()
-        .filter(|c| rules.spawn_mobs && (spawn_enemies || c.friendly()) && (spawn_persistent || !c.persistent()) && global_ok[cat_index(*c)])
+        .filter(|c| {
+            let pass = rules.spawn_mobs && (spawn_enemies || c.friendly()) && (spawn_persistent || !c.persistent());
+            if pass {
+                stats::global(*c, totals.chunks, totals.counts[cat_index(*c)], global_ok[cat_index(*c)]);
+            }
+            pass && global_ok[cat_index(*c)]
+        })
         .collect();
+    if rules.spawn_mobs {
+        stats::categories(&categories);
+    }
     // `ServerChunkCache.tickSpawningChunk`: every ticking chunk with a player near gets one more
     // tick of `InhabitedTime`, whether or not anything may spawn.
     level.cells.for_each_cell_mut(&mut |pos, cell| {
@@ -586,7 +701,9 @@ pub(crate) fn tick(
     // chunk sees (its caps), and spawns are rare: in turn, a chunk that spawned nothing and
     // whose caps still say the same is done; the others run again, so the outcome is the
     // serial one whatever the workers.
-    let speculated: Vec<Option<smallvec::SmallVec<[bool; N]>>> = {
+    let speculated: Vec<Option<smallvec::SmallVec<[bool; N]>>> = if stats::enabled() {
+        vec![None; chunks.len()]
+    } else {
         let (lvl, sp, cats) = (&*level, &s, &categories);
         ctx.map_indexed_with(SPAWN_WINDOW, &chunks, |_, &(_, c)| speculate(lvl, sp, c, cats, ticking))
     };
@@ -755,11 +872,16 @@ fn spawn_category_for_chunk(
             if data.is_none() {
                 // `getRandomSpawnMobAt`: rivers have most of their ambient water spawns taken away.
                 if cat == Category::WaterAmbient && kiln_entity::mob::kinds::slime::biome_in_tag(biome as i32, "minecraft:reduce_water_ambient_spawns") && r.next_float() < 0.98 {
+                    stats::pick(None);
                     break;
                 }
                 match pick(here, r) {
-                    None => break,
+                    None => {
+                        stats::pick(None);
+                        break;
+                    }
                     Some(d) => {
+                        stats::pick(Some(d.type_name));
                         let d = d.clone();
                         pack = if d.constant { d.min } else { r.next_int_bounded(d.max - d.min + 1) + d.min };
                         data = Some(d);
@@ -769,21 +891,25 @@ fn spawn_category_for_chunk(
             let d_ = data.clone().unwrap();
             let Some(kind) = d_.kind else { continue };
             // `isValidSpawnPostitionForType`.
-            // The nearest player within the despawn distance.
-            if !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
-                continue;
-            }
-            // `canSpawnMobAt`: what was picked is among what spawns at this very place.
-            if !here.iter().any(|e| *e == d_) {
-                continue;
-            }
-            if !placement_ok(level, pos, kind) || !check_spawn_rules(level, pos, kind, r) {
-                continue;
-            }
             let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
-            // `EntityType.getSpawnAABB`: slimes and magma cubes look for room for a size-4 one (four times their box).
-            let scale = kiln_entity::spawner::spawn_dimensions_scale(t.name);
-            if !no_collision(level, [fx, y as f64, fz], t.width * scale, t.height * scale) {
+            let valid = 'valid: {
+                // The nearest player within the despawn distance.
+                if !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
+                    break 'valid false;
+                }
+                // `canSpawnMobAt`: what was picked is among what spawns at this very place.
+                if !here.iter().any(|e| *e == d_) {
+                    break 'valid false;
+                }
+                if !placement_ok(level, pos, kind) || !check_spawn_rules(level, pos, kind, r) {
+                    break 'valid false;
+                }
+                // `EntityType.getSpawnAABB`: slimes and magma cubes look for room for a size-4 one (four times their box).
+                let scale = kiln_entity::spawner::spawn_dimensions_scale(t.name);
+                no_collision(level, [fx, y as f64, fz], t.width * scale, t.height * scale)
+            };
+            stats::valid_position(d_.type_name, [pos.x, pos.y, pos.z], valid);
+            if !valid {
                 continue;
             }
             // `SpawnState.canSpawn` (the spawn predicate): the biome's cost for the type, and the energy the charges near the spot give it.
@@ -812,7 +938,9 @@ fn spawn_category_for_chunk(
             };
             let ignores_light = kind.ext().is_some_and(|k| k.spawn_ignores_light());
             let liquid_ok = kind.ext().is_some_and(|k| k.spawn_in_liquids());
-            if (walk < 0.0 && !ignores_light) || (!liquid_ok && contains_liquid(level, [fx, y as f64, fz], t.width, t.height)) {
+            let mob_ok = !((walk < 0.0 && !ignores_light) || (!liquid_ok && contains_liquid(level, [fx, y as f64, fz], t.width, t.height)));
+            stats::valid_mob(d_.type_name, mob_ok);
+            if !mob_ok {
                 continue;
             }
             // `finalizeSpawn` draws from the chunk's random.
