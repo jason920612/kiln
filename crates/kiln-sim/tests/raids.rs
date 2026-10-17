@@ -290,7 +290,7 @@ fn a_raid_in_progress_survives_a_restart() {
     w.ticks(5);
     w.village();
     w.ticks(40);
-    assert!(w.sim.sections_to_village("minecraft:overworld", w.pos()) <= 1, "a village");
+    assert!(w.sim.sections_to_village("minecraft:overworld", w.pos()) <= 1, "a village: {:?} at {:?}", w.sim.mobs(), w.pos());
     w.console("gamemode survival Hunter");
     w.console("effect give Hunter minecraft:bad_omen 100 1");
     w.ticks(2);
