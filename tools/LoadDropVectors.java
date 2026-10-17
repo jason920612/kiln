@@ -46,6 +46,8 @@ public class LoadDropVectors {
         c.add(new Case("be_chest_lootable", "block", "chest", "{LootTable:\"minecraft:chests/simple_dungeon\",LootTableSeed:5L,Items:[" + it(0, unknown, 1) + "]}"));
         // Single item block entities.
         c.add(new Case("be_decorated_pot_unknown", "block", "decorated_pot", "{item:{id:\"" + unknown + "\",count:1}}"));
+        c.add(new Case("be_decorated_pot_components", "block", "decorated_pot", "{components:{\"minecraft:pot_decorations\":[\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}}"));
+        c.add(new Case("be_decorated_pot_sherds", "block", "decorated_pot", "{sherds:[\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}"));
         c.add(new Case("be_decorated_pot_ok", "block", "decorated_pot", "{item:{id:\"minecraft:stone\",count:2}}"));
         c.add(new Case("be_decorated_pot_zero", "block", "decorated_pot", "{item:{id:\"minecraft:stone\",count:0}}"));
         c.add(new Case("be_jukebox_unknown", "block", "jukebox", "{RecordItem:{id:\"" + unknown + "\",count:1}}"));
