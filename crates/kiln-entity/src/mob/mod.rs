@@ -1893,7 +1893,10 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         }
     }
     // `canFreeze()` for the powder snow the block effects find: the type and the worn items.
-    e.freeze_immune = entity_type_tag(e.type_name, "minecraft:freeze_immune_entity_types")
+    // (`Skeleton.canFreeze` is false: it only converts into a stray; a sulfur cube with a swallowed item cannot freeze either.)
+    e.freeze_immune = m.kind == MobKind::Skeleton
+        || (m.kind == MobKind::SulfurCube && kinds::sulfur_cube::has_body(m))
+        || entity_type_tag(e.type_name, "minecraft:freeze_immune_entity_types")
         || [FEET, LEGS, CHEST, HEAD].iter().any(|&i| !m.equipment[i].is_empty() && item_tag(m.equipment[i].item(), "minecraft:freeze_immune_wearables"));
     {
         crate::prof!("mob", "apply_effects_from_blocks");
