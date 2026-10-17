@@ -288,6 +288,9 @@ fn a_raid_in_progress_survives_a_restart() {
         w.console(c);
     }
     w.ticks(5);
+    // (A saved world has no ground by itself.)
+    let [x, y, z] = w.pos();
+    w.console(&format!("fill {} {} {} {} {} {} minecraft:stone", x - 12, y - 1, z - 12, x + 14, y - 1, z + 14));
     w.village();
     w.ticks(40);
     assert!(w.sim.sections_to_village("minecraft:overworld", w.pos()) <= 1, "a village: {:?} at {:?}", w.sim.mobs(), w.pos());
