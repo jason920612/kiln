@@ -55,6 +55,26 @@ public final class W72Hook {
         add("validMob " + n + " -> " + (result != 0));
     }
 
+    public static void globalCap(int result, Object state, Object category) {
+        try {
+            var f = state.getClass().getDeclaredField("spawnableChunkCount");
+            f.setAccessible(true);
+            var g = state.getClass().getDeclaredField("mobCategoryCounts");
+            g.setAccessible(true);
+            var counts = (it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap<?>) g.get(state);
+            int n = counts.getInt(category);
+            if (String.valueOf(category).equals("CREATURE")) {
+                add("global CREATURE chunks=" + f.getInt(state) + " count=" + n + " -> " + (result != 0));
+            }
+        } catch (Throwable t) {
+            add("globalCap error " + t);
+        }
+    }
+
+    public static void cats(Object list) {
+        add("categories " + String.valueOf(list));
+    }
+
     public static void pick(Object optional) {
         try {
             var o = (java.util.Optional<?>) optional;

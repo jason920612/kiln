@@ -63,7 +63,19 @@ public final class W72Agent {
                                 b.invokestatic(HOOK, "slimeRet", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_int, ConstantDescs.CD_Object, ConstantDescs.CD_Object));
                             })));
                 }
+                if ("net/minecraft/world/level/NaturalSpawner$SpawnState".equals(name)) {
+                    return cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("canSpawnForCategoryGlobal"), onReturn(b -> {
+                        b.dup();
+                        b.aload(0);
+                        b.aload(1);
+                        b.invokestatic(HOOK, "globalCap", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_int, ConstantDescs.CD_Object, ConstantDescs.CD_Object));
+                    })));
+                }
                 if ("net/minecraft/world/level/NaturalSpawner".equals(name)) {
+                    bytes = cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("getFilteredSpawningCategories"), onReturn(b -> {
+                        b.dup();
+                        b.invokestatic(HOOK, "cats", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_Object));
+                    })));
                     byte[] b1 = cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("isValidSpawnPostitionForType"), onReturn(b -> {
                         b.dup();
                         b.aload(4);
