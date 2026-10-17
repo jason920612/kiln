@@ -23,5 +23,6 @@ fn a_summoned_item_has_its_first_tick_in_the_next_tick() {
     assert!((y - 99.96).abs() < 1e-9, "first tick done: y = {y}");
     assert!(sim.step([]));
     let y2 = y_of(&sim, "minecraft:item");
-    assert!((y2 - (99.96 - 0.0392)).abs() < 1e-6, "second tick: y = {y2}");
+    // (vanilla: 201.96, 201.8808 for a falling block summoned at 202)
+    assert!((y2 - 99.8808).abs() < 1e-6, "second tick: y = {y2}");
 }
