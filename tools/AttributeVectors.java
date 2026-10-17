@@ -111,7 +111,7 @@ public class AttributeVectors {
         int x = 8, y = 80, z = 8;
         server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "summon minecraft:" + c.type + " " + x + " " + y + " " + z + " {Tags:[\"attr_probe\"]}");
         Entity found = null;
-        for (Entity e : level.getEntities((Entity) null, new net.minecraft.world.phys.AABB(x - 3, y - 3, z - 3, x + 3, y + 3, z + 3), e -> e.getTags().contains("attr_probe"))) found = e;
+        for (Entity e : level.getEntities((Entity) null, new net.minecraft.world.phys.AABB(x - 3, y - 3, z - 3, x + 3, y + 3, z + 3), e -> e.entityTags().contains("attr_probe"))) found = e;
         if (found == null) return String.format(Locale.ROOT, "{\"name\":\"%s\",\"type\":\"minecraft:%s\",\"loaded\":false}", c.name, c.type);
         String fresh = attrs(found);
         // A few ticks later (the mob's own code may touch more attributes).
