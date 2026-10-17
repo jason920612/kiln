@@ -105,7 +105,7 @@ fn saved_attributes_and_brain_match_vanilla() {
                 step(&mut sim, &mut client, vec![]);
                 done += 1;
             }
-            let saved = sim.entity_nbt().into_iter().find(|n| n.get("id").and_then(Tag::as_str) == Some(ty));
+            let saved = sim.entity_nbt().into_iter().rfind(|n| n.get("id").and_then(Tag::as_str) == Some(ty));
             let Some(saved) = saved else {
                 failed.push((name.to_owned(), "gone in Kiln".to_owned(), t));
                 break;
