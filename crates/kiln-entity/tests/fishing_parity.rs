@@ -80,7 +80,8 @@ fn bobbers_match_vanilla_tick_by_tick() {
             ];
             let w: Vec<f64> = want.as_array().unwrap().iter().map(|x| x.as_bool().map_or_else(|| num(x), |b| b as u8 as f64)).collect();
             values += got.len();
-            if got.iter().zip(&w).any(|(a, b)| a != b && !(a.is_nan() && b.is_nan())) {
+            // (The fish angle is a float: the vector has its shortest decimal form.)
+            if got.iter().zip(&w).enumerate().any(|(i, (a, b))| if i == 4 { *a as f32 != *b as f32 } else { a != b && !(a.is_nan() && b.is_nan()) }) {
                 failures.push(format!("{name} (luck {} lure {}) t={}: Kiln {got:?}\n    vanilla {w:?}", v["luck_level"], v["lure_level"], t + 1));
                 break;
             }
