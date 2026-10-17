@@ -805,7 +805,7 @@ impl Sim {
         }
         let mut corners: Vec<[i32; 3]> = Vec::new();
         for region in self.dims[dim].regions.iter() {
-            for (p, c) in region.part().1.containers.map.iter() {
+            for (p, c) in region.part().1.containers.iter() {
                 let Some(d) = c.structure.as_deref() else { continue };
                 let inside = (p.x - pos[0]).abs() <= 80 && (p.z - pos[2]).abs() <= 80;
                 if inside && d.mode == Mode::Corner && d.name == name {

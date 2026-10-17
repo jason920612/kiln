@@ -470,6 +470,12 @@ impl Sim {
         self.execute_as(CommandSource::Console, command);
     }
 
+    /// [`Sim::run_console_command`] between ticks, to look at the world right after a command
+    /// returns (for tests).
+    pub fn console_now(&mut self, command: &str) {
+        self.run_console_command(command);
+    }
+
     fn execute_as(&mut self, source: CommandSource, command: &str) {
         let dispatcher = self.commands.dispatcher.clone();
         let previous = std::mem::replace(&mut self.commands.source, source);
@@ -1871,6 +1877,10 @@ impl Host for Sim {
 
     fn set_chunk_forced(&mut self, dimension: &str, chunk: [i32; 2], forced: bool) -> bool {
         crate::dim_id(dimension).is_some_and(|d| self.set_forced(d, chunk, forced))
+    }
+
+    fn load_forced_chunks(&mut self) {
+        self.load_forced_now();
     }
 
     fn random_between(&mut self, sequence: Option<&Identifier>, min: i32, max: i32) -> i32 {

@@ -824,6 +824,7 @@ impl crate::Dim {
     pub(crate) fn store_entities(&mut self, unloaded: &[ChunkPos], all: bool, owners: &HashMap<i32, u128>) -> Vec<(i32, Vec<ConnId>)> {
         // Without storage, entities outside loaded chunks are lost (their cells may go away).
         let storing = self.entity_store.is_some();
+        let dt = std::time::Instant::now();
         let owner = |id: i32| owners.get(&id).copied();
         let mut groups: HashMap<ChunkPos, Vec<Tag>> = HashMap::new();
         let mut leaving: HashSet<i32> = HashSet::new();
@@ -848,6 +849,7 @@ impl crate::Dim {
             }
             to_save.push(mine);
         }
+        let dt = crate::diag::lap_slow("ue.scan", dt);
         // Encoding the entities reads them only: a whole-world save (thousands of entities)
         // encodes side by side, in the same order.
         let lists: Vec<&[entities::Entity]> = self.regions.iter().map(|r| &r.part().0.list[..]).collect();
@@ -866,6 +868,7 @@ impl crate::Dim {
         for (c, tag) in encoded {
             groups.entry(c).or_default().push(tag);
         }
+        let dt = crate::diag::lap_slow("ue.save_in", dt);
         let mut gone = Vec::new();
         if !leaving.is_empty() {
             for r in self.regions.iter_mut() {
@@ -878,6 +881,7 @@ impl crate::Dim {
                 });
             }
         }
+        let dt = crate::diag::lap_slow("ue.leave", dt);
         if !storing {
             return gone;
         }
@@ -891,6 +895,7 @@ impl crate::Dim {
         }
         chunks.sort_unstable_by_key(|c| (c.x, c.z));
         chunks.dedup();
+        let unloaded: HashSet<ChunkPos> = unloaded.iter().copied().collect();
         for c in chunks {
             let mut list = groups.remove(&c).unwrap_or_default();
             let was_unloaded = unloaded.contains(&c);
@@ -910,6 +915,7 @@ impl crate::Dim {
                 store.unloaded(c);
             }
         }
+        crate::diag::lap_slow("ue.store", dt);
         gone
     }
 

@@ -198,6 +198,20 @@ impl GenPool {
         }
     }
 
+    /// Blocks until the threads finish another chunk, and collects it.
+    pub fn wait(&mut self) {
+        if let Ok((pos, chunk)) = self.results.recv()
+            && self.in_flight.contains_key(&pos)
+        {
+            self.ready.entry(pos).or_insert(chunk);
+        }
+        self.collect();
+    }
+
+    pub fn is_ready(&self, pos: ChunkPos) -> bool {
+        self.ready.contains_key(&pos)
+    }
+
     /// Finished chunks waiting to be taken, in position order.
     pub fn ready(&self) -> impl Iterator<Item = ChunkPos> + '_ {
         self.ready.keys().copied()

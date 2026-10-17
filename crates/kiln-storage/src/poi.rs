@@ -21,11 +21,13 @@ pub struct PoiStore {
     pending: HashMap<(i32, i32), Vec<Update>>,
     /// Region writes on a thread of its own, once [`Self::set_background`] asked.
     writer: Option<crate::region::BackgroundWriter>,
+    /// Encoding on a thread of its own, once [`Self::set_background`] asked.
+    encoder: Option<crate::encoder::Encoder>,
 }
 
 impl PoiStore {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { native: None, dir: dir.into(), regions: HashMap::new(), pending: HashMap::new(), writer: None }
+        Self { native: None, dir: dir.into(), regions: HashMap::new(), pending: HashMap::new(), writer: None, encoder: None }
     }
 
     /// Point of interest chunks kept in a native store.
@@ -41,6 +43,11 @@ impl PoiStore {
 
     /// The saved compound of a chunk, if any.
     pub fn load(&mut self, pos: ChunkPos) -> Option<Tag> {
+        // Handed to the encoder and not back: the newest there is.
+        if let Some(root) = self.encoder.as_ref().and_then(|e| e.newest(pos)) {
+            return Some(root.as_ref().clone());
+        }
+        self.collect();
         let data = if let Some(store) = &self.native {
             store.lock().unwrap().read(POI, pos).map(|(_, raw, _)| raw)?
         } else {
@@ -85,23 +92,40 @@ impl PoiStore {
 
     /// Queues a chunk's compound for the next `flush` (`None` deletes it).
     pub fn store(&mut self, pos: ChunkPos, tag: Option<Tag>) {
-        let nbt = tag.map(|t| {
-            let mut buf = bytes::BytesMut::new();
-            t.write_named("", &mut buf);
-            buf
-        });
+        match (tag, self.encoder.as_mut()) {
+            (Some(tag), Some(e)) => e.submit(pos, tag),
+            (tag, encoder) => {
+                // (Newer than whatever is still with the encoder.)
+                if let Some(e) = encoder {
+                    e.forget(pos);
+                }
+                let encoded = tag.map(|t| crate::encoder::encode(&t, self.native.is_none()));
+                self.put(pos, encoded);
+            }
+        }
+    }
+
+    /// Queues a chunk's encoded compound (`None`: delete it) for the next `flush`.
+    fn put(&mut self, pos: ChunkPos, encoded: Option<Vec<u8>>) {
         if let Some(store) = &self.native {
             let mut store = store.lock().unwrap();
-            if nbt.is_some() || store.contains(POI, pos) {
-                store.write(POI, pos, FORM_NBT, nbt.as_deref());
+            if encoded.is_some() || store.contains(POI, pos) {
+                store.write(POI, pos, FORM_NBT, encoded.as_deref());
             }
             return;
         }
-        let payload = nbt.map(|b| crate::region::compress_chunk(&b));
         let (key, (lx, lz)) = Self::local(pos);
         let entry = self.pending.entry(key).or_default();
         entry.retain(|(x, z, _)| (*x, *z) != (lx, lz));
-        entry.push((lx, lz, payload));
+        entry.push((lx, lz, encoded));
+    }
+
+    /// Takes in what the encoder finished.
+    fn collect(&mut self) {
+        let Some(e) = self.encoder.as_mut() else { return };
+        for (pos, encoded) in e.finished() {
+            self.put(pos, Some(encoded));
+        }
     }
 
     /// Writes the queued chunks into their region files.
@@ -110,6 +134,9 @@ impl PoiStore {
     pub fn set_background(&mut self, on: bool) {
         if on && self.writer.is_none() && self.native.is_none() {
             self.writer = Some(crate::region::BackgroundWriter::start("kiln-write-poi"));
+        }
+        if on && self.encoder.is_none() {
+            self.encoder = Some(crate::encoder::Encoder::start("kiln-encode-poi", self.native.is_none()));
         }
     }
 
@@ -128,6 +155,12 @@ impl PoiStore {
     }
 
     pub fn flush(&mut self) -> std::io::Result<usize> {
+        // Everything still with the encoder, encoded here (no waiting for its thread).
+        if let Some(e) = self.encoder.as_mut() {
+            for (pos, encoded) in e.drain() {
+                self.put(pos, Some(encoded));
+            }
+        }
         if let Some(store) = &self.native {
             return store.lock().unwrap().flush();
         }
@@ -176,6 +209,43 @@ mod tests {
         let mut s = PoiStore::new(&dir);
         let back = s.load(a).unwrap();
         assert_eq!(kiln_world::poi::ChunkPois::from_nbt(&back).sections, pois.sections);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// With the encoder thread, reads see the newest compound of a chunk whether its encoding is
+    /// out or back, and a sync writes the newest.
+    #[test]
+    fn newest_compound_while_encoding() {
+        let dir = std::env::temp_dir().join(format!("kiln-poi-encoder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = PoiStore::new(&dir);
+        s.set_background(true);
+        let tag = |n: i32| {
+            let mut pois = kiln_world::poi::ChunkPois::default();
+            for k in 0..n {
+                pois.add([k, 70, 650], kiln_world::poi::type_index("minecraft:meeting").unwrap());
+            }
+            pois.to_nbt(crate::anvil::DATA_VERSION as i32)
+        };
+        let chunks: Vec<ChunkPos> = (0..12).map(|i| ChunkPos { x: i, z: 40 }).collect();
+        let sections = |t: &Option<Tag>| t.as_ref().map(|t| kiln_world::poi::ChunkPois::from_nbt(t).sections);
+        let mut newest = HashMap::new();
+        for round in 0..20 {
+            for (i, &c) in chunks.iter().enumerate() {
+                let t = ((round + i) % 4 != 0).then(|| tag((round + i) as i32 % 5 + 1));
+                s.store(c, t.clone());
+                newest.insert(c, t);
+                assert_eq!(sections(&s.load(c)), sections(&newest[&c]), "round {round}, chunk {c:?}");
+            }
+            if round % 7 == 6 {
+                s.flush().unwrap();
+            }
+        }
+        s.sync().unwrap();
+        let mut fresh = PoiStore::new(&dir);
+        for &c in &chunks {
+            assert_eq!(sections(&fresh.load(c)), sections(&newest[&c]), "after the sync, chunk {c:?}");
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

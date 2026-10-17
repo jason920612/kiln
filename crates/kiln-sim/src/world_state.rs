@@ -14,7 +14,6 @@ use kiln_command::{Text, tr};
 use kiln_javamath::random::{RandomSource, Seed128, XoroshiroRandom};
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets::world_fx as fx;
-use kiln_world::spawn::LoadChunks;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// `MinecraftServer.getAbsoluteMaxWorldSize` (the `max-world-size` default).
@@ -583,6 +582,8 @@ pub(crate) struct WorldState {
     pub tick_times: Vec<i64>,
     pub tick_index: usize,
     pub forced_dirty: bool,
+    /// Chunks forced since the last [`Sim::load_forced_now`]: loaded before the command returns.
+    pub forcing: Vec<(crate::DimId, [i32; 2])>,
     /// A block is being placed with its data (`Host::set_block`): its block entity goes out with the block's change, not on its own.
     pub defer_be_packet: bool,
     /// Block edits of the commands running ([`crate::edits`]).
@@ -609,6 +610,7 @@ impl Default for WorldState {
             tick_times: vec![0; 100],
             tick_index: 0,
             forced_dirty: false,
+            forcing: Vec::new(),
             defer_be_packet: false,
             edits: Default::default(),
             pipelines: Vec::new(),
@@ -708,22 +710,45 @@ impl Sim {
         }
     }
 
-    /// `ServerLevel.setChunkForced`: loads and keeps the chunk, or lets it go.
+    /// `ServerLevel.setChunkForced`: keeps the chunk, or lets it go. A newly forced chunk loads in
+    /// [`Sim::load_forced_now`], which the command calls before it returns.
     pub(crate) fn set_forced(&mut self, dim: crate::DimId, chunk: [i32; 2], forced: bool) -> bool {
         let changed = if forced { self.world.forced[dim].insert(chunk) } else { self.world.forced[dim].remove(&chunk) };
         if changed {
             self.world.forced_dirty = true;
             if forced {
-                // Vanilla's `getChunk` blocks until the chunk is full: the commands that follow in the same tick can edit it. Here
-                // the chunk is put in its region at once too (a chunk without a region waits in `pending` until the next tick, and
-                // then installs within a time budget unless it is urgent).
-                let pos = kiln_world::ChunkPos::new(chunk[0], chunk[1]);
-                self.dims[dim].load_chunk(pos);
-                self.dims[dim].urgent.insert(pos);
-                self.apply_topology();
+                self.world.forcing.push((dim, chunk));
             }
         }
         changed
+    }
+
+    /// The `getChunk` of `setChunkForced` for the chunks forced since the last call. Vanilla's blocks
+    /// until each chunk is full, so the commands that follow in the same tick can edit it; here too
+    /// every one of them is loaded, in its region and lit when this returns. The missing ones are
+    /// generated side by side on the generation threads, ahead of everything else, while the tick
+    /// waits (vanilla's main thread waits for its worker threads the same way), instead of one after
+    /// another on the tick thread.
+    pub(crate) fn load_forced_now(&mut self) {
+        let mut forcing = std::mem::take(&mut self.world.forcing);
+        if forcing.is_empty() {
+            return;
+        }
+        forcing.sort_unstable();
+        forcing.dedup();
+        let by_dim = |dim| forcing.iter().filter(move |(d, _)| *d == dim).map(|&(_, [x, z])| kiln_world::ChunkPos::new(x, z));
+        for dim in 0..self.dims.len() {
+            let wanted: Vec<_> = by_dim(dim).collect();
+            if !wanted.is_empty() {
+                self.dims[dim].load_now(&wanted);
+            }
+        }
+        // Their cells get regions (chunks without one wait in `pending`, put first as urgent).
+        self.apply_topology();
+        for dim in 0..self.dims.len() {
+            let wanted: Vec<_> = by_dim(dim).collect();
+            self.dims[dim].light_now(&wanted);
+        }
     }
 
     /// Tells every player about a tick rate change and reports a finished sprint.

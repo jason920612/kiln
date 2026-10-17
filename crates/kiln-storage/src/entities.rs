@@ -5,6 +5,7 @@ use crate::anvil::DATA_VERSION;
 use crate::region::RegionFile;
 use kiln_proto::nbt::{self, Tag};
 use kiln_world::ChunkPos;
+use crate::encoder::{Encoder, encode};
 use std::collections::{HashMap, HashSet};
 use crate::native::{ENTITIES, FORM_NBT, NativeStore};
 use std::path::PathBuf;
@@ -28,11 +29,13 @@ pub struct EntityStore {
     /// them empty again writes nothing.
     empty: HashSet<ChunkPos>,
     warned_version: bool,
+    /// Encoding on a thread of its own, once [`Self::set_background`] asked.
+    encoder: Option<Encoder>,
 }
 
 impl EntityStore {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { native: None, dir: dir.into(), regions: HashMap::new(), pending: HashMap::new(), writer: None, empty: HashSet::new(), warned_version: false }
+        Self { native: None, dir: dir.into(), regions: HashMap::new(), pending: HashMap::new(), writer: None, empty: HashSet::new(), warned_version: false, encoder: None }
     }
 
     /// Entity chunks kept in a native store.
@@ -83,6 +86,11 @@ impl EntityStore {
         if self.empty.contains(&pos) {
             return Vec::new();
         }
+        // Handed to the encoder and not back: the newest there is.
+        if let Some(root) = self.encoder.as_ref().and_then(|e| e.newest(pos)) {
+            return root.get("Entities").and_then(Tag::as_list).unwrap_or(&[]).iter().map(|t| t.unwrap_list_element().clone()).collect();
+        }
+        self.collect();
         let Some(data) = self.read_nbt(pos) else {
             self.empty.insert(pos);
             return Vec::new();
@@ -119,35 +127,54 @@ impl EntityStore {
     /// `EntityStorage.storeEntities`: queues a chunk's entities for the next `flush`. An empty
     /// list deletes the chunk's data unless it is already known to be empty.
     pub fn store(&mut self, pos: ChunkPos, entities: Vec<Tag>) {
-        let nbt = if entities.is_empty() {
+        if entities.is_empty() {
             if !self.empty.insert(pos) {
                 return;
             }
-            None
-        } else {
-            let root = Tag::Compound(vec![
-                ("DataVersion".into(), Tag::Int(DATA_VERSION as i32)),
-                ("Entities".into(), Tag::List(entities)),
-                ("Position".into(), Tag::IntArray(vec![pos.x, pos.z])),
-            ]);
-            let mut buf = bytes::BytesMut::new();
-            root.write_named("", &mut buf);
-            self.empty.remove(&pos);
-            Some(buf)
-        };
+            // (Newer than whatever is still with the encoder.)
+            if let Some(e) = self.encoder.as_mut() {
+                e.forget(pos);
+            }
+            self.put(pos, None);
+            return;
+        }
+        self.empty.remove(&pos);
+        let root = Tag::Compound(vec![
+            ("DataVersion".into(), Tag::Int(DATA_VERSION as i32)),
+            ("Entities".into(), Tag::List(entities)),
+            ("Position".into(), Tag::IntArray(vec![pos.x, pos.z])),
+        ]);
+        match self.encoder.as_mut() {
+            Some(e) => e.submit(pos, root),
+            None => {
+                let encoded = encode(&root, self.native.is_none());
+                self.put(pos, Some(encoded));
+            }
+        }
+    }
+
+    /// Queues a chunk's encoded entities (`None`: it has none) for the next `flush`.
+    fn put(&mut self, pos: ChunkPos, encoded: Option<Vec<u8>>) {
         if let Some(store) = &self.native {
             let mut store = store.lock().unwrap();
             // Deleting what is not stored changes nothing.
-            if nbt.is_some() || store.contains(ENTITIES, pos) {
-                store.write(ENTITIES, pos, FORM_NBT, nbt.as_deref());
+            if encoded.is_some() || store.contains(ENTITIES, pos) {
+                store.write(ENTITIES, pos, FORM_NBT, encoded.as_deref());
             }
             return;
         }
-        let payload = nbt.map(|b| crate::region::compress_chunk(&b));
         let (key, (lx, lz)) = Self::local(pos);
         let entry = self.pending.entry(key).or_default();
         entry.retain(|(x, z, _)| (*x, *z) != (lx, lz));
-        entry.push((lx, lz, payload));
+        entry.push((lx, lz, encoded));
+    }
+
+    /// Takes in what the encoder finished.
+    fn collect(&mut self) {
+        let Some(e) = self.encoder.as_mut() else { return };
+        for (pos, encoded) in e.finished() {
+            self.put(pos, Some(encoded));
+        }
     }
 
     /// Forgets what is known about a chunk that unloaded (its data stays pending until
@@ -162,6 +189,9 @@ impl EntityStore {
     pub fn set_background(&mut self, on: bool) {
         if on && self.writer.is_none() && self.native.is_none() {
             self.writer = Some(crate::region::BackgroundWriter::start("kiln-write-entities"));
+        }
+        if on && self.encoder.is_none() {
+            self.encoder = Some(Encoder::start("kiln-encode-entities", self.native.is_none()));
         }
     }
 
@@ -180,6 +210,12 @@ impl EntityStore {
     }
 
     pub fn flush(&mut self) -> std::io::Result<usize> {
+        // Everything still with the encoder, encoded here (no waiting for its thread).
+        if let Some(e) = self.encoder.as_mut() {
+            for (pos, encoded) in e.drain() {
+                self.put(pos, Some(encoded));
+            }
+        }
         if let Some(store) = &self.native {
             return store.lock().unwrap().flush();
         }
@@ -247,6 +283,42 @@ mod tests {
         // Storing an already empty chunk empty again queues nothing.
         s.store(a, Vec::new());
         assert_eq!(s.flush().unwrap(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// With the encoder thread, a chunk read back at any moment (its encoding out or back, flushed
+    /// or not) has its newest entities, never an older copy, and a flush writes the newest.
+    #[test]
+    fn entities_read_back_while_encoding_are_the_newest() {
+        let dir = std::env::temp_dir().join(format!("kiln-entity-encoder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = EntityStore::new(&dir);
+        s.set_background(true);
+        let chunks: Vec<ChunkPos> = (0..40).map(|i| ChunkPos { x: i % 7 - 3, z: i / 7 - 40 }).collect();
+        let mut newest: HashMap<ChunkPos, Vec<Tag>> = HashMap::new();
+        for round in 0..30 {
+            for (i, &c) in chunks.iter().enumerate() {
+                // Some rounds leave a chunk empty, some store more entities than before.
+                let n = (round * 7 + i) % 5;
+                let list: Vec<Tag> = (0..n as i32).map(|k| entity(round as i32 * 100 + k)).collect();
+                s.store(c, list.clone());
+                newest.insert(c, list);
+                if (round + i) % 3 == 0 {
+                    assert_eq!(s.load(c), newest[&c], "round {round}, chunk {c:?}");
+                }
+            }
+            if round % 10 == 9 {
+                s.flush().unwrap();
+            }
+            for &c in &chunks {
+                assert_eq!(s.load(c), newest[&c], "round {round}, chunk {c:?}");
+            }
+        }
+        s.sync().unwrap();
+        let mut fresh = EntityStore::new(&dir);
+        for &c in &chunks {
+            assert_eq!(fresh.load(c), newest[&c], "after the flush, chunk {c:?}");
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -22,3 +22,78 @@ fn commands_after_a_forceload_in_the_same_tick_can_edit_the_chunk() {
     assert_eq!(sim.block_at(4002, 80, 4002), Some(d::GOLD_BLOCK), "a fill in it");
     assert_eq!(sim.block_at(4131, 80, 4131), Some(d::EMERALD_BLOCK), "a range of chunks, the last one");
 }
+
+/// The vanilla datapack (`KILN_DATAPACK`, else `$KILN_WORK/generated`, else `work/generated`).
+fn datapack() -> Option<std::path::PathBuf> {
+    use std::path::{Path, PathBuf};
+    let dir = match std::env::var_os("KILN_DATAPACK").filter(|d| !d.is_empty()) {
+        Some(d) => PathBuf::from(d),
+        None => {
+            let work = match std::env::var_os("KILN_WORK") {
+                Some(d) if !d.is_empty() => PathBuf::from(d),
+                _ => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../work"),
+            };
+            work.join("generated")
+        }
+    };
+    if dir.join("reports/biome_parameters").is_dir() {
+        Some(dir)
+    } else {
+        eprintln!("skipped: no datapack at {} (KILN_DATAPACK or `cargo xtask data`)", dir.display());
+        None
+    }
+}
+
+/// wp73: with generated terrain the forced chunks are made side by side on the generation threads
+/// while the command waits (not one after another on the tick thread), and when it returns they
+/// are all there and lit (none waits for its region's next run to get the light across its
+/// borders).
+#[test]
+fn generated_forced_chunks_are_loaded_and_lit_when_the_command_returns() {
+    let Some(datapack) = datapack() else { return };
+    let mut config = SimConfig::new(4, 3, None);
+    config.noise = Some(kiln_sim::NoiseConfig { seed: 73, datapack, threads: 4 });
+    let mut sim = Sim::new(config);
+    assert!(sim.step([]));
+    sim.console_now("forceload add 1600 1600 1663 1631");
+    sim.console_now("setblock 1663 300 1631 minecraft:diamond_block");
+    assert_eq!(sim.block_at(1663, 300, 1631), Some(d::DIAMOND_BLOCK), "the far corner, right after");
+    for cx in 100..104 {
+        for cz in 100..102 {
+            assert!(sim.block_at(cx * 16 + 8, 0, cz * 16 + 8).is_some(), "chunk {cx},{cz} is loaded");
+        }
+    }
+    assert_eq!(sim.unlit_chunks(), 0, "a forced chunk still waits for its light");
+}
+
+/// wp73: chunks forced again after they were let go and saved come from storage, and every one of
+/// them is in its region when the command returns (more than a tick's install count of chunks read
+/// from storage, waiting for their cells' regions, went in a few at a time: the far corner was not
+/// loaded yet).
+#[test]
+fn forced_chunks_read_from_storage_are_in_their_regions_when_the_command_returns() {
+    let Some(datapack) = datapack() else { return };
+    let dir = std::env::temp_dir().join(format!("kiln-forceload-reload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut config = SimConfig::new(4, 3, Some(dir.clone()));
+    config.noise = Some(kiln_sim::NoiseConfig { seed: 73, datapack, threads: 4 });
+    let mut sim = Sim::new(config);
+    assert!(sim.step([]));
+    sim.console_now("forceload add 1600 1600 1727 1727");
+    assert!(sim.block_at(1727, 0, 1727).is_some());
+    sim.console_now("forceload remove 1600 1600 1727 1727");
+    for _ in 0..60 {
+        assert!(sim.step([]));
+    }
+    assert!(sim.block_at(1727, 0, 1727).is_none(), "let go and unloaded");
+    sim.console_now("forceload add 1600 1600 1727 1727");
+    sim.console_now("setblock 1727 300 1727 minecraft:diamond_block");
+    assert_eq!(sim.block_at(1727, 300, 1727), Some(d::DIAMOND_BLOCK), "the far corner, right after");
+    for cx in 100..108 {
+        for cz in 100..108 {
+            assert!(sim.block_at(cx * 16 + 8, 0, cz * 16 + 8).is_some(), "chunk {cx},{cz} is loaded");
+        }
+    }
+    drop(sim);
+    let _ = std::fs::remove_dir_all(&dir);
+}

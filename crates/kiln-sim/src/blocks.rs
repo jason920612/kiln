@@ -28,7 +28,7 @@ use kiln_region::{CellPos, CellSet, RegionPart};
 use kiln_world::chunk::{Chunk, LightLayer, SavedTicks};
 use kiln_world::{Blocks, Cell, CellStore, ChunkPos};
 use smallvec::SmallVec;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 /// `max-chained-neighbor-updates` default.
 const MAX_CHAINED_NEIGHBOR_UPDATES: i32 = 1_000_000;
@@ -152,23 +152,29 @@ impl RegionBlocks {
     }
 
     /// A chunk leaves the region's cells: its ticks and moving pistons go onto it for saving.
+    /// [`RegionBlocks::chunks_unloaded`] follows for the whole batch.
     pub fn chunk_unloaded(&mut self, pos: ChunkPos, chunk: &mut Chunk, game_time: i64) {
         self.store(pos, chunk, game_time);
         self.block_ticks.remove_container(key(pos));
         self.fluid_ticks.remove_container(key(pos));
-        // Not applied yet (its neighbours never loaded): generation's updates are dropped.
-        self.generated.retain(|(p, _)| *p != pos);
-        let gone: Vec<BlockPos> = self.data.pistons.iter().map(|(p, _)| p).filter(|&p| chunk_of(p) == pos).collect();
-        for p in gone {
-            self.data.pistons.remove(p);
-        }
-        self.data.pistons.lids.retain(|p, _| chunk_of(*p) != pos);
         self.containers.chunk_unloaded(pos);
         self.sculk.chunk_unloaded(pos);
         self.hearts.chunk_unloaded(pos);
         self.gateways.chunk_unloaded(pos);
-        self.initial_mobs.retain(|p| *p != pos);
         self.spawners.chunk_unloaded(pos);
+    }
+
+    /// What the chunks of an unload batch leave in the region's lists, in one pass over each
+    /// (one pass per chunk made a batch of thousands of chunks quadratic).
+    pub fn chunks_unloaded(&mut self, gone: &HashSet<ChunkPos>) {
+        // Not applied yet (their neighbours never loaded): generation's updates are dropped.
+        self.generated.retain(|(p, _)| !gone.contains(p));
+        let moving: Vec<BlockPos> = self.data.pistons.iter().map(|(p, _)| p).filter(|&p| gone.contains(&chunk_of(p))).collect();
+        for p in moving {
+            self.data.pistons.remove(p);
+        }
+        self.data.pistons.lids.retain(|p, _| !gone.contains(&chunk_of(*p)));
+        self.initial_mobs.retain(|p| !gone.contains(p));
     }
 
     /// Puts the chunk's scheduled ticks and moving pistons on it in their saved form.

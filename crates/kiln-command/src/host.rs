@@ -1170,10 +1170,15 @@ pub trait Host: SelectorWorld {
     fn forced_chunks(&self, _dimension: &str) -> Vec<[i32; 2]> {
         Vec::new()
     }
-    /// `ServerLevel.setChunkForced`: whether it changed.
+    /// `ServerLevel.setChunkForced`: whether it changed. A newly forced chunk may still be on its way
+    /// until [`Host::load_forced_chunks`].
     fn set_chunk_forced(&mut self, _dimension: &str, _chunk: [i32; 2], _forced: bool) -> bool {
         false
     }
+    /// The `getChunk` half of `setChunkForced`, for every chunk forced since the last call: returns
+    /// once they are all loaded (vanilla waits for each in turn, its generation threads working
+    /// meanwhile; a host can load them side by side).
+    fn load_forced_chunks(&mut self) {}
     /// `Mth.randomBetweenInclusive` on random sequence `sequence` (the server's, seeded from
     /// the world seed) or, without one, the level random.
     fn random_between(&mut self, _sequence: Option<&Identifier>, min: i32, _max: i32) -> i32 {

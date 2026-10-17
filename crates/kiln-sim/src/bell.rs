@@ -113,10 +113,9 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &mut Entities, ticking: &c
     let bells: Vec<BlockPos> = level
         .blocks
         .containers
-        .map
-        .iter()
-        .filter(|(p, c)| c.kind == BeKind::Bell && ticking.contains(ChunkPos::of_block(p.x, p.z)))
-        .map(|(p, _)| *p)
+        .of_kind(|k| k == BeKind::Bell)
+        .filter(|(p, _)| ticking.contains(ChunkPos::of_block(p.x, p.z)))
+        .map(|(p, _)| p)
         .collect();
     for pos in bells {
         let center = kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z);

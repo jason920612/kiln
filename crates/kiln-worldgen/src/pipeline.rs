@@ -36,7 +36,9 @@ use crate::structure::{ChunkStarts, StartCache, Structures};
 use kiln_proto::nbt::Tag;
 use std::collections::{HashMap, HashSet};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 /// Everything overworld generation needs, shared by all generation threads.
 pub struct Worldgen {
@@ -77,6 +79,12 @@ impl Worldgen {
     }
 }
 
+/// A step [`Pipeline::full`] can take.
+enum Work {
+    Decorate((i32, i32)),
+    Terrain((i32, i32)),
+}
+
 enum Slot {
     /// TERRAIN in progress on some thread.
     Generating,
@@ -111,6 +119,23 @@ pub struct PipelineStats {
 /// Terrain prefetch radius around a requested chunk (see [`Pipeline::wait_or_help`]).
 const PREFETCH: i32 = 3;
 
+/// Thread time spent generating terrain, decorating and waiting for other threads (nanoseconds,
+/// summed over every pipeline and thread), for load tools: how much of the generation threads'
+/// time is work.
+static TERRAIN_NS: AtomicU64 = AtomicU64::new(0);
+static DECORATE_NS: AtomicU64 = AtomicU64::new(0);
+static WAIT_NS: AtomicU64 = AtomicU64::new(0);
+
+/// `(terrain, decorate, wait)` thread time so far.
+pub fn timing() -> (Duration, Duration, Duration) {
+    let d = |a: &AtomicU64| Duration::from_nanos(a.load(Relaxed));
+    (d(&TERRAIN_NS), d(&DECORATE_NS), d(&WAIT_NS))
+}
+
+fn add(a: &AtomicU64, since: Instant) {
+    a.fetch_add(since.elapsed().as_nanos() as u64, Relaxed);
+}
+
 /// The chunk generation scheduler. `Sync`: share it (`Arc`) between generation threads, each
 /// with its own [`GenScratch`].
 pub struct Pipeline {
@@ -137,6 +162,13 @@ impl Pipeline {
 
     /// Generates the chunk through FULL: its 3×3 neighbourhood decorated, so nothing will
     /// write to it any more. Blocks until done.
+    ///
+    /// The calling thread works through the decorations the chunk needs (its 3×3 and their
+    /// predecessors, [`order::decoration_order`]), each time taking whichever is ready (its
+    /// predecessors decorated, its window's terrain there and nobody else's decoration using it),
+    /// or else a missing terrain of one of their windows; it waits only when there is none.
+    /// Threads asking for nearby chunks share these decorations and each takes a different
+    /// ready one (instead of descending the same predecessor chain and waiting for each other).
     pub fn full(&self, gs: &mut GenScratch, x: i32, z: i32) -> ProtoChunk {
         {
             let mut s = self.state.lock().unwrap();
@@ -153,34 +185,68 @@ impl Pipeline {
                 }
             }
         }
-        for dz in -1..=1 {
-            for dx in -1..=1 {
-                self.decorate(gs, x + dx, z + dz);
-            }
-        }
+        let mut todo = order::decoration_order(&[(x, z)]);
         let mut s = self.state.lock().unwrap();
         loop {
-            if s.finished.contains(&(x, z)) {
-                drop(s);
-                return Pipeline::new(self.world.clone()).full(gs, x, z);
+            todo.retain(|p| !s.decorated.contains(p));
+            if todo.is_empty() {
+                break;
             }
-            match s.chunks.remove(&(x, z)) {
-                Some(Slot::Ready(c)) => {
-                    s.finished.insert((x, z));
-                    s.stamps.remove(&(x, z));
-                    Self::park_idle(&mut s);
+            s = match Self::pick(&s, &todo) {
+                Some(Work::Decorate(d)) => self.decorate(s, gs, d),
+                Some(Work::Terrain(p)) => {
+                    s.chunks.insert(p, Slot::Generating);
                     drop(s);
-                    let mut c = *c;
-                    c.unpark();
-                    return c;
+                    let chunk = self.generate_terrain(gs, p.0, p.1);
+                    let mut s = self.state.lock().unwrap();
+                    Self::put_back(&mut s, p, chunk);
+                    self.wake.notify_all();
+                    s
                 }
-                Some(other) => {
-                    s.chunks.insert((x, z), other);
-                    s = self.wait_or_help(s, gs);
+                None => self.wait_or_help(s, gs),
+            };
+        }
+        if s.finished.contains(&(x, z)) {
+            drop(s);
+            return Pipeline::new(self.world.clone()).full(gs, x, z);
+        }
+        // Every decoration that could borrow it is done: it is back and nothing takes it again.
+        match s.chunks.remove(&(x, z)) {
+            Some(Slot::Ready(c)) => {
+                s.finished.insert((x, z));
+                s.stamps.remove(&(x, z));
+                Self::park_idle(&mut s);
+                drop(s);
+                let mut c = *c;
+                c.unpark();
+                c
+            }
+            _ => unreachable!("decorated neighbourhood without the chunk {x},{z}"),
+        }
+    }
+
+    /// The next step for `todo` (decorations not done, in canonical order): the first one that can
+    /// run now, else the first missing terrain of their windows.
+    fn pick(s: &State, todo: &[(i32, i32)]) -> Option<Work> {
+        let mut terrain = None;
+        for &(x, z) in todo {
+            let mut free = true;
+            for i in 0..9 {
+                let w = (x + i % 3 - 1, z + i / 3 - 1);
+                match s.chunks.get(&w) {
+                    Some(Slot::Ready(_)) => {}
+                    Some(_) => free = false,
+                    None => {
+                        free = false;
+                        terrain = terrain.or(Some(w));
+                    }
                 }
-                None => unreachable!("decorated neighbourhood without the chunk"),
+            }
+            if free && order::predecessors(x, z).all(|p| s.decorated.contains(&p)) {
+                return Some(Work::Decorate((x, z)));
             }
         }
+        terrain.map(Work::Terrain)
     }
 
     /// The chunk's `structures` NBT (`SerializableChunkData.packStructureData`): the starts
@@ -220,25 +286,6 @@ impl Pipeline {
         Some((found.pos, w.structures.structures[found.structure].name.clone()))
     }
 
-    /// Makes sure the chunk is at TERRAIN or later.
-    fn terrain(&self, gs: &mut GenScratch, x: i32, z: i32) {
-        let mut s = self.state.lock().unwrap();
-        loop {
-            debug_assert!(!s.finished.contains(&(x, z)), "terrain requested for a finished chunk {x},{z}");
-            match s.chunks.get(&(x, z)) {
-                Some(Slot::Ready(_) | Slot::Borrowed) => return,
-                Some(Slot::Generating) => s = self.wait_or_help(s, gs),
-                None => break,
-            }
-        }
-        s.chunks.insert((x, z), Slot::Generating);
-        drop(s);
-        let chunk = self.generate_terrain(gs, x, z);
-        let mut s = self.state.lock().unwrap();
-        Self::put_back(&mut s, (x, z), chunk);
-        self.wake.notify_all();
-    }
-
     /// A chunk back in the pipeline, waiting; stamped for parking.
     fn put_back(s: &mut State, key: (i32, i32), chunk: Box<ProtoChunk>) {
         s.ops += 1;
@@ -269,6 +316,13 @@ impl Pipeline {
 
     /// BIOMES and TERRAIN (with the chunk's beardifier when structures generate).
     fn generate_terrain(&self, gs: &mut GenScratch, x: i32, z: i32) -> Box<ProtoChunk> {
+        let started = Instant::now();
+        let chunk = self.generate_terrain_untimed(gs, x, z);
+        add(&TERRAIN_NS, started);
+        chunk
+    }
+
+    fn generate_terrain_untimed(&self, gs: &mut GenScratch, x: i32, z: i32) -> Box<ProtoChunk> {
         let beard = self.world.generate_structures.then(|| {
             let starts = ChunkStarts::new(&self.world.structures, &self.world.generator, &self.starts, &mut gs.structures, x, z);
             Beardifier::for_chunk(&self.world.structures, &starts, x, z)
@@ -291,42 +345,23 @@ impl Pipeline {
             self.wake.notify_all();
             return s;
         }
-        self.wake.wait(s).unwrap()
+        let started = Instant::now();
+        let s = self.wake.wait(s).unwrap();
+        add(&WAIT_NS, started);
+        s
     }
 
-    /// FEATURES for one chunk, after the chunks that must precede it in canonical order.
-    fn decorate(&self, gs: &mut GenScratch, x: i32, z: i32) {
-        if self.state.lock().unwrap().decorated.contains(&(x, z)) {
-            return;
-        }
-        for (px, pz) in order::predecessors(x, z) {
-            self.decorate(gs, px, pz);
-        }
-        for dz in -1..=1 {
-            for dx in -1..=1 {
-                self.terrain(gs, x + dx, z + dz);
-            }
-        }
-        let window = {
-            let mut s = self.state.lock().unwrap();
-            loop {
-                if s.decorated.contains(&(x, z)) {
-                    return;
-                }
-                let free = (0..9).all(|i| matches!(s.chunks.get(&(x + i % 3 - 1, z + i / 3 - 1)), Some(Slot::Ready(_))));
-                if free {
-                    break;
-                }
-                s = self.wait_or_help(s, gs);
-            }
-            debug_assert!(order::predecessors(x, z).all(|p| s.decorated.contains(&p)), "decorating {x},{z} out of order");
-            (0..9)
-                .map(|i| match s.chunks.insert((x + i % 3 - 1, z + i / 3 - 1), Slot::Borrowed) {
-                    Some(Slot::Ready(c)) => c,
-                    _ => unreachable!(),
-                })
-                .collect::<Vec<_>>()
-        };
+    /// FEATURES for one chunk whose predecessors are decorated and whose window is free
+    /// ([`Pipeline::pick`]): borrows the window, decorates it unlocked, and puts it back.
+    fn decorate<'a>(&'a self, mut s: MutexGuard<'a, State>, gs: &mut GenScratch, (x, z): (i32, i32)) -> MutexGuard<'a, State> {
+        debug_assert!(order::predecessors(x, z).all(|p| s.decorated.contains(&p)), "decorating {x},{z} out of order");
+        let window: Vec<Box<ProtoChunk>> = (0..9)
+            .map(|i| match s.chunks.insert((x + i % 3 - 1, z + i / 3 - 1), Slot::Borrowed) {
+                Some(Slot::Ready(c)) => c,
+                _ => unreachable!(),
+            })
+            .collect();
+        drop(s);
         let mut window = window;
         for c in &mut window {
             c.unpark();
@@ -334,10 +369,12 @@ impl Pipeline {
         let starts = self.world.generate_structures.then(|| {
             ChunkStarts::new(&self.world.structures, &self.world.generator, &self.starts, &mut gs.structures, x, z)
         });
+        let started = Instant::now();
         let mut region = Region::new(window, x, z, &self.world.generator, gs);
         let structures = starts.as_ref().map(|s| (&self.world.structures, s));
         self.world.decorator.decorate(&mut region, structures, &mut ());
         let chunks = region.into_chunks();
+        add(&DECORATE_NS, started);
         let mut s = self.state.lock().unwrap();
         for (i, mut c) in chunks.into_iter().enumerate() {
             if i == 4 {
@@ -347,5 +384,6 @@ impl Pipeline {
         }
         s.decorated.insert((x, z));
         self.wake.notify_all();
+        s
     }
 }

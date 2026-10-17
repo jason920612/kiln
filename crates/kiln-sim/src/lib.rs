@@ -1209,6 +1209,65 @@ impl Dim {
         false
     }
 
+    /// Loads every chunk of `wanted` before returning (blocking): stored ones from storage at once, the
+    /// missing ones generated ahead of everything else on the generation threads, side by side, and
+    /// installed as they come back. The ones that wait for their cell's region are urgent: they go
+    /// into it as soon as the regionizer gives it one, whatever the tick's install counts.
+    fn load_now(&mut self, wanted: &[ChunkPos]) {
+        for &pos in wanted {
+            if self.regions.chunk(pos).is_none() {
+                self.urgent.insert(pos);
+            }
+        }
+        if self.generation.is_none() {
+            for &pos in wanted {
+                self.load_chunk(pos);
+            }
+            return;
+        }
+        let started = Instant::now();
+        let mut missing: Vec<ChunkPos> = wanted.iter().copied().filter(|&pos| !self.request_urgent(pos)).collect();
+        let generated = missing.len();
+        while !missing.is_empty() {
+            let pool = self.generation.as_mut().unwrap();
+            pool.collect();
+            if !missing.iter().any(|&p| pool.is_ready(p)) {
+                pool.wait();
+                continue;
+            }
+            let mut i = 0;
+            while i < missing.len() {
+                let pos = missing[i];
+                match self.generation.as_mut().unwrap().take(pos) {
+                    Some(chunk) => {
+                        missing.swap_remove(i);
+                        if !self.is_loaded(pos) {
+                            self.timed_install(pos, chunk);
+                        }
+                    }
+                    None => i += 1,
+                }
+            }
+        }
+        if generated > 0 {
+            debug!("{} chunks of {} loaded now, {generated} generated, in {:?}", wanted.len(), self.key, started.elapsed());
+        }
+    }
+
+    /// Lights the chunks of `wanted` still waiting for their region's next run.
+    fn light_now(&mut self, wanted: &[ChunkPos]) {
+        if self.unlit.is_empty() {
+            return;
+        }
+        let wanted: HashSet<ChunkPos> = wanted.iter().copied().collect();
+        let (now, later): (Vec<ChunkPos>, Vec<ChunkPos>) =
+            std::mem::take(&mut self.unlit).into_iter().partition(|p| wanted.contains(p) && self.regions.chunk(*p).is_some());
+        self.unlit = later;
+        for pos in now {
+            kiln_world::light::light_new_chunk(&mut self.regions, pos);
+        }
+    }
+
     /// `install`, counted in the chunk statistics.
     fn timed_install(&mut self, pos: ChunkPos, chunk: Chunk) -> bool {
         let started = Instant::now();
@@ -1306,11 +1365,16 @@ impl Dim {
     /// the chunks that unloaded.
     fn unload(&mut self, chunks: Vec<ChunkPos>, keep: &HashSet<ChunkPos>) -> Vec<ChunkPos> {
         let mut unloaded = Vec::new();
+        // (Block machinery, points of interest, chunk storage.)
+        let mut times = [Duration::ZERO; 3];
+        // The batch's chunks by region (some block machinery lists are cleaned once per batch).
+        let mut by_region: BTreeMap<RegionId, (ChunkPos, HashSet<ChunkPos>)> = BTreeMap::new();
         for pos in chunks {
             if keep.contains(&pos) {
                 continue;
             }
             let stores = self.provider.stores();
+            let Some(owner) = self.regions.owner(pos.cell()) else { continue };
             let Some(region) = self.regions.at_mut(pos.cell()) else { continue };
             let (cells, part) = region.cells_and_part_mut();
             let Some(cell) = cells.get_mut(pos.cell()) else { continue };
@@ -1319,18 +1383,36 @@ impl Dim {
                 continue;
             }
             if let Some(mut chunk) = cell.remove(pos) {
+                let t0 = Instant::now();
                 part.1.chunk_unloaded(pos, &mut chunk, self.game_time);
+                let t1 = Instant::now();
                 if let (Some(store), Some(p)) = (self.poi_store.as_mut(), chunk.pois.as_deref())
                     && p.dirty
                 {
                     store.store(pos, Some(p.to_nbt(kiln_storage::anvil::DATA_VERSION as i32)));
                 }
+                let t2 = Instant::now();
                 self.provider.unload(pos, *chunk);
+                let t3 = Instant::now();
+                times[0] += t1 - t0;
+                times[1] += t2 - t1;
+                times[2] += t3 - t2;
                 unloaded.push(pos);
+                by_region.entry(owner).or_insert_with(|| (pos, HashSet::new())).1.insert(pos);
             }
             if cell.is_empty() {
                 self.emptied.push(pos.cell());
             }
+        }
+        let t0 = Instant::now();
+        for (_, (any, gone)) in by_region {
+            if let Some(region) = self.regions.at_mut(any.cell()) {
+                region.part_mut().1.chunks_unloaded(&gone);
+            }
+        }
+        times[0] += t0.elapsed();
+        for (name, t) in ["uc.blocks", "uc.poi", "uc.save"].into_iter().zip(times) {
+            diag::add_slow(name, t);
         }
         unloaded
     }
@@ -1978,7 +2060,7 @@ impl Sim {
             .iter()
             .enumerate()
             .flat_map(|(d, dim)| dim.regions.iter().map(move |r| (d, r)))
-            .flat_map(|(d, r)| r.part().1.containers.map.iter().map(move |(p, c)| (d, *p, c)))
+            .flat_map(|(d, r)| r.part().1.containers.iter().map(move |(p, c)| (d, *p, c)))
             .map(|(d, p, c)| {
                 let items: Vec<(i32, i32)> = c.items.iter().map(|s| (s.item(), s.count())).collect();
                 (d, p, items, c.cooldown, [c.lit_remaining, c.lit_total, c.cook_timer, c.cook_total], c.openers)
@@ -2114,7 +2196,7 @@ impl Sim {
             .map(|b| b.save())
             .or_else(|| part.hearts.map.get(&p).map(|h| h.save()))
             .or_else(|| part.spawners.map.get(&p).map(|s| s.save()))
-            .or_else(|| part.containers.map.get(&p).map(|c| c.save()))
+            .or_else(|| part.containers.get(p).map(|c| c.save()))
             // (a moving piston's own fields, with the `id` and position the chunk's copy has)
             .or_else(|| part.data.pistons.get(p).map(|m| m.to_nbt()))
     }
@@ -2136,6 +2218,11 @@ impl Sim {
     /// The level a player is in, and where (for tests and tools).
     pub fn player_level(&self, conn: ConnId) -> Option<(&'static str, [f64; 3])> {
         self.players.get(&conn).map(|p| (DIMENSIONS[p.dim].0, p.pos))
+    }
+
+    /// Generated chunks in regions that wait for their region's next run to be lit (for tests).
+    pub fn unlit_chunks(&self) -> usize {
+        self.dims.iter().map(|d| d.unlit.len()).sum()
     }
 
     /// Loaded chunks per level, in [`DIMENSIONS`] order (for tests and tools).
