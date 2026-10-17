@@ -158,6 +158,10 @@ fn saved_attributes_and_brain_match_vanilla() {
                 }
                 break;
             };
+            if std::env::var_os("KILN_SAVED_TRACE").is_some() && t >= 300 {
+                let all: Vec<_> = sim.entity_nbt().into_iter().filter(|n| n.get("id").and_then(Tag::as_str) == Some(ty)).collect();
+                eprintln!("TRACE {name} t={t}: {} of {ty}; newest Health {:?}", all.len(), all.last().and_then(|n| n.get("Health")));
+            }
             let vs = &s["saved"];
             let vattrs = (!vs["attributes"].is_null()).then(|| tag_of(&vs["attributes"]));
             let vbrain = (!vs["brain"].is_null()).then(|| tag_of(&vs["brain"]));
