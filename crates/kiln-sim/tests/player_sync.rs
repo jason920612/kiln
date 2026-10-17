@@ -788,3 +788,40 @@ fn a_frozen_player_gets_the_speed_attribute_every_tick() {
     w.ticks(20);
     assert!(listed(&w.watcher_log()).is_empty(), "nothing once the frost is gone");
 }
+
+/// wp75: `AttributeMap.getSyncableAttributes` lists the attributes the map has an instance of: a new player has 4 (max health, movement speed
+/// and the two interaction ranges), not every syncable attribute; one that something changes (a speed effect's modifier on the movement
+/// speed is one of the four; a strength effect's on the attack damage is not) joins them.
+#[test]
+fn a_player_is_told_of_the_attributes_that_exist() {
+    fn listed(log: &[Bytes]) -> Vec<Vec<i32>> {
+        log.iter()
+            .filter(|p| packet_id(p) == id::UPDATE_ATTRIBUTES)
+            .map(|p| {
+                let mut r = Reader::new(p);
+                r.varint().unwrap();
+                r.varint().unwrap();
+                let n = r.varint().unwrap();
+                (0..n)
+                    .map(|_| {
+                        let attribute = r.varint().unwrap();
+                        r.bytes(8).unwrap();
+                        for _ in 0..r.varint().unwrap() {
+                            r.string(256).unwrap();
+                            r.bytes(8).unwrap();
+                            r.varint().unwrap();
+                        }
+                        attribute
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+    let mut w = World::new();
+    let login = listed(&w.actor_log());
+    assert_eq!(login.first().map(Vec::len), Some(4), "at login: {login:?}");
+    w.run("effect give Actor minecraft:strength 100 0 true");
+    w.ticks(3);
+    let later = listed(&w.actor_log());
+    assert_eq!(later.iter().map(Vec::len).collect::<Vec<_>>(), [1], "only the attack damage changed: {later:?}");
+}

@@ -276,3 +276,35 @@ impl Attributes {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn created(a: &Attributes) -> Vec<Attr> {
+        a.list.iter().filter(|i| i.created).map(|i| i.attr).collect()
+    }
+
+    /// `AttributeMap.getSyncableAttributes` lists the instances that exist, and an instance is made when something asks to change the
+    /// attribute (`getInstance`), not when its value is read; a new mob has the few its constructor asks for (read off 26.3 by
+    /// `tools/AttributeVectors.java`).
+    #[test]
+    fn an_attribute_has_an_instance_once_it_is_asked_for() {
+        let mut a = Attributes::new(&[(Attr::FollowRange, 16.0)]);
+        assert!(created(&a).is_empty());
+        let _ = a.value(Attr::MovementSpeed);
+        let _ = a.get(Attr::MaxHealth);
+        assert!(created(&a).is_empty(), "reading makes none");
+        a.set_modifier(Attr::MovementSpeed, "x", 0.1, Op::AddValue);
+        assert_eq!(created(&a), [Attr::MovementSpeed]);
+        let mut zombie = Attributes::new(&[]);
+        zombie.create_for("minecraft:zombie");
+        assert_eq!(created(&zombie), [Attr::MovementSpeed]);
+        let mut slime = Attributes::new(&[]);
+        slime.create_for("minecraft:magma_cube");
+        assert_eq!(created(&slime), [Attr::MaxHealth, Attr::MovementSpeed, Attr::Armor]);
+        let mut pig = Attributes::new(&[]);
+        pig.create_for("minecraft:pig");
+        assert!(created(&pig).is_empty());
+    }
+}
