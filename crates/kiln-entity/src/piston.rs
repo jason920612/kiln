@@ -243,6 +243,9 @@ pub fn push_entity(plan: &CollidedPlan, e: &mut Entity, level: &mut dyn EntityLe
         e.delta = v;
     }
     let needed = plan.needed(&e.bounding_box());
+    if std::env::var_os("KILN_PISTON_DEBUG").is_some() {
+        eprintln!("  PUSH id {} bb {:?} needed {needed}", e.id, e.bounding_box());
+    }
     if needed <= 0.0 {
         return;
     }
@@ -307,6 +310,9 @@ impl StuckPlan {
 /// the caller's: their ids come back, with the plans for them to use).
 pub fn move_entities(level: &mut dyn EntityLevel, pos: BlockPos, view: &MovingPistonView, next: f32) -> (Option<CollidedPlan>, Option<StuckPlan>) {
     let collided = plan_collided(pos, view, next);
+    if std::env::var_os("KILN_PISTON_DEBUG").is_some() {
+        eprintln!("PISTON pos {pos:?} view {view:?} next {next} plan {collided:?}");
+    }
     if let Some(plan) = &collided {
         for id in level.entities_in(&plan.query, EntityFilter::Any, -1) {
             if level.entity(id).is_some_and(|e| e.type_name == "minecraft:player") {
