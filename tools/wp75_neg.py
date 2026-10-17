@@ -30,6 +30,9 @@ CASES = {
     "damage_event_order": ([("crates/kiln-sim/src/players.rs", "    packets.append(&mut target.pending_sounds);\n", "")], SIM + ["--test", "player_sync", "the_damage_event_comes_before_the_hurt_sound"]),
     "same_tick_projectile": ([("crates/kiln-sim/src/entities.rs", "let never_looked_at = e.removed && e.section.is_none() && e.kind.tracking_range != 0;", "let never_looked_at = false;")], SIM + ["--test", "player_sync", "a_projectile_gone_in_its_first_tick"]),
     "raid_bar": ([("crates/kiln-sim/src/raid.rs", "            if loaded {\n                self.update_bar_progress(dim, id);\n            }", "")], SIM + ["--test", "raids", "a_raid_in_progress"]),
+    "removed_in_tick": ([("crates/kiln-sim/src/entities.rs", "        if !e.removed && e.phys.as_deref().is_some_and(|p| p.is_removed()) {
+            e.sync();", "        if false {
+            e.sync();")], SIM + ["--test", "removed_in_tick"]),
     "spawner_rewrite": ([("crates/kiln-sim/src/mob_spawner.rs", "        e.dirty = !is_saved_as(&e.save(), nbt);", "        e.dirty = false;")], SIM + ["--lib", "a_spawner_missing_its_defaults_is_rewritten"]),
     # With the vanilla vectors (they print how many scenarios still agree):
     "tick_order_vectors": ([("crates/kiln-sim/src/container/mod.rs", "self.ticking.values().map(|p| (*p, self.index[p]))", "self.index.iter().filter(|(_, k)| ticks(**k)).map(|(p, k)| (*p, *k))")], SIM + ["--lib", "container_parity", "--", "--nocapture"], {"KILN_CONTAINER_VECTORS": VEC + "/containers/hc.jsonl"}),
