@@ -181,6 +181,12 @@ fn saved_attributes_and_brain_match_vanilla() {
             let kind = ty.trim_start_matches("minecraft:");
             ka.retain(|a| !(kind == "shulker" && a.starts_with("minecraft:armor ")));
             va.retain(|a| !(kind == "shulker" && a.starts_with("minecraft:armor ")));
+            // Mobs that draw their gear (a piglin's sword or crossbow, a zombie's helmet): what the items touch is chance.
+            if matches!(kind, "piglin" | "zombie" | "husk" | "drowned" | "zombie_villager" | "zombified_piglin" | "skeleton" | "stray" | "bogged" | "wither_skeleton" | "pillager" | "vindicator") {
+                for set in [&mut ka, &mut va] {
+                    set.retain(|a| !["minecraft:armor ", "minecraft:armor_toughness ", "minecraft:attack_damage ", "minecraft:attack_speed "].iter().any(|p| a.starts_with(p)));
+                }
+            }
             for set in [&mut km, &mut vm] {
                 set.retain(|m| !(matches!(kind, "goat" | "frog") && matches!(m.as_str(), "minecraft:long_jump_cooling_down" | "minecraft:ram_cooldown_ticks")));
             }
