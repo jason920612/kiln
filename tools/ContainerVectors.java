@@ -1090,8 +1090,16 @@ public class ContainerVectors {
                 srcBlock = "minecraft:hopper[facing=down]" + items(slot(r.nextInt(5), things[r.nextInt(things.length)], 1 + r.nextInt(64)), slot(r.nextInt(5), things[r.nextInt(things.length)], 1 + r.nextInt(20)));
             }
             List<int[]> watched = new ArrayList<>();
-            blocks.add(new Object[] {p0[0], p0[1] + 1, p0[2], srcBlock});
-            watched.add(new int[] {p0[0], p0[1] + 1, p0[2]});
+            // The later scenarios have minecarts at the source or the end (their own random, so the others stay as they were).
+            java.util.Random r2 = new java.util.Random(9100 + n);
+            boolean cartSource = n >= 100 && r2.nextInt(2) == 0, cartEnd = n >= 100 && r2.nextInt(2) == 0;
+            String endCart = r2.nextBoolean() ? "hopper_minecart" : "chest_minecart";
+            if (cartSource) {
+                s.cart(p0[0], p0[1] + 1, p0[2], "chest_minecart", 0.0, sourceItems);
+            } else {
+                blocks.add(new Object[] {p0[0], p0[1] + 1, p0[2], srcBlock});
+                watched.add(new int[] {p0[0], p0[1] + 1, p0[2]});
+            }
             for (int i = 0; i < path.size() - 1; i++) {
                 int[] p = path.get(i);
                 String pre = "";
@@ -1100,8 +1108,12 @@ public class ContainerVectors {
                 watched.add(p);
             }
             int[] last = path.get(path.size() - 1);
-            blocks.add(new Object[] {last[0], last[1], last[2], endBlock});
-            watched.add(last);
+            if (cartEnd) {
+                s.cart(last[0], last[1], last[2], endCart, 0.0, "");
+            } else {
+                blocks.add(new Object[] {last[0], last[1], last[2], endBlock});
+                watched.add(last);
+            }
             // A comparator beside some hopper, reading it.
             if (r.nextInt(2) == 0) {
                 int i = r.nextInt(path.size());
