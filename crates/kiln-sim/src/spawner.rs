@@ -432,6 +432,7 @@ pub mod stats {
             && (0..3).all(|a| pos[a] >= b[a] && pos[a] <= b[a + 3])
         {
             add(format!("validPosition IN-BOX {name} -> {ok}"));
+            add(format!("validPosition IN-BOX Y={} {name} -> {ok}", pos[1]));
         }
     }
 
