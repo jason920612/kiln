@@ -1409,6 +1409,31 @@ mod tests {
         // 2/5 full: floor(0.4 * 14) + 1 = 6.
         assert_eq!(signal_from_items(hopper.iter(), 5), 6);
     }
+
+    /// Positions put in a `HashMap<BlockPos, _>` come out by bucket (the orders were read off Java `HashMap`s of the same keys).
+    #[test]
+    fn java_hash_map_order_of_block_positions() {
+        let pos = |v: &[[i32; 3]]| v.iter().map(|p| BlockPos::new(p[0], p[1], p[2])).collect::<Vec<_>>();
+        // Five keys (a table of 16).
+        let keys = pos(&[[11, -4, 4], [6, 30, 10], [3, 48, 13], [5, 27, 10], [13, -40, 11]]);
+        assert_eq!(java_hash_order(&keys), vec![2, 4, 1, 0, 3]);
+        // Thirteen keys: the table doubled to 32 at the 13th.
+        let keys = pos(&[
+            [11, -20, 3], [2, -29, 3], [7, -44, 14], [0, -28, 0], [15, 32, 12], [11, -10, 0], [0, -47, 1], [7, 63, 1], [7, 8, 5], [7, 74, 7], [7, -61, 1],
+            [0, -48, 11], [15, 24, 3],
+        ]);
+        assert_eq!(java_hash_order(&keys), vec![2, 0, 1, 3, 8, 9, 7, 5, 6, 10, 12, 4, 11]);
+        // Thirty keys (a table of 64), with keys sharing a bucket.
+        let keys = pos(&[
+            [11, 43, 7], [7, 28, 13], [12, 58, 1], [9, -43, 2], [5, -23, 9], [11, 10, 8], [12, 63, 1], [15, 57, 14], [11, 53, 0], [12, -40, 7], [15, 66, 5],
+            [11, -5, 0], [6, -12, 0], [15, -38, 4], [5, 55, 12], [15, 57, 9], [8, 46, 3], [2, 9, 9], [14, 47, 13], [3, -33, 14], [15, -33, 0], [14, 2, 4],
+            [11, -44, 10], [14, 12, 14], [0, -17, 2], [14, 38, 0], [15, 41, 3], [1, -21, 2], [3, 75, 13], [1, 55, 6],
+        ]);
+        assert_eq!(
+            java_hash_order(&keys),
+            vec![22, 7, 4, 0, 5, 26, 18, 11, 21, 23, 10, 19, 2, 3, 16, 17, 28, 25, 12, 6, 20, 29, 24, 8, 1, 27, 13, 14, 9, 15]
+        );
+    }
 }
 
 /// Writes the container at `p` into its chunk's NBT if it changed.
