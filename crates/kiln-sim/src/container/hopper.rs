@@ -621,7 +621,7 @@ impl<'a> EntityItems<'a> {
     }
 
     pub fn new(entities: &'a mut crate::entities::Entities) -> Self {
-        let items = entities
+        let items: Vec<(usize, [f64; 3], [f64; 3])> = entities
             .list
             .iter()
             .enumerate()
