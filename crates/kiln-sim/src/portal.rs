@@ -544,14 +544,23 @@ impl Sim {
 /// The region's entities whose box may meet a nether or end portal block, as the region's cells
 /// stand (a box in a chunk the region does not have counts): only the sections whose palette
 /// has a portal block are looked at, so a region without portals finds none at once.
-pub(crate) fn portal_candidates(entities: &crate::entities::Entities, cells: &kiln_region::CellSet<kiln_world::Cell>, min_y: i32) -> Vec<i32> {
+pub(crate) fn portal_candidates(entities: &crate::entities::Entities, cells: &kiln_region::CellSet<kiln_world::Cell>, min_y: i32, ctx: &kiln_sched::Ctx<'_>) -> Vec<i32> {
+    // In runs of entities side by side (a crowd of items has thousands), each run looking its sections up itself.
+    const RUN: usize = 512;
+    let runs: Vec<usize> = (0..entities.list.len().div_ceil(RUN)).collect();
+    let list = &entities.list;
+    let found = ctx.map_indexed_with(kiln_sched::Window::new().item_ns(30_000), &runs, |_, &r| portal_candidates_in(&list[r * RUN..((r + 1) * RUN).min(list.len())], cells, min_y));
+    found.concat()
+}
+
+fn portal_candidates_in(list: &[crate::entities::Entity], cells: &kiln_region::CellSet<kiln_world::Cell>, min_y: i32) -> Vec<i32> {
     let is_portal = |s: u16| {
         let first = kiln_data::blocks_types::block_of(s).first;
         first == block::NETHER_PORTAL || first == block::END_PORTAL
     };
     let mut may_have: crate::FastMap<(i32, i32, i32), bool> = Default::default();
     let mut out = Vec::new();
-    for e in entities.list.iter().filter(|e| !e.removed) {
+    for e in list.iter().filter(|e| !e.removed) {
         let Some(phys) = e.phys.as_deref() else { continue };
         // The box `entity_portals` looks in.
         let half = phys.width as f64 / 2.0 - 1.0e-5;

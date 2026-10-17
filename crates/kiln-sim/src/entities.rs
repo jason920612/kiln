@@ -667,6 +667,12 @@ impl RegionPart for Entities {
     }
 }
 
+/// An item entity (by its type, without reading its state: crowds of them are common, and most per-entity passes have
+/// nothing to do with one).
+pub(crate) fn is_item(e: &Entity) -> bool {
+    e.kind.id == kiln_data::entities::types::ITEM.id
+}
+
 pub(crate) fn chunk_of(pos: [f64; 3]) -> ChunkPos {
     ChunkPos::of_block(pos[0].floor() as i32, pos[2].floor() as i32)
 }
@@ -2249,7 +2255,7 @@ pub(crate) fn tick(
     let dt = crate::diag::lap("e.list", dt);
     // `ServerEntity.sendChanges` → `updateDataBeforeSync`: the invisible flag follows the
     // effects once all the entities have ticked.
-    for e in sim.list.iter_mut() {
+    for e in sim.list.iter_mut().filter(|e| !is_item(e)) {
         if let Some(p) = e.phys.as_deref_mut() {
             kiln_entity::mob::update_data_before_sync(p);
         }
@@ -2274,7 +2280,7 @@ pub(crate) fn tick(
     // finds them, in its order).
     let mut by_section: FastMap<(i32, i32, i32), Vec<usize>> = Default::default();
     for (i, e) in sim.list.iter().enumerate() {
-        if !e.removed && e.phys.as_deref().is_some_and(kiln_entity::mob::touches_players) {
+        if !e.removed && !is_item(e) && e.phys.as_deref().is_some_and(kiln_entity::mob::touches_players) {
             by_section.entry(section_of(e.pos)).or_default().push(i);
         }
     }
@@ -3946,9 +3952,28 @@ fn send_entity_sound(
 /// Players touching items that can be picked up take them into their inventory. `players`
 /// is the region's, sorted by connection.
 pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
-    arrow_pickups(entities, players);
+    // Only what lies near a player that can pick things up is looked at: an entity farther than this from every such
+    // player (its position against the player's, with room to spare for the boxes) cannot touch one.
+    let reach: SmallVec<[([f64; 3], [f64; 3]); 4]> = players
+        .iter()
+        .filter(|p| !p.disconnected && !p.dead && p.game_mode != 3)
+        .map(|p| ([p.pos[0] - 4.0, p.pos[1] - 4.0, p.pos[2] - 4.0], [p.pos[0] + 4.0, p.pos[1] + 6.0, p.pos[2] + 4.0]))
+        .collect();
+    if reach.is_empty() {
+        return;
+    }
+    let near: Vec<usize> = (0..entities.list.len())
+        .filter(|&i| {
+            let e = &entities.list[i];
+            !e.removed && reach.iter().any(|(lo, hi)| (0..3).all(|k| e.pos[k] > lo[k] && e.pos[k] < hi[k]))
+        })
+        .collect();
+    if near.is_empty() {
+        return;
+    }
+    arrow_pickups(entities, players, &near);
     // `ItemEntity.getOwner`: who threw the items on the ground (a mob, for the trigger).
-    let throwers: Vec<u128> = entities.list.iter().filter_map(|e| match e.phys.as_deref().map(|p| &p.kind) {
+    let throwers: Vec<u128> = near.iter().map(|&i| &entities.list[i]).filter_map(|e| match e.phys.as_deref().map(|p| &p.kind) {
         Some(EntityKind::Item(i)) if !e.removed && i.pickup_delay <= 0 => i.thrower,
         _ => None,
     }).collect();
@@ -3957,7 +3982,8 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
     } else {
         entities.list.iter().filter(|o| !o.removed).filter_map(|o| o.phys.as_deref()).filter(|p| throwers.contains(&p.uuid)).map(|p| (p.uuid, kiln_entity::level::Seen::of(p))).collect()
     };
-    for e in &mut entities.list {
+    for &k in &near {
+        let e = &mut entities.list[k];
         if e.removed {
             continue;
         }
@@ -4019,10 +4045,11 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
 /// `AbstractArrow.playerTouch` for arrows and tridents at rest (stuck, or a loyal trident on
 /// its way back): `tryPickup` by the pickup mode (a returning trident goes to its thrower);
 /// the viewers see it taken.
-fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player]) {
+fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player], near: &[usize]) {
     use kiln_entity::arrow::{PICKUP_ALLOWED, PICKUP_CREATIVE_ONLY};
     use kiln_entity::ext_entity::trident::Trident;
-    for e in &mut entities.list {
+    for &k in near {
+        let e = &mut entities.list[k];
         if e.removed {
             continue;
         }
