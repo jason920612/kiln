@@ -378,3 +378,24 @@ impl TrialConfigs {
         self.map.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A spawner whose save lacks what vanilla writes loads with the defaults and has them written back into its chunk's copy (what
+    /// `data get block` shows far from a player); one saved complete is left alone.
+    #[test]
+    fn a_spawner_missing_its_defaults_is_rewritten() {
+        let type_id = kiln_world::block_entity::type_id(TYPE).unwrap();
+        let bare = Tag::Compound(vec![("id".into(), Tag::String(TYPE.into()))]);
+        let entry = SpawnerEntry::load(type_id, &bare);
+        assert!(entry.dirty, "the defaults are not in the chunk's copy yet");
+        let saved = entry.save();
+        for key in ["SpawnCount", "MaxNearbyEntities", "RequiredPlayerRange", "MinSpawnDelay", "MaxSpawnDelay", "SpawnRange"] {
+            assert!(saved.get(key).is_some(), "{key} is saved");
+        }
+        let full = SpawnerEntry::load(type_id, &saved);
+        assert!(!full.dirty, "a complete save stays as it is");
+    }
+}
