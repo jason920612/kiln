@@ -127,12 +127,16 @@ public class AttributeVectors {
         Field rn = net.minecraft.world.TickRateManager.class.getDeclaredField("runGameElements");
         rn.setAccessible(true);
         rn.set(level.tickRateManager(), true);
-        for (int i = 0; i < 5; i++) level.tick(() -> true);
+        StringBuilder per = new StringBuilder();
+        for (int i = 0; i < 5; i++) {
+            level.tick(() -> true);
+            per.append(i > 0 ? "," : "").append(attrs(found));
+        }
         rn.set(level.tickRateManager(), false);
         String later = attrs(found);
         found.discard();
         for (Entity e : level.getEntities((Entity) null, new net.minecraft.world.phys.AABB(x - 6, y - 6, z - 6, x + 6, y + 6, z + 6), e -> true)) e.discard();
-        return String.format(Locale.ROOT, "{\"name\":\"%s\",\"type\":\"minecraft:%s\",\"loaded\":true,\"fresh\":%s,\"later\":%s}", c.name, c.type, fresh, later);
+        return String.format(Locale.ROOT, "{\"name\":\"%s\",\"type\":\"minecraft:%s\",\"loaded\":true,\"fresh\":%s,\"ticks\":[%s],\"later\":%s}", c.name, c.type, fresh, per, later);
     }
 
     static String d(double v) {
