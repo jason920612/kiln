@@ -2302,6 +2302,13 @@ pub(crate) fn tick_list(sim: &mut SimLevel, ticking: &blocks::Ticking, any_playe
         }
         tick_turn(sim, i, ticking, any_player);
     }
+    // An entity another one discarded after its own turn (a charge that killed a stand ticked before it) is gone from this tick on, as
+    // vanilla's `remove` is at once; `settle` only looks at an entity in its own turn.
+    for e in sim.list.iter_mut() {
+        if !e.removed && e.phys.as_deref().is_some_and(|p| p.is_removed()) {
+            e.sync();
+        }
+    }
 }
 
 /// Passengers tick right after their vehicle (`ServerLevel.tickPassenger`), not in their own
