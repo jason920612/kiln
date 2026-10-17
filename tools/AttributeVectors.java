@@ -60,6 +60,15 @@ public class AttributeVectors {
         }, "AttributeVectors main");
         main.start();
         MinecraftServer server = awaitServer();
+        server.submit(() -> {
+            ServerLevel l = server.overworld();
+            for (int cx = -1; cx <= 1; cx++)
+                for (int cz = -1; cz <= 1; cz++) {
+                    l.setChunkForced(cx, cz, true);
+                    l.getChunk(cx, cz);
+                }
+        }).get();
+        Thread.sleep(3000);
         List<String> lines = new ArrayList<>();
         server.submit(() -> {
             ServerLevel level = server.overworld();
@@ -107,8 +116,6 @@ public class AttributeVectors {
 
     static String run(ServerLevel level, Case c) throws Exception {
         var server = level.getServer();
-        level.setChunkForced(0, 0, true);
-        level.getChunk(0, 0);
         // The summon command: the same path Kiln's `/summon` follows.
         int x = 8, y = 80, z = 8;
         server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "summon minecraft:" + c.type + " " + x + " " + y + " " + z + " {Tags:[\"attr_probe\"]}");
