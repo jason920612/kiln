@@ -791,7 +791,7 @@ fn a_frozen_player_gets_the_speed_attribute_every_tick() {
 
 /// wp75: `AttributeMap.getSyncableAttributes` lists the attributes the map has an instance of: a new player has 4 (max health, movement speed
 /// and the two interaction ranges), not every syncable attribute; one that something changes (a speed effect's modifier on the movement
-/// speed is one of the four; a strength effect's on the attack damage is not) joins them.
+/// speed is one of the four; luck effect's on luck is not) joins them.
 #[test]
 fn a_player_is_told_of_the_attributes_that_exist() {
     fn listed(log: &[Bytes]) -> Vec<Vec<i32>> {
@@ -820,8 +820,8 @@ fn a_player_is_told_of_the_attributes_that_exist() {
     let mut w = World::new();
     let login = listed(&w.actor_log());
     assert_eq!(login.first().map(Vec::len), Some(4), "at login: {login:?}");
-    w.run("effect give Actor minecraft:strength 100 0 true");
+    w.run("effect give Actor minecraft:luck 100 0 true");
     w.ticks(3);
     let later = listed(&w.actor_log());
-    assert_eq!(later.iter().map(Vec::len).collect::<Vec<_>>(), [1], "only the attack damage changed: {later:?}");
+    assert_eq!(later.iter().map(Vec::len).collect::<Vec<_>>(), [1], "only luck changed: {later:?}");
 }
