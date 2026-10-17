@@ -451,9 +451,14 @@ pub mod stats {
         }
     }
 
-    pub(crate) fn valid_mob(type_name: &str, ok: bool) {
-        if enabled() {
-            add(format!("validMob {} -> {ok}", type_name.strip_prefix("minecraft:").unwrap_or(type_name)));
+    pub(crate) fn valid_mob(type_name: &str, pos: [i32; 3], ok: bool) {
+        let Some(c) = config() else { return };
+        let name = type_name.strip_prefix("minecraft:").unwrap_or(type_name);
+        add(format!("validMob {name} -> {ok}"));
+        if let Some(b) = c.bounds
+            && (0..3).all(|a| pos[a] >= b[a] && pos[a] <= b[a + 3])
+        {
+            add(format!("validMob IN-BOX {name} -> {ok}"));
         }
     }
 
@@ -956,7 +961,7 @@ fn spawn_category_for_chunk(
             let ignores_light = kind.ext().is_some_and(|k| k.spawn_ignores_light());
             let liquid_ok = kind.ext().is_some_and(|k| k.spawn_in_liquids());
             let mob_ok = !((walk < 0.0 && !ignores_light) || (!liquid_ok && contains_liquid(level, [fx, y as f64, fz], t.width, t.height)));
-            stats::valid_mob(d_.type_name, mob_ok);
+            stats::valid_mob(d_.type_name, [pos.x, pos.y, pos.z], mob_ok);
             if !mob_ok {
                 continue;
             }

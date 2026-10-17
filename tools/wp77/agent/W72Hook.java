@@ -81,6 +81,20 @@ public final class W72Hook {
             n = "?";
         }
         add("validMob " + n + " -> " + (result != 0));
+        try {
+            String bx = System.getProperty("w72.box");
+            var p = ((net.minecraft.world.entity.Mob) mob).blockPosition();
+            if (bx != null) {
+                String[] v = bx.split(",");
+                int[] b = new int[6];
+                for (int i = 0; i < 6; i++) b[i] = Integer.parseInt(v[i].trim());
+                if (p.getX() >= b[0] && p.getX() <= b[3] && p.getY() >= b[1] && p.getY() <= b[4] && p.getZ() >= b[2] && p.getZ() <= b[5]) {
+                    add("validMob IN-BOX " + n + " -> " + (result != 0));
+                }
+            }
+        } catch (Throwable t) {
+            add("validMob error " + t);
+        }
     }
 
     public static void globalCap(int result, Object state, Object category) {

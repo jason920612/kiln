@@ -225,6 +225,11 @@ fn heal(m: &mut MobData, amount: f32) {
 }
 
 impl Kind for Wolf {
+    /// `Wolf.getMaxSpawnClusterSize`: a pack of up to eight.
+    fn max_spawn_cluster(&self) -> i32 {
+        8
+    }
+
     fn sound_volume(&self, _m: &MobData) -> f32 {
         0.4
     }
