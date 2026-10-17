@@ -120,3 +120,7 @@
 ## 截圖
 
 `docs/wp74/hazards_KV.jpg`:兩個客戶端(大視窗 Kiln、小視窗 vanilla 的畫面疊在 Xvfb 上)看同一個場景:水槽裡的海龜與銅傀儡(修好後 800 刻仍活著)、點燃的營火旁被燒死的豬、粉雪格。
+
+## 驗證(VM,最後一個 commit)
+
+workspace 測試不帶與帶 `KILN_DATAPACK=/home/test/kiln/work/generated` 各 192 個二進位全部 `ok`;`determinism` 6/6;`mob_parity` 1462 個向量全過(第一輪 1461/1462:`convert_skeleton` 揪出普通骷髏不能凍傷,已修,見問題 2);`tools/parity_suites.py --skip-workspace` 102 個套件全部 exit 0。`crowd_golden` 沒有重錄(玩家封包、狀態 hash 都沒變)。`work/m6-mobs2/vectors.jsonl` 沒有動(備份 `.wp74bak`)。負向檢查(把修正退回上一版,對應測試必須失敗)四項全做:海龜/銅傀儡、營火/凋零玫瑰/粉雪、開箱子、挖金磚(`tools/wp74/neg2.sh`);骷髏例外的負向檢查就是第一輪的 `mob_parity` 失敗。
