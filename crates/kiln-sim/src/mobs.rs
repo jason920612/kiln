@@ -695,6 +695,25 @@ pub(crate) fn attributes_packet_of(entity_id: i32, m: &MobData, only: Option<&[m
     Some(kiln_proto::packets::entity::update_attributes(entity_id, &snapshots))
 }
 
+/// A hash of what [`attributes_packet`] would say (never 0), to tell when some viewers' copy is stale at all.
+pub(crate) fn attributes_hash(m: &MobData) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut mix = |v: u64| h = (h ^ v).wrapping_mul(0x0000_0100_0000_01b3);
+    for i in m.attrs.list.iter().filter(|i| i.created && i.attr.is_client_syncable()) {
+        mix(i.attr as u64);
+        mix(i.base.to_bits());
+        for x in &i.modifiers {
+            mix(x.amount.to_bits());
+            mix(x.op as u64);
+            for b in x.id.bytes() {
+                mix(b as u64);
+            }
+        }
+        mix(u64::MAX);
+    }
+    h | 1
+}
+
 /// A hash per existing client-syncable attribute of what [`attributes_packet`] would say about it (never 0), to tell which of them the
 /// viewers' copy has stale.
 pub(crate) fn attribute_hashes(m: &MobData) -> Vec<(mob::attributes::Attr, u64)> {

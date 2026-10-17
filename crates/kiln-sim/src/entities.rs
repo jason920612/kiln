@@ -87,6 +87,7 @@ pub(crate) struct Entity {
     /// The attributes the viewers have been told (`ServerEntity.sendChanges`: only the ones that change are sent again), and whether
     /// the first look has been taken.
     attrs_sent: Vec<(kiln_entity::mob::attributes::Attr, u64)>,
+    attrs_total: u64,
     attrs_primed: bool,
     /// Passengers as viewers last got them (Set Passengers).
     passengers_sent: Vec<i32>,
@@ -384,6 +385,7 @@ impl Entity {
             meta_sent: Vec::new(),
             meta_prev: None,
             attrs_sent: Vec::new(),
+            attrs_total: 0,
             attrs_primed: false,
             passengers_sent: Vec::new(),
             equipment_sent: Vec::new(),
@@ -446,6 +448,7 @@ impl Entity {
         self.meta_sent = Vec::new();
         self.meta_prev = None;
         self.attrs_sent = Vec::new();
+        self.attrs_total = 0;
         self.attrs_primed = false;
         self.passengers_sent = Vec::new();
         self.equipment_sent = Vec::new();
@@ -4201,27 +4204,30 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
         push_dirty_data(e.id, meta, &mut e.meta_sent, &mut e.meta_prev, &mut packets, false);
         // `ServerEntity.sendDirtyEntityData`: attributes that changed (effects, babies, taming, `/attribute`).
         // An instance made without a change (the first step asks for the movement speed) is not told.
-        let now = crate::mobs::attribute_hashes(m);
-        if !e.attrs_primed {
-            e.attrs_primed = true;
-        } else {
-            let defaults = |a: kiln_entity::mob::attributes::Attr| m.attrs.get(a).is_some_and(|i| i.modifiers.is_empty() && i.base == a.info().1);
-            let changed: Vec<kiln_entity::mob::attributes::Attr> = now
-                .iter()
-                .filter(|(a, h)| match e.attrs_sent.iter().find(|(o, _)| o == a) {
-                    Some((_, was)) => was != h,
-                    // (An instance that is new and unchanged is in the viewers' pairing data once they are paired later.)
-                    None => !defaults(*a),
-                })
-                .map(|(a, _)| *a)
-                .collect();
-            if !changed.is_empty()
-                && let Some(pkt) = crate::mobs::attributes_packet_of(e.id, m, Some(&changed))
-            {
-                packets.push(pkt);
+        let total = crate::mobs::attributes_hash(m);
+        if total != e.attrs_total || !e.attrs_primed {
+            let now = crate::mobs::attribute_hashes(m);
+            if e.attrs_primed {
+                let unchanged = |a: kiln_entity::mob::attributes::Attr| m.attrs.get(a).is_some_and(|i| i.modifiers.is_empty() && i.base == i.initial);
+                let changed: Vec<kiln_entity::mob::attributes::Attr> = now
+                    .iter()
+                    .filter(|(a, h)| match e.attrs_sent.iter().find(|(o, _)| o == a) {
+                        Some((_, was)) => was != h,
+                        // (An instance that is new and unchanged is in the viewers' pairing data once they are paired later.)
+                        None => !unchanged(*a),
+                    })
+                    .map(|(a, _)| *a)
+                    .collect();
+                if !changed.is_empty()
+                    && let Some(pkt) = crate::mobs::attributes_packet_of(e.id, m, Some(&changed))
+                {
+                    packets.push(pkt);
+                }
             }
+            e.attrs_primed = true;
+            e.attrs_sent = now;
+            e.attrs_total = total;
         }
-        e.attrs_sent = now;
         let worn = crate::mobs::shown_equipment(m);
         if worn.len() != e.equipment_sent.len() || worn.iter().zip(&e.equipment_sent).any(|(a, b)| a.0 != b.0 || !kiln_inventory::stack::matches(&a.1, &b.1)) {
             let mut slots: Vec<(u8, kiln_item::ItemStack)> = worn.clone();

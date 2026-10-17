@@ -789,34 +789,36 @@ fn a_frozen_player_gets_the_speed_attribute_every_tick() {
     assert!(listed(&w.watcher_log()).is_empty(), "nothing once the frost is gone");
 }
 
+/// The attribute ids each Update Attributes packet of `log` lists.
+fn listed(log: &[Bytes]) -> Vec<Vec<i32>> {
+    log.iter()
+        .filter(|p| packet_id(p) == id::UPDATE_ATTRIBUTES)
+        .map(|p| {
+            let mut r = Reader::new(p);
+            r.varint().unwrap();
+            r.varint().unwrap();
+            let n = r.varint().unwrap();
+            (0..n)
+                .map(|_| {
+                    let attribute = r.varint().unwrap();
+                    r.bytes(8).unwrap();
+                    for _ in 0..r.varint().unwrap() {
+                        r.string(256).unwrap();
+                        r.bytes(8).unwrap();
+                        r.varint().unwrap();
+                    }
+                    attribute
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// wp75: `AttributeMap.getSyncableAttributes` lists the attributes the map has an instance of: a new player has 4 (max health, movement speed
 /// and the two interaction ranges), not every syncable attribute; one that something changes (a speed effect's modifier on the movement
 /// speed is one of the four; luck effect's on luck is not) joins them.
 #[test]
 fn a_player_is_told_of_the_attributes_that_exist() {
-    fn listed(log: &[Bytes]) -> Vec<Vec<i32>> {
-        log.iter()
-            .filter(|p| packet_id(p) == id::UPDATE_ATTRIBUTES)
-            .map(|p| {
-                let mut r = Reader::new(p);
-                r.varint().unwrap();
-                r.varint().unwrap();
-                let n = r.varint().unwrap();
-                (0..n)
-                    .map(|_| {
-                        let attribute = r.varint().unwrap();
-                        r.bytes(8).unwrap();
-                        for _ in 0..r.varint().unwrap() {
-                            r.string(256).unwrap();
-                            r.bytes(8).unwrap();
-                            r.varint().unwrap();
-                        }
-                        attribute
-                    })
-                    .collect()
-            })
-            .collect()
-    }
     let mut w = World::new();
     let login = listed(&w.actor_log());
     assert_eq!(login.first().map(Vec::len), Some(4), "at login: {login:?}");
@@ -824,4 +826,22 @@ fn a_player_is_told_of_the_attributes_that_exist() {
     w.ticks(3);
     let later = listed(&w.actor_log());
     assert_eq!(later.iter().map(Vec::len).collect::<Vec<_>>(), [1], "only luck changed: {later:?}");
+}
+
+/// wp75: a mob is told of the attributes that change, not of the instances made (its first step asks for the movement speed: `getInstance`
+/// makes the instance without marking it changed).
+#[test]
+fn a_mob_is_told_of_the_attributes_that_change_not_of_those_made() {
+    let mut w = World::new();
+    w.ticks(2);
+    let p = w.actor.pos;
+    w.watcher_log();
+    w.run(&format!("summon minecraft:pig {} {} {} {{NoAI:0b}}", p[0] + 3.0, p[1], p[2]));
+    w.ticks(8);
+    assert!(listed(&w.watcher_log()).is_empty(), "the pig has none at pairing and its movement speed is not news");
+    w.run("attribute @e[type=minecraft:pig,limit=1] minecraft:movement_speed base set 0.5");
+    w.ticks(2);
+    let told = listed(&w.watcher_log());
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0].len(), 1, "only the movement speed: {told:?}");
 }

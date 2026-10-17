@@ -154,6 +154,8 @@ pub struct Instance {
     /// Whether the attribute map has an instance of it (`AttributeMap.getInstance` makes one the first time something asks to change
     /// it; reading a value does not). Only those are in `getSyncableAttributes`, so only those are told to the clients.
     pub created: bool,
+    /// The base value the instance was made with (the type's own; a change from it is something to tell the viewers).
+    pub initial: f64,
 }
 
 impl Instance {
@@ -213,12 +215,15 @@ impl Attributes {
             Bounciness,
         ]
         .into_iter()
-        .map(|a| Instance { attr: a, base: a.info().1, modifiers: Vec::new(), created: false })
+        .map(|a| Instance { attr: a, base: a.info().1, modifiers: Vec::new(), created: false, initial: a.info().1 })
         .collect();
         for &(a, v) in extra {
             match list.iter_mut().find(|i| i.attr == a) {
-                Some(i) => i.base = v,
-                None => list.push(Instance { attr: a, base: v, modifiers: Vec::new(), created: false }),
+                Some(i) => {
+                    i.base = v;
+                    i.initial = v;
+                }
+                None => list.push(Instance { attr: a, base: v, modifiers: Vec::new(), created: false, initial: v }),
             }
         }
         list.sort_by_key(|i| i.attr);
