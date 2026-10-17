@@ -63,3 +63,27 @@ fn a_summoned_zombie_is_there_and_stays() {
     }
     assert_eq!(sim.entity_ids_of("minecraft:zombie").len(), 1, "{:?}", sim.entities());
 }
+
+/// A block that falls because of its scheduled tick (placed over air with `/setblock`, two ticks later) is an entity that already moved by
+/// 0.04 when the tick ends: vanilla's entity tick list holds what block ticks add (real servers side by side: a falling sand at 202 was at
+/// y = 201.96, motion -0.0392 after its first tick on vanilla, 202.0 and 0 on Kiln).
+#[test]
+fn a_falling_block_that_the_block_phase_made_has_its_first_tick_in_that_tick() {
+    let mut sim = Sim::new(SimConfig::new(4, 4, None));
+    assert!(sim.step([ToSim::Console("gamerule minecraft:spawn_mobs false".into()), ToSim::Console("forceload add 0 0 15 15".into())]));
+    for _ in 0..20 {
+        assert!(sim.step([]));
+    }
+    assert!(sim.step([ToSim::Console("setblock 8 -40 8 minecraft:sand".into())]));
+    let mut first = None;
+    for k in 1..=6 {
+        if let Some((_, p)) = sim.entities().iter().find(|(t, _)| *t == "minecraft:falling_block") {
+            first = Some((k, p[1]));
+            break;
+        }
+        assert!(sim.step([]));
+    }
+    let (k, y) = first.expect("the sand fell");
+    assert!(k <= 4, "the entity exists soon after the scheduled tick (2 ticks): tick {k}");
+    assert!((y - (-40.04)).abs() < 1e-9, "the tick that made it also moved it: y = {y}");
+}
