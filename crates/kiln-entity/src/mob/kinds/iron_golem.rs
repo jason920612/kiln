@@ -207,19 +207,15 @@ impl Kind for IronGolem {
 
     fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
         let created = r.bool_or("PlayerCreated", false);
-        let end = match r.get("anger_end_time") {
-            Some(Tag::Long(t)) => *t,
-            _ => -1,
-        };
         let s = st_mut(m);
         s.player_created = created;
-        s.anger.end = end;
+        s.anger.load(r);
     }
 
     fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
         let s = st(m);
         o.put("PlayerCreated", Tag::Byte(s.player_created as i8));
-        o.put("anger_end_time", Tag::Long(s.anger.end));
+        s.anger.save(o);
     }
 
     fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {

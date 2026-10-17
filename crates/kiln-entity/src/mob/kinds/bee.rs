@@ -462,10 +462,6 @@ impl Kind for Bee {
         let ticks = r.int_or("TicksSincePollination", 0);
         let out = r.int_or("CannotEnterHiveTicks", 0);
         let crops = r.int_or("CropsGrownSincePollination", 0);
-        let end = match r.get("anger_end_time") {
-            Some(Tag::Long(t)) => *t,
-            _ => -1,
-        };
         let s = st_mut(m);
         s.hive_pos = hive;
         s.flower_pos = flower;
@@ -474,7 +470,7 @@ impl Kind for Bee {
         s.ticks_without_nectar = ticks;
         s.stay_out_of_hive = out;
         s.crops_grown = crops;
-        s.anger.end = end;
+        s.anger.load(r);
         if nectar {
             s.ticks_without_nectar = 0;
         }
@@ -494,7 +490,7 @@ impl Kind for Bee {
         o.put("TicksSincePollination", Tag::Int(s.ticks_without_nectar));
         o.put("CannotEnterHiveTicks", Tag::Int(s.stay_out_of_hive));
         o.put("CropsGrownSincePollination", Tag::Int(s.crops_grown));
-        o.put("anger_end_time", Tag::Long(s.anger.end));
+        s.anger.save(o);
     }
 
     fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {

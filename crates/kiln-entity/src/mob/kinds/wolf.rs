@@ -595,10 +595,7 @@ impl Kind for Wolf {
             m.variant = v;
         }
         st_mut(m).collar = r.byte_or("CollarColor", DEFAULT_COLLAR as i8) as u8 & 15;
-        st_mut(m).anger.end = match r.get("anger_end_time") {
-            Some(Tag::Long(t)) => *t,
-            _ => -1,
-        };
+        st_mut(m).anger.load(r);
         if let Some(v) = r.get("sound_variant").and_then(Tag::as_str).and_then(|v| kiln_data::synced_id("minecraft:wolf_sound_variant", v)) {
             m.sound_variant = v;
         }
@@ -626,7 +623,7 @@ impl Kind for Wolf {
         if let Some(v) = synced_name("minecraft:wolf_variant", m.variant) {
             o.put("variant", Tag::String(v.to_owned()));
         }
-        o.put("anger_end_time", Tag::Long(s.anger.end));
+        s.anger.save(o);
         if let Some(v) = synced_name("minecraft:wolf_sound_variant", m.sound_variant) {
             o.put("sound_variant", Tag::String(v.to_owned()));
         }

@@ -42,7 +42,7 @@ fn items_of(t: &Tag) -> String {
     let Tag::Compound(fields) = t else { return String::new() };
     let mut v: Vec<String> = fields
         .iter()
-        .filter(|(k, _)| matches!(k.as_str(), "Items" | "Item" | "item" | "equipment" | "Inventory" | "Offers" | "FireworksItem" | "weapon" | "drop_chances"))
+        .filter(|(k, _)| matches!(k.as_str(), "Items" | "Item" | "item" | "equipment" | "Inventory" | "Offers" | "FireworksItem" | "weapon" | "drop_chances" | "anger_end_time" | "angry_at"))
         .map(|(k, v)| format!("{k}:{}", canon(v)))
         .collect();
     v.sort();

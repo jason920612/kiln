@@ -9,19 +9,58 @@ use crate::mob::ext::{self, CustomGoal};
 use crate::mob::goals::{self, Living, TARGET};
 use crate::mob::mth::reduced_tick_delay;
 use crate::mob::{MobData, MobKind};
+use crate::persist::{Input, Output};
 use kiln_javamath::random::RandomSource;
+use kiln_proto::nbt::Tag;
+
+pub use super::enderman::Reference;
 
 #[derive(Clone, Debug)]
 pub struct Anger {
     /// `getPersistentAngerEndTime` (-1: none).
     pub end: i64,
-    /// `getPersistentAngerTarget` (by network id; not saved).
-    pub target: Option<i32>,
+    /// `getPersistentAngerTarget` (`angry_at`): the network id when known, and the UUID. One that was loaded has only the UUID until
+    /// the entity is found.
+    pub target: Option<Reference>,
+    /// `AngerTime` of saved data from before the end time: the ticks left, counted from the first update.
+    pending: Option<i64>,
 }
 
 impl Default for Anger {
     fn default() -> Anger {
-        Anger { end: -1, target: None }
+        Anger { end: -1, target: None, pending: None }
+    }
+}
+
+impl Anger {
+    /// `NeutralMob.readPersistentAngerSaveData`.
+    pub fn load(&mut self, r: &mut Input) {
+        let end = r.get("anger_end_time").and_then(Tag::as_i64);
+        let legacy = r.get("AngerTime").and_then(Tag::as_i64);
+        let angry_at = r.uuid("angry_at");
+        match (end, legacy) {
+            (Some(t), _) => self.end = t,
+            (None, Some(left)) => self.pending = Some(left),
+            _ => self.end = -1,
+        }
+        self.target = angry_at.map(|uuid| Reference { id: None, uuid });
+    }
+
+    /// `NeutralMob.addPersistentAngerSaveData`.
+    pub fn save(&self, o: &mut Output) {
+        o.put("anger_end_time", Tag::Long(self.end));
+        if let Some(r) = self.target
+            && r.uuid != 0
+        {
+            o.put("angry_at", crate::persist::uuid_to_tag(r.uuid));
+        }
+    }
+
+    /// An `AngerTime` read from old saved data becomes an end time at the first update.
+    fn settle(&mut self, now: i64) {
+        if let Some(left) = self.pending.take() {
+            self.end = now + left;
+        }
     }
 }
 
@@ -81,10 +120,14 @@ pub fn update_persistent_anger(e: &mut Entity, m: &mut MobData, level: &dyn Enti
 /// `updatePersistentAnger(level, updateAnger)`: bees pass false (the timer starts only when the
 /// target changes).
 pub fn update_persistent_anger_with(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, update: bool) {
+    if let Some(a) = get_mut(m) {
+        a.settle(level.game_time());
+    }
     let anger_ref = get(m).and_then(|a| a.target);
+    let is_ref = |id: i32| anger_ref.is_some_and(|r| r.matches(level, id));
     if let Some(u) = m.target.and_then(|id| goals::living(level, id))
         && !u.alive
-        && anger_ref == Some(u.id)
+        && is_ref(u.id)
         && !u.player
     {
         stop_being_angry(m);
@@ -92,9 +135,9 @@ pub fn update_persistent_anger_with(e: &mut Entity, m: &mut MobData, level: &dyn
     }
     let target = goals::target(m, level);
     if let Some(t) = target {
-        let changed = anger_ref != Some(t.id);
+        let changed = !is_ref(t.id);
         if changed && let Some(a) = get_mut(m) {
-            a.target = Some(t.id);
+            a.target = Some(Reference::of(level, t.id));
         }
         if changed || update {
             start_timer(e, m, level);
@@ -103,7 +146,7 @@ pub fn update_persistent_anger_with(e: &mut Entity, m: &mut MobData, level: &dyn
     if anger_ref.is_some() && !is_angry(m, level) && (target.is_none_or(|t| !valid_player_target(level, &t)) || !update) {
         stop_being_angry(m);
     }
-    if let Some(p) = anger_ref.and_then(|id| level.player(id))
+    if let Some(p) = anger_ref.and_then(|r| r.id.and_then(|id| level.player(id)).or_else(|| level.player_by_uuid(r.uuid)))
         && (p.creative || p.spectator || level.difficulty() == 0)
     {
         stop_being_angry(m);
@@ -135,7 +178,7 @@ impl CustomGoal for AngryAtPlayerGoal {
         }
         let range = m.attrs.value(Attr::FollowRange);
         let angry_at = get(m).and_then(|a| a.target);
-        self.target = goals::nearest_player(e, m, level, true, range, true, |p| angry_at == Some(p.id)).map(|p| p.id);
+        self.target = goals::nearest_player(e, m, level, true, range, true, |p| angry_at.is_some_and(|r| r.id.map_or(r.uuid != 0 && r.uuid == p.uuid, |id| id == p.id))).map(|p| p.id);
         self.target.is_some()
     }
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {

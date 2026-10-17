@@ -95,6 +95,14 @@ public class LoadDropVectors {
         c.add(new Case("e_trident_unknown", "entity", "trident", "{item:{id:\"" + unknown + "\",count:1}}"));
         c.add(new Case("e_firework_unknown", "entity", "firework_rocket", "{FireworksItem:{id:\"" + unknown + "\",count:1}}"));
         c.add(new Case("e_eye_of_ender_unknown", "entity", "eye_of_ender", "{Item:{id:\"" + unknown + "\",count:1}}"));
+        // ---- neutral mobs: the anger they save (wp75)
+        for (String t : new String[] {"wolf", "iron_golem", "polar_bear", "bee", "enderman", "zombified_piglin"}) {
+            c.add(new Case("anger_" + t + "_both", "entity", t, "{anger_end_time:123456L,angry_at:[I;1,2,3,4]}"));
+            c.add(new Case("anger_" + t + "_target_only", "entity", t, "{angry_at:[I;5,6,7,8]}"));
+            c.add(new Case("anger_" + t + "_time_only", "entity", t, "{anger_end_time:99L}"));
+            c.add(new Case("anger_" + t + "_none", "entity", t, "{}"));
+            c.add(new Case("anger_" + t + "_bad_target", "entity", t, "{anger_end_time:5L,angry_at:[I;1,2]}"));
+        }
         return c;
     }
 
