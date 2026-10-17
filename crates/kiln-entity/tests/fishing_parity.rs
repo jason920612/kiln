@@ -81,13 +81,23 @@ fn bobbers_match_vanilla_tick_by_tick() {
             let w: Vec<f64> = want.as_array().unwrap().iter().map(|x| x.as_bool().map_or_else(|| num(x), |b| b as u8 as f64)).collect();
             values += got.len();
             // (The fish angle is a float: the vector has its shortest decimal form.)
-            if got.iter().zip(&w).enumerate().any(|(i, (a, b))| if i == 4 { *a as f32 != *b as f32 } else { a != b && !(a.is_nan() && b.is_nan()) }) {
-                failures.push(format!("{name} (luck {} lure {}) t={}: Kiln {got:?}\n    vanilla {w:?}", v["luck_level"], v["lure_level"], t + 1));
+            let same = |i: usize, a: f64, b: f64| if i == 4 { a as f32 == b as f32 } else { a == b || (a.is_nan() && b.is_nan()) };
+            if let Some(first) = got.iter().zip(&w).enumerate().position(|(i, (a, b))| !same(i, *a, *b)) {
+                let mut text = format!("{name} (luck {} lure {}) t={} first field {first}: Kiln {got:?}
+    vanilla {w:?}", v["luck_level"], v["lure_level"], t + 1);
+                if std::env::var_os("KILN_FISHING_TRACE").is_some() {
+                    for k in t.saturating_sub(3)..t {
+                        let before: Vec<f64> = v["ticks"][k].as_array().unwrap().iter().map(|x| x.as_bool().map_or_else(|| num(x), |b| b as u8 as f64)).collect();
+                        text.push_str(&format!("
+    vanilla t={} {before:?}", k + 1));
+                    }
+                }
+                failures.push(text);
                 break;
             }
         }
     }
-    for f in failures.iter().take(12) {
+    for f in failures.iter().take(std::env::var("KILN_FISHING_SHOW").ok().and_then(|n| n.parse().ok()).unwrap_or(12)) {
         eprintln!("FAIL {f}");
     }
     eprintln!("fishing: {cases} cases, {values} values, {} differ", failures.len());
