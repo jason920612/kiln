@@ -804,10 +804,8 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
     // What the kept turns replaced, freed side by side afterwards (a mob's brain is many
     // small allocations).
     let mut garbage: Vec<Box<kiln_entity::Entity>> = Vec::new();
+    let timed = crate::diag::on();
     for i in 0..n {
-        if carried(sim, i) {
-            continue;
-        }
         let me = sim.list[i].id;
         let mut spec = specs[i].take();
         let valid = spec.as_ref().is_some_and(|s| {
@@ -829,23 +827,30 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
             }
             r.is_empty()
         });
-        if !valid && let Some(s) = spec.take() {
-            garbage.push(s.phys);
-            garbage.extend(s.overlays.into_iter().map(|o| o.ent));
+        if !valid {
+            if let Some(s) = spec.take() {
+                garbage.push(s.phys);
+                garbage.extend(s.overlays.into_iter().map(|o| o.ent));
+            }
+            // (A turn that is kept rides nothing: it was speculated riding nothing, and nothing changed it since.)
+            if carried(sim, i) {
+                continue;
+            }
         }
-        let tk = std::time::Instant::now();
+        let tk = timed.then(std::time::Instant::now);
         let was = spec.is_some();
         match spec {
             Some(s) => {
                 kept += 1;
-                let before = shape(sim, me);
+                let own = |sim: &SimLevel| sim.list[i].phys.as_deref().map(|e| (e.bounding_box(), e.is_alive()));
+                let before = own(sim);
                 let e = &mut sim.list[i];
                 e.age += 1;
                 garbage.extend(e.phys.replace(s.phys));
                 (sim.current, sim.seeds, sim.rng) = (me, s.seeds, s.rng);
                 sim.current_source = None;
                 settle(sim, i);
-                let after = shape(sim, me);
+                let after = own(sim);
                 dirty.changed(me, before, after);
                 for o in s.overlays {
                     let (id, before) = (o.id, Some((o.before, o.alive)));
@@ -900,7 +905,9 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
                 }
             }
         }
-        if was { t_keep += tk.elapsed() } else { t_run += tk.elapsed() }
+        if let Some(tk) = tk {
+            if was { t_keep += tk.elapsed() } else { t_run += tk.elapsed() }
+        }
     }
     crate::diag::add("spec.t_keep", t_keep);
     crate::diag::add("spec.t_run", t_run);

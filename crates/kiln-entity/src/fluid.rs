@@ -104,7 +104,7 @@ struct Accumulator {
 /// `EntityFluidInteraction`.
 #[derive(Clone, Debug, Default)]
 pub struct FluidInteraction {
-    trackers: Vec<Tracker>,
+    trackers: smallvec::SmallVec<[Tracker; 2]>,
     water: Accumulator,
     lava: Accumulator,
 }

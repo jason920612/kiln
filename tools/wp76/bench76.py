@@ -37,6 +37,10 @@ COUNT = re.compile(r"Test passed[.,] [Cc]ount: (\d+)")
 BOT = HOME / "wp76/bin/base/kiln-bot"
 
 FULL = ["rotten_flesh", "bone", "arrow", "string", "gunpowder", "spider_eye", "iron_ingot", "redstone", "glass_bottle", "stick"]
+CENSUS = ["zombie", "husk", "drowned", "skeleton", "stray", "bogged", "creeper", "spider", "cave_spider", "enderman", "witch", "slime",
+          "zombie_villager", "phantom", "bat", "squid", "glow_squid", "cod", "salmon", "tropical_fish", "pufferfish", "dolphin", "axolotl",
+          "cow", "sheep", "pig", "chicken", "rabbit", "horse", "donkey", "llama", "wolf", "fox", "goat", "frog", "turtle", "parrot", "panda",
+          "polar_bear", "armadillo", "camel", "mooshroom", "ocelot", "cat", "bee", "villager"]
 GEAR = ["bow", "golden_sword", "iron_helmet", "golden_chestplate", "iron_shovel", "crossbow", "fishing_rod"]
 
 # scene: (x, y, z) of its place (the chamber's floor centre), chunks to forceload around it
@@ -49,6 +53,9 @@ PLACES = {
     "hopper": (520, 150, 520),
     "reload": (776, 150, 776),
     "scatter": (2008, None, 2008),
+    # wp74's witch hut farm: an 11x11 floor across chunk borders, a repeating command block killing
+    # everything but players outside the box every tick; the drops inside pile up
+    "hut": (1280, 150, 1280),
 }
 SCATTER_R = 120
 
@@ -183,6 +190,24 @@ def write_pack():
             lines.append(f"execute positioned {px:.3f} 0 {pz:.3f} positioned over motion_blocking run summon item ~ ~0.1 ~ "
                          f"{{Item:{{id:\"minecraft:{drops[i % len(drops)]}\",count:{c}}}}}")
         (fn / f"scatter{n}.mcfunction").write_text("\n".join(lines) + "\n")
+    # the hut: floor top at y, box x/z -5..+5 around the centre, y..y+14; the command block 12 west
+    x, y, z = PLACES["hut"]
+    box = f"x={x - 5},y={y},z={z - 5},dx=10,dy=14,dz=10"
+    (fn / "hut_build.mcfunction").write_text(
+        f"fill {x - 6} {y - 1} {z - 6} {x + 6} {y + 4} {z + 6} glass\n"
+        f"fill {x - 5} {y} {z - 5} {x + 5} {y + 4} {z + 5} air\n"
+        "gamerule command_block_output false\n"
+        f"setblock {x - 18} {y + 8} {z} repeating_command_block{{auto:1b,TrackOutput:0b,"
+        f"Command:\"execute as @e[type=!player] unless entity @s[{box}] run kill @s\"}}\n")
+    (fn / "hut_off.mcfunction").write_text(f"setblock {x - 18} {y + 8} {z} air\n")
+    for n in (1000, 5000, 10000):
+        rng = random.Random(90 + n)
+        lines = []
+        for i in range(n):
+            px = x - 5 + rng.random() * 11
+            pz = z - 5 + rng.random() * 11
+            lines.append(f"summon item {px:.3f} {y + 0.2 + rng.random():.3f} {pz:.3f} {{Item:{item(i, rng)}}}")
+        (fn / f"hut{n}.mcfunction").write_text("\n".join(lines) + "\n")
     # the farm's killer (wp74): every tick, everything but players and items
     (fn / "killer.mcfunction").write_text("kill @e[type=!player,type=!item]\n")
     print("pack written to", pack)
@@ -238,6 +263,15 @@ class Server:
                 got.append(l)
             time.sleep(0.05)
         raise TimeoutError(cmd)
+
+    def wait_for(self, text, timeout=900.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            for l in self.lines():
+                if text in l:
+                    return
+            time.sleep(0.1)
+        raise TimeoutError(text)
 
     def items(self):
         for l in self.run("execute if entity @e[type=item]"):
@@ -325,6 +359,55 @@ def run(args):
                 time.sleep(3)
                 results.append(measure(s, args.window, scene + "+killer"))
                 s.run("scoreboard players set killer wp76 0")
+                s.run("kill @e[type=item]")
+            elif scene.startswith("mobfarm"):
+                # wp74's farm rounds: night, monsters spawning around a creative player, `tick sprint 1000`, then
+                # every mob killed where it stands (`kill @e[type=!player,type=!item]`): the drops pile up over
+                # the simulated area round after round (items live 6000 ticks)
+                rounds = int(scene[7:] or 8)
+                x, _, z = PLACES["scatter"]
+                s.run(f"tp Bench0 {x + 0.5} 140 {z + 0.5}")
+                time.sleep(20)
+                for c in ["gamemode creative Bench0", f"execute positioned {x} 0 {z} positioned over motion_blocking run tp Bench0 ~ ~ ~",
+                          "difficulty normal", "time set 18000", "gamerule spawn_mobs true"]:
+                    s.run(c)
+                for r in range(rounds):
+                    s.send("tick sprint 1000")
+                    s.wait_for("Sprint completed", 900)
+                    time.sleep(1)
+                    results.append(measure(s, 10, f"mobfarm round {r}"))
+                    census = {}
+                    for t in CENSUS:
+                        n = 0
+                        for l in s.run(f"execute if entity @e[type={t}]"):
+                            m = COUNT.search(l)
+                            if m:
+                                n = int(m.group(1))
+                        if n:
+                            census[t] = n
+                    print(f"[{which}]   census: {census}", flush=True)
+                    results[-1]["census"] = census
+                    killed = [l for l in s.run("kill @e[type=!player,type=!item]") if "Killed" in l or "killed" in l]
+                    print(f"[{which}]   killed: {killed[-1][-60:] if killed else '-'}", flush=True)
+                    results[-1]["killed"] = killed[-1][-60:] if killed else ""
+                    time.sleep(1)
+                s.run("gamerule spawn_mobs false")
+                s.run("difficulty peaceful")
+                s.run("kill @e[type=item]")
+            elif scene.startswith("hut"):
+                if not getattr(s, "hut_ready", False):
+                    tp(s, "hut")
+                    time.sleep(3)
+                    s.run("function wp76:hut_build")
+                    s.hut_ready = True
+                    time.sleep(5)
+                    results.append(measure(s, 15, "hut idle (killer on)"))
+                s.run(f"function wp76:{scene}")
+                time.sleep(10)
+                results.append(measure(s, args.window, scene))
+                if scene == scenes[-1] or not scenes[scenes.index(scene) + 1].startswith("hut"):
+                    s.run("function wp76:hut_off")
+                    s.hut_ready = False
                 s.run("kill @e[type=item]")
             elif scene.startswith("pile"):
                 n = int(scene[4:])

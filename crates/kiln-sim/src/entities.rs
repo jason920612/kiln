@@ -2454,7 +2454,8 @@ fn settle(sim: &mut SimLevel, i: usize) {
     sim.grid.moved(i, pos);
     let e = &mut sim.list[i];
     let cell = chunk_of(e.pos).cell();
-    if sim.level.cells().cell(cell).is_some() {
+    // (Most entities stay in their cell: nothing to look up.)
+    if cell != e.cell && sim.level.cells().cell(cell).is_some() {
         e.cell = cell;
     }
 }

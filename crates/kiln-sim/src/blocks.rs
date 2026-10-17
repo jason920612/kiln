@@ -407,8 +407,8 @@ pub(crate) struct EntityBox {
     pub conn: Option<ConnId>,
     /// A monster that keeps players from sleeping nearby (`Monster.isPreventingPlayerRest`).
     pub prevents_rest: bool,
-    /// A player as the source of the game events it causes.
-    pub player_source: Option<kiln_entity::vibration::EventSource>,
+    /// A player as the source of the game events it causes (boxed: a crowd of item entities makes these by the thousand).
+    pub player_source: Option<Box<kiln_entity::vibration::EventSource>>,
     /// A hanging entity (item frame, painting): its facing and type.
     pub hanging: Option<(kiln_entity::math::Direction, &'static str)>,
     /// A cushion (placing one does not overlap another).
@@ -416,7 +416,7 @@ pub(crate) struct EntityBox {
     /// What a dispenser asks of a living thing (a player, an armor stand, a mob).
     /// `Entity.canBeCollidedWith(null)`: a boat, a living shulker, a grown happy ghast that stays still (what `Level.noCollision` counts besides blocks).
     pub collides: bool,
-    pub wear: Option<Wear>,
+    pub wear: Option<Box<Wear>>,
 }
 
 /// What a dispenser needs to know of a living thing in front of it (`LivingEntity.canEquipWithDispenser`).
@@ -488,22 +488,27 @@ fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Ent
                 blocks_building: true,
                 conn: Some(p.conn),
                 prevents_rest: false,
-                player_source: Some(player_source(p)),
+                player_source: Some(Box::new(player_source(p))),
                 hanging: None,
                 cushion: false,
                 collides: false,
-                wear: (!spots.is_empty() && near(min, max)).then(|| crate::container::equip::wear_of_player(p)),
+                wear: (!spots.is_empty() && near(min, max)).then(|| Box::new(crate::container::equip::wear_of_player(p))),
             }
         })
         .collect();
+    out.reserve(entities.list.len());
     out.extend(entities.list.iter().filter(|e| !e.removed && e.phys.is_some()).map(|e| {
         let (min, max, blocks_building) = e.body();
+        // An item entity is none of the things below (the common case in a crowd).
+        if matches!(e.phys.as_deref().map(|p| &p.kind), Some(kiln_entity::EntityKind::Item(_))) {
+            return EntityBox { min, max, living: false, blocks_building, conn: None, prevents_rest: false, player_source: None, hanging: None, cushion: false, collides: false, wear: None };
+        }
         // Mobs are living entities (pressure plates, lightning targets).
         let living = e.phys.as_deref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
         let wear = if !spots.is_empty() && near(min, max) {
             e.phys.as_deref().and_then(crate::container::equip::wear_of).map(|mut w| {
                 w.leads = holders.contains(&e.id) || e.phys.as_deref().is_some_and(kiln_entity::leash::is_leashed);
-                w
+                Box::new(w)
             })
         } else {
             None
@@ -763,7 +768,7 @@ impl Level for RegionLevel<'_> {
         };
         // `level.gameEvent(player, event, pos)`: the acting player is the source.
         if crate::sculk::listening(self) {
-            let source = self.actor.and_then(|c| self.bodies.iter().find(|b| b.conn == Some(c))).and_then(|b| b.player_source);
+            let source = self.actor.and_then(|c| self.bodies.iter().find(|b| b.conn == Some(c))).and_then(|b| b.player_source.as_deref().copied());
             let at = kiln_entity::math::Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
             crate::sculk::post(self, event, at, kiln_entity::vibration::Context { source, affected_state: state });
         }
