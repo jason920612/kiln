@@ -18,8 +18,10 @@ fn summoned_entities_get_their_ids_in_command_order() {
     }
     let p = client.pos;
     // Each to the west of the one before: by position they would come in the opposite order.
+    // Out of the keeper's reach (a creative player picks up what lies next to them).
+    let z = p[2] + 6.0;
     let xs = [p[0] + 3.0, p[0] + 2.0, p[0] + 1.0, p[0] - 1.0, p[0] - 2.0];
-    let mut inbox: Vec<ToSim> = xs.iter().map(|x| ToSim::Console(format!("summon minecraft:item {x} {} {} {{Item:{{id:\"minecraft:stone\",count:1}},NoGravity:1b}}", p[1] + 2.0, p[2]))).collect();
+    let mut inbox: Vec<ToSim> = xs.iter().map(|x| ToSim::Console(format!("summon minecraft:item {x} {} {} {{Item:{{id:\"minecraft:stone\",count:1}},NoGravity:1b}}", p[1] + 2.0, z))).collect();
     client.tick(None, &mut inbox);
     assert!(sim.step(inbox));
     let items: Vec<f64> = sim.entities().into_iter().filter(|(k, _)| *k == "minecraft:item").map(|(_, pos)| pos[0]).collect();
