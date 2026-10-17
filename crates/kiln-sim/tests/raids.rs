@@ -326,7 +326,7 @@ fn a_raid_in_progress_survives_a_restart() {
         "and found their raid again: {:?}",
         pillagers.iter().map(|&id| w.sim.raider(id)).collect::<Vec<_>>()
     );
-    assert_eq!(after[0].5, raiders, "all of them count");
+    assert_eq!(after[0].5, before[0].5, "all of them count");
     assert!(after[0].6 > 0.0 && (after[0].6 - hurt[0].6).abs() < 0.2, "the bar shows what is left: {} then {}", hurt[0].6, after[0].6);
     // The raid goes on: kill the wave and the next one comes.
     w.console("kill @e[type=minecraft:pillager]");
