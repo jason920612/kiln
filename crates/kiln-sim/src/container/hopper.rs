@@ -602,6 +602,9 @@ pub(crate) struct EntityItems<'a> {
     /// The item entities at the start of the phase with their boxes (hoppers only look at
     /// these, not at every entity).
     items: Vec<(usize, [f64; 3], [f64; 3])>,
+    /// Where in `items` they are by the block columns their boxes cover (a hopper looks above one block: a floor of
+    /// hoppers under a pile of items would otherwise look at every item each).
+    columns: crate::FastMap<(i32, i32), smallvec::SmallVec<[u32; 4]>>,
     /// The container minecarts, likewise.
     carts: Vec<(usize, [f64; 3], [f64; 3])>,
     touched: Vec<usize>,
@@ -638,7 +641,15 @@ impl<'a> EntityItems<'a> {
                 (i, min, max)
             })
             .collect();
-        EntityItems { entities, items, carts, touched: Vec::new() }
+        let mut columns: crate::FastMap<(i32, i32), smallvec::SmallVec<[u32; 4]>> = Default::default();
+        for (k, (_, min, max)) in items.iter().enumerate() {
+            for x in min[0].floor() as i32..=max[0].floor() as i32 {
+                for z in min[2].floor() as i32..=max[2].floor() as i32 {
+                    columns.entry((x, z)).or_default().push(k as u32);
+                }
+            }
+        }
+        EntityItems { entities, items, columns, carts, touched: Vec::new() }
     }
 
     /// Indices of the item entities whose stack changed.
@@ -651,11 +662,23 @@ impl<'a> EntityItems<'a> {
 
 impl ItemEntities for EntityItems<'_> {
     fn items_in(&self, lo: [f64; 3], hi: [f64; 3]) -> Vec<usize> {
-        self.items
-            .iter()
-            .filter(|(i, min, max)| !self.entities.list[*i].removed && (0..3).all(|k| min[k] < hi[k] && max[k] > lo[k]))
-            .map(|(i, _, _)| *i)
-            .collect()
+        let hits = |&(i, min, max): &(usize, [f64; 3], [f64; 3])| !self.entities.list[i].removed && (0..3).all(|k| min[k] < hi[k] && max[k] > lo[k]);
+        let (x0, x1, z0, z1) = (lo[0].floor() as i64, hi[0].floor() as i64, lo[2].floor() as i64, hi[2].floor() as i64);
+        if (x1 - x0 + 1) * (z1 - z0 + 1) > self.items.len() as i64 {
+            return self.items.iter().filter(|it| hits(it)).map(|it| it.0).collect();
+        }
+        // (Two boxes that meet share a column; `items` is in list order, which the answer keeps.)
+        let mut found: smallvec::SmallVec<[u32; 16]> = smallvec::SmallVec::new();
+        for x in x0..=x1 {
+            for z in z0..=z1 {
+                if let Some(v) = self.columns.get(&(x as i32, z as i32)) {
+                    found.extend(v.iter().copied().filter(|&k| hits(&self.items[k as usize])));
+                }
+            }
+        }
+        found.sort_unstable();
+        found.dedup();
+        found.into_iter().map(|k| self.items[k as usize].0).collect()
     }
     fn stack_mut(&mut self, i: usize) -> &mut ItemStack {
         self.entities.stack_mut(i)
