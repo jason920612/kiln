@@ -15,7 +15,7 @@ VEC = os.path.expanduser("~/kiln/work/wp75")
 # name: ([(file, old, new)], [cargo args])
 CASES = {
     "tick_order": ([("crates/kiln-sim/src/container/mod.rs", "self.ticking.values().map(|p| (*p, self.index[p]))", "self.index.iter().filter(|(_, k)| ticks(**k)).map(|(p, k)| (*p, *k))")], SIM + ["--test", "hopper_order"]),
-    "java_hash_order": ([("crates/kiln-sim/src/container/mod.rs", "    let mut size = 16usize;", "    let mut size = 32usize;")], SIM + ["--lib", "java_hash_map_order_of_block_positions"]),
+    "java_hash_order": ([("crates/kiln-sim/src/container/mod.rs", "    while keys.len() > size / 4 * 3 {", "    while keys.len() > size {")], SIM + ["--lib", "java_hash_map_order_of_block_positions"]),
     "pot_decorations": ([("crates/kiln-sim/src/container/mod.rs", "            normalize_pot_decorations(&mut extra);", "")], SIM + ["--lib", "a_decorated_pot_loads_sherds_in_the_codec_form"]),
     "piston_old_progress": ([("crates/kiln-sim/src/entities/piston.rs", "            m.progress = push.piston.progress;", "            m.progress = push.progress;")], SIM + ["--test", "piston_items"]),
     "summon_order": ([("crates/kiln-sim/src/lib.rs", "            batch.append(&mut d.serial_spawns);", "            batch.append(&mut d.serial_spawns);\n            batch = entities::canonical(batch);")], SIM + ["--test", "summon_order"]),

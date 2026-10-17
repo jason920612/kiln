@@ -819,8 +819,9 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 載入不能載入的物品(110 個方塊實體案例 + 66 個實體案例 + `/setblock` 6 個) | **修**:部分解碼(未知 id、壞槽位丟掉、count 超界為 1、壞元件只丟元件、束口袋/潛影盒裡壞元素丟掉;實體逐格);裝飾罐 `sherds` 用 26.3 的複合形式 |
 | 中立生物的憤怒(6 種 × 5 案例) | **修**:`angry_at`(UUID)存取;`AngerTime` 從第一次更新算起;`anger.rs` 測試 |
 | 生物身上的箭與蜂針 | **修**:生物也計數、掉落、送資料(0 時重設);`an_arrow_sticks_in_a_mobs_body_and_falls_out_in_time` |
-| 屬性清單(89 種生物 × 新建立與第一 tick 之後;玩家登入) | **修**:只列已建立實例的屬性(玩家 4 個);89 種全部與 vanilla 相同;`crowd_golden` 封包摘要重錄 |
+| 屬性清單(89 種生物 × 新建立與第一 tick 之後;玩家登入) | **修**:只列已建立實例的屬性(玩家 4 個);89 種的實例集合與 vanilla 相同(隨機裝備帶來的護甲屬性不比,piglin 的金盔甲抽籤與向量世界不同);`crowd_golden` 封包摘要重錄 |
 | 傷害事件與受傷聲音;同 tick 生成又移除的投射物 | **修**(旁觀者的傷害事件先於聲音;補送 `AddEntity`+`RemoveEntities`);傷害事件對直接送出的 level event 的先後**沒做** |
+| 被後面的實體丟棄的實體(`container49-wind` 先召喚的盔甲架被後召喚的風彈打掉) | **修**:晚一個 tick 才消失,改成 tick 結束時就是已移除;`removed_in_tick.rs`;容器場景 27/27 |
 | 重啟後的突襲 | **修**:襲擊者載入時回到突襲、血條與領隊恢復;`a_raid_in_progress_survives_a_restart` |
 | 刷怪籠 `data get block`、裝飾罐 `/setblock` 資料 | **修**;`NoAI` 牛的 `Motion` 殘留沒修(只是 NBT 數字) |
 | 重錘(重擊/密度/突破/風爆/擊退爆發)與銅工具/銅盔甲 | 沒有差異:combat 115、melee 763、spear 148、mount 240、riptide 110 全部位元相同 |
