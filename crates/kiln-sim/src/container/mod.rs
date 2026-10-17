@@ -389,10 +389,13 @@ impl ContainerBe {
             Some(Tag::Compound(fields)) => fields.iter().filter_map(|(k, v)| Some((k.clone(), v.as_i64()? as i32))).collect(),
             _ => Vec::new(),
         };
-        let extra = match nbt {
+        let mut extra: Vec<(String, Tag)> = match nbt {
             Tag::Compound(fields) => fields.iter().filter(|(k, _)| !MODELED.contains(&k.as_str())).cloned().collect(),
             _ => Vec::new(),
         };
+        if kind == BeKind::DecoratedPot {
+            normalize_pot_decorations(&mut extra);
+        }
         // `JukeboxBlockEntity.loadAdditional`: the disc, and how far its song had got.
         let mut list = list;
         // An item that did not load is gone from the saved form too (the chunk's copy is rewritten).
@@ -1201,6 +1204,32 @@ pub(crate) fn scheduled_tick(level: &mut RegionLevel, pos: BlockPos, s: u16) {
         // The command runs in the serial phase after the regions' tick (it may change anything).
         C::CommandBlock => level.blocks.command_ticks.push(pos),
         _ => level.out.rechecks.push(pos),
+    }
+}
+
+/// `DecoratedPotBlockEntity.loadAdditional`: `sherds` is a compound of up to four items (`PotDecorations.CODEC`); anything that does not
+/// decode as one is not loaded, and what does is saved in the codec's own form. The `pot_decorations` of `components` (kept as given, not
+/// applied) goes the same way.
+fn normalize_pot_decorations(extra: &mut Vec<(String, Tag)>) {
+    use kiln_item::component::{ComponentValue, PotDecorations};
+    let canonical = |t: &Tag| PotDecorations::from_value(&kiln_item::Value::from_nbt(t)).ok().map(|d| (d.to_value().to_nbt(), d == PotDecorations::default()));
+    if let Some(i) = extra.iter().position(|(k, _)| k == "sherds") {
+        match canonical(&extra[i].1) {
+            Some((tag, false)) => extra[i].1 = tag,
+            _ => {
+                extra.remove(i);
+            }
+        }
+    }
+    if let Some((_, Tag::Compound(components))) = extra.iter_mut().find(|(k, _)| k == "components")
+        && let Some(j) = components.iter().position(|(k, _)| k == "minecraft:pot_decorations")
+    {
+        match canonical(&components[j].1) {
+            Some((tag, _)) => components[j].1 = tag,
+            None => {
+                components.remove(j);
+            }
+        }
     }
 }
 
