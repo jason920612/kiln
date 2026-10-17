@@ -38,6 +38,15 @@ pub(crate) fn push(entities: &mut Entities, level: &mut RegionLevel, players: &m
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    // `PistonMovingBlockEntity.tick` pushes with the block entity where it was and only then moves it on: what an entity runs into
+    // (and what gives way to it) is the old progress. The block phase advanced them all; they go back and forward again one by one.
+    for pushed in pushes {
+        if let Pushed::Piston(push) = pushed
+            && let Some(m) = level.blocks.data.pistons.get_mut(push.pos)
+        {
+            m.progress = push.piston.progress;
+        }
+    }
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x7069, 0);
     let (game_time, min_y, fast_lava) = (level.env.game_time, level.env.min_y, level.env.rules.fast_lava);
     let mut sim = SimLevel {
@@ -107,6 +116,8 @@ pub(crate) fn push(entities: &mut Entities, level: &mut RegionLevel, players: &m
                 }
             });
         }
+        // (`this.progress = newProgress`.)
+        sim.level.set_piston_progress(push.pos, push.progress.min(1.0));
     }
     for e in sim.list.iter_mut() {
         e.sync();
