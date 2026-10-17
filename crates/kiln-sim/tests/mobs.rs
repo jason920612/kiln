@@ -880,6 +880,26 @@ fn wither_skeletons_wither_their_target() {
     assert!(withered, "a wither skeleton's hit withers");
 }
 
+/// `EntityTypeTags.CAN_BREATHE_UNDER_WATER` (wp74: a playthrough found turtles and copper golems drowning in Kiln where vanilla keeps
+/// them alive; the same 700 ticks under water kill an ordinary cow).
+#[test]
+fn turtles_and_copper_golems_do_not_drown_but_cows_do() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.fill([4, 0, -2], [8, 3, 2], "minecraft:water");
+    w.summon("minecraft:turtle", [5.5, 0.0, 0.5], "{PersistenceRequired:1b,NoAI:1b}");
+    w.summon("minecraft:copper_golem", [6.5, 0.0, 0.5], "{PersistenceRequired:1b,NoAI:1b}");
+    w.summon("minecraft:cow", [7.5, 0.0, 0.5], "{PersistenceRequired:1b,NoAI:1b}");
+    w.ticks(700);
+    let turtle = w.mobs("minecraft:turtle");
+    assert_eq!(turtle.len(), 1, "the turtle is alive");
+    assert_eq!(turtle[0].2, 30.0, "and unhurt");
+    let golem = w.mobs("minecraft:copper_golem");
+    assert_eq!(golem.len(), 1, "the copper golem is alive");
+    assert_eq!(golem[0].2, 12.0, "and unhurt");
+    assert!(w.mobs("minecraft:cow").is_empty(), "the cow drowned");
+}
+
 #[test]
 fn zombies_drown_into_drowned_and_skeletons_freeze_into_strays() {
     let mut w = World::new();

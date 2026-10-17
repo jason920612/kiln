@@ -34,6 +34,7 @@ pub static KIND: CopperGolem = CopperGolem;
 
 static INFO: Info = Info {
     ambient_interval: 120,
+    breathes_under_water: true,
     ..Info::misc("minecraft:copper_golem", &[(MaxHealth, 12.0), (MovementSpeed, 0.20000000298023224), (StepHeight, 1.0)])
 };
 
