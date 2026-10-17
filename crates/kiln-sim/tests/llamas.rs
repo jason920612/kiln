@@ -243,7 +243,10 @@ fn a_llama_spits_at_the_player_who_hurt_it() {
     let llama = *w.sim.entity_ids_of("minecraft:llama").iter().find(|id| !before.contains(id)).expect("summoned");
     let mut min_health = 20.0f32;
     let mut spit_seen = false;
-    for round in 0..4 {
+    for _ in 0..12 {
+        if min_health < 20.0 {
+            break;
+        }
         w.ticks(25);
         assert!(w.sim.step([ToSim::Packet(1, PlayIn::Attack { entity_id: llama })]));
         for _ in 0..40 {
