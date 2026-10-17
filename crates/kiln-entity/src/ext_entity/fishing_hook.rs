@@ -122,7 +122,7 @@ pub fn owner_still_fishing(e: &Entity, level: &dyn EntityLevel, owner: i32) -> b
 
 impl FishingHook {
     /// `catchingFish`: the fish's approach, the bite, and the wait for the next one.
-    fn catching_fish(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, pos: BlockPos) {
+    fn catching_fish(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, pos: BlockPos, synced: &mut LegacyRandom) {
         let mut speed = 1;
         let above = pos.above();
         if e.random.next_float() < 0.25 && level.is_raining_at(above) {
@@ -155,6 +155,10 @@ impl FishingHook {
                 let pitch = 1.0 + (e.random.next_float() - e.random.next_float()) * 0.4;
                 level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.fishing_bobber.splash", source: "neutral", volume: 0.25, pitch });
                 self.nibble = next_int(&mut e.random, 20, 40);
+                // `entityData.set(DATA_BITING, true)` runs `onSyncedDataUpdated` on the server too: the bobber dips by a draw of the synchronized random.
+                if !self.biting {
+                    e.delta = Vec3::new(e.delta.x, (-0.4f32 * next_float(synced, 0.6, 1.0)) as f64, e.delta.z);
+                }
                 self.biting = true;
             }
         } else if self.time_until_lured > 0 {
@@ -373,7 +377,7 @@ impl EntityExt for FishingHook {
                         let b = synced.next_float() as f64;
                         e.delta = e.delta + Vec3::new(0.0, -0.1 * a * b, 0.0);
                     }
-                    self.catching_fish(e, level, pos);
+                    self.catching_fish(e, level, pos, &mut synced);
                 } else {
                     self.out_of_water_time = (self.out_of_water_time + 1).min(10);
                 }
