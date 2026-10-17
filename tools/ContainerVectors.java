@@ -1211,6 +1211,7 @@ public class ContainerVectors {
             // The power: beside the piston, not in front.
             int[] side = d == 1 || d == 2 ? new int[] {1, 0, 0} : new int[] {0, 0, 1};
             String where = String.format(Locale.ROOT, "~%d ~%d ~%d", side[0], side[1], side[2]);
+            s.state(side[0], side[1], side[2]);
             s.at(3, "setblock " + where + " minecraft:redstone_block");
             if (fam == 1) s.at(26, "setblock " + where + " minecraft:air");
             out.add(s);
