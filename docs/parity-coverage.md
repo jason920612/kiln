@@ -791,6 +791,23 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 沒有記錄的 hash 或向量因此改變(`crowd_golden` 只有玩家、`mob_parity` 的閘種子由重播固定,1462 個向量逐位元不變)。驗證(VM):workspace 測試不帶與帶 `KILN_DATAPACK` 各 183 個二進位 `ok`、determinism 6/6、`crowd_golden` 4/4、`parity_suites` 102/102。排除的假說:大腦流改為全部共用一條或混勻種子,傀儡數不變(856、862 對 866)。
 
 
+### 6.18 wp72(`wp72-playthrough7`):技術型玩家的建造,同一個世界逐刻並排
+
+細節見 `docs/playthrough-wp72.md`。一支程式同時驅動 Kiln 與 vanilla 的 console(`tick freeze`+`tick step`),每刻比兩邊的方塊/實體/容器。
+
+| 區域 | 結果 |
+|---|---|
+| 紅石(活塞、半連接、中繼器/比較器/觀察者鏈、黏液/蜜)fuzz 160+ 案例 | 逐刻 0 差異 |
+| 所有容器的比較器讀數 390 案例 | 0 差異 |
+| 導管 | **原本沒實作** → `conduit.rs`;啟動/能量/打擊週期逐刻相同 |
+| 活塞方塊事件封包順序 | **修**(事件先於它造成的方塊變化);`piston_packets.rs` |
+| 自然生成:史萊姆生成盒(`spawnDimensionsScale`)、掠奪者規則、`PotentialCalculator` 生成成本 | **修** 3 處;`slime_rooms.rs`、`pillager_spawn_rules.rs`、`spawn_costs.rs`;史萊姆區塊演算法 `slime_chunks.rs` 與 vanilla 相同 |
+| 指令/函式召喚、方塊階段產生的實體第一次 tick 的時刻 | **修**(同一刻);`summon_tick.rs`;`schedule_timing.rs` 記錄排程時序與 vanilla 一致 |
+| 自訂名稱在指令回饋 | **修**;`display_name_tests` |
+| 村民洗牌/繁殖、苦力怕平台、守衛者、溺屍裝備(1200 隻) | 在雜訊內相同 |
+| 未覆蓋/沒結論 | 女巫小屋、末影人、黃金農場、海龜蛋、交易大廳/突襲/貓、徒步下界、以物易物、複製機 |
+
+
 ## 7. 重跑
 
 ```sh
