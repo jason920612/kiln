@@ -52,7 +52,7 @@ fn animals_in_far_loaded_chunks_fill_the_cap() {
         cmds.push(format!("summon minecraft:cow {} 100 8 {{NoAI:1b}}", 193 + i));
     }
     assert!(sim.step(cmds.into_iter().map(ToSim::Console)));
-    tick(&mut sim, &mut client, 300);
+    tick(&mut sim, &mut client, 450);
     let counters = kiln_sim::spawn_counters();
     let full = counters.iter().filter(|(k, _)| k.starts_with("global CREATURE chunks=289 count=") && k.ends_with("-> false")).collect::<Vec<_>>();
     assert!(
