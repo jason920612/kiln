@@ -166,7 +166,9 @@ fn saved_attributes_and_brain_match_vanilla() {
             let vs = &s["saved"];
             // A mob that finalizes may come out a baby: only mobs that are the same age compare.
             let is_baby = |t: &Tag| t.get("Age").and_then(Tag::as_i64).is_some_and(|a| a < 0) || t.get("IsBaby").and_then(Tag::as_i64) == Some(1);
-            if is_baby(&saved) != vs["baby"].as_bool().unwrap_or(false) {
+            // (A type that cannot be a baby keeps the `Age` of the summon in Kiln as an unknown field; vanilla drops it.)
+            let vanilla_baby = vs["baby"].as_bool().unwrap_or(false);
+            if is_baby(&saved) != vanilla_baby && (!baby || vanilla_baby) {
                 skipped.push(format!("{name} (Kiln {})", if is_baby(&saved) { "baby" } else { "adult" }));
                 break;
             }
