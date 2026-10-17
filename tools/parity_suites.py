@@ -118,6 +118,25 @@ SUITES = {
     "lid57_sim": (["-p", "kiln-sim", "--lib", "lid_parity"], {"KILN_LID_VECTORS": vec("wp57/lid/lid57.jsonl")}),
     "interact57": (["-p", "kiln-sim", "--lib", "interact_parity"], {"KILN_INTERACT_VECTORS": "wp57/interact/*.jsonl"}),
     "menus57": (["-p", "kiln-inventory", "--test", "click_parity"], {"KILN_PARITY": "1", "KILN_CLICK_VECTORS": ":".join(vec(f"wp57/inventory/{n}.jsonl") for n in ("stations57", "stations57b"))}),
+    # wp75 suites: recorded into <work>/wp75 (docs/wp75.md). containers/hc.jsonl: 160 random hopper chains placed in different orders (tools/ContainerVectors.java
+    # `hc_`), containers/pi.jsonl: items beside and on pistons (`piston_`; the ones vanilla itself does not repeat are skipped by container_parity), entities/items.jsonl: the
+    # item scenarios of tools/EntityVectors.java (floors, bubble columns, pistons beside), load/ld.jsonl: tools/LoadDropVectors.java (what loads from saved data with
+    # items vanilla cannot read, the anger of neutral mobs, `/setblock` data), attrs/at.jsonl: tools/AttributeVectors.java, combat/*: tools/CombatVectors.java with
+    # the copper tools and armour.
+    "hopper_chains75": (["-p", "kiln-sim", "--lib", "container_parity"], {"KILN_CONTAINER_VECTORS": vec("wp75/containers/hc.jsonl")}),
+    "piston_items75": (["-p", "kiln-sim", "--lib", "container_parity"], {"KILN_CONTAINER_VECTORS": vec("wp75/containers/pi.jsonl")}),
+    "items75": (["-p", "kiln-entity", "--test", "parity"], {"KILN_PARITY": "1", "KILN_PARITY_FILTER": "item_", "KILN_ENTITY_VECTORS": vec("wp75/entities/items.jsonl")}),
+    "load75_blocks": (["-p", "kiln-sim", "--lib", "load_parity"], {"KILN_LOAD_VECTORS": vec("wp75/load/ld.jsonl")}),
+    "load75_entities": (["-p", "kiln-entity", "--test", "load_drops"], {"KILN_LOAD_VECTORS": vec("wp75/load/ld.jsonl")}),
+    "attrs75": (["-p", "kiln-sim", "--lib", "attr_parity"], {"KILN_ATTR_VECTORS": vec("wp75/attrs/at.jsonl")}),
+    "combat75": (["-p", "kiln-sim", "--lib", "parity"], {
+        "KILN_COMBAT_VECTORS": vec("wp75/combat/vectors.jsonl"),
+        "KILN_MELEE_VECTORS": vec("wp75/combat/melee.jsonl"),
+        "KILN_RIPTIDE_VECTORS": vec("wp75/combat/riptide.jsonl"),
+        "KILN_MOUNT_VECTORS": vec("wp75/combat/mount.jsonl"),
+        "KILN_ENCHANT_VECTORS": vec("wp75/combat/enchant_helpers.jsonl"),
+        "KILN_SPEAR_VECTORS": vec("wp75/combat/spear.jsonl"),
+    }),
     "plugin_compat": (["-p", "kiln-plugin-host", "--test", "api_compat", "--test", "wit_freeze"], {}),
 }
 
