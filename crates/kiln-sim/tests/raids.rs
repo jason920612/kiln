@@ -331,8 +331,13 @@ fn a_raid_in_progress_survives_a_restart() {
     // updates the bar: it shows what is left, as before the restart.
     assert!(after[0].6 > 0.8 && (after[0].6 - hurt[0].6).abs() < 0.1, "the bar after the restart: {} then {}", hurt[0].6, after[0].6);
     // The raid goes on: kill the wave and the next one comes.
-    w.console("kill @e[type=minecraft:pillager]");
-    w.ticks(400);
+    let village = w.sim.sections_to_village("minecraft:overworld", w.pos());
+    assert!(village <= 1, "the village is still one after the restart: {village}, villagers {:?}", w.mobs("minecraft:villager"));
+    w.console("kill @e[type=!minecraft:villager,type=!minecraft:player]");
+    w.ticks(30);
+    let mid = w.sim.raids("minecraft:overworld");
+    assert_eq!(mid[0].1, "ongoing", "{mid:?} village {}", w.sim.sections_to_village("minecraft:overworld", w.pos()));
+    w.ticks(370);
     let later = w.sim.raids("minecraft:overworld");
     assert_eq!(later[0].2, 2, "the second wave: {later:?}");
 }
