@@ -1550,7 +1550,7 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     }
     m.tick_stuck_in_body();
     // The first step of a mob asks for its movement speed (`getAttribute`): the instance is there from then on.
-    let _ = m.attrs.get_mut(Attr::MovementSpeed);
+    m.attrs.touch_by_step(Attr::MovementSpeed);
     sync_equipment_modifiers(m);
     if let Some(k) = m.kind.ext() {
         k.detect_equipment_updates(e, m, level);

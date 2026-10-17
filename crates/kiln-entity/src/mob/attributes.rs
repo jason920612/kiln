@@ -156,6 +156,9 @@ pub struct Instance {
     pub created: bool,
     /// The base value the instance was made with (the type's own; a change from it is something to tell the viewers).
     pub initial: f64,
+    /// Made by the mob's first step (not by its constructor): a mob paired in the tick it was made, before that step in vanilla's order,
+    /// is not told of it.
+    pub by_step: bool,
 }
 
 impl Instance {
@@ -215,7 +218,7 @@ impl Attributes {
             Bounciness,
         ]
         .into_iter()
-        .map(|a| Instance { attr: a, base: a.info().1, modifiers: Vec::new(), created: false, initial: a.info().1 })
+        .map(|a| Instance { attr: a, base: a.info().1, modifiers: Vec::new(), created: false, initial: a.info().1, by_step: false })
         .collect();
         for &(a, v) in extra {
             match list.iter_mut().find(|i| i.attr == a) {
@@ -223,7 +226,7 @@ impl Attributes {
                     i.base = v;
                     i.initial = v;
                 }
-                None => list.push(Instance { attr: a, base: v, modifiers: Vec::new(), created: false, initial: v }),
+                None => list.push(Instance { attr: a, base: v, modifiers: Vec::new(), created: false, initial: v, by_step: false }),
             }
         }
         list.sort_by_key(|i| i.attr);
@@ -239,6 +242,16 @@ impl Attributes {
         let i = self.list.iter_mut().find(|i| i.attr == a)?;
         i.created = true;
         Some(i)
+    }
+
+    /// The first step of a mob asks for its movement speed (`getAttribute`).
+    pub fn touch_by_step(&mut self, a: Attr) {
+        if let Some(i) = self.list.iter_mut().find(|i| i.attr == a)
+            && !i.created
+        {
+            i.created = true;
+            i.by_step = true;
+        }
     }
 
     /// The instances a new mob of type `type_name` already has (what its constructor and `finalizeSpawn` ask for; read off a 26.3 server

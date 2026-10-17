@@ -664,20 +664,19 @@ mod tests {
     }
 }
 
-/// The client-syncable attributes of a mob (`AttributeMap.getSyncableAttributes`: the instances that exist) as an Update
-/// Attributes packet; `None` when it has none.
-pub(crate) fn attributes_packet(entity_id: i32, m: &MobData) -> Option<bytes::Bytes> {
-    attributes_packet_of(entity_id, m, None)
+/// The pairing packet: a mob paired in the tick it was made (`fresh`) is paired before its first step, so without the instances that step makes.
+pub(crate) fn attributes_pairing_packet(entity_id: i32, m: &MobData, fresh: bool) -> Option<bytes::Bytes> {
+    attributes_packet_of(entity_id, m, None, fresh)
 }
 
 /// [`attributes_packet`] with only the attributes in `only` (`AttributeMap.getAttributesToSync`).
-pub(crate) fn attributes_packet_of(entity_id: i32, m: &MobData, only: Option<&[mob::attributes::Attr]>) -> Option<bytes::Bytes> {
+pub(crate) fn attributes_packet_of(entity_id: i32, m: &MobData, only: Option<&[mob::attributes::Attr]>, skip_made_by_step: bool) -> Option<bytes::Bytes> {
     use kiln_proto::packets::entity::{AttributeModifier, AttributeSnapshot, ModifierOperation};
     let list: Vec<(i32, &mob::attributes::Instance)> = m
         .attrs
         .list
         .iter()
-        .filter(|i| i.created && i.attr.is_client_syncable() && only.is_none_or(|o| o.contains(&i.attr)))
+        .filter(|i| i.created && !(skip_made_by_step && i.by_step) && i.attr.is_client_syncable() && only.is_none_or(|o| o.contains(&i.attr)))
         .filter_map(|i| Some((kiln_data::builtin_id("minecraft:attribute", i.attr.name())?, i)))
         .collect();
     if list.is_empty() {

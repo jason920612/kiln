@@ -557,7 +557,7 @@ impl Entity {
         let mut out = vec![entity::bundle_delimiter(), spawn, entity::set_entity_data(self.id, &self.metadata())];
         // `ServerEntity.sendPairingData`: a living entity's syncable attributes (a horse's speed and jump).
         if let EntityKind::Mob(m) = &self.phys().kind
-            && let Some(pkt) = crate::mobs::attributes_packet(self.id, m)
+            && let Some(pkt) = crate::mobs::attributes_pairing_packet(self.id, m, self.phys().tick_count <= 1)
         {
             out.push(pkt);
         }
@@ -4219,7 +4219,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
                     .map(|(a, _)| *a)
                     .collect();
                 if !changed.is_empty()
-                    && let Some(pkt) = crate::mobs::attributes_packet_of(e.id, m, Some(&changed))
+                    && let Some(pkt) = crate::mobs::attributes_packet_of(e.id, m, Some(&changed), false)
                 {
                     packets.push(pkt);
                 }
