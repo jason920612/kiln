@@ -3850,6 +3850,7 @@ impl Sim {
         // creative player as it was saved.
         let flying = joining.game_mode == 3
             || (joining.game_mode == 1 && joining.saved.raw().get("abilities").and_then(|a| a.get("flying")).and_then(Tag::as_i64) == Some(1));
+        let saved_attributes = Player::saved_attributes(joining.saved.raw().get("attributes"));
         let mut player = Player {
             dim,
             conn: j.conn,
@@ -3954,7 +3955,7 @@ impl Sim {
             effects: joining.effects,
             attributes_dirty: true,
             attrs_sent: Vec::new(),
-            attrs_touched: Vec::new(),
+            attrs_touched: saved_attributes.1,
             data_packed: false,
             frost_marked: false,
             pending_sounds: Vec::new(),
@@ -4054,7 +4055,7 @@ impl Sim {
             stats: self.load_stats(j.uuid),
             recipe_book,
             advancements: self.load_player_advancements(j.uuid),
-            command_attributes: combat::CommandAttributes::default(),
+            command_attributes: saved_attributes.0,
             limited_crafting: self.rule_bool("minecraft:limited_crafting"),
         };
 
