@@ -46,8 +46,9 @@ public class LoadDropVectors {
         c.add(new Case("be_chest_lootable", "block", "chest", "{LootTable:\"minecraft:chests/simple_dungeon\",LootTableSeed:5L,Items:[" + it(0, unknown, 1) + "]}"));
         // Single item block entities.
         c.add(new Case("be_decorated_pot_unknown", "block", "decorated_pot", "{item:{id:\"" + unknown + "\",count:1}}"));
-        c.add(new Case("be_decorated_pot_components", "block", "decorated_pot", "{components:{\"minecraft:pot_decorations\":[\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}}"));
-        c.add(new Case("be_decorated_pot_sherds", "block", "decorated_pot", "{sherds:[\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}"));
+        c.add(new Case("be_decorated_pot_components", "block", "decorated_pot", "{components:{\"minecraft:pot_decorations\":{back:\"minecraft:brick\",left:{id:\"minecraft:arms_up_pottery_sherd\"},right:\"minecraft:brick\",front:\"minecraft:blade_pottery_sherd\"}}}"));
+        c.add(new Case("be_decorated_pot_sherds", "block", "decorated_pot", "{sherds:{back:\"minecraft:brick\",left:{id:\"minecraft:arms_up_pottery_sherd\"},right:\"minecraft:brick\",front:\"minecraft:blade_pottery_sherd\"}}"));
+        c.add(new Case("be_decorated_pot_old_list", "block", "decorated_pot", "{sherds:[\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}"));
         c.add(new Case("be_decorated_pot_ok", "block", "decorated_pot", "{item:{id:\"minecraft:stone\",count:2}}"));
         c.add(new Case("be_decorated_pot_zero", "block", "decorated_pot", "{item:{id:\"minecraft:stone\",count:0}}"));
         c.add(new Case("be_jukebox_unknown", "block", "jukebox", "{RecordItem:{id:\"" + unknown + "\",count:1}}"));
@@ -93,8 +94,9 @@ public class LoadDropVectors {
         c.add(new Case("e_firework_unknown", "entity", "firework_rocket", "{FireworksItem:{id:\"" + unknown + "\",count:1}}"));
         c.add(new Case("e_eye_of_ender_unknown", "entity", "eye_of_ender", "{Item:{id:\"" + unknown + "\",count:1}}"));
         // ---- the block entity data of /setblock (wp75)
-        c.add(new Case("setblock_pot_sherds", "setblock", "decorated_pot", "{sherds:[\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}"));
-        c.add(new Case("setblock_pot_components", "setblock", "decorated_pot", "{components:{\"minecraft:pot_decorations\":[\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}}"));
+        c.add(new Case("setblock_pot_sherds", "setblock", "decorated_pot", "{sherds:{back:\"minecraft:brick\",left:{id:\"minecraft:arms_up_pottery_sherd\"},right:\"minecraft:brick\",front:\"minecraft:blade_pottery_sherd\"}}"));
+        c.add(new Case("setblock_pot_components", "setblock", "decorated_pot", "{components:{\"minecraft:pot_decorations\":{back:\"minecraft:brick\",left:{id:\"minecraft:arms_up_pottery_sherd\"},right:\"minecraft:brick\",front:\"minecraft:blade_pottery_sherd\"}}}"));
+        c.add(new Case("setblock_pot_old_list", "setblock", "decorated_pot", "{sherds:[\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}"));
         c.add(new Case("setblock_chest_components", "setblock", "chest", "{components:{\"minecraft:custom_name\":\"x\"}}"));
         c.add(new Case("setblock_sign_components", "setblock", "oak_sign", "{components:{\"minecraft:custom_name\":\"x\"}}"));
         c.add(new Case("setblock_chest_unknown_item", "setblock", "chest", "{Items:[{Slot:0b,id:\"minecraft:no_such_item\",count:1},{Slot:1b,id:\"minecraft:stone\",count:2}]}"));
