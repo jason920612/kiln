@@ -196,17 +196,20 @@ public class FishingVectors {
         long gameTime = level.getGameTime();
         StringBuilder ticks = new StringBuilder();
         for (int t = 1; t <= TICKS; t++) {
+            // (What catchingFish asks of the light: the cell above the bobber's block, before the tick moves it.)
+            BlockPos above = hook.blockPosition().above();
+            boolean seesSky = level.canSeeSky(above);
             hook.tick();
             if (hook.isRemoved()) {
                 ticks.append(ticks.length() > 0 ? "," : "").append("null");
                 break;
             }
             Vec3 p = hook.position(), d = hook.getDeltaMovement();
-            ticks.append(ticks.length() > 0 ? "," : "").append(String.format(Locale.ROOT, "[%s,%d,%d,%d,%s,%b,%b,%s,%s,%s,%s,%s,%s]",
+            ticks.append(ticks.length() > 0 ? "," : "").append(String.format(Locale.ROOT, "[%s,%d,%d,%d,%s,%b,%b,%s,%s,%s,%s,%s,%s,%b,%d,%d,%d]",
                     ((Enum<?>) get(hook, FishingHook.class, "currentState")).ordinal(), (Integer) get(hook, FishingHook.class, "nibble"),
                     (Integer) get(hook, FishingHook.class, "timeUntilLured"), (Integer) get(hook, FishingHook.class, "timeUntilHooked"),
                     Float.toString((Float) get(hook, FishingHook.class, "fishAngle")), (Boolean) get(hook, FishingHook.class, "biting"),
-                    hook.isOpenWaterFishing(), Double.toString(p.x), Double.toString(p.y), Double.toString(p.z), Double.toString(d.x), Double.toString(d.y), Double.toString(d.z)));
+                    hook.isOpenWaterFishing(), Double.toString(p.x), Double.toString(p.y), Double.toString(p.z), Double.toString(d.x), Double.toString(d.y), Double.toString(d.z), seesSky, above.getX(), above.getY(), above.getZ()));
         }
         hook.discard();
         return String.format(Locale.ROOT, "{\"name\":\"fishing_%d\",\"luck_level\":%d,\"lure_level\":%d,\"luck\":%d,\"lure_speed\":%d,\"seed\":\"%d\",\"uuid_lsb\":\"%d\",\"game_time\":%d,\"blocks\":[%s],\"ticks\":[%s]}",

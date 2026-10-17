@@ -63,6 +63,10 @@ fn bobbers_match_vanilla_tick_by_tick() {
             if want.is_null() {
                 break;
             }
+            // The light the bobber's block sees (the level here has no light engine): what the vector says of the cell above.
+            let row = want.as_array().unwrap();
+            let sees = row[13].as_bool().unwrap();
+            level.lights.insert(BlockPos::new(row[14].as_i64().unwrap() as i32, row[15].as_i64().unwrap() as i32, row[16].as_i64().unwrap() as i32), (if sees { 15 } else { 14 }, 0));
             level.tick();
             let Some(e) = level.entities().find(|e| e.id == 5) else {
                 failures.push(format!("{name} t={}: the bobber is gone", t + 1));
@@ -78,7 +82,7 @@ fn bobbers_match_vanilla_tick_by_tick() {
                 state, h.nibble as f64, h.time_until_lured as f64, h.time_until_hooked as f64, h.fish_angle as f64, h.biting as u8 as f64, h.open_water as u8 as f64,
                 e.position().x, e.position().y, e.position().z, e.delta.x, e.delta.y, e.delta.z,
             ];
-            let w: Vec<f64> = want.as_array().unwrap().iter().map(|x| x.as_bool().map_or_else(|| num(x), |b| b as u8 as f64)).collect();
+            let w: Vec<f64> = want.as_array().unwrap()[..13].iter().map(|x| x.as_bool().map_or_else(|| num(x), |b| b as u8 as f64)).collect();
             values += got.len();
             // (The fish angle is a float: the vector has its shortest decimal form.)
             let same = |i: usize, a: f64, b: f64| if i == 4 { a as f32 == b as f32 } else { a == b || (a.is_nan() && b.is_nan()) };
