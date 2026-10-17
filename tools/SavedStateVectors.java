@@ -33,7 +33,7 @@ public class SavedStateVectors {
     /** `setup` commands run before the summon, `summon` is the command (with {type}); both optional per variant. */
     record Variant(String name, String summonTail) {}
 
-    static final Variant[] VARIANTS = {new Variant("", ""), new Variant("_baby", " {IsBaby:1b}")};
+    static final Variant[] VARIANTS = {new Variant("", ""), new Variant("_baby", " {Age:-24000,IsBaby:1b}")};
 
     static void run(String[] args) throws Exception {
         Path outPath = Path.of(args[0]).toAbsolutePath();

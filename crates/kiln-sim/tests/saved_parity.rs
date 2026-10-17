@@ -93,7 +93,7 @@ fn saved_attributes_and_brain_match_vanilla() {
         }
         let ty = v["type"].as_str().unwrap();
         let baby = name.ends_with("_baby");
-        let tail = if baby { " {IsBaby:1b}" } else { "" };
+        let tail = if baby { " {Age:-24000,IsBaby:1b}" } else { "" };
         step(&mut sim, &mut client, vec![format!("summon {ty} 8.5 80 8.5{tail}")]);
         let mut done = 1;
         for s in v["samples"].as_array().unwrap() {

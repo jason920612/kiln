@@ -454,7 +454,8 @@ impl Kind for Hoglin {
         }
     }
 
-    fn post_tick(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+    /// `Hoglin.ageBoundaryReached`: the attack damage instance is made then (a baby set by `setAge`, a grown one), not before.
+    fn age_boundary_reached(&self, _e: &mut Entity, m: &mut MobData) {
         update_attack_damage(m);
     }
 
@@ -533,7 +534,6 @@ impl Kind for Hoglin {
             mob::set_age(e, m, mob::breed::BABY_START_AGE);
         }
         ext::ageable_finalize(e, m, r, group, 0.05);
-        update_attack_damage(m);
         ext::mob_finalize(m, r);
     }
 
@@ -546,7 +546,10 @@ impl Kind for Hoglin {
         let immune = r.bool_or("IsImmuneToZombification", false);
         let time = r.int_or("TimeInOverworld", 0);
         let hunted = r.bool_or("CannotBeHunted", false);
-        update_attack_damage(m);
+        // (`AgeableMob.readAdditionalSaveData` -> `setAge`: a baby crosses the boundary from age 0.)
+        if m.baby() {
+            update_attack_damage(m);
+        }
         let Some(st) = state_mut(m) else { return };
         st.immune_to_zombification = immune;
         st.time_in_overworld = time;

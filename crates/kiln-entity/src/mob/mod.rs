@@ -3367,6 +3367,11 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
     let mut m = take(e);
     let kind = m.kind;
     group.natural = natural;
+    // (`SummonCommand` finalizes only a `Mob`; a mannequin is a living entity but not one.)
+    if !kind.is_mob() {
+        put(e, m);
+        return;
+    }
     // `CaveSpider.finalizeSpawn` returns the group data as it is: nothing is drawn.
     if kind == MobKind::CaveSpider {
         put(e, m);

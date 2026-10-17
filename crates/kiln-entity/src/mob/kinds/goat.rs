@@ -935,7 +935,10 @@ impl Kind for Goat {
         s.screaming = screaming;
         s.left_horn = left;
         s.right_horn = right;
-        set_attack_damage(m);
+        // (`AgeableMob.readAdditionalSaveData` -> `setAge`: a baby crosses the boundary from age 0, an adult does not.)
+        if m.baby() {
+            set_attack_damage(m);
+        }
     }
 
     fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
