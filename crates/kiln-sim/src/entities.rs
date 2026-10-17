@@ -2708,6 +2708,50 @@ pub(crate) struct MobStabOutcome {
     pub health_before: Option<f32>,
 }
 
+/// `PiglinAi.angerNearbyPiglins` for the players who opened a chest, ender chest, barrel or shulker box or broke gold this tick
+/// (`blocks.piglin_anger`): their idle piglins within 16 blocks that see them turn on them.
+pub(crate) fn anger_piglins(entities: &mut Entities, level: &mut RegionLevel, players: &mut [&mut Player], spawns: &mut Vec<Spawn>, deaths: &mut Vec<health::Death>) {
+    let requests = std::mem::take(&mut level.blocks.piglin_anger);
+    for (player, line_of_sight) in requests {
+        let live = |p: &Player| !p.disconnected && !p.dead;
+        let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
+        let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+        let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x7069_676C, player);
+        let mut sim = SimLevel {
+            level: World::Region(&mut *level),
+            list: &mut entities.list,
+            players: &mut *players,
+            deaths: &mut *deaths,
+            proxies,
+            views,
+            spawns: &mut *spawns,
+            events: Vec::new(),
+            next_placeholder: -1_000_000,
+            current: player,
+            seeds: 0x7069_676C_00,
+            current_source: None,
+            rng,
+            grid: Grid::default(),
+            proxy_at: Default::default(),
+            proxy_grid: Default::default(),
+            view_index: Default::default(),
+            despawn: None,
+            player_writes: 0,
+            touched: None,
+            current_info: None,
+            owner_hints: Vec::new(),
+        };
+        sim.grid = Grid::build(sim.list);
+        sim.index_players();
+        kiln_entity::mob::kinds::piglin::anger_nearby_piglins(&mut sim, player, line_of_sight);
+        let SimLevel { level: world, list, events, spawns: sp, players: pl, deaths: dt, .. } = sim;
+        let region = world.into_region();
+        for (n, event) in keyed(events) {
+            carry_out(event, n, region, list, pl, sp, dt);
+        }
+    }
+}
+
 /// `Player.stabAttack` on entity `stab.target`: hurt (if it hurts), pushed once or twice, taken
 /// off what it rides, set on fire; `None` when the entity is gone.
 pub(crate) fn stab_mob(

@@ -279,6 +279,10 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     crate::container::open::player_will_destroy(level, bp, state, actor.creative);
     crate::heart::player_will_destroy(level, bp, state, p.entity_id, p.game_mode == 0 || p.game_mode == 2);
     crate::beehive::player_will_destroy(level, bp, state, actor.creative);
+    // `Block.playerWillDestroy`: gold, its ores and what holds treasure anger the piglins around, seen or not.
+    if kiln_entity::mob::kinds::wolf::block_in_tag(state, "minecraft:guarded_by_piglins") {
+        level.blocks.piglin_anger.push((p.entity_id, false));
+    }
     crate::decorated_pot::will_destroy(level, bp, state, &p.inv.selected_item().clone());
     // `BeehiveBlock.playerDestroy`: for a player who harvests the block.
     if drops && kiln_data::block_logic::block_class(state) == kiln_data::block_logic::BlockClass::BeehiveBlock {

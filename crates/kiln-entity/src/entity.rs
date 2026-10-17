@@ -105,6 +105,8 @@ pub struct Entity {
     pub remaining_fire_ticks: i32,
     pub air_supply: i32,
     pub ticks_frozen: i32,
+    /// `!canFreeze()` of a mob: its type is in `#freeze_immune_entity_types` or it wears `#freeze_immune_wearables` (set by the mob's tick).
+    pub freeze_immune: bool,
     pub is_in_powder_snow: bool,
     pub was_in_powder_snow: bool,
     pub no_physics: bool,
@@ -201,6 +203,7 @@ impl Entity {
             remaining_fire_ticks: 0,
             air_supply: 300,
             ticks_frozen: 0,
+            freeze_immune: false,
             is_in_powder_snow: false,
             was_in_powder_snow: false,
             no_physics: false,
@@ -390,7 +393,7 @@ impl Entity {
 
     /// `canFreeze` (the `freeze_immune_entity_types` tag).
     pub fn can_freeze(&self) -> bool {
-        true
+        !self.freeze_immune
     }
 
     pub fn is_affected_by_blocks(&self) -> bool {

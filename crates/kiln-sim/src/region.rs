@@ -760,6 +760,7 @@ impl RegionWork<'_> {
             self.out.times[9] += spawning.elapsed();
             entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player, ctx);
             crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
+            entities::anger_piglins(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths);
         }
         let dt = Instant::now();
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);

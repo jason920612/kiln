@@ -827,6 +827,23 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 重錘(重擊/密度/突破/風爆/擊退爆發)與銅工具/銅盔甲 | 沒有差異:combat 115、melee 763、spear 148、mount 240、riptide 110 全部位元相同 |
 
 
+### 6.20 wp74(`wp74-playthrough8`):農場長跑、取樣、稽核矩陣、豬布林、複製機 fuzz、四人騎乘
+
+細節見 `docs/playthrough-wp74.md`。同一個世界(種子 72)、同一份腳本同時驅動 Kiln 與 vanilla(`tools/wp74/`),真客戶端用在釣魚、開箱子、挖金磚、騎乘。**最有效的方法是矩陣稽核**:一次比 87 種生物。
+
+| 區域 | 結果 |
+|---|---|
+| 溺水稽核(87 種生物各一個水槽,700 刻) | **修**:海龜、銅傀儡不該溺水(`#can_breathe_under_water`);其他相同;`mobs.rs::turtles_and_copper_golems_do_not_drown_but_cows_do` |
+| 危害矩陣(87 種 × 營火/凋零玫瑰/粉雪/火/岩漿/岩漿塊/仙人掌/甜莓/蜘蛛網/日照) | **修**:生物被營火、凋零玫瑰傷害,粉雪凍傷(含免疫與 ×5 型別);`mobs.rs::mobs_are_hurt_by_campfires_wither_roses_and_powder_snow`。其餘是 ±1 血的時序差 |
+| 豬布林激怒(開箱子/終界箱/木桶/界伏盒、挖 `#guarded_by_piglins`) | **修**(`PiglinAi.angerNearbyPiglins` 從 sim 呼叫);兩個 `piglins_turn_on_a_player_who_*` 測試;真客戶端 `angry_at` 相同 |
+| 豬布林對裸身玩家/金頭盔、豬獸與排斥物(扭曲菌、重生錨) | 相同(傷害軌跡 8~13 / 0 / 4~3 / 0) |
+| 以物易物(3800 件)、釣魚(開放/非開放水域,Lure/Luck,約 400 拋)、村莊貓/村民/傀儡(4 村 × 一天)、交易大廳認領/搶工作站 | 相同(χ² 18.8/16;釣魚開放水域 K 寶藏偏低但不顯著) |
+| 女巫小屋(10 萬刻)、黃金/終界農場 | K 0 / V 0;小屋為真 0(vanilla agent:3000 刻內小屋盒內只有 1 次有效位置),下界/終界農場的計數無效(殺怪方塊不運作) |
+| 複製機 fuzz(`dupe2`:黏液柱 + 活塞 + 地毯/珊瑚扇/鐵軌/TNT,230 案例) | 方塊與實體 0 差異;物品總數 K 偏多 1 件的差異縮小後重跑相同(雜訊) |
+| 四人騎乘快樂恐懼幽靈(2 真客戶端 + 2 村民) | 座位距離/高度與駕駛軌跡相同;機器人不能騎 |
+| 未覆蓋/沒結論 | 補貨與折扣、兩位玩家的突襲、徒步下界(失敗)、傳送門被打斷、TNT/鐵軌/地毯複製機的原版教學照蓋 |
+
+
 ## 7. 重跑
 
 ```sh
@@ -933,6 +950,10 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 #   java ... tools/CombatVectors.java work/wp75/combat/vectors.jsonl [spear]         # 含銅工具與盔甲
 #   python tools/parity_suites.py --only hopper_chains75,piston_items75,items75,load75_blocks,load75_entities,attrs75,combat75
 #   負向檢查(拿掉修正,測試要失敗,VM):python3 tools/wp75_neg.py [case…]
+# wp74：矩陣稽核與取樣（VM；Kiln 25589、vanilla 25595；見 docs/playthrough-wp74.md）
+#   bash tools/wp74/push_tools.sh；bash wp74_start.sh / wp74_vanilla.sh、switch.sh K split（SIMDIST=6：setsim.sh 6），然後 ./run.sh p74_drown.py | p74_hazard.py [危害,…] [刻] | p74_barter.py N R | p74_village.py | p74_hall.py | p74_misc.py endermite|turtles
+#   真客戶端：bash par.sh p74_fish.py N RATE open|closed none|both、p74_piglin.py、p74_gold.py；雙客戶端：switch.sh K|V both，TARGET=K|V ./run.sh p74_ghast4.py；農場：KILLBLOCK=1 BOX=x0,y0,z0,x1,y1,z1 bash run_farm.sh OUT p74_farm.py witch N T
+#   負向檢查：tools/wp74/neg.sh（刪掉含樣式的行）、neg2.sh REV 檔案… -- cargo test …（檔案退回 REV）
 # 登入等封包的 golden 由原版驗證後寫入
 python tools/packet_vectors.py --bless
 ```

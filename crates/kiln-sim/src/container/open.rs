@@ -504,6 +504,10 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
         return None;
     }
     if let Some(provider) = container_provider(level, pos, s) {
+        // `ChestBlock` / `EnderChestBlock` / `BarrelBlock` / `ShulkerBoxBlock.useWithoutItem`: `PiglinAi.angerNearbyPiglins(level, player, true)`.
+        if [C::ChestBlock, C::EnderChestBlock, C::BarrelBlock, C::ShulkerBoxBlock].into_iter().any(|c| logic::is_instance(s, c)) {
+            level.blocks.piglin_anger.push((p.entity_id, true));
+        }
         open_menu(p, level, provider, spawns);
         if let Some(stat) = crate::player_stats::interact_stat(s) {
             p.award_stat(stat, 1);

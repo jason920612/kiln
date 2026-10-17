@@ -28,6 +28,7 @@ pub static KIND: Turtle = Turtle;
 
 static INFO: Info = Info {
     ambient_interval: 200,
+    breathes_under_water: true,
     ..Info::animal("minecraft:turtle", &[(MaxHealth, 30.0), (MovementSpeed, 0.25), (StepHeight, 1.0)])
 };
 

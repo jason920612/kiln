@@ -880,6 +880,111 @@ fn wither_skeletons_wither_their_target() {
     assert!(withered, "a wither skeleton's hit withers");
 }
 
+/// wp74: with a real client, vanilla piglins turn on a player in gold armour who opens a chest in their sight (`PiglinAi.angerNearbyPiglins`,
+/// called by chests, ender chests, barrels and shulker boxes; the player took 8.9 damage in 8 seconds); Kiln's did nothing.
+#[test]
+fn piglins_turn_on_a_player_who_opens_a_chest() {
+    let mut w = World::new();
+    w.console("difficulty normal");
+    w.console("gamemode survival Hunter");
+    w.console("item replace entity Hunter armor.head with minecraft:golden_helmet");
+    let p = w.pos().map(|v| v.floor() as i32);
+    let chest = [p[0] + 2, p[1], p[2]];
+    w.console(&format!("setblock {} {} {} minecraft:chest[facing=west]", chest[0], chest[1], chest[2]));
+    w.summon("minecraft:piglin", [-6.0, 0.0, 0.0], "{PersistenceRequired:1b,IsImmuneToZombification:1b,HandItems:[{id:\"minecraft:golden_sword\",count:1},{}]}");
+    w.ticks(100);
+    assert_eq!(w.health(), 20.0, "a player in gold armour is left alone");
+    let pkt = PlayIn::UseItemOn { hand: 0, pos: [chest[0], chest[1], chest[2]], face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: 1 };
+    assert!(w.sim.step([ToSim::Packet(1, pkt)]));
+    w.ticks(200);
+    assert!(w.health() < 20.0, "the piglin attacked after the chest was opened (health {})", w.health());
+}
+
+/// `Block.playerWillDestroy`: a player in gold armour who breaks a block of `#guarded_by_piglins` (gold block, gold ores...) is attacked by the
+/// piglins around, seen or not; stone does not matter.
+#[test]
+fn piglins_turn_on_a_player_who_breaks_gold() {
+    let attacked_after_breaking = |block: &str| -> bool {
+        let mut w = World::new();
+        w.console("difficulty normal");
+        w.console("gamemode survival Hunter");
+        w.console("item replace entity Hunter armor.head with minecraft:golden_helmet");
+        w.console("item replace entity Hunter weapon.mainhand with minecraft:netherite_pickaxe");
+        w.console("effect give Hunter minecraft:haste 999 50 true");
+        let p = w.pos().map(|v| v.floor() as i32);
+        let at = [p[0] + 2, p[1], p[2]];
+        w.console(&format!("setblock {} {} {} {block}", at[0], at[1], at[2]));
+        w.summon("minecraft:piglin", [-6.0, 0.0, 0.0], "{PersistenceRequired:1b,IsImmuneToZombification:1b,HandItems:[{id:\"minecraft:golden_sword\",count:1},{}]}");
+        w.ticks(100);
+        assert_eq!(w.health(), 20.0, "a player in gold armour is left alone");
+        for (action, sequence, wait) in [(0, 1, 40), (2, 2, 2)] {
+            assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action, pos: at, face: 1, sequence })]));
+            w.ticks(wait);
+        }
+        let gone = w.sim.block_at(at[0], at[1], at[2]).is_some_and(kiln_data::blocks_types::is_air);
+        assert!(gone, "the {block} was dug out");
+        w.ticks(200);
+        w.health() < 20.0
+    };
+    assert!(!attacked_after_breaking("minecraft:stone"), "breaking stone angers nobody");
+    assert!(attacked_after_breaking("minecraft:gold_block"), "breaking a gold block does");
+}
+
+/// wp74: a hazard matrix against vanilla found that mobs took nothing from lit campfires, wither roses and powder snow. Vanilla (a frozen reading
+/// after 200 ticks, NoAI mobs standing in the block): a cow in powder snow loses 2 (1 every 40 ticks once fully frozen), a blaze 10 (5 each), a
+/// polar bear nothing (`#freeze_immune_entity_types`); a cow in a lit campfire or a wither rose dies, a blaze in the campfire (fire immune) lives.
+#[test]
+fn mobs_are_hurt_by_campfires_wither_roses_and_powder_snow() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.console("difficulty normal");
+    let cell = |w: &mut World, at: f64, block: &str, mob: &str| {
+        let x = at.floor() as i32;
+        w.fill([x, 0, 0], [x, 0, 0], block);
+        // (the block's centre: the player stands at the middle of its own block)
+        let p = w.pos().map(|v| v.floor());
+        w.console(&format!("summon {mob} {} {} {} {{PersistenceRequired:1b,NoAI:1b}}", p[0] + at + 0.5, p[1], p[2] + 0.5));
+        w.ticks(1);
+    };
+    cell(&mut w, 4.0, "minecraft:powder_snow", "minecraft:cow");
+    cell(&mut w, 6.0, "minecraft:powder_snow", "minecraft:blaze");
+    cell(&mut w, 8.0, "minecraft:powder_snow", "minecraft:polar_bear");
+    cell(&mut w, 10.0, "minecraft:campfire[lit=true]", "minecraft:pig");
+    cell(&mut w, 12.0, "minecraft:campfire[lit=true]", "minecraft:blaze");
+    cell(&mut w, 14.0, "minecraft:wither_rose", "minecraft:sheep");
+    w.ticks(200);
+    let hp = |w: &World, kind: &str| w.mobs(kind).iter().map(|m| m.2).collect::<Vec<_>>();
+    let cows = hp(&w, "minecraft:cow");
+    assert_eq!(cows, vec![8.0], "frozen cow: two hits of 1");
+    let blazes = hp(&w, "minecraft:blaze");
+    assert_eq!(blazes.len(), 2);
+    assert!(blazes.contains(&10.0), "frozen blaze: two hits of 5 ({blazes:?})");
+    assert!(blazes.contains(&20.0), "the fire immune blaze in the campfire lives ({blazes:?})");
+    assert_eq!(hp(&w, "minecraft:polar_bear"), vec![30.0], "polar bears do not freeze");
+    assert!(w.mobs("minecraft:pig").is_empty(), "the pig burned in the campfire");
+    assert!(w.mobs("minecraft:sheep").is_empty(), "the sheep withered");
+}
+
+/// `EntityTypeTags.CAN_BREATHE_UNDER_WATER` (wp74: a playthrough found turtles and copper golems drowning in Kiln where vanilla keeps
+/// them alive; the same 700 ticks under water kill an ordinary cow).
+#[test]
+fn turtles_and_copper_golems_do_not_drown_but_cows_do() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.fill([4, 0, -2], [8, 3, 2], "minecraft:water");
+    w.summon("minecraft:turtle", [5.5, 0.0, 0.5], "{PersistenceRequired:1b,NoAI:1b}");
+    w.summon("minecraft:copper_golem", [6.5, 0.0, 0.5], "{PersistenceRequired:1b,NoAI:1b}");
+    w.summon("minecraft:cow", [7.5, 0.0, 0.5], "{PersistenceRequired:1b,NoAI:1b}");
+    w.ticks(700);
+    let turtle = w.mobs("minecraft:turtle");
+    assert_eq!(turtle.len(), 1, "the turtle is alive");
+    assert_eq!(turtle[0].2, 30.0, "and unhurt");
+    let golem = w.mobs("minecraft:copper_golem");
+    assert_eq!(golem.len(), 1, "the copper golem is alive");
+    assert_eq!(golem[0].2, 12.0, "and unhurt");
+    assert!(w.mobs("minecraft:cow").is_empty(), "the cow drowned");
+}
+
 #[test]
 fn zombies_drown_into_drowned_and_skeletons_freeze_into_strays() {
     let mut w = World::new();
