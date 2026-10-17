@@ -90,6 +90,12 @@ public class LoadDropVectors {
         c.add(new Case("e_trident_unknown", "entity", "trident", "{item:{id:\"" + unknown + "\",count:1}}"));
         c.add(new Case("e_firework_unknown", "entity", "firework_rocket", "{FireworksItem:{id:\"" + unknown + "\",count:1}}"));
         c.add(new Case("e_eye_of_ender_unknown", "entity", "eye_of_ender", "{Item:{id:\"" + unknown + "\",count:1}}"));
+        // ---- the block entity data of /setblock (wp75)
+        c.add(new Case("setblock_pot_sherds", "setblock", "decorated_pot", "{sherds:[\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}"));
+        c.add(new Case("setblock_pot_components", "setblock", "decorated_pot", "{components:{\"minecraft:pot_decorations\":[\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}}"));
+        c.add(new Case("setblock_chest_components", "setblock", "chest", "{components:{\"minecraft:custom_name\":\"x\"}}"));
+        c.add(new Case("setblock_sign_components", "setblock", "oak_sign", "{components:{\"minecraft:custom_name\":\"x\"}}"));
+        c.add(new Case("setblock_chest_unknown_item", "setblock", "chest", "{Items:[{Slot:0b,id:\"minecraft:no_such_item\",count:1},{Slot:1b,id:\"minecraft:stone\",count:2}]}"));
         // ---- neutral mobs: the anger they save (wp75)
         for (String t : new String[] {"wolf", "iron_golem", "polar_bear", "bee", "enderman", "zombified_piglin"}) {
             c.add(new Case("anger_" + t + "_both", "entity", t, "{anger_end_time:123456L,angry_at:[I;1,2,3,4]}"));
@@ -123,6 +129,13 @@ public class LoadDropVectors {
         }, "LoadDropVectors main");
         main.start();
         MinecraftServer server = awaitServer();
+        // (The `setblock` cases need a loaded chunk, which needs the server thread free for a moment.)
+        server.submit(() -> {
+            ServerLevel l = server.overworld();
+            l.setChunkForced(0, 0, true);
+            l.getChunk(0, 0);
+        }).get();
+        Thread.sleep(3000);
         List<String> lines = new ArrayList<>();
         server.submit(() -> {
             ServerLevel level = server.overworld();
@@ -150,6 +163,22 @@ public class LoadDropVectors {
 
     static String run(ServerLevel level, Case c) throws Exception {
         net.minecraft.nbt.CompoundTag tag = net.minecraft.nbt.TagParser.parseCompoundFully(c.nbt);
+        if (c.kind.equals("setblock")) {
+            // The command, then what the block entity saves (the platform is air above y 64 at the chunk's middle).
+            var pos = new net.minecraft.core.BlockPos(8, 64, 8);
+            var server = level.getServer();
+            level.setBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
+            server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "setblock 8 64 8 minecraft:" + c.type + c.nbt);
+            var be = level.getBlockEntity(pos);
+            String line;
+            if (be == null) {
+                line = String.format(Locale.ROOT, "{\"name\":\"%s\",\"kind\":\"setblock\",\"type\":\"%s\",\"loaded\":false}", c.name, c.type);
+            } else {
+                line = String.format(Locale.ROOT, "{\"name\":\"%s\",\"kind\":\"setblock\",\"type\":\"%s\",\"command\":\"%s\",\"loaded\":true,\"saved\":%s}", c.name, c.type, ("setblock 8 64 8 minecraft:" + c.type + c.nbt).replace("\\", "\\\\").replace("\"", "\\\""), tagJson(be.saveWithFullMetadata(level.registryAccess())));
+            }
+            level.setBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
+            return line;
+        }
         if (c.kind.equals("block")) {
             net.minecraft.world.level.block.state.BlockState state = net.minecraft.commands.arguments.blocks.BlockStateParser
                     .parseForBlock(net.minecraft.core.registries.BuiltInRegistries.BLOCK, "minecraft:" + c.type, false).blockState();
