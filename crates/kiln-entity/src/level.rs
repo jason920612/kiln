@@ -10,6 +10,8 @@ use kiln_javamath::random::LegacyRandom;
 pub enum EntityFilter {
     Any,
     Item,
+    /// Item entities that can merge (`ItemEntity.isMergable`, the predicate of `mergeWithNeighbours`' search).
+    MergeableItem,
     ExperienceOrb,
     /// Entities that are alive and can be hurt by a falling block or pushed by explosions.
     Living,

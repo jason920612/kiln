@@ -261,8 +261,14 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
     fn entities_in(&self, area: &Aabb, filter: EntityFilter, exclude: i32) -> Vec<i32> {
         self.check_overlays();
         self.log.borrow_mut().areas.push(*area);
-        let mut found = self.base.entities_in(area, filter, exclude);
+        // Whether an item can merge is its state, not its box: every item of the area is read (and logged) for it,
+        // as it stands for this turn.
+        let mergeable = filter == EntityFilter::MergeableItem;
+        let mut found = self.base.entities_in(area, if mergeable { EntityFilter::Item } else { filter }, exclude);
         found.retain(|&id| id != self.me);
+        if mergeable {
+            found.retain(|&id| self.entity(id).is_some_and(kiln_entity::item::is_mergable));
+        }
         found
     }
 

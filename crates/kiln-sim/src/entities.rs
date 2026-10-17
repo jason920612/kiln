@@ -935,6 +935,7 @@ impl SimLevel<'_, '_, '_> {
             let kind = match filter {
                 EntityFilter::Any => true,
                 EntityFilter::Item => matches!(e.kind, EntityKind::Item(_)),
+                EntityFilter::MergeableItem => matches!(e.kind, EntityKind::Item(_)) && kiln_entity::item::is_mergable(e),
                 EntityFilter::ExperienceOrb => matches!(e.kind, EntityKind::ExperienceOrb(_)),
                 EntityFilter::Living => matches!(e.kind, EntityKind::Other { .. } | EntityKind::Player(_) | EntityKind::Mob(_)),
             };
