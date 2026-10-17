@@ -86,3 +86,52 @@ fn block_entities_drop_what_vanilla_drops() {
     eprintln!("block entity loads: {ok} match vanilla, {} differ", failed.len());
     assert!(failed.is_empty(), "{} cases differ from vanilla", failed.len());
 }
+
+/// `/setblock` with block entity data: what `data get block` shows afterwards (vanilla keeps the `components` it was given for a
+/// chest or a sign and loads no pot decorations from the command; items it cannot load are gone).
+#[test]
+fn setblock_data_matches_vanilla() {
+    use crate::{Sim, SimConfig};
+    use kiln_link::ToSim;
+    let Some(path) = std::env::var_os("KILN_LOAD_VECTORS") else {
+        eprintln!("skipped: set KILN_LOAD_VECTORS (tools/LoadDropVectors.java)");
+        return;
+    };
+    let text = std::fs::read_to_string(path).unwrap();
+    let mut sim = Sim::new(SimConfig::new(2, 3, None));
+    let (msg, stats) = crate::testing::join(1, "Probe", 3);
+    assert!(sim.step([msg, ToSim::Console("gamemode spectator Probe".into()), ToSim::Console("tp Probe 8 70 8".into())]));
+    let mut client = crate::testing::Client::new(1, stats);
+    for _ in 0..8 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    let (mut ok, mut failed) = (0, Vec::new());
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let v: Value = serde_json::from_str(line).unwrap();
+        if v["kind"].as_str() != Some("setblock") || v["loaded"].as_bool() != Some(true) {
+            continue;
+        }
+        let mut inbox = vec![ToSim::Console("setblock 8 64 8 minecraft:air".into()), ToSim::Console(v["command"].as_str().unwrap().to_owned())];
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+        let got = sim.block_entity_data("minecraft:overworld", 8, 64, 8);
+        let strip = |t: &Tag| -> String {
+            let Tag::Compound(fields) = t else { return String::new() };
+            let mut v: Vec<String> = fields.iter().filter(|(k, _)| !matches!(k.as_str(), "x" | "y" | "z" | "id")).map(|(k, v)| format!("{k}:{}", canon(v))).collect();
+            v.sort();
+            v.join(",")
+        };
+        let want = tag_of(&v["saved"]);
+        match got {
+            Some(g) if strip(&g) == strip(&want) => ok += 1,
+            other => failed.push(format!("{}: kiln {:?}, vanilla {}", v["name"], other.as_ref().map(&strip), strip(&want))),
+        }
+    }
+    for f in &failed {
+        eprintln!("FAIL {f}");
+    }
+    eprintln!("setblock data: {ok} match vanilla, {} differ", failed.len());
+    assert!(failed.is_empty(), "{} cases differ from vanilla", failed.len());
+}
