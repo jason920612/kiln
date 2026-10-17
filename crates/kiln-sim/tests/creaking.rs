@@ -205,6 +205,8 @@ fn a_creaking_far_from_its_heart_is_let_go() {
     w.heart(heart, "awake");
     w.run(&format!("data merge block {} {} {} {{creaking:[I;1,2,3,4]}}", heart[0], heart[1], heart[2]));
     assert_eq!(w.holds(heart), Some(vec![1, 2, 3, 4]));
+    // (wp72: a command's entity ticks in the tick it was summoned in: the heart takes the merge into its books a tick first.)
+    w.ticks(1);
     let (x, y, z) = (heart[0] as f64 + 0.5, heart[1] as f64, heart[2] as f64 + 40.5);
     w.run(&format!("summon minecraft:creaking {x} {y} {z} {{UUID:[I;1,2,3,4],home_pos:[I;{},{},{}]}}", heart[0], heart[1], heart[2]));
     w.ticks(2);
