@@ -62,8 +62,8 @@ impl kiln_loot::LootContext for Catch<'_> {
 }
 
 /// `EnchantmentHelper.getFishingLuckBonus` / `getFishingTimeReduction` of the rod.
-fn rod_value(p: &Player, rod: &ItemStack, c: kiln_loot::effects::ValueComponent) -> f32 {
-    let Some(loot) = p.loot.clone() else { return 0.0 };
+fn rod_value(loot: Option<&kiln_loot::LootData>, rod: &ItemStack, c: kiln_loot::effects::ValueComponent) -> f32 {
+    let Some(loot) = loot else { return 0.0 };
     let mut rng = kiln_javamath::random::LegacyRandom::new(0);
     let mut value = 0.0;
     loot.for_each_enchantment(rod, |e, level| {
@@ -95,8 +95,8 @@ pub(crate) fn use_rod(entities: &mut Entities, level: &mut RegionLevel, players:
             let pitch = 0.4 / (rng.next_float() * 0.4 + 0.8);
             sound(players, env, at, "minecraft:entity.fishing_bobber.throw", 0.5, pitch);
             let p = &*players[i];
-            let luck = rod_value(p, &rod, kiln_loot::effects::ValueComponent::FishingLuckBonus) as i32;
-            let lure = (rod_value(p, &rod, kiln_loot::effects::ValueComponent::FishingTimeReduction) * 20.0) as i32;
+            let luck = rod_value(p.loot.as_deref(), &rod, kiln_loot::effects::ValueComponent::FishingLuckBonus) as i32;
+            let lure = (rod_value(p.loot.as_deref(), &rod, kiln_loot::effects::ValueComponent::FishingTimeReduction) * 20.0) as i32;
             let seed = rng.next_long();
             let eye = p.eye_position()[1] - p.pos[1];
             let hook = fishing_hook::cast(0, 0, pid, Vec3::new(p.pos[0], p.pos[1], p.pos[2]), eye, p.rot[0], p.rot[1], luck, lure, seed);
@@ -214,5 +214,41 @@ impl Player {
     /// `canInteractWithLevel` for fishing: alive and not a spectator.
     fn alive_for_fishing(&self) -> bool {
         !self.dead && !self.disconnected && self.game_mode != 3
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `FishingRodItem.use` hands the bobber `getFishingLuckBonus` (the level of Luck of the Sea) and `(int)(getFishingTimeReduction * 20)` (100 a level of
+    /// Lure): what `tools/FishingVectors.java` read off a vanilla rod of every combination. Needs the vanilla datapack (`KILN_DATAPACK`, else
+    /// `$KILN_WORK/generated`, else `work/generated`); skips without it.
+    #[test]
+    fn a_rod_gives_the_bobber_its_luck_and_lure() {
+        let dir = match std::env::var_os("KILN_DATAPACK").filter(|d| !d.is_empty()) {
+            Some(d) => std::path::PathBuf::from(d),
+            None => {
+                let work = std::env::var_os("KILN_WORK").filter(|d| !d.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../work"));
+                work.join("generated")
+            }
+        };
+        if !dir.join("data").is_dir() {
+            return;
+        }
+        let loot = kiln_loot::LootData::load(&dir).unwrap();
+        for (luck, lure) in (0..=3).flat_map(|a| (0..=3).map(move |b| (a, b))) {
+            use kiln_proto::nbt::Tag;
+            let levels: Vec<(String, Tag)> = [("minecraft:luck_of_the_sea", luck), ("minecraft:lure", lure)].into_iter().filter(|(_, l)| *l > 0).map(|(n, l)| (n.to_owned(), Tag::Int(l))).collect();
+            let rod = ItemStack::from_nbt(&Tag::Compound(vec![
+                ("id".into(), Tag::String("minecraft:fishing_rod".into())),
+                ("count".into(), Tag::Int(1)),
+                ("components".into(), Tag::Compound(vec![("minecraft:enchantments".into(), Tag::Compound(levels))])),
+            ]))
+            .unwrap();
+            let got_luck = rod_value(Some(&loot), &rod, kiln_loot::effects::ValueComponent::FishingLuckBonus) as i32;
+            let got_lure = (rod_value(Some(&loot), &rod, kiln_loot::effects::ValueComponent::FishingTimeReduction) * 20.0) as i32;
+            assert_eq!((got_luck, got_lure), (luck, 100 * lure), "luck {luck} lure {lure}");
+        }
     }
 }
