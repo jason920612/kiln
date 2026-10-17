@@ -434,7 +434,7 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         // `LecternBlock.getMenuProvider`: only with a book.
         BeKind::Lectern if state::get_bool(s, "has_book") => single(Menu::lectern),
         BeKind::Lectern => return None,
-        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::Shelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw => return None,
+        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::Shelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Vault | BeKind::DecoratedPot | BeKind::Brushable | BeKind::CommandBlock | BeKind::Banner | BeKind::StructureBlock | BeKind::Jigsaw | BeKind::Conduit => return None,
     })
 }
 

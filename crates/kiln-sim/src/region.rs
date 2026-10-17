@@ -578,10 +578,13 @@ impl RegionWork<'_> {
         let dt = std::time::Instant::now();
         let ticking = ticking_chunks(&self.players, env);
         crate::diag::lap("b.ticking", dt);
+        let early_from = self.out.spawns.len();
         self.tick_blocks(env, &ticking);
+        let early = early_from..self.out.spawns.len();
         mark(&mut self.out.times, 3);
         let spawned_before = self.out.times[9];
         self.tick_entities(env, ctx, &ticking);
+        self.tick_block_spawns(env, early);
         let dt = std::time::Instant::now();
         crate::trading::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         crate::carts::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
@@ -766,6 +769,27 @@ impl RegionWork<'_> {
         crate::diag::lap("e.block_entities", dt);
     }
 
+    /// What the block phase spawned (`early`: its places among this tick's spawns) and vanilla ticks in the same tick: falling blocks, primed TNT
+    /// and item drops. They tick after the entities, as the entities added during the block ticks come last in vanilla's tick list.
+    fn tick_block_spawns(&mut self, env: &Env, early: std::ops::Range<usize>) {
+        if early.is_empty() || env.frozen {
+            return;
+        }
+        let idxs: Vec<usize> = early
+            .filter(|&k| k < self.out.spawns.len() && matches!(self.out.spawns[k].body, entities::Body::FallingBlock { .. } | entities::Body::FallingStalactite { .. } | entities::Body::Tnt | entities::Body::Item { .. }))
+            .collect();
+        if idxs.is_empty() {
+            return;
+        }
+        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        let mut out = BlockOut::default();
+        {
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: (&bodies).into(), actor: None };
+            entities::tick_spawns(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &idxs);
+        }
+        blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+    }
+
     /// `Level.tickBlockEntities` for the moving pistons, after the entities: each one that
     /// advances pushes what is in its way (`PistonMovingBlockEntity.moveCollidedEntities`).
     fn tick_pistons(&mut self, env: &Env, ticking: &Ticking) {
@@ -852,6 +876,7 @@ impl RegionWork<'_> {
             crate::bell::requests(&mut level, items.entities_mut());
             crate::beehive::anger_requests(&mut level, items.entities_mut(), &self.players);
             crate::bell::tick(&mut level, items.entities_mut(), &ticking);
+            crate::conduit::tick(&mut level, items.entities_mut(), &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &ticking);
             crate::sculk::tick_block_entities(&mut level, &ticking);
             crate::gateway::tick(&mut level, &ticking);
             crate::sculk::requests(&mut level, &mut self.players, items.entities(), &mut self.out.spawns);

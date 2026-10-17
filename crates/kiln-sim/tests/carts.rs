@@ -399,10 +399,11 @@ fn a_hopper_minecart_pulls_from_the_container_above_it_one_item_at_a_time() {
     w.set([x, y + 2, z], "minecraft:chest");
     w.run(&format!("item replace block {x} {} {z} container.0 with minecraft:apple 5", y + 2));
     let cart = w.summon("minecraft:hopper_minecart", [x, y + 1, z], "{}");
-    // One item per tick at most (`consumedItemThisFrame`), from the chest into the cart's first slot.
+    // One item per tick at most (`consumedItemThisFrame`), from the chest into the cart's first slot. (The cart has ticked in the tick of
+    // the summon (wp72: a command's entity is in the level when the tick starts), in the helper's tick and in these two: four ticks.)
     w.ticks(2);
     let taken = |w: &World| w.sim.cart_items(cart).unwrap().0.iter().map(|&(_, _, n)| n).sum::<i32>();
-    assert!(taken(&w) >= 1 && taken(&w) <= 3, "a little so far: {}", taken(&w));
+    assert!(taken(&w) >= 1 && taken(&w) <= 4, "a little so far: {}", taken(&w));
     w.ticks(20);
     assert_eq!(taken(&w), 5);
     assert_eq!(w.sim.container_at([x, y + 2, z]).unwrap().0, Vec::new(), "the chest is empty");

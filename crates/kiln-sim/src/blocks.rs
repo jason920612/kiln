@@ -518,6 +518,11 @@ pub(crate) fn player_source(p: &Player) -> kiln_entity::vibration::EventSource {
 pub(crate) struct BlockOut {
     /// Positions set with `UPDATE_CLIENTS`, in order (may repeat).
     pub changed: Vec<[i32; 3]>,
+    /// `changed.len()` when the block events began to run (`ServerLevel.runBlockEvents`): the changes before it reach the clients ahead of
+    /// the events' packets, the ones the events make (a piston's moved blocks) after them, as in vanilla, where `ServerChunkCache.tick`
+    /// flushes the chunk changes before the events run and an event's own changes wait for the next flush. A client runs the piston's
+    /// move itself when the event arrives, so it needs the blocks as they were before it.
+    pub events_from: Option<usize>,
     /// Effects with the player whose action caused them.
     pub effects: Vec<(Option<ConnId>, Effect)>,
     /// Crack stages to show others: (breaker entity id, position, stage; outside 0..=9
@@ -1048,6 +1053,7 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
         }
     }
     let dt = crate::diag::lap("tb.random", dt);
+    level.out.events_from.get_or_insert(level.out.changed.len());
     kiln_blocks::block_events::run_block_events(level, |p| ticking.contains(chunk_of(p)));
     // `SignBlockEntity.tick`: editing locks of players who left.
     crate::signs::tick(level);
@@ -1323,6 +1329,11 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
 /// Update (and block entity data) to players with the chunk, particles, sounds and block
 /// events to players near them, drops, falling blocks and primed TNT to `spawns`.
 pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&mut Player], spawns: &mut Vec<Spawn>, env: &BlockEnv) {
+    // The changes the block events made go out after the events (below).
+    let late = match out.events_from.take() {
+        Some(n) if n < out.changed.len() => out.changed.split_off(n),
+        _ => Vec::new(),
+    };
     send_changes(cells, &out.changed, players);
     spawns.append(&mut out.spawns);
     for (at, range, pkt) in std::mem::take(&mut out.packets) {
@@ -1559,6 +1570,7 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
             Effect::PistonMove { .. } | Effect::ShulkerLid { .. } | Effect::GameEvent { .. } | Effect::BlockGameEvent { .. } => {}
         }
     }
+    send_changes(cells, &late, players);
 }
 
 fn send_near(players: &mut [&mut Player], pos: BlockPos, range: f64, pkt: &Bytes, filter: impl Fn(&&mut Player) -> bool) {

@@ -13,7 +13,8 @@
 //!   tick and the chunk (like random ticks, see [`crate::blocks`]), and chunks go in an order
 //!   hashed from the same inputs.
 //!
-//! Spawn potentials (`spawn_costs`, soul sand valleys) are not simulated; biomes are read at their
+//! Spawn potentials (`spawn_costs`: soul sand valleys, warped forests; `NaturalSpawner.SpawnState.canSpawn`/`afterSpawn`,
+//! `PotentialCalculator`) are simulated per region; biomes are read at their
 //! stored 4×4×4 cells (vanilla fuzzes the lookup). Structure spawn overrides are
 //! ([`crate::structure_spawns`]): inside a fortress, a swamp hut, a monument... the structure's
 //! mobs replace the biome's.
@@ -48,6 +49,8 @@ pub(crate) struct SpawnTable {
     biomes: Vec<Option<[Vec<SpawnerData>; N]>>,
     /// By biome network id: `minecraft:gameplay/creature_world_gen_spawn_probability` (chunk generation's animals).
     world_gen: Vec<f32>,
+    /// By biome network id: the biome's `spawn_costs` (`MobSpawnSettings.MobSpawnCost`): entity type name, charge, energy budget.
+    costs: Vec<Vec<(&'static str, f64, f64)>>,
     /// The structures' `spawn_overrides`.
     pub structures: crate::structure_spawns::StructureSpawns,
 }
@@ -76,11 +79,26 @@ impl SpawnTable {
             if t.world_gen.len() <= id {
                 t.world_gen.resize(id + 1, 0.1);
             }
+            if t.costs.len() <= id {
+                t.costs.resize_with(id + 1, Vec::new);
+            }
+            if let Some(o) = json["attributes"]["minecraft:gameplay/natural_mob_spawns"]["argument"]["spawn_costs"].as_object() {
+                for (name, v) in o {
+                    if let (Some(ty), Some(charge), Some(budget)) = (kiln_data::entities::by_name(name), v["charge"].as_f64(), v["energy_budget"].as_f64()) {
+                        t.costs[id].push((ty.name, charge, budget));
+                    }
+                }
+            }
             if let Some(p) = json["attributes"]["minecraft:gameplay/creature_world_gen_spawn_probability"].as_f64() {
                 t.world_gen[id] = p as f32;
             }
         }
         Some(t)
+    }
+
+    /// `MobSpawnSettings.getMobSpawnCost`: the charge and energy budget of `type_name` in `biome`, if the biome has a cost for it.
+    pub(crate) fn cost(&self, biome: u16, type_name: &str) -> Option<(f64, f64)> {
+        self.costs.get(biome as usize)?.iter().find(|c| c.0 == type_name).map(|c| (c.1, c.2))
     }
 
     /// `creature_world_gen_spawn_probability` of a biome (0.1 unless the biome says).
@@ -189,6 +207,9 @@ struct Spawner<'a> {
     counts: Vec<[i32; N]>,
     caps: Vec<[i32; N]>,
     table: &'a SpawnTable,
+    /// The `PotentialCalculator`'s point charges: the block and charge of every counted mob whose biome has a spawn cost for its type
+    /// (made at the start of the tick, and a spawn adds its own).
+    charges: Vec<([i32; 3], f64)>,
     /// The distinct chunks players stand in (sorted) and each one's cluster.
     stands: Vec<ChunkPos>,
     stand_cluster: Vec<usize>,
@@ -488,6 +509,7 @@ pub(crate) fn tick(
         counts: vec![[0; N]; ids.len()],
         caps,
         table: &table,
+        charges: Vec::new(),
         stands,
         stand_cluster,
         boxes,
@@ -501,6 +523,13 @@ pub(crate) fn tick(
             continue;
         }
         s.add(crate::entities::chunk_of(e.pos), m.kind.category());
+        // `createState`: the charge of the mob's type in the biome it stands in.
+        let at = KBlockPos::new(e.pos[0].floor() as i32, e.pos[1].floor() as i32, e.pos[2].floor() as i32);
+        if !table.costs.is_empty()
+            && let Some((charge, _)) = table.cost(biome_at(level, at), e.kind.name)
+        {
+            s.charges.push(([at.x, at.y, at.z], charge));
+        }
     }
     // `getFilteredSpawningCategories`; the global cap is checked per cluster below, with
     // the counts as they were at the start of the tick.
@@ -567,9 +596,10 @@ pub(crate) fn tick(
             if global(&s, cat) && s.local_ok(c, cat) {
                 let mut made = Vec::new();
                 spawn_category_for_chunk(level, &s, &mut r, cat, c, ticking, &mut made);
-                for (spawn, pc) in made {
+                for (spawn, pc, charge) in made {
                     spawns.push(spawn);
                     s.add(pc, cat);
+                    s.charges.extend(charge);
                     spawned_any = true;
                 }
             }
@@ -667,7 +697,7 @@ fn spawn_category_for_chunk(
     cat: Category,
     c: ChunkPos,
     ticking: &Ticking,
-    spawns: &mut Vec<(Spawn, ChunkPos)>,
+    spawns: &mut Vec<(Spawn, ChunkPos, Option<([i32; 3], f64)>)>,
 ) {
     let env = level.env;
     let min_y = env.min_y;
@@ -685,6 +715,8 @@ fn spawn_category_for_chunk(
         return;
     }
     let mut spawned = 0;
+    // The charges of the mobs this call spawned (`afterSpawn` adds them at once).
+    let mut mine: Vec<([i32; 3], f64)> = Vec::new();
     for _ in 0..3 {
         let (mut px, mut pz) = (x, z);
         let mut data: Option<SpawnerData> = None;
@@ -744,8 +776,24 @@ fn spawn_category_for_chunk(
                 continue;
             }
             let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
-            if !no_collision(level, [fx, y as f64, fz], t.width, t.height) {
+            // `EntityType.getSpawnAABB`: slimes and magma cubes look for room for a size-4 one (four times their box).
+            let scale = kiln_entity::spawner::spawn_dimensions_scale(t.name);
+            if !no_collision(level, [fx, y as f64, fz], t.width * scale, t.height * scale) {
                 continue;
+            }
+            // `SpawnState.canSpawn` (the spawn predicate): the biome's cost for the type, and the energy the charges near the spot give it.
+            let cost = s.table.cost(biome, t.name);
+            if let Some((charge, budget)) = cost
+                && charge != 0.0
+            {
+                let mut sum = 0.0f64;
+                for (p, c) in s.charges.iter().chain(mine.iter()) {
+                    let d2 = ((pos.x - p[0]) as f64).powi(2) + ((pos.y - p[1]) as f64).powi(2) + ((pos.z - p[2]) as f64).powi(2);
+                    sum += if d2 == 0.0 { f64::INFINITY } else { c / d2.sqrt() };
+                }
+                if sum * charge > budget {
+                    continue;
+                }
             }
             let yaw = r.next_float() * 360.0;
             // `isValidPositionForMob`: the walk target value and the spawn obstruction.
@@ -776,7 +824,9 @@ fn spawn_category_for_chunk(
             let black_cat = kind == MobKind::Cat && black_cat_structure(level, [fx.floor() as i32, y, fz.floor() as i32]);
             let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: true, monsters_disabled, camel_space, black_cat };
             // The caller counts it (nothing below reads the counts).
-            spawns.push((crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(fin)), pc));
+            let charge = cost.map(|(c, _)| ([pos.x, pos.y, pos.z], c));
+            mine.extend(charge);
+            spawns.push((crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(fin)), pc, charge));
             spawned += 1;
             in_group += 1;
             if spawned >= kind.ext().map_or(4, |k| k.max_spawn_cluster()) {
@@ -1202,4 +1252,29 @@ fn contains_liquid(level: &RegionLevel, pos: [f64; 3], w: f32, h: f32) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod potential_tests {
+    /// `PotentialCalculator.getPotentialEnergyChange` against `MobSpawnCost.energyBudget` as `canSpawn` asks it.
+    fn can_spawn(charges: &[([i32; 3], f64)], pos: [i32; 3], charge: f64, budget: f64) -> bool {
+        let mut sum = 0.0f64;
+        for (p, c) in charges {
+            let d2 = ((pos[0] - p[0]) as f64).powi(2) + ((pos[1] - p[1]) as f64).powi(2) + ((pos[2] - p[2]) as f64).powi(2);
+            sum += if d2 == 0.0 { f64::INFINITY } else { c / d2.sqrt() };
+        }
+        sum * charge <= budget
+    }
+
+    #[test]
+    fn a_warped_forest_enderman_keeps_its_distance() {
+        // warped_forest: enderman charge 1.0, budget 0.12: one enderman 9 blocks away gives 1/9 = 0.111 (allowed), 8 blocks 0.125 (not)
+        let one = [([0, 64, 0], 1.0)];
+        assert!(can_spawn(&[], [3, 64, 0], 1.0, 0.12), "nothing near");
+        assert!(can_spawn(&one, [9, 64, 0], 1.0, 0.12));
+        assert!(!can_spawn(&one, [8, 64, 0], 1.0, 0.12));
+        assert!(!can_spawn(&one, [0, 64, 0], 1.0, 0.12), "the very block: infinite");
+        // two endermen add up: 1/12 + 1/12 = 0.1667 > 0.12 although each alone is far enough
+        assert!(!can_spawn(&[([0, 64, 0], 1.0), ([24, 64, 0], 1.0)], [12, 64, 0], 1.0, 0.12));
+    }
 }

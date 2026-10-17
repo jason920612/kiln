@@ -155,9 +155,8 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
     }
-    // Vanilla's `/summon` adds the entity at once; here entities summoned by a command join the
-    // level in the next tick, so the summons of tick `t` are sent with tick `t - 1` (tick 1's in
-    // a step of their own before it).
+    // Vanilla's `/summon` adds the entity at once, and so does Kiln (wp72: it is in the level when the tick starts and
+    // has its first tick in that tick); the summons come after the other commands of their tick.
     let actions = |t: usize, summons: bool| -> Vec<ToSim> {
         line["actions"].get(t.to_string()).and_then(Value::as_array).map_or(Vec::new(), |a| {
             a.iter()
@@ -166,12 +165,6 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                 .collect()
         })
     };
-    let first_summons = actions(1, true);
-    if !first_summons.is_empty() {
-        let mut inbox = first_summons;
-        client.tick(None, &mut inbox);
-        assert!(sim.step(inbox));
-    }
     // The game time is a multiple of 20 as the scenario begins (daylight detectors work on it).
     if line["align20"].as_bool() == Some(true) {
         // (The harness ticks the level alone, which leaves the world clock where `/time` put it.)
@@ -194,7 +187,7 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
     let mut previous_mobs: Option<Value> = None;
     let mut seen_bees: std::collections::HashSet<i32> = Default::default();
     let mut seen_entities: std::collections::HashSet<i32> = Default::default();
-    let mut pending_entities: Vec<i32> = Vec::new();
+    let mut pending_entities: Vec<(i32, Option<[f64; 3]>)> = Vec::new();
     let mut previous_entities = serde_json::json!([]);
     for (t, want) in line["result"].as_array().unwrap().iter().enumerate() {
         let tick = t + 1;
@@ -209,7 +202,7 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             }
         }
         inbox.extend(actions(tick, false));
-        inbox.extend(actions(tick + 1, true));
+        inbox.extend(actions(tick, true));
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
         for (i, &p) in containers.iter().enumerate() {
@@ -258,13 +251,16 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             }
         }
         if line["entities"].as_bool() == Some(true) {
-            // The entities that appeared: vanilla ticks them in the tick they are made, Kiln's join the level after
-            // the tick's work, so those that came last tick are reported now and compared with last tick's vanilla.
+            // The entities that appeared: vanilla ticks them in the tick they are made. Kiln's do the same when a command or
+            // the block phase made them (wp72: they have ticked once when first seen: where they were then is what is reported);
+            // those the entity phase made join the level after the tick's work. Both are reported a tick later and compared
+            // with last tick's vanilla.
             let mut reported: Vec<(String, f64, f64, f64)> = Vec::new();
-            let mut now_new: Vec<i32> = Vec::new();
+            let mut now_new: Vec<(i32, Option<[f64; 3]>)> = Vec::new();
             for region in sim.dims[OVERWORLD_ID].regions.iter() {
                 for e in region.part().0.list.iter().filter(|e| !e.removed && e.kind.name != "minecraft:item" && e.kind.name != "minecraft:player") {
-                    if pending_entities.contains(&e.id) {
+                    if let Some(&(_, first_seen)) = pending_entities.iter().find(|(id, _)| *id == e.id) {
+                        let at = first_seen.unwrap_or(e.pos);
                         let r = |v: f64| (v * 10000.0).round() / 10000.0;
                         // (A primed TNT hops a random way at its making: only where it is to a tenth is compared.)
                         let t = |v: f64| if e.kind.name == "minecraft:tnt" || e.kind.name == "minecraft:sulfur_cube" { (v * 10.0).round() / 10.0 } else { r(v) };
@@ -275,11 +271,11 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                         if shot {
                             reported.push((e.kind.name.to_owned(), 0.0, 0.0, 0.0));
                         } else {
-                            reported.push((e.kind.name.to_owned(), t(e.pos[0]), r(e.pos[1]), t(e.pos[2])));
+                            reported.push((e.kind.name.to_owned(), t(at[0]), r(at[1]), t(at[2])));
                         }
                     }
                     if seen_entities.insert(e.id) {
-                        now_new.push(e.id);
+                        now_new.push((e.id, e.phys.as_deref().is_some_and(|p| p.tick_count > 0).then_some(e.pos)));
                     }
                 }
             }

@@ -397,6 +397,29 @@ public class ClientCtl {
                     return arr.toString();
                 });
             }
+            case "boxdump": { // boxdump X0 Y0 Z0 X1 Y1 Z1: every non-air block state of the box as one JSON array of "x y z state" (client's view; unloaded chunks are skipped)
+                int x0 = Integer.parseInt(a[1]), y0 = Integer.parseInt(a[2]), z0 = Integer.parseInt(a[3]);
+                int x1 = Integer.parseInt(a[4]), y1 = Integer.parseInt(a[5]), z1 = Integer.parseInt(a[6]);
+                return onMain(() -> {
+                    JsonArray arr = new JsonArray();
+                    var pos = new BlockPos.MutableBlockPos();
+                    for (int x = x0; x <= x1; x++) {
+                        for (int z = z0; z <= z1; z++) {
+                            if (mc.level.getChunk(x >> 4, z >> 4, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false) == null) {
+                                continue;
+                            }
+                            for (int y = y0; y <= y1; y++) {
+                                pos.set(x, y, z);
+                                var st = mc.level.getBlockState(pos);
+                                if (!st.isAir()) {
+                                    arr.add(x + " " + y + " " + z + " " + st.toString().replace("Block{minecraft:", "").replace("}", ""));
+                                }
+                            }
+                        }
+                    }
+                    return arr.toString();
+                });
+            }
             case "menubutton": // menubutton I: the container menu button (loom pattern, stonecutter recipe, enchanting option...)
                 return onMain(() -> {
                     if (mc.gui.screen() instanceof AbstractContainerScreen<?> c) {
@@ -839,12 +862,24 @@ public class ClientCtl {
         "ClientboundEntityPositionSyncPacket", "ClientboundTeleportEntityPacket", "ClientboundChunkBatchStartPacket", "ClientboundChunkBatchFinishedPacket", "ClientboundBlockUpdatePacket",
         "ClientboundSectionBlocksUpdatePacket", "ClientboundTickingStatePacket", "ClientboundTickingStepPacket", "ClientboundBlockEntityDataPacket");
 
+    /** wp72: `spy blocks`: also log block updates, section updates and block entity data (positions, states) in arrival order. */
+    static volatile boolean spyBlocks = false;
+
     static synchronized void spyRecord(Minecraft mc, Object msg) {
         if (msg instanceof net.minecraft.network.protocol.game.ClientboundBundlePacket b) {
             for (var sub : b.subPackets()) {
                 spyRecord(mc, sub);
             }
             return;
+        }
+        if (spyBlocks) {
+            if (msg instanceof net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket p) {
+                spyAdd("block_update " + p.getPos().getX() + " " + p.getPos().getY() + " " + p.getPos().getZ() + " " + p.getBlockState().toString().replace("Block{minecraft:", "").replace("}", ""));
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket p) {
+                p.runUpdates((pos, st) -> spyAdd("section_update " + pos.getX() + " " + pos.getY() + " " + pos.getZ() + " " + st.toString().replace("Block{minecraft:", "").replace("}", "")));
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket p) {
+                spyAdd("be_data " + p.getPos().getX() + " " + p.getPos().getY() + " " + p.getPos().getZ() + " " + BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(p.getType()).getPath());
+            }
         }
         String cn = msg.getClass().getSimpleName();
         SPY.merge(cn, 1, Integer::sum);
@@ -951,6 +986,9 @@ public class ClientCtl {
                     }
                 });
                 spyInstalled = true;
+            }
+            if (what.equals("blocks")) {
+                spyBlocks = true;
             }
             if (what.equals("clear")) {
                 synchronized (ClientCtl.class) {

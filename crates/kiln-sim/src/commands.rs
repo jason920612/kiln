@@ -127,9 +127,13 @@ impl PlayerRef {
             rot,
             dim: crate::DIMENSIONS[dim].0,
             mode: GameMode::Survival,
+            // `Entity.getDisplayName`: the custom name (a name tag, `CustomName` of `/summon`) or the type's name.
             display: match e.phys.as_deref().map(|p| &p.kind) {
                 Some(kiln_entity::EntityKind::Item(d)) => crate::command_data::hover_name(&d.stack),
-                _ => Text::translate(format!("entity.minecraft.{path}"), Vec::new()),
+                _ => match e.phys.as_deref().and_then(|p| p.extra.iter().find(|(k, _)| k == "CustomName")) {
+                    Some((_, name)) => Text::raw(name.clone()),
+                    None => Text::translate(format!("entity.minecraft.{path}"), Vec::new()),
+                },
             },
             entity: Some(e.id),
             kind: e.kind.name,
@@ -2104,4 +2108,27 @@ pub(crate) fn offline_uuid(name: &str) -> Uuid {
 
 fn block_pos(p: [i32; 3]) -> kiln_blocks::BlockPos {
     kiln_blocks::BlockPos::new(p[0], p[1], p[2])
+}
+
+#[cfg(test)]
+mod display_name_tests {
+    use super::*;
+    use crate::entities::{Body, Entity, Spawn};
+
+    /// A named mob is called by its name in command feedback and `say` (`Entity.getDisplayName` is the custom name when there is one);
+    /// Kiln always used the type's name.
+    #[test]
+    fn a_named_entity_is_called_by_its_name() {
+        let spawn = || Spawn {
+            kind: &kiln_data::entities::types::ZOMBIE,
+            pos: [0.0; 3],
+            vel: [0.0; 3],
+            body: Body::Mob { kind: kiln_entity::mob::MobKind::Zombie, yaw: None, finalize: None },
+        };
+        let board = Scoreboard::default();
+        let mut e = Entity::new(1, Uuid::nil(), spawn());
+        assert_eq!(PlayerRef::of_entity(0, &e, &board).display.key(), Some("entity.minecraft.zombie"));
+        e.phys.as_deref_mut().unwrap().extra.push(("CustomName".into(), Tag::String("Bob".into())));
+        assert_eq!(PlayerRef::of_entity(0, &e, &board).display.to_plain(), "Bob");
+    }
 }

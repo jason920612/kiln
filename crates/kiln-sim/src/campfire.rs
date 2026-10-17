@@ -32,7 +32,7 @@ fn recipe_for(level: &RegionLevel, stack: &ItemStack) -> Option<(usize, i32)> {
 
 /// `BlockEntity.markUpdated`: saved, and the clients that have the chunk see the food
 /// (`Level.sendBlockUpdated`).
-fn mark_updated(level: &mut RegionLevel, pos: BlockPos) {
+pub(crate) fn mark_updated(level: &mut RegionLevel, pos: BlockPos) {
     let Some(c) = level.blocks.containers.get_mut(pos) else { return };
     c.mark_changed();
     crate::container::hopper::changed(level, pos);

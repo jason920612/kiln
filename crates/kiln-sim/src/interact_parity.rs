@@ -593,6 +593,8 @@ fn run_case(line: &Value) -> Vec<String> {
     let view = if maps { 8 } else { 2 };
     let mut config = SimConfig::new(2, view, None);
     config.enable_command_block = true;
+    // (The vectors' recorder adds the entities of its setup without ticking them.)
+    config.summons_join_late = true;
     let mut sim = Sim::new(config);
     // (Vaults roll loot tables: the level has the vanilla ones whatever the working directory.)
     if line["ticking"].as_bool() == Some(true) && sim.loot.is_none() {
