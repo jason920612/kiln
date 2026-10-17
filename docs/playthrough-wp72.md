@@ -55,7 +55,10 @@
 | 8 | **方塊階段產生的實體(掉落的沙/礫/鐵砧、紅石點燃的 TNT、方塊 tick 弄破方塊的掉落物)晚一刻**:vanilla 的 `entityTickList` 迭代涵蓋方塊 tick 加入的實體,同一刻就 tick;Kiln 晚一刻(vanilla 的掉落沙在生成那刻伺服器 `Pos` y=201.96、`Motion` -0.0392,Kiln 202.0/0.0;`dupe` 調色盤 30 案例中 21 個落地時間差一刻) | `entities::tick_spawns` + `Region::tick_block_spawns`:方塊階段新增的 FallingBlock/FallingStalactite/Tnt/Item 在同一刻補一次 `common_tick`+`tick` | `summon_tick.rs::a_falling_block_that_the_block_phase_made…`(拿掉 `tick_block_spawns` 呼叫:紅) |
 
 **7、8 的副作用**:三個舊測試編碼了舊的「晚一刻」時序,已更新並註明原因:`carts.rs`(漏斗礦車前幾刻拿到的物品數上限 3 → 4,因為礦車在召喚那刻就開始 tick)、`creaking.rs`(讓心臟先 tick 一刻吃進 `creaking` 的資料)、`llamas.rs`(羊駝吐口水測試原本依賴第一刻的 RNG 流剛好在 40 刻內吐;改成只打一下、等 120 刻 — 遠程攻擊目標間隔本來就是 40 刻,被擊退後第二下打不到)。
-這些改動不會改變 `mob_parity` 的重播(重播自己控制每刻)。
+回放 vanilla 向量的兩個測試台也編碼了舊的時序,已調整(向量本身沒動):
+`container_parity.rs`(召喚隨自己那一刻送出,不再提前一刻;新出現的實體若第一次被看到時已經 tick 過,就用那時的位置和下一刻的 vanilla 比 — 方塊階段的 TNT、掉落沙、指令召喚的屬於這一類,實體階段的仍是下一刻才進場);
+`interact_parity.rs`(向量的錄製器把佈置用的實體直接加進關卡、不 tick 它們,所以回放設 `SimConfig::summons_join_late = true`,指令召喚的實體維持舊的進場時機)。
+這兩處之外的測試台與 `mob_parity` 沒有動(`parity_suites` 102 個套件全綠,見驗證)。
 
 負向檢查(每個修正在 VM 上用一行文字編輯關掉,對應測試必須失敗)已全部做過:導管 3 個紅、自訂名稱 1 個紅、掠奪者 1 個紅、召喚物品 1 個紅、方塊階段掉落沙 1 個紅;活塞封包、史萊姆房間、生成成本是在做修正時各手動驗證過(沒有修正時紅)。
 
@@ -74,6 +77,10 @@
 1. 容器裡的**未知物品 id**:vanilla 載入時丟掉,Kiln 保留原始條目。
 2. 物品靜止時 `Motion` 的小差異:泡泡柱地板反彈、靈魂沙、仙人掌、活塞旁、藍冰/蜜上的次毫米漂移(位置在容許內,沒有造成可見差)。
 3. 漏斗鏈:物品數有 ±1 的延遲(在鏈尾,稍後的取樣相同)。
+
+## 驗證(VM,最後一個 commit)
+
+workspace 測試不帶與帶 `KILN_DATAPACK` 各 192 個二進位全部 `ok`;`determinism` 6/6;`mob_parity` 通過;`tools/parity_suites.py --skip-workspace` 102 個套件全部 exit 0(含 `container49`、`interact50`~`interact56`、`mob_*`);`crowd_golden` 沒有重錄(玩家封包沒變、狀態 hash 沒變)。`work/m6-mobs2/vectors.jsonl` 沒有動(另備份 `.wp72bak`)。
 
 ## MSPT
 
