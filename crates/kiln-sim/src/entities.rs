@@ -4079,7 +4079,26 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
     let mut t = Tracked::default();
     let section = e.pos.map(|c| c.floor() as i32 >> 4);
     let moved = e.section != Some(section);
+    // An entity that was made and is gone before tracking looked at it (a snowball thrown at a wall): vanilla's tracker paired it at the
+    // start of the tick it was made in, so its viewers are told of it and of its going (`AddEntity`, then `RemoveEntities`).
+    let never_looked_at = e.removed && e.section.is_none() && e.kind.tracking_range != 0;
     e.section = Some(section);
+    if never_looked_at {
+        let range = (e.kind.tracking_range as f64 * 16.0).min(f64::MAX);
+        for p in viewers {
+            let (dx, dz) = (p.pos[0] - e.pos[0], p.pos[2] - e.pos[2]);
+            let (pc, ec) = (chunk_of(p.pos), chunk_of(e.pos));
+            if dx * dx + dz * dz <= range.min(p.view as f64 * 16.0).powi(2) && (pc.x - ec.x).abs() <= p.view && (pc.z - ec.z).abs() <= p.view {
+                t.added.push(p.conn);
+            }
+        }
+        t.removed = t.added.clone();
+        if !t.added.is_empty() {
+            t.spawn = e.spawn_packets();
+            t.despawn = Some(entity::remove_entities(&[e.id]));
+        }
+        return t;
+    }
     {
         let (added, removed) = (&mut t.added, &mut t.removed);
         let mut check = |p: &Viewer, seen: bool| match (sees(p, e), seen) {
