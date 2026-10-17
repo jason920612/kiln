@@ -203,7 +203,7 @@ public class BrainRoundTrip {
         }
         found.discard();
         for (Entity e : level.getEntities((Entity) null, new net.minecraft.world.phys.AABB(x - 20, y - 20, z - 20, x + 20, y + 20, z + 20), e -> true)) e.discard();
-        return String.format(Locale.ROOT, "{\"name\":\"%s\",\"type\":\"minecraft:%s\",\"loaded\":true,\"samples\":[%s]}", name, type, samples);
+        return String.format(Locale.ROOT, "{\"name\":\"%s\",\"type\":\"minecraft:%s\",\"nbt\":\"%s\",\"loaded\":true,\"samples\":[%s]}", name, type, c.nbt.replace("\\", "\\\\").replace("\"", "\\\""), samples);
     }
 
     static void writeServerFiles() throws Exception {
