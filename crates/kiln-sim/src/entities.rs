@@ -1719,6 +1719,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let env = self.level.env();
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
         p.hurt(5.0, &source, &mut ctx);
+        self.events.push(Event::PlayerHurt { target: id });
     }
 
     fn monsters_burn(&self) -> bool {
@@ -1761,6 +1762,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         if hurt && let Some(a) = source.attacker.as_ref().map(|a| a.id) {
             p.last_hurt_by_mob = Some((a, env.game_time));
         }
+        self.events.push(Event::PlayerHurt { target: id });
         hurt
     }
 
@@ -3381,6 +3383,20 @@ fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
         .collect()
 }
 
+/// `broadcastDamageEvent` for a hurt player: the players that see it get the damage event now, at its place among what else happened (the player
+/// itself was told as it was hurt).
+fn flush_player_damage(players: &mut [&mut Player], target: i32) {
+    let Some(t) = players.iter_mut().find(|p| p.entity_id == target) else { return };
+    let Some((kind, attacker, direct)) = t.damaged.take() else { return };
+    let viewers = t.seen_by.clone();
+    let pkt = entity::damage_event(target, kind, attacker, direct, None);
+    for v in viewers {
+        if let Ok(j) = players.binary_search_by_key(&v, |q| q.conn) {
+            players[j].send(pkt.clone());
+        }
+    }
+}
+
 /// `BlockBehaviour.onProjectileHit` of the block at `pos`; `owner` is the projectile's owner.
 fn block_projectile_hit(level: &mut RegionLevel, players: &mut [&mut Player], pos: kiln_blocks::BlockPos, face: kiln_blocks::Direction, location: [f64; 3], projectile_type: &str, owner: Option<i32>, on_fire: bool) {
     use kiln_data::block_logic::BlockClass as C;
@@ -3496,7 +3512,9 @@ fn carry_out(
                 let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
                 p.hurt(amount, &source, &mut ctx);
             }
+            flush_player_damage(players, target);
         }
+        Event::PlayerHurt { target } => flush_player_damage(players, target),
         Event::EntityEvent { entity: id, event } => {
             if let Ok(i) = list.binary_search_by_key(&id, |e| e.id) {
                 let pkt = entity::entity_event(id, event);

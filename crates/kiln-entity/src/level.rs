@@ -332,6 +332,9 @@ pub enum Event {
     Explosion { pos: Vec3, power: f32, blocks: Vec<BlockPos>, keep: bool, knockbacks: Vec<(i32, Vec3)>, source: Option<i32>, fx: Option<ExplosionFx> },
     /// A mob took a full hit (`broadcastDamageEvent`: the hurt animation for viewers).
     MobHurt { entity: i32, kind: DamageKind, attacker: Option<i32>, direct: Option<i32> },
+    /// A player was hurt during the tick: the damage event goes to the players that see it here, among the tick's other events (a level event
+    /// sent after the damage must come after the damage event).
+    PlayerHurt { target: i32 },
     /// A mob died: the simulation drops its loot table (`LivingEntity.dropFromLootTable`).
     /// `killer`: the player credited with the kill (`last_damage_player`).
     DeathLoot {
