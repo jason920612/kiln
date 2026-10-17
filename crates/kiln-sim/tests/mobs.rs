@@ -920,6 +920,8 @@ fn piglins_turn_on_a_player_who_breaks_gold() {
             assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action, pos: at, face: 1, sequence })]));
             w.ticks(2);
         }
+        let gone = w.sim.block_at(at[0], at[1], at[2]).is_some_and(kiln_data::blocks_types::is_air);
+        assert!(gone, "the {block} was dug out");
         w.ticks(200);
         w.health() < 20.0
     };
