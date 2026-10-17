@@ -12,9 +12,13 @@ def item(tag, x, y, z, mot=(0, 0, 0), stack="minecraft:stone", pickup=32767):
     return (f'summon minecraft:item {x} {y} {z} {{Item:{{id:"{stack}",count:1}},Motion:[{mot[0]}d,{mot[1]}d,{mot[2]}d],PickupDelay:{pickup}s,Tags:["{tag}"]}}')
 
 
-def read(t, tag, path):
-    out = ask(t, f"data get entity @e[tag={tag},limit=1] {path}", wait=0.22)
+def parse(out):
     return DBL.findall(out.split("data:")[-1] if "data:" in out else out[out.find("["):]) or ["gone"]
+
+
+def read_both(tag, path):
+    out = ask_both(f"data get entity @e[tag={tag},limit=1] {path}", wait=0.16)
+    return parse(out["K"]), parse(out["V"])
 
 
 def clear(x0=X0 - 2, z0=Z0 - 2, x1=X0 + 30, z1=Z0 + 12):
@@ -25,19 +29,24 @@ def clear(x0=X0 - 2, z0=Z0 - 2, x1=X0 + 30, z1=Z0 + 12):
     time.sleep(1.0)
 
 
-def watch(name, tags, ticks, every=1):
+def watch(name, tags, ticks, every=2):
     """Steps `ticks` ticks and compares Pos and Motion of each tag on the two servers after every `every` ticks."""
     first = None
+    pos_first = {}
     for k in range(1, ticks + 1):
         step(1)
         if k % every:
             continue
         for tag in tags:
             for path in ("Pos", "Motion"):
-                a, b = read("K", tag, path), read("V", tag, path)
+                a, b = read_both(tag, path)
                 if a != b and first is None:
                     first = (k, tag, path, a, b)
+                if a != b and path == "Pos" and tag not in pos_first:
+                    pos_first[tag] = (k, a, b)
     print(("SAME  " if first is None else "DIFF  ") + name, first if first else "", flush=True)
+    for tag, v in pos_first.items():
+        print("      position differs: ", tag, v, flush=True)
     return first
 
 

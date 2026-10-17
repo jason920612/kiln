@@ -26,3 +26,17 @@ fn a_summoned_item_has_its_first_tick_in_the_next_tick() {
     // (vanilla: 201.96, 201.8808 for a falling block summoned at 202)
     assert!((y2 - 99.8808).abs() < 1e-6, "second tick: y = {y2}");
 }
+
+#[test]
+fn a_summoned_zombie_is_there_and_stays() {
+    let mut sim = Sim::new(SimConfig::new(4, 4, None));
+    assert!(sim.step([ToSim::Console("gamerule minecraft:spawn_mobs false".into()), ToSim::Console("forceload add 0 0 15 15".into()), ToSim::Console("difficulty normal".into())]));
+    for _ in 0..20 {
+        assert!(sim.step([]));
+    }
+    assert!(sim.step([ToSim::Console("summon minecraft:zombie 8.5 -60 8.5".into())]));
+    for _ in 0..60 {
+        assert!(sim.step([]));
+    }
+    assert_eq!(sim.entity_ids_of("minecraft:zombie").len(), 1, "{:?}", sim.entities());
+}
