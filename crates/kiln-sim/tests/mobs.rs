@@ -909,7 +909,8 @@ fn piglins_turn_on_a_player_who_breaks_gold() {
         w.console("difficulty normal");
         w.console("gamemode survival Hunter");
         w.console("item replace entity Hunter armor.head with minecraft:golden_helmet");
-        w.console("effect give Hunter minecraft:haste 999 100 true");
+        w.console("item replace entity Hunter weapon.mainhand with minecraft:netherite_pickaxe");
+        w.console("effect give Hunter minecraft:haste 999 50 true");
         let p = w.pos().map(|v| v.floor() as i32);
         let at = [p[0] + 2, p[1], p[2]];
         w.console(&format!("setblock {} {} {} {block}", at[0], at[1], at[2]));
