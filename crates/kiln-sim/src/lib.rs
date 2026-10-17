@@ -922,6 +922,9 @@ struct Dim {
     unloads: Vec<ChunkPos>,
     /// Entities spawned in a serial phase, waiting for ids.
     spawns: Vec<entities::Spawn>,
+    /// What `/summon` made: they get their ids in the order the commands ran (vanilla numbers entities as they are made), after the
+    /// regions' spawns, which are numbered by where they are.
+    serial_spawns: Vec<entities::Spawn>,
     /// Cells emptied by unloads; vacated when the regionizer runs, unless refilled first.
     emptied: Vec<kiln_world::CellPos>,
     /// Generation threads, when missing chunks come from an expensive generator.
@@ -1043,6 +1046,7 @@ impl Dim {
             requests: Vec::new(),
             unloads: Vec::new(),
             spawns: Vec::new(),
+            serial_spawns: Vec::new(),
             emptied: Vec::new(),
             generation,
             loading: HashSet::new(),
@@ -3199,7 +3203,9 @@ impl Sim {
             // Entities built during a tick carry placeholder (negative) ids that other new
             // entities refer to as their vehicle or passengers: (placeholder, id, chunk).
             let mut placeholders: Vec<(i32, i32, ChunkPos)> = Vec::new();
-            for spawn in entities::canonical(std::mem::take(&mut d.spawns)) {
+            let mut batch = entities::canonical(std::mem::take(&mut d.spawns));
+            batch.append(&mut d.serial_spawns);
+            for spawn in batch {
                 let chunk = entities::chunk_of(spawn.pos);
                 // Into a region ticking away: once it is back.
                 if d.lent_at(chunk) {

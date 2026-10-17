@@ -1263,10 +1263,10 @@ impl Host for Sim {
 
     fn summon(&mut self, entity: &Identifier, pos: [f64; 3], nbt: Option<&Tag>, initialize: bool) -> Result<Text, CommandError> {
         let dim = crate::dim_id(kiln_command::host::Source::dimension(self)).unwrap_or(0);
-        let seed = crate::mobs::loot_seed(self.config.noise.as_ref().map_or(0, |n| n.seed), self.game_time, self.dims[dim].spawns.len() as i32, 0x73756d6d);
+        let seed = crate::mobs::loot_seed(self.config.noise.as_ref().map_or(0, |n| n.seed), self.game_time, (self.dims[dim].spawns.len() + self.dims[dim].serial_spawns.len()) as i32, 0x73756d6d);
         // `ServerLevel.getCurrentDifficultyAt`: the chunk the mob appears in has been inhabited so long.
         let inhabited = self.dims[dim].regions.chunk(kiln_world::ChunkPos::of_block(pos[0].floor() as i32, pos[2].floor() as i32)).map_or(0, |c| c.inhabited_time());
-        let name = crate::mobs::summon(&mut self.dims[dim].spawns, entity.as_str(), pos, nbt, initialize, self.commands.difficulty as u8, self.game_time, inhabited, seed)
+        let name = crate::mobs::summon(&mut self.dims[dim].serial_spawns, entity.as_str(), pos, nbt, initialize, self.commands.difficulty as u8, self.game_time, inhabited, seed)
             .ok_or_else(|| CommandError::new(kiln_command::tr!("commands.summon.failed")))?;
         Ok(Text::raw(name))
     }
