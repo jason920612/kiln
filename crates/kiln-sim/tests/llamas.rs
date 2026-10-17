@@ -243,20 +243,15 @@ fn a_llama_spits_at_the_player_who_hurt_it() {
     let llama = *w.sim.entity_ids_of("minecraft:llama").iter().find(|id| !before.contains(id)).expect("summoned");
     let mut min_health = 20.0f32;
     let mut spit_seen = false;
-    for round in 0..12 {
-        if min_health < 20.0 {
-            break;
-        }
-        w.ticks(25);
-        assert!(w.sim.step([ToSim::Packet(1, PlayIn::Attack { entity_id: llama })]));
-        eprintln!("DBG round {round} {:?} {:?}", w.sim.entities().iter().filter(|(n, _)| n.contains("llama")).collect::<Vec<_>>(), w.client.pos);
-        for _ in 0..40 {
-            w.ticks(1);
-            spit_seen |= w.sim.entities().iter().any(|(n, _)| *n == "minecraft:llama_spit");
-            min_health = min_health.min(w.sim.health(1).unwrap().0);
-        }
+    w.ticks(25);
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::Attack { entity_id: llama })]));
+    // A ranged attack goal's first shot comes a full interval (40 ticks) after the target was taken; the hurt llama is knocked away
+    // and the player's next hit is out of reach, so the one hit has to be answered on its own.
+    for _ in 0..120 {
+        w.ticks(1);
+        spit_seen |= w.sim.entities().iter().any(|(n, _)| *n == "minecraft:llama_spit");
+        min_health = min_health.min(w.sim.health(1).unwrap().0);
     }
-    // (The chance of the first spit depends on the llama's random stream, which a tick of difference in when its first tick comes changes.)
     assert!(spit_seen, "a grievance is answered with a spit");
     assert!(min_health < 20.0, "a spit hit the player (health went down to {min_health})");
     assert!(min_health >= 16.0, "each spit does 1 damage (health went down to {min_health})");
