@@ -147,6 +147,15 @@ fn p_inside_y(y: f64) -> bool {
     y + 0.25 > (BASE[1] - 8) as f64 && y < (BASE[1] + 12) as f64
 }
 
+/// Scenarios whose vanilla trace is not repeatable: two runs of `ContainerVectors` on a fresh server give different traces
+/// (an item that ends up inside a retracting piston is pushed out with `Entity.random`, which vanilla does not seed). Found by running
+/// the vectors twice and comparing; they are not compared.
+const VANILLA_NOT_REPEATABLE: &[&str] = &[
+    "piston_pull/8", "piston_pull/10", "piston_pull/11", "piston_pull/12", "piston_pull/14", "piston_pull/15", "piston_pull/23", "piston_pull/27",
+    "piston_pull/28", "piston_pull/30", "piston_pull/31", "piston_pull/32", "piston_pull/34", "piston_pull/35", "piston_pull/36", "piston_pull/39",
+    "piston_pull/48", "piston_pull/50", "piston_pull/52", "piston_pull/54", "piston_pull/55", "piston_pull/60", "piston_pull/62", "piston_pull/63",
+];
+
 /// Replays one scenario; returns (values compared, mismatches).
 fn run_scenario(line: &Value) -> (usize, Vec<String>) {
     let mut config = SimConfig::new(2, 3, None);
@@ -437,6 +446,9 @@ fn container_parity() {
         let name = v["name"].as_str().unwrap().to_owned();
         assert!(v.get("error").is_none(), "{name}: vanilla failed: {}", v["error"]);
         if filter.as_deref().is_some_and(|f| !name.contains(f)) {
+            continue;
+        }
+        if VANILLA_NOT_REPEATABLE.contains(&name.as_str()) {
             continue;
         }
         let (n, errors) = run_scenario(&v);
