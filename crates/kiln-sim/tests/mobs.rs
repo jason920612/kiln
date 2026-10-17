@@ -916,9 +916,9 @@ fn piglins_turn_on_a_player_who_breaks_gold() {
         w.summon("minecraft:piglin", [-6.0, 0.0, 0.0], "{PersistenceRequired:1b,IsImmuneToZombification:1b,HandItems:[{id:\"minecraft:golden_sword\",count:1},{}]}");
         w.ticks(100);
         assert_eq!(w.health(), 20.0, "a player in gold armour is left alone");
-        for (action, sequence) in [(0, 1), (2, 2)] {
+        for (action, sequence, wait) in [(0, 1, 40), (2, 2, 2)] {
             assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action, pos: at, face: 1, sequence })]));
-            w.ticks(2);
+            w.ticks(wait);
         }
         let gone = w.sim.block_at(at[0], at[1], at[2]).is_some_and(kiln_data::blocks_types::is_air);
         assert!(gone, "the {block} was dug out");
