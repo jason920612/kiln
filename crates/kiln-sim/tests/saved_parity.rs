@@ -46,6 +46,27 @@ fn memory_set(t: Option<&Tag>) -> BTreeSet<String> {
     }
 }
 
+/// The types and keys of a tag with the numbers taken out (the values of timers and positions come from random draws).
+fn shape(t: &Tag) -> String {
+    match t {
+        Tag::Compound(fields) => {
+            let mut v: Vec<String> = fields.iter().map(|(k, v)| format!("{k}:{}", shape(v))).collect();
+            v.sort();
+            format!("{{{}}}", v.join(","))
+        }
+        Tag::List(items) => format!("[{}]", items.first().map(|t| shape(t.unwrap_list_element())).unwrap_or_default()),
+        Tag::Byte(_) => "b".into(),
+        Tag::Short(_) => "s".into(),
+        Tag::Int(_) => "i".into(),
+        Tag::Long(_) => "L".into(),
+        Tag::Float(_) => "f".into(),
+        Tag::Double(_) => "d".into(),
+        Tag::String(_) => "str".into(),
+        Tag::IntArray(_) => "ia".into(),
+        other => format!("{other:?}"),
+    }
+}
+
 fn world() -> (Sim, Client) {
     let mut sim = Sim::new(SimConfig::new(2, 4, None));
     let (msg, stats) = join(1, "Probe", 3);
@@ -121,6 +142,14 @@ fn saved_attributes_and_brain_match_vanilla() {
             }
             if km != vm {
                 bad.push(format!("memories: Kiln-only {:?}, vanilla-only {:?}", km.difference(&vm).collect::<Vec<_>>(), vm.difference(&km).collect::<Vec<_>>()));
+            }
+            for k in km.intersection(&vm) {
+                let (a, b) = (saved.get("Brain").and_then(|b| b.get("memories")).and_then(|m| m.get(k)), vbrain.as_ref().and_then(|b| b.get("memories")).and_then(|m| m.get(k)));
+                if let (Some(a), Some(b)) = (a, b)
+                    && shape(a) != shape(b)
+                {
+                    bad.push(format!("memory {k}: Kiln {}, vanilla {}", shape(a), shape(b)));
+                }
             }
             if saved.get("Brain").is_some() != vbrain.is_some() {
                 bad.push(format!("Brain tag: Kiln {}, vanilla {}", saved.get("Brain").is_some(), vbrain.is_some()));
