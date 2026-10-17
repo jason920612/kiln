@@ -55,6 +55,24 @@ public final class W72Hook {
         }
     }
 
+    /** NaturalSpawner.spawnCategoryForChunk(category, level, chunk, ...): one try of a chunk (counted for the chunks the box touches). */
+    public static void chunkAttempt(Object category, Object chunk) {
+        try {
+            var pos = ((net.minecraft.world.level.chunk.LevelChunk) chunk).getPos();
+            add("chunkAttempt " + category + " all");
+            String bx = System.getProperty("w72.box");
+            if (bx == null) return;
+            String[] v = bx.split(",");
+            int[] n = new int[6];
+            for (int i = 0; i < 6; i++) n[i] = Integer.parseInt(v[i].trim());
+            if (pos.x() >= (n[0] >> 4) && pos.x() <= (n[3] >> 4) && pos.z() >= (n[2] >> 4) && pos.z() <= (n[5] >> 4)) {
+                add("chunkAttempt " + category + " " + pos.x() + "," + pos.z());
+            }
+        } catch (Throwable t) {
+            add("chunkAttempt error " + t);
+        }
+    }
+
     public static void validMob(int result, Object mob) {
         String n;
         try {

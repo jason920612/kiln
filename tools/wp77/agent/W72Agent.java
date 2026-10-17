@@ -76,6 +76,11 @@ public final class W72Agent {
                         b.dup();
                         b.invokestatic(HOOK, "cats", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_Object));
                     })));
+                    bytes = cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("spawnCategoryForChunk"), onReturn(b -> {
+                        b.aload(0);
+                        b.aload(2);
+                        b.invokestatic(HOOK, "chunkAttempt", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_Object, ConstantDescs.CD_Object));
+                    })));
                     byte[] b1 = cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("isValidSpawnPostitionForType"), onReturn(b -> {
                         b.dup();
                         b.aload(4);

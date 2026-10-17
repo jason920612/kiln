@@ -436,6 +436,21 @@ pub mod stats {
         }
     }
 
+    /// `chunkAttempt` of the vanilla agent: one try of a chunk for a category (counted per chunk for the chunks the box touches).
+    pub(crate) fn chunk_attempt(category: kiln_entity::mob::Category, chunk: [i32; 2]) {
+        let Some(c) = config() else { return };
+        let name = category_name(category);
+        add(format!("chunkAttempt {name} all"));
+        if let Some(b) = c.bounds
+            && chunk[0] >= (b[0] >> 4)
+            && chunk[0] <= (b[3] >> 4)
+            && chunk[1] >= (b[2] >> 4)
+            && chunk[1] <= (b[5] >> 4)
+        {
+            add(format!("chunkAttempt {name} {},{}", chunk[0], chunk[1]));
+        }
+    }
+
     pub(crate) fn valid_mob(type_name: &str, ok: bool) {
         if enabled() {
             add(format!("validMob {} -> {ok}", type_name.strip_prefix("minecraft:").unwrap_or(type_name)));
@@ -824,6 +839,7 @@ fn spawn_category_for_chunk(
 ) {
     let env = level.env;
     let min_y = env.min_y;
+    stats::chunk_attempt(cat, [c.x, c.z]);
     // `getRandomPosWithin`.
     let x = c.x * 16 + r.next_int_bounded(16);
     let z = c.z * 16 + r.next_int_bounded(16);
