@@ -118,9 +118,9 @@ public class AttributeVectors {
         var server = level.getServer();
         // The summon command: the same path Kiln's `/summon` follows.
         int x = 8, y = 80, z = 8;
-        server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "summon minecraft:" + c.type + " " + x + " " + y + " " + z + " {Tags:[\"attr_probe\"]}");
+        server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "summon minecraft:" + c.type + " " + x + " " + y + " " + z);
         Entity found = null;
-        for (Entity e : level.getEntities((Entity) null, new net.minecraft.world.phys.AABB(x - 3, y - 3, z - 3, x + 3, y + 3, z + 3), e -> e.entityTags().contains("attr_probe"))) found = e;
+        for (Entity e : level.getEntities((Entity) null, new net.minecraft.world.phys.AABB(x - 3, y - 3, z - 3, x + 3, y + 3, z + 3), e -> true)) found = e;
         if (found == null) return String.format(Locale.ROOT, "{\"name\":\"%s\",\"type\":\"minecraft:%s\",\"loaded\":false}", c.name, c.type);
         String fresh = attrs(found);
         // A few ticks later (the mob's own code may touch more attributes).

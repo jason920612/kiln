@@ -53,7 +53,7 @@ fn mob_attribute_instances_match_vanilla() {
             continue;
         }
         // After its first tick.
-        let mut inbox = vec![ToSim::Console(format!("summon {ty} 8.5 80 8.5 {{NoAI:0b,Tags:[\"probe\"]}}"))];
+        let mut inbox = vec![ToSim::Console(format!("summon {ty} 8.5 80 8.5"))];
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
         let mut seen = None;
@@ -68,7 +68,7 @@ fn mob_attribute_instances_match_vanilla() {
             Some(s) => failed.push(format!("{ty}: after a tick {s:?}, vanilla {want:?}")),
             None => {}
         }
-        let mut inbox = vec![ToSim::Console("kill @e[tag=probe]".into())];
+        let mut inbox = vec![ToSim::Console(format!("kill @e[type={ty}]"))];
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
     }
