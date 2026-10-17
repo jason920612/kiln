@@ -92,6 +92,14 @@ public final class W72Hook {
             for (int i = 0; i < 6; i++) n[i] = Integer.parseInt(v[i].trim());
             if (p.getX() >= n[0] && p.getX() <= n[3] && p.getZ() >= n[2] && p.getZ() <= n[5]) {
                 add("start " + category + " Y=" + (p.getY() >= 127 && p.getY() <= 134 ? String.valueOf(p.getY()) : "other"));
+                String tr = System.getProperty("w72.trace");
+                if (tr != null && String.valueOf(category).equals("MONSTER") && p.getY() >= 129 && p.getY() <= 132) {
+                    try {
+                        java.nio.file.Files.writeString(java.nio.file.Path.of(tr), "S " + p.getX() + " " + p.getY() + " " + p.getZ() + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                    } catch (Exception e) {
+                        add("trace error " + e);
+                    }
+                }
             }
         } catch (Throwable t) {
             add("start error " + t);
