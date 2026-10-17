@@ -98,6 +98,8 @@ pub(crate) struct Raid {
     pub heroes: BTreeSet<u128>,
     /// `groupToLeaderMap`: wave → entity id.
     pub leaders: BTreeMap<i32, i32>,
+    /// The raiders the raid has taken in (spawned for it, joined, or loaded with its id: `groupRaiderMap`). Not saved.
+    pub known: BTreeSet<i32>,
     pub celebration_ticks: i32,
     pub wave_spawn_pos: Option<[i32; 3]>,
     pub random: LegacyRandom,
@@ -131,6 +133,7 @@ impl Raid {
             center,
             heroes: BTreeSet::new(),
             leaders: BTreeMap::new(),
+            known: BTreeSet::new(),
             celebration_ticks: 0,
             wave_spawn_pos: None,
             random,
@@ -519,6 +522,7 @@ impl Sim {
                 if let Some(r) = d.raids.raids.get_mut(&raid) {
                     // `addWaveMob`: the total grows by the joiner's health.
                     r.total_health += health;
+                    r.known.insert(entity);
                     let _ = wave;
                 }
             }
@@ -587,7 +591,24 @@ impl Sim {
                 raid.stop();
                 return;
             }
-            let alive = raiders_of(&self.dims[dim], id).len();
+            let members = raiders_of(&self.dims[dim], id);
+            let alive = members.len();
+            let raid = self.dims[dim].raids.raids.get_mut(&id).expect("raid");
+            // `Raider.readAdditionalSaveData`: a raider loaded with this raid's id is taken in again (`addWaveMob(wave, raider, false)`: the
+            // total stays, the bar is updated) and leads its wave again if it was the leader (`setLeader`).
+            raid.known.retain(|k| members.iter().any(|r| r.id == *k));
+            let mut loaded = false;
+            for r in &members {
+                if raid.known.insert(r.id) {
+                    loaded = true;
+                    if r.leader {
+                        raid.leaders.entry(r.wave).or_insert(r.id);
+                    }
+                }
+            }
+            if loaded {
+                self.update_bar_progress(dim, id);
+            }
             let raid = self.dims[dim].raids.raids.get_mut(&id).expect("raid");
             if alive == 0 && raid.has_more_waves() {
                 if raid.cooldown_ticks <= 0 {
