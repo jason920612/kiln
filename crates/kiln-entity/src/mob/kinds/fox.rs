@@ -16,7 +16,7 @@ use crate::mob::goals::{self, Goal, JUMP, LOOK, Living, MOVE, TARGET};
 use crate::mob::interact::{Interactor, Outcome};
 use crate::mob::kinds::wolf::{biome_is, block_in_tag};
 use crate::mob::path::{self, PathType};
-use crate::mob::{DamageSource, GroupData, MAINHAND, MobData, MobKind, SpawnContext, item_name, item_tag, mth};
+use crate::mob::{DamageSource, GroupData, MAINHAND, MobData, MobKind, SpawnContext, item_name, item_tag, mth, random_pos};
 use crate::persist::{Input, Output};
 use kiln_data::entities::data;
 use kiln_item::ItemStack;
