@@ -891,7 +891,10 @@ fn mobs_are_hurt_by_campfires_wither_roses_and_powder_snow() {
     let cell = |w: &mut World, at: f64, block: &str, mob: &str| {
         let x = at.floor() as i32;
         w.fill([x, 0, 0], [x, 0, 0], block);
-        w.summon(mob, [at + 0.5, 0.0, 0.5], "{PersistenceRequired:1b,NoAI:1b}");
+        // (the block's centre: the player stands at the middle of its own block)
+        let p = w.pos().map(|v| v.floor());
+        w.console(&format!("summon {mob} {} {} {} {{PersistenceRequired:1b,NoAI:1b}}", p[0] + at + 0.5, p[1], p[2] + 0.5));
+        w.ticks(1);
     };
     cell(&mut w, 4.0, "minecraft:powder_snow", "minecraft:cow");
     cell(&mut w, 6.0, "minecraft:powder_snow", "minecraft:blaze");
