@@ -1442,6 +1442,21 @@ mod tests {
         assert_eq!(signal_from_items(hopper.iter(), 5), 6);
     }
 
+    /// A pot's `sherds` is a compound of up to four items in 26.3 (an old list of four ids does not load), saved in the codec's own form.
+    #[test]
+    fn a_decorated_pot_loads_sherds_in_the_codec_form() {
+        let type_id = kiln_world::block_entity::type_id("minecraft:decorated_pot").unwrap();
+        let load = |nbt: Vec<(&str, Tag)>| ContainerBe::load(BeKind::DecoratedPot, type_id, &Tag::Compound(nbt.into_iter().map(|(k, v)| (k.to_owned(), v)).collect())).save();
+        let old = load(vec![("sherds", Tag::List(vec![Tag::String("minecraft:brick".into()); 4]))]);
+        assert!(old.get("sherds").is_none(), "the list of four ids is not the 26.3 form");
+        let bare = Tag::Compound(vec![("back".into(), Tag::String("minecraft:brick".into()))]);
+        let new = load(vec![("sherds", bare.clone())]);
+        assert_eq!(new.get("sherds"), Some(&Tag::Compound(vec![("back".into(), Tag::Compound(vec![("id".into(), Tag::String("minecraft:brick".into()))]))])));
+        let components = load(vec![("components", Tag::Compound(vec![("minecraft:pot_decorations".into(), bare)]))]);
+        let decorations = components.get("components").and_then(|c| c.get("minecraft:pot_decorations")).expect("kept in the components");
+        assert!(decorations.get("back").and_then(|b| b.get("id")).is_some(), "in the codec form: {decorations:?}");
+    }
+
     /// Positions put in a `HashMap<BlockPos, _>` come out by bucket (the orders were read off Java `HashMap`s of the same keys).
     #[test]
     fn java_hash_map_order_of_block_positions() {
