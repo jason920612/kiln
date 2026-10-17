@@ -1648,6 +1648,8 @@ public class ContainerVectors {
         command(server, "kill @e[type=item]");
         // wp75: block events and tickers the clearing left (a piston that was on the move) run out before the next scenario begins.
         if (s.trackItems) {
+            // (Sticky blocks drag the floor along: what was pushed beyond the cleared area goes too.)
+            command(server, String.format(Locale.ROOT, "fill %d %d %d %d %d %d air strict", BASE[0] - 9, BASE[1] - 4, BASE[2] - 9, BASE[0] + 11, BASE[1] + 8, BASE[2] + 9));
             setRunsNormally(level, true);
             for (int i = 0; i < 4; i++) level.tick(() -> true);
             setRunsNormally(level, false);
