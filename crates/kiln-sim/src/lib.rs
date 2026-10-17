@@ -1832,7 +1832,11 @@ impl Sim {
             self.profile_lookup_finished(request, result);
         }
         lap(&mut self.stats, "g.console");
+        // What console commands summoned is in the level when the tick starts (vanilla adds the entity at once and its first tick is this one).
+        self.materialize_spawns();
         self.tick_global();
+        // ... and so is what the tick functions and scheduled functions summoned (they run first in `MinecraftServer.tickChildren`).
+        self.materialize_spawns();
         lap(&mut self.stats, "g.tick_global");
         self.flush_stat_scores();
         lap(&mut self.stats, "g.stat_scores");
