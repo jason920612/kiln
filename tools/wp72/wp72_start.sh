@@ -8,6 +8,6 @@ cp "${1:-$HOME/wt/wp72-playthrough7/target/release/kiln}" ~/wp72/kiln-run72
 # a fresh fifo: a stop nobody read must not stop the new server
 rm -f console; mkfifo console
 (sleep 100000000 > console &)
-export KILN_PORT=25589 KILN_GENERATOR=noise KILN_SEED=${KILN_SEED:-72} KILN_DATAPACK=/home/test/kiln/work/generated KILN_WORLD=${KILN_WORLD:-$HOME/wp72/world} KILN_OPS=KilnTest KILN_WORK=$HOME/kiln/work RUST_LOG=info
+export KILN_VIEW_DISTANCE=8 KILN_SIMULATION_DISTANCE=8 KILN_PORT=25589 KILN_GENERATOR=noise KILN_SEED=${KILN_SEED:-72} KILN_DATAPACK=/home/test/kiln/work/generated KILN_WORLD=${KILN_WORLD:-$HOME/wp72/world} KILN_OPS=KilnTest KILN_WORK=$HOME/kiln/work RUST_LOG=info
 nohup ./kiln-run72 < console > server.log 2>&1 &
 echo started $!

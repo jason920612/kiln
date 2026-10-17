@@ -171,6 +171,12 @@ def scen_creeper(f):
     return f.run(["creeper", "zombie", "skeleton", "spider", "enderman", "witch", "slime", "cave_spider"], (bx, 200, bx, bx + 16 * n, 203, bx + 16 * n))
 
 
+def locate_biome_xz(t, biome, dim):
+    out = ask(t, f"execute in minecraft:{dim} positioned 0 64 0 run locate biome {biome}", wait=6)
+    m = re.search(r"\[(-?\d+), (-?\d+|~), (-?\d+)\]", out)
+    return int(m.group(1)), int(m.group(3))
+
+
 def scen_structure(f, struct, types, dim="overworld", half=12, up=10, time_of_day=18000):
     f.prep(time_of_day=time_of_day)
     xz = locate(f.t, f"minecraft:{struct}", dim)
@@ -187,8 +193,10 @@ def scen_structure(f, struct, types, dim="overworld", half=12, up=10, time_of_da
 
 def scen_gold(f):
     """A nether-roof farm: a 15x15 slab floor at y 129 on the bedrock roof, the player 50 blocks away above it."""
-    x0, z0 = 600, 600
     f.prep(time_of_day=18000)
+    xz = locate_biome_xz(f.t, "minecraft:nether_wastes", "the_nether")
+    x0, z0 = xz
+    F(f.t, "nether_wastes located", xz)
     f.tp("the_nether", x0 + 0.5, 191, z0 + 0.5)
     f.cmd(f"execute in minecraft:the_nether run forceload add {x0 - 16} {z0 - 16} {x0 + 32} {z0 + 32}")
     f.wait_chunks(30)
@@ -203,7 +211,8 @@ def scen_gold(f):
     f.cmd(f"execute in minecraft:the_nether run fill {x0 - 8} 133 {z0 - 8} {x0 + 8} 133 {z0 + 8} minecraft:stone")
     f.cmd("kill @e[type=!player]")
     F(f.t, "biome at the farm", f.cmd(f"execute in minecraft:the_nether run locate biome minecraft:nether_wastes", wait=3)[-120:])
-    return f.run(["zombified_piglin", "piglin", "ghast", "magma_cube", "enderman", "hoglin", "strider", "skeleton"], (x0 - 7, 129, z0 - 7, x0 + 7, 132, z0 + 7))
+    box = (x0 - 7, 129, z0 - 7, x0 + 7, 132, z0 + 7) if os.environ.get("GOLDBOX") != "big" else (x0 - 120, 0, z0 - 120, x0 + 120, 255, z0 + 120)
+    return f.run(["zombified_piglin", "piglin", "ghast", "magma_cube", "enderman", "hoglin", "strider", "skeleton", "wither_skeleton", "blaze"], box)
 
 
 def scen_enderman(f):

@@ -141,6 +141,22 @@ impl SpawnTable {
     }
 }
 
+static STATS: std::sync::Mutex<std::collections::BTreeMap<String, u64>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+fn stat(key: String) {
+    *STATS.lock().unwrap().entry(key).or_insert(0) += 1;
+}
+pub(crate) fn dump_stats(game_time: i64) {
+    if game_time % 3000 == 0 && std::env::var_os("KILN_SPAWN_STATS").is_some() {
+        let g = STATS.lock().unwrap();
+        let mut out = String::new();
+        for (k, v) in g.iter() {
+            out.push_str(&format!("{k}	{v}
+"));
+        }
+        let _ = std::fs::write(std::env::var("KILN_SPAWN_STATS").unwrap(), out);
+    }
+}
+
 /// `WeightedList.getRandom`.
 fn pick<'a>(list: &'a [SpawnerData], r: &mut (impl RandomSource + ?Sized)) -> Option<&'a SpawnerData> {
     let total: i32 = list.iter().map(|s| s.weight).sum();
@@ -390,6 +406,7 @@ pub(crate) fn tick(
 ) {
     let env = level.env;
     let rules = env.mobs;
+    dump_stats(env.game_time);
 
     let Some(table) = env.spawn_table.clone() else { return };
     let dt = std::time::Instant::now();
@@ -724,6 +741,7 @@ fn spawn_category_for_chunk(
                     None => break,
                     Some(d) => {
                         let d = d.clone();
+                        stat(format!("pick {}", d.type_name.trim_start_matches("minecraft:")));
                         pack = if d.constant { d.min } else { r.next_int_bounded(d.max - d.min + 1) + d.min };
                         data = Some(d);
                     }
@@ -731,6 +749,7 @@ fn spawn_category_for_chunk(
             }
             let d_ = data.clone().unwrap();
             let Some(kind) = d_.kind else { continue };
+            let tn = d_.type_name.trim_start_matches("minecraft:").to_owned();
             // `isValidSpawnPostitionForType`.
             // The nearest player within the despawn distance.
             if !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
@@ -741,14 +760,18 @@ fn spawn_category_for_chunk(
                 continue;
             }
             if !placement_ok(level, pos, kind) || !check_spawn_rules(level, pos, kind, r) {
+                stat(format!("validPosition {tn} -> false"));
+                stat(format!("  (rules) {tn} placement={}", placement_ok(level, pos, kind)));
                 continue;
             }
             let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
             // `EntityType.getSpawnAABB`: slimes and magma cubes look for room for a size-4 one (four times their box).
             let scale = kiln_entity::spawner::spawn_dimensions_scale(t.name);
             if !no_collision(level, [fx, y as f64, fz], t.width * scale, t.height * scale) {
+                stat(format!("validPosition {tn} -> false"));
                 continue;
             }
+            stat(format!("validPosition {tn} -> true"));
             let yaw = r.next_float() * 360.0;
             // `isValidPositionForMob`: the walk target value and the spawn obstruction.
             let magic = light_magic(level, pos);
@@ -762,8 +785,10 @@ fn spawn_category_for_chunk(
             let ignores_light = kind.ext().is_some_and(|k| k.spawn_ignores_light());
             let liquid_ok = kind.ext().is_some_and(|k| k.spawn_in_liquids());
             if (walk < 0.0 && !ignores_light) || (!liquid_ok && contains_liquid(level, [fx, y as f64, fz], t.width, t.height)) {
+                stat(format!("validMob {tn} -> false"));
                 continue;
             }
+            stat(format!("validMob {tn} -> true"));
             // `finalizeSpawn` draws from the chunk's random.
             let inhabited = inhabited_at(&*level.cells, fx.floor() as i32, fz.floor() as i32);
             let mut ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, inhabited, moon_brightness(env.mobs.day_time));

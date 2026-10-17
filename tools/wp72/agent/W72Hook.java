@@ -33,6 +33,37 @@ public final class W72Hook {
         add("slime predicate " + where + " slimeChunk=" + slimeChunk + " -> " + (result != 0));
     }
 
+    static String typeName(Object spawnerData) {
+        try {
+            return net.minecraft.world.entity.EntityType.getKey(((net.minecraft.world.level.biome.MobSpawnSettings.SpawnerData) spawnerData).type()).getPath();
+        } catch (Throwable t) {
+            return "?";
+        }
+    }
+
+    public static void validPos(int result, Object data, Object pos) {
+        add("validPosition " + typeName(data) + " -> " + (result != 0));
+    }
+
+    public static void validMob(int result, Object mob) {
+        String n;
+        try {
+            n = net.minecraft.world.entity.EntityType.getKey(((net.minecraft.world.entity.Mob) mob).getType()).getPath();
+        } catch (Throwable t) {
+            n = "?";
+        }
+        add("validMob " + n + " -> " + (result != 0));
+    }
+
+    public static void pick(Object optional) {
+        try {
+            var o = (java.util.Optional<?>) optional;
+            add("pick " + (o.isPresent() ? typeName(o.get()) : "(none)"));
+        } catch (Throwable t) {
+            add("pick error");
+        }
+    }
+
     public static synchronized void dump() {
         String out = System.getProperty("w72.out", System.getenv("W72_OUT"));
         if (out == null) return;
