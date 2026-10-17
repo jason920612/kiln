@@ -55,8 +55,7 @@ public final class W72Hook {
                 if (tr != null) {
                     try {
                         long t = ((net.minecraft.server.level.ServerLevel) level).getGameTime();
-                        java.nio.file.Files.writeString(java.nio.file.Path.of(tr), t + " " + typeName(data) + " " + p.getX() + " " + p.getY() + " " + p.getZ() + " " + (result != 0) + "
-", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                        java.nio.file.Files.writeString(java.nio.file.Path.of(tr), t + " " + typeName(data) + " " + p.getX() + " " + p.getY() + " " + p.getZ() + " " + (result != 0) + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
                     } catch (Exception e) {
                         add("trace error " + e);
                     }
