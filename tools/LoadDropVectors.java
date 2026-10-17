@@ -1,11 +1,6 @@
 // wp75: what vanilla 26.3 makes of saved data with items it cannot load (unknown ids, counts out of range, slots outside the container, components it cannot read):
 // block entities (BlockEntity.loadStatic, saveWithFullMetadata) and entities (EntityType.loadEntityRecursive, Entity.save), as the compound it saves. Built on EntityNbtVectors.
 //
-// interactions, mannequins. A real vanilla 26.3 dedicated server is started in-process; every case is an
-// entity read from a compound the way `/summon` and the chunk loader read it (`EntityType.loadEntityRecursive`),
-// then recorded as it saves (`Entity.save`) and as its viewers get it (the non-default synched data values, each
-// as its network encoding).
-//
 // usage (cwd = a scratch server directory):
 //   java --add-opens java.base/java.lang=ALL-UNNAMED -cp <server jar + libraries> tools/LoadDropVectors.java <out.jsonl> [name-filter]
 

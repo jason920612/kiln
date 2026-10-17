@@ -515,6 +515,35 @@ fn an_arrow_sticks_in_the_body_and_falls_out_in_time() {
     assert!(!ticks.iter().any(|t| t.0.iter().any(|d| contains(d, &w1))), "an invulnerable player takes none");
 }
 
+/// wp75: the same for a mob (`LivingEntity` keeps the counts, not `Player`): the viewers are told of the arrow, and when it falls
+/// out the count goes back to 0 (a mob's entity data lists non-default values only, so the reset has to be sent).
+#[test]
+fn an_arrow_sticks_in_a_mobs_body_and_falls_out_in_time() {
+    use kiln_data::entities::data::living_entity::ARROW_COUNT;
+    let mut w = World::new();
+    w.run("gamerule minecraft:natural_health_regeneration false");
+    w.ticks(2);
+    let p = w.actor.pos;
+    w.run(&format!("summon minecraft:pig {} {} {} {{NoAI:1b,Health:100f,Attributes:[{{id:\"minecraft:max_health\",base:100.0d}}]}}", p[0] + 3.0, p[1], p[2]));
+    w.ticks(3);
+    let pig = w.sim.entity_ids_of("minecraft:pig")[0];
+    let (one, none) = (one(ARROW_COUNT, DataValue::Int(1)), one(ARROW_COUNT, DataValue::Int(0)));
+    w.watcher_log();
+    let summon = format!("summon minecraft:arrow {} {} {} {{Motion:[0.0,-1.5,0.0]}}", p[0] + 3.0, p[1] + 2.5, p[2]);
+    let mut ticks = Vec::new();
+    w.run(&summon);
+    ticks.push(data_of(&w.watcher_log(), pig));
+    for _ in 1..700 {
+        w.ticks(1);
+        ticks.push(data_of(&w.watcher_log(), pig));
+    }
+    let at = |want: &[u8]| ticks.iter().position(|t| t.iter().any(|d| contains(d, want)));
+    let added = at(&one).expect("the viewer is told of the arrow in the pig");
+    assert!(added < 5, "the arrow hit at once: tick {added}");
+    let gone = at(&none).expect("and of the arrow falling out");
+    assert_eq!(gone - added, 580, "20 * (30 - 1) ticks");
+}
+
 /// `Bee.doHurtTarget`: a sting raises the stinger count (entity data 13), which falls out like the arrows do.
 #[test]
 fn a_sting_leaves_a_stinger_in_the_body() {

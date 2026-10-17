@@ -120,6 +120,13 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
         d.set(data::living_entity::EFFECT_AMBIENCE, &DataValue::Boolean(true));
     }
     d.set(data::living_entity::HEALTH, &DataValue::Float(m.health));
+    // `DATA_ARROW_COUNT_ID` and `DATA_STINGER_COUNT_ID`: the viewers get the count while it is above 0 (and 0 when it falls back).
+    if m.arrow_count > 0 {
+        d.set(data::living_entity::ARROW_COUNT, &DataValue::Int(m.arrow_count));
+    }
+    if m.stinger_count > 0 {
+        d.set(data::living_entity::STINGER_COUNT, &DataValue::Int(m.stinger_count));
+    }
     // `Mob.DATA_MOB_FLAGS_ID` (15): a mannequin is no `Mob`, and its field 15 is the `Avatar`'s main hand.
     if m.kind.is_mob() {
         let mob_flags = (m.no_ai as i8) | ((m.left_handed as i8) << 1) | ((m.aggressive as i8) << 2);

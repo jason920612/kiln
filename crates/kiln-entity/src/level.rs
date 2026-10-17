@@ -977,7 +977,7 @@ pub trait EntityLevel {
 
     /// `setArrowCount(getArrowCount() + 1)` after an arrow's hit landed (`AbstractArrow.onHitEntity`, not
     /// for a piercing one) or `setStingerCount(getStingerCount() + 1)` after a bee's sting (`stinger`):
-    /// one more of them in the body of player or entity `id`. Only players keep the count.
+    /// one more of them in the body of player or mob `id`.
     fn stick_in_body(&mut self, id: i32, stinger: bool) {
         let _ = (id, stinger);
     }
