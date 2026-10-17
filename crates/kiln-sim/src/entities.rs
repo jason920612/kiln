@@ -2861,6 +2861,86 @@ pub(crate) fn hurt_by_block(
     hurt
 }
 
+/// What block work (scheduled and random ticks, block events: falling sand, TNT a redstone signal lit, the drops of a block that broke)
+/// spawned before the entities ticked gets its first tick in that very tick: vanilla's entity tick list is iterated after the block
+/// ticks and holds what they added (`ServerLevel.tick`), so a falling block summoned by its scheduled tick has moved by 0.04 when
+/// the tick ends. Kiln made the entities at the end of the tick, one tick late. `idxs` are the places in `spawns` of such spawns;
+/// each is built, ticked once here (with a placeholder id: the real one comes with `materialize_spawns`) and put back as the
+/// ticked entity; one that removed itself (a block that landed) is dropped from the spawns.
+pub(crate) fn tick_spawns(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<health::Death>,
+    idxs: &[usize],
+) {
+    let live = |p: &Player| !p.disconnected && !p.dead;
+    let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    let mut sim = SimLevel {
+        level: World::Region(level),
+        list: &mut entities.list,
+        players,
+        deaths,
+        proxies,
+        views,
+        spawns,
+        events: Vec::new(),
+        next_placeholder: -2_000_000,
+        current: 0,
+        seeds: 0,
+        current_source: None,
+        rng: LegacyRandom::new(0),
+        grid: Grid::default(),
+        proxy_at: Default::default(),
+        proxy_grid: Default::default(),
+        view_index: Default::default(),
+        despawn: None,
+        player_writes: 0,
+        touched: None,
+        current_info: None,
+        owner_hints: Vec::new(),
+    };
+    sim.grid = Grid::build(sim.list);
+    sim.index_players();
+    let mut gone: Vec<usize> = Vec::new();
+    for (n, &k) in idxs.iter().enumerate() {
+        let placeholder = -3_000_000 - n as i32;
+        let (kind, pos, vel) = (sim.spawns[k].kind, sim.spawns[k].pos, sim.spawns[k].vel);
+        let body = std::mem::replace(&mut sim.spawns[k].body, Body::Tnt);
+        let Some(mut phys) = Entity::new(placeholder, Uuid::nil(), Spawn { kind, pos, vel, body }).phys else {
+            gone.push(k);
+            continue;
+        };
+        (sim.current, sim.seeds) = (placeholder, 0);
+        sim.current_info = Some((phys.type_name, arr(phys.position())));
+        sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
+        sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, placeholder);
+        phys.common_tick();
+        if !phys.is_removed() {
+            phys.tick(&mut sim);
+        }
+        if phys.is_removed() {
+            gone.push(k);
+            continue;
+        }
+        sim.spawns[k].pos = arr(phys.position());
+        sim.spawns[k].vel = arr(phys.delta);
+        sim.spawns[k].body = Body::Ready(phys);
+    }
+    let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
+    for (n, event) in keyed(events) {
+        carry_out(event, n, level, list, players, spawns, deaths);
+    }
+    // (Highest first: the places of the others hold.)
+    gone.sort_unstable();
+    for k in gone.into_iter().rev() {
+        spawns.remove(k);
+    }
+}
+
 /// `ServerGamePacketListenerImpl.handleInteract` on a mob, then `Player.interactOn`: player
 /// `i` of the region's players right-clicks entity `target` with the item in `hand` (0 main,
 /// 1 off). The held item changes as the mob says; sheared wool drops.

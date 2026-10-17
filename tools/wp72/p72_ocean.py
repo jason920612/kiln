@@ -37,7 +37,7 @@ def drowned(n):
 
 
 def eggs():
-    setup(rules=("random_tick_speed 300",))
+    setup(rules=("random_tick_speed 4096",))
     both_("gamemode creative KilnTest"); both_("tp KilnTest 28 205 14"); both_("time set 18000")
     both_(f"fill 9 199 9 40 205 40 minecraft:air"); both_("fill 9 199 9 40 199 40 minecraft:sand")
     both_("kill @e[type=!player]")
