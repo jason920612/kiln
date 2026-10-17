@@ -642,7 +642,7 @@ pub(crate) fn tick(
         // `createState`: the charge of the mob's type in the biome it stands in.
         let at = KBlockPos::new(e.pos[0].floor() as i32, e.pos[1].floor() as i32, e.pos[2].floor() as i32);
         if !table.costs.is_empty()
-            && let Some((charge, _)) = table.cost(biome_at(level, at), e.kind.name)
+            && let Some((charge, _)) = table.cost(spawn_biome(level, at), e.kind.name)
         {
             s.charges.push(([at.x, at.y, at.z], charge));
         }
@@ -865,7 +865,7 @@ fn spawn_category_for_chunk(
                 continue;
             }
             let pos = KBlockPos::new(px, y, pz);
-            let biome = biome_at(level, pos);
+            let biome = spawn_biome(level, pos);
             // What spawns at this very place (looked up once: the pick and `canSpawnMobAt` below
             // ask the same).
             let here = s.table.mobs_at(level, biome, cat, pos);
@@ -976,6 +976,12 @@ pub(crate) fn inhabited_at(cells: &impl kiln_world::Blocks, x: i32, z: i32) -> i
     cells.chunk(ChunkPos::of_block(x, z)).map_or(0, |c| c.inhabited_time())
 }
 
+/// The biome natural spawning sees at `pos`: `natural_mob_spawns` is a full-resolution biome attribute, so `BiomeManager.getBiome` (the voronoi-zoomed
+/// lookup that moves the borders around by up to a cell), not the stored cell.
+pub(crate) fn spawn_biome(level: &RegionLevel, pos: KBlockPos) -> u16 {
+    crate::weather::biome_at(level.cells, level.env, pos)
+}
+
 /// The biome of the stored 4×4×4 cell holding `pos`.
 pub(crate) fn biome_at(level: &RegionLevel, pos: KBlockPos) -> u16 {
     biome_at_in(level.cells, level.env, pos)
@@ -1034,7 +1040,7 @@ impl kiln_entity::mob::ext::SpawnView for View<'_, '_> {
         kiln_world::light::light_at(&*self.0.cells, kiln_world::chunk::LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
     }
     fn biome(&self, pos: kiln_entity::math::BlockPos) -> i32 {
-        biome_at(self.0, KBlockPos::new(pos.x, pos.y, pos.z)) as i32
+        spawn_biome(self.0, KBlockPos::new(pos.x, pos.y, pos.z)) as i32
     }
     fn difficulty(&self) -> u8 {
         self.0.env.mobs.difficulty
