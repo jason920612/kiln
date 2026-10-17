@@ -113,10 +113,9 @@ pub(crate) fn tick(
     let conduits: Vec<BlockPos> = level
         .blocks
         .containers
-        .map
-        .iter()
-        .filter(|(p, c)| c.kind == BeKind::Conduit && ticking.contains(ChunkPos::of_block(p.x, p.z)))
-        .map(|(p, _)| *p)
+        .of_kind(|k| k == BeKind::Conduit)
+        .filter(|(p, _)| ticking.contains(ChunkPos::of_block(p.x, p.z)))
+        .map(|(p, _)| p)
         .collect();
     for pos in conduits {
         serve(level, entities, players, spawns, deaths, pos);

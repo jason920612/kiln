@@ -869,8 +869,8 @@ impl kiln_inventory::Container for ContainerBe {
 #[derive(Default)]
 pub(crate) struct Containers {
     map: BTreeMap<BlockPos, ContainerBe>,
-    /// The ones the region tick looks for every tick (dispensers, droppers, bells and the block
-    /// entities that tick), by position: scanning every container for them each tick cost ~10% of
+    /// The ones the region tick looks for every tick (dispensers, droppers, bells, conduits and the
+    /// block entities that tick), by position: scanning every container for them each tick cost ~10% of
     /// an idle tick with thousands of chests. Kept by [`Containers::insert`] and
     /// [`Containers::remove`], the only ways in and out of `map`.
     index: BTreeMap<BlockPos, BeKind>,
@@ -884,9 +884,9 @@ fn ticks(kind: BeKind) -> bool {
     )
 }
 
-/// Whether [`Containers::index`] keeps the kind.
+/// Whether [`Containers::index`] keeps the kind (conduits tick in their own phase, `conduit::tick`).
 fn indexed(kind: BeKind) -> bool {
-    ticks(kind) || matches!(kind, BeKind::Dispenser | BeKind::Dropper | BeKind::Bell)
+    ticks(kind) || matches!(kind, BeKind::Dispenser | BeKind::Dropper | BeKind::Bell | BeKind::Conduit)
 }
 
 fn chunk_of(pos: BlockPos) -> ChunkPos {
