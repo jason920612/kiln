@@ -205,6 +205,9 @@ pub fn move_entity_by_piston(e: &mut Entity, level: &mut dyn EntityLevel, noclip
     let (sx, sy, sz) = toward.step();
     e.do_move(level, MoverType::Piston, Vec3::new(amount * sx as f64, amount * sy as f64, amount * sz as f64));
     let to = e.position();
+    if std::env::var_os("KILN_PISTON_DEBUG").is_some() {
+        eprintln!("  MOVED id {} from {from:?} to {to:?} amount {amount} game_time {}", e.id, level.game_time());
+    }
     e.apply_effects_between(level, from, to);
     e.remove_latest_movement_recording();
     e.piston_noclip = None;
