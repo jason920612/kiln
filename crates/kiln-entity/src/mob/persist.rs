@@ -1,9 +1,3 @@
-    // `AttributeMap.pack`: every instance the map has (made by the first `getInstance`), whether or not it differs from the type.s own value.
-    let attrs: Vec<Tag> = m
-        .attrs
-        .list
-        .iter()
-        .filter(|i| i.created)
 //! Mob NBT: `LivingEntity`, `Mob`, `AgeableMob` and the types' `addAdditionalSaveData` /
 //! `readAdditionalSaveData`. Fields Kiln does not model stay in [`Entity::extra`].
 
