@@ -121,6 +121,7 @@ fn saved_attributes_and_brain_match_vanilla() {
         assert!(sim.step(inbox));
     };
     let (mut ok, mut failed): (i32, Vec<(String, String, usize)>) = (0, Vec::new());
+    let mut skipped: Vec<String> = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let v: Value = serde_json::from_str(line).unwrap();
         if v["loaded"].as_bool() != Some(true) {
@@ -166,6 +167,7 @@ fn saved_attributes_and_brain_match_vanilla() {
             // A mob that finalizes may come out a baby: only mobs that are the same age compare.
             let is_baby = |t: &Tag| t.get("Age").and_then(Tag::as_i64).is_some_and(|a| a < 0) || t.get("IsBaby").and_then(Tag::as_i64) == Some(1);
             if is_baby(&saved) != vs["baby"].as_bool().unwrap_or(false) {
+                skipped.push(format!("{name} (Kiln {})", if is_baby(&saved) { "baby" } else { "adult" }));
                 break;
             }
             let vattrs = (!vs["attributes"].is_null()).then(|| tag_of(&vs["attributes"]));
@@ -224,6 +226,7 @@ fn saved_attributes_and_brain_match_vanilla() {
     for (n, m, ts) in &grouped {
         eprintln!("FAIL {n} t={ts:?}: {m}");
     }
+    eprintln!("not compared (a different age on the two servers): {skipped:?}");
     eprintln!("saved attributes and brain: {ok} samples match vanilla, {} differ", failed.len());
     assert!(failed.is_empty(), "{} samples differ from vanilla", failed.len());
 }
