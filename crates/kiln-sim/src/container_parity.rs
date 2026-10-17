@@ -347,7 +347,8 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                     (0..7).all(|i| g[i].to_bits() == w[i].to_bits() || g[i] == w[i])
                 });
             if !same {
-                errors.push(format!("tick {tick} items: kiln {got:?}, vanilla {want_items:?}"));
+                let ids: Vec<(i32, [f64; 3])> = sim.dims[OVERWORLD_ID].regions.iter().flat_map(|r| r.part().0.list.iter().filter(|e| e.kind.name == "minecraft:item").map(|e| (e.id, e.pos)).collect::<Vec<_>>()).collect();
+                errors.push(format!("tick {tick} items: kiln {got:?}, vanilla {want_items:?} (kiln ids {ids:?}, vanilla {:?})", want["item_ids"]));
             }
         }
         if line["mobs"].as_bool() == Some(true) {
