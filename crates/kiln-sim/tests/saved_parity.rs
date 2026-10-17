@@ -163,6 +163,11 @@ fn saved_attributes_and_brain_match_vanilla() {
                 eprintln!("TRACE {name} t={t}: {} of {ty}; newest Health {:?}", all.len(), all.last().and_then(|n| n.get("Health")));
             }
             let vs = &s["saved"];
+            // A mob that finalizes may come out a baby: only mobs that are the same age compare.
+            let is_baby = |t: &Tag| t.get("Age").and_then(Tag::as_i64).is_some_and(|a| a < 0) || t.get("IsBaby").and_then(Tag::as_i64) == Some(1);
+            if is_baby(&saved) != vs["baby"].as_bool().unwrap_or(false) {
+                break;
+            }
             let vattrs = (!vs["attributes"].is_null()).then(|| tag_of(&vs["attributes"]));
             let vbrain = (!vs["brain"].is_null()).then(|| tag_of(&vs["brain"]));
             let (mut ka, mut va) = (attr_set(saved.get("attributes")), attr_set(vattrs.as_ref()));

@@ -97,7 +97,9 @@ public class SavedStateVectors {
         var tag = out.buildResult();
         var attrs = tag.get("attributes");
         var brain = tag.get("Brain");
-        return "{\"attributes\":" + (attrs == null ? "null" : tagJson(attrs)) + ",\"brain\":" + (brain == null ? "null" : tagJson(brain)) + "}";
+        // (finalizeSpawn makes a baby by chance: the case says which it got.)
+        boolean baby = tag.getIntOr("Age", 0) < 0 || tag.getBooleanOr("IsBaby", false);
+        return "{\"baby\":" + baby + ",\"attributes\":" + (attrs == null ? "null" : tagJson(attrs)) + ",\"brain\":" + (brain == null ? "null" : tagJson(brain)) + "}";
     }
 
     static String run(ServerLevel level, String name, String type, String tail) throws Exception {
