@@ -144,6 +144,9 @@ pub struct Modifier {
     pub id: String,
     pub amount: f64,
     pub op: Op,
+    /// `addTransientModifier`: not part of what the map saves (`AttributeInstance.pack` writes the permanent ones). Equipment, sprinting,
+    /// a baby zombie's speed and the like are put back by the entity's own code when it loads.
+    pub transient: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -284,7 +287,15 @@ impl Attributes {
     pub fn set_modifier(&mut self, a: Attr, id: &str, amount: f64, op: Op) {
         if let Some(i) = self.get_mut(a) {
             i.modifiers.retain(|m| m.id != id);
-            i.modifiers.push(Modifier { id: id.to_owned(), amount, op });
+            i.modifiers.push(Modifier { id: id.to_owned(), amount, op, transient: false });
+        }
+    }
+
+    /// `addOrUpdateTransientModifier`.
+    pub fn set_transient_modifier(&mut self, a: Attr, id: &str, amount: f64, op: Op) {
+        if let Some(i) = self.get_mut(a) {
+            i.modifiers.retain(|m| m.id != id);
+            i.modifiers.push(Modifier { id: id.to_owned(), amount, op, transient: true });
         }
     }
 

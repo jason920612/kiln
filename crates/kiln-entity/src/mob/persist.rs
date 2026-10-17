@@ -169,7 +169,7 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
         _ => {}
     }
     if m.zombie_baby {
-        m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
+        m.attrs.set_transient_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
     }
     super::reassess_weapon_goal(m, false);
     // The saved memories (`Brain` tag) of a brain-driven type; any other living entity has a brain without memory types, which drops
@@ -206,10 +206,11 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
         .filter(|i| i.created)
         .map(|i| {
             let mut c = vec![("id".to_owned(), Tag::String(i.attr.name().to_owned())), ("base".to_owned(), Tag::Double(i.base))];
-            if !i.modifiers.is_empty() {
+            if i.modifiers.iter().any(|md| !md.transient) {
                 let mods = i
                     .modifiers
                     .iter()
+                    .filter(|md| !md.transient)
                     .map(|md| {
                         Tag::Compound(vec![
                             ("id".into(), Tag::String(md.id.clone())),

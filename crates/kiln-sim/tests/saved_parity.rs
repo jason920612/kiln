@@ -40,7 +40,11 @@ fn attr_set(t: Option<&Tag>) -> BTreeSet<String> {
             .filter_map(|a| {
                 let a = a.unwrap_list_element();
                 let id = a.get("id").and_then(Tag::as_str)?;
-                let base = a.get("base").and_then(Tag::as_f64).map_or("-".to_owned(), |b| format!("{b}"));
+                // (Sizes, horse stats and the reinforcement chance are drawn at random.)
+                let random = matches!(id, "minecraft:spawn_reinforcements" | "minecraft:max_health" | "minecraft:movement_speed" | "minecraft:jump_strength" | "minecraft:armor" | "minecraft:attack_damage")
+                    && std::env::var("KILN_SAVED_TYPE").is_ok_and(|t| matches!(t.as_str(), "horse" | "donkey" | "mule" | "llama" | "trader_llama" | "skeleton_horse" | "zombie_horse" | "slime" | "magma_cube" | "sulfur_cube" | "zombie" | "husk" | "drowned" | "zombie_villager" | "zombified_piglin"))
+                    || id == "minecraft:spawn_reinforcements";
+                let base = if random { "~".to_owned() } else { a.get("base").and_then(Tag::as_f64).map_or("-".to_owned(), |b| format!("{b}")) };
                 let mut mods: Vec<String> = match a.get("modifiers") {
                     Some(Tag::List(m)) => m.iter().filter_map(|m| m.unwrap_list_element().get("id").and_then(Tag::as_str).map(str::to_owned)).collect(),
                     _ => Vec::new(),
@@ -123,6 +127,8 @@ fn saved_attributes_and_brain_match_vanilla() {
             continue;
         }
         let name = v["name"].as_str().unwrap();
+        // SAFETY: the test is single-threaded.
+        unsafe { std::env::set_var("KILN_SAVED_TYPE", v["type"].as_str().unwrap().trim_start_matches("minecraft:")) };
         if only.as_deref().is_some_and(|o| !name.contains(o)) {
             continue;
         }

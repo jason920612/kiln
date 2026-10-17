@@ -196,7 +196,7 @@ fn apply_archetype(m: &mut MobData, a: &'static Archetype) {
     s.knockback = (a.horizontal_power, a.vertical_power);
     s.sound = (a.hit_sound, a.push_sound, a.push_sound_cooldown, a.push_sound_impulse_threshold);
     for (attr, id, amount, op) in a.modifiers() {
-        m.attrs.set_modifier(attr, id, amount, op);
+        m.attrs.set_transient_modifier(attr, id, amount, op);
     }
 }
 

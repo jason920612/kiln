@@ -1640,7 +1640,7 @@ pub fn sync_equipment_modifiers(m: &mut MobData) {
         m.attrs.remove_modifier(a, &id);
     }
     for (a, id, amount, op) in want {
-        m.attrs.set_modifier(a, &id, amount, op);
+        m.attrs.set_transient_modifier(a, &id, amount, op);
         m.equip_mods.push((a, id));
     }
 }

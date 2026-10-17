@@ -162,7 +162,7 @@ pub fn set_baby(e: &mut Entity, m: &mut MobData, baby: bool) {
     m.zombie_baby = baby;
     m.attrs.remove_modifier(Attr::MovementSpeed, "minecraft:baby");
     if baby {
-        m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
+        m.attrs.set_transient_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
     }
     mob::refresh_dimensions(e, m);
 }
@@ -536,7 +536,7 @@ pub fn reinforcements(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLev
         m.attrs.get_mut(Attr::SpawnReinforcements).map(|i| {
             let old = i.modifiers.iter().find(|md| md.id == "minecraft:reinforcement_caller_charge").map_or(0.0, |md| md.amount);
             i.modifiers.retain(|md| md.id != "minecraft:reinforcement_caller_charge");
-            i.modifiers.push(crate::mob::attributes::Modifier { id: "minecraft:reinforcement_caller_charge".into(), amount: old - 0.05, op: Op::AddValue });
+            i.modifiers.push(crate::mob::attributes::Modifier { id: "minecraft:reinforcement_caller_charge".into(), amount: old - 0.05, op: Op::AddValue, transient: false });
         });
         return;
     }

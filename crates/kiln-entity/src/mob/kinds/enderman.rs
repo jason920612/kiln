@@ -242,7 +242,7 @@ fn sync_target(e: &Entity, m: &mut MobData) {
         s.target_change_time = tick;
         s.creepy = true;
         if !m.attrs.get(Attr::MovementSpeed).is_some_and(|i| i.has_modifier(ATTACKING)) {
-            m.attrs.set_modifier(Attr::MovementSpeed, ATTACKING, 0.15000000596046448, Op::AddValue);
+            m.attrs.set_transient_modifier(Attr::MovementSpeed, ATTACKING, 0.15000000596046448, Op::AddValue);
         }
     }
 }

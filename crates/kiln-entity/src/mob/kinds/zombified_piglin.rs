@@ -194,7 +194,7 @@ impl Kind for ZombifiedPiglin {
         let has = m.attrs.get(Attr::MovementSpeed).is_some_and(|i| i.has_modifier("minecraft:attacking"));
         if is_angry(m, level) {
             if !m.baby() && !has {
-                m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:attacking", 0.05, Op::AddValue);
+                m.attrs.set_transient_modifier(Attr::MovementSpeed, "minecraft:attacking", 0.05, Op::AddValue);
             }
             let s = st_mut(m);
             if s.play_first_anger_sound_in > 0 {

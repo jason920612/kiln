@@ -126,7 +126,7 @@ impl Kind for Strider {
             let suffocating = !warm && !riding_warm;
             st_mut(m).suffocating = suffocating;
             if suffocating {
-                m.attrs.set_modifier(MovementSpeed, "minecraft:suffocating", -0.3400000035762787, Op::AddMultipliedBase);
+                m.attrs.set_transient_modifier(MovementSpeed, "minecraft:suffocating", -0.3400000035762787, Op::AddMultipliedBase);
             } else {
                 m.attrs.remove_modifier(MovementSpeed, "minecraft:suffocating");
             }

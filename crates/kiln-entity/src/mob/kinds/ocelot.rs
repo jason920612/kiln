@@ -96,7 +96,7 @@ impl Kind for Ocelot {
             s.sprinting = sprint;
             // `LivingEntity.setSprinting`: the sprint speed bonus.
             if sprint {
-                m.attrs.set_modifier(MovementSpeed, "minecraft:sprinting", 0.30000001192092896, Op::AddMultipliedTotal);
+                m.attrs.set_transient_modifier(MovementSpeed, "minecraft:sprinting", 0.30000001192092896, Op::AddMultipliedTotal);
             } else {
                 m.attrs.remove_modifier(MovementSpeed, "minecraft:sprinting");
             }
