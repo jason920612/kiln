@@ -1,3 +1,9 @@
+    // `AttributeMap.pack`: every instance the map has (made by the first `getInstance`), whether or not it differs from the type.s own value.
+    let attrs: Vec<Tag> = m
+        .attrs
+        .list
+        .iter()
+        .filter(|i| i.created)
 //! Mob NBT: `LivingEntity`, `Mob`, `AgeableMob` and the types' `addAdditionalSaveData` /
 //! `readAdditionalSaveData`. Fields Kiln does not model stay in [`Entity::extra`].
 
@@ -56,12 +62,9 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
         for a in list {
             let Some(name) = a.get("id").and_then(Tag::as_str) else { continue };
             let Some(attr) = Attr::by_name(name) else { continue };
-            if m.attrs.get(attr).is_none() {
-                continue;
-            }
-            if let Some(base) = a.get("base").and_then(Tag::as_f64)
-                && let Some(i) = m.attrs.get_mut(attr)
-            {
+            // `AttributeMap.apply`: `getInstance` for each entry (an instance now), none for an attribute the type lacks.
+            let Some(i) = m.attrs.get_mut(attr) else { continue };
+            if let Some(base) = a.get("base").and_then(Tag::as_f64) {
                 i.base = base;
             }
             if let Some(Tag::List(mods)) = a.get("modifiers") {
@@ -195,21 +198,13 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     o.put("current_impulse_context_reset_grace_time", Tag::Int(0));
     o.put("DeathTime", Tag::Short(m.death_time as i16));
     o.put("AbsorptionAmount", Tag::Float(m.absorption));
-    // (A base `/attribute` set back to the registry default is still not the type's own: a horse's 53
-    // health set to 20 has to be saved or it comes back as 53.)
-    let type_defaults = m.kind.attributes();
+    // `AttributeMap.pack`: every instance the map has (`getInstance` makes one the first time something changes or asks for it), whether
+    // or not its value differs from the type's own.
     let attrs: Vec<Tag> = m
         .attrs
         .list
         .iter()
-        .filter(|i| {
-            !i.modifiers.is_empty()
-                || i.base != i.attr.info().1
-                || i.base != type_defaults.base(i.attr)
-                || (m.kind.is_mob() && matches!(i.attr, Attr::MovementSpeed | Attr::FollowRange))
-        })
-        // (A mannequin has the living entity attributes only.)
-        .filter(|i| m.kind.is_mob() || !matches!(i.attr, Attr::FollowRange | Attr::TemptRange | Attr::AttackDamage))
+        .filter(|i| i.created)
         .map(|i| {
             let mut c = vec![("id".to_owned(), Tag::String(i.attr.name().to_owned())), ("base".to_owned(), Tag::Double(i.base))];
             if !i.modifiers.is_empty() {

@@ -81,7 +81,7 @@ fn saved_attributes_and_brain_match_vanilla() {
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
     };
-    let (mut ok, mut failed) = (0, Vec::new());
+    let (mut ok, mut failed): (i32, Vec<(String, String, usize)>) = (0, Vec::new());
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let v: Value = serde_json::from_str(line).unwrap();
         if v["loaded"].as_bool() != Some(true) {
@@ -107,7 +107,7 @@ fn saved_attributes_and_brain_match_vanilla() {
             }
             let saved = sim.entity_nbt().into_iter().find(|n| n.get("id").and_then(Tag::as_str) == Some(ty));
             let Some(saved) = saved else {
-                failed.push(format!("{name} t={t}: gone in Kiln"));
+                failed.push((name.to_owned(), "gone in Kiln".to_owned(), t));
                 break;
             };
             let vs = &s["saved"];
@@ -128,14 +128,21 @@ fn saved_attributes_and_brain_match_vanilla() {
             if bad.is_empty() {
                 ok += 1;
             } else {
-                failed.push(format!("{name} t={t}: {}", bad.join("; ")));
+                failed.push((name.to_owned(), bad.join("; "), t));
             }
         }
         step(&mut sim, &mut client, vec![format!("kill @e[type={ty}]")]);
         step(&mut sim, &mut client, vec!["kill @e[type=!player]".into()]);
     }
-    for f in &failed {
-        eprintln!("FAIL {f}");
+    let mut grouped: Vec<(String, String, Vec<usize>)> = Vec::new();
+    for (n, m, t) in &failed {
+        match grouped.iter_mut().find(|g| g.0 == *n && g.1 == *m) {
+            Some(g) => g.2.push(*t),
+            None => grouped.push((n.clone(), m.clone(), vec![*t])),
+        }
+    }
+    for (n, m, ts) in &grouped {
+        eprintln!("FAIL {n} t={ts:?}: {m}");
     }
     eprintln!("saved attributes and brain: {ok} samples match vanilla, {} differ", failed.len());
     assert!(failed.is_empty(), "{} samples differ from vanilla", failed.len());
