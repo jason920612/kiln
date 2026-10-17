@@ -1232,10 +1232,7 @@ impl Dim {
             let pool = self.generation.as_mut().unwrap();
             pool.collect();
             if !missing.iter().any(|&p| pool.is_ready(p)) {
-                // The tick generates too while it waits, rather than idle.
-                if !pool.help() {
-                    pool.wait();
-                }
+                pool.wait();
                 continue;
             }
             let mut i = 0;
