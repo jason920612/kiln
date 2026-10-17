@@ -97,7 +97,8 @@ enum Named {
 enum Display {
     /// An item entity: its stack's item (`ItemStack.getHoverName`).
     Item(&'static str),
-    Custom(String),
+    /// `CustomName`.
+    Custom(Tag),
     /// The type's name.
     Type(&'static str),
 }

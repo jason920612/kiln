@@ -396,7 +396,7 @@ pub(crate) struct BlockEnv {
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct EntityBox {
     pub min: [f64; 3],
     pub max: [f64; 3],
