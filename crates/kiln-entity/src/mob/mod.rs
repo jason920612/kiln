@@ -742,6 +742,8 @@ impl MobData {
             MobKind::Spider | MobKind::CaveSpider => Species::Spider { climbing: false },
             _ => Species::Plain,
         };
+        let mut attrs = attrs;
+        attrs.create_for(kind.type_name());
         let mut m = MobData {
             kind,
             arrow_count: 0,
@@ -1547,6 +1549,8 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         *t += 1;
     }
     m.tick_stuck_in_body();
+    // The first step of a mob asks for its movement speed (`getAttribute`): the instance is there from then on.
+    let _ = m.attrs.get_mut(Attr::MovementSpeed);
     sync_equipment_modifiers(m);
     if let Some(k) = m.kind.ext() {
         k.detect_equipment_updates(e, m, level);

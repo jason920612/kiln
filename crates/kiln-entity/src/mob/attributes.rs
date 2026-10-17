@@ -151,6 +151,9 @@ pub struct Instance {
     pub attr: Attr,
     pub base: f64,
     pub modifiers: Vec<Modifier>,
+    /// Whether the attribute map has an instance of it (`AttributeMap.getInstance` makes one the first time something asks to change
+    /// it; reading a value does not). Only those are in `getSyncableAttributes`, so only those are told to the clients.
+    pub created: bool,
 }
 
 impl Instance {
@@ -210,12 +213,12 @@ impl Attributes {
             Bounciness,
         ]
         .into_iter()
-        .map(|a| Instance { attr: a, base: a.info().1, modifiers: Vec::new() })
+        .map(|a| Instance { attr: a, base: a.info().1, modifiers: Vec::new(), created: false })
         .collect();
         for &(a, v) in extra {
             match list.iter_mut().find(|i| i.attr == a) {
                 Some(i) => i.base = v,
-                None => list.push(Instance { attr: a, base: v, modifiers: Vec::new() }),
+                None => list.push(Instance { attr: a, base: v, modifiers: Vec::new(), created: false }),
             }
         }
         list.sort_by_key(|i| i.attr);
@@ -226,8 +229,27 @@ impl Attributes {
         self.list.iter().find(|i| i.attr == a)
     }
 
+    /// `getInstance`: the instance of `a`, made if it was not there.
     pub fn get_mut(&mut self, a: Attr) -> Option<&mut Instance> {
-        self.list.iter_mut().find(|i| i.attr == a)
+        let i = self.list.iter_mut().find(|i| i.attr == a)?;
+        i.created = true;
+        Some(i)
+    }
+
+    /// The instances a new mob of type `type_name` already has (what its constructor and `finalizeSpawn` ask for; read off a 26.3 server
+    /// by `tools/AttributeVectors.java`).
+    pub fn create_for(&mut self, type_name: &str) {
+        use Attr::*;
+        let made: &[Attr] = match type_name {
+            "minecraft:zombie" | "minecraft:husk" | "minecraft:drowned" | "minecraft:zombie_villager" | "minecraft:zombified_piglin" | "minecraft:piglin" | "minecraft:enderman" => &[MovementSpeed],
+            "minecraft:slime" | "minecraft:sulfur_cube" => &[MaxHealth, MovementSpeed],
+            "minecraft:magma_cube" => &[MaxHealth, MovementSpeed, Armor],
+            "minecraft:wolf" => &[MaxHealth],
+            _ => &[],
+        };
+        for &a in made {
+            let _ = self.get_mut(a);
+        }
     }
 
     /// `getAttributeValue` (0 for an attribute the mob does not have, as vanilla's map

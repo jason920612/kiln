@@ -156,6 +156,8 @@ mod lid_parity;
 #[cfg(test)]
 mod load_parity;
 #[cfg(test)]
+mod attr_parity;
+#[cfg(test)]
 mod interact_parity;
 
 use bytes::Bytes;
@@ -580,6 +582,8 @@ struct Player {
     attributes_dirty: bool,
     /// The syncable attributes as the last Update Attributes left them (empty: the next one lists them all).
     attrs_sent: Vec<combat::AttributeList>,
+    /// The attributes that have had a modifier or another base (their instance exists in the attribute map for good).
+    attrs_touched: Vec<&'static str>,
     /// This tick's entity data pack was not empty (it opens `ServerEntity.sendChanges`' main block, where the
     /// attributes go out, in a tick that is not an update tick).
     data_packed: bool,
@@ -3926,6 +3930,7 @@ impl Sim {
             effects: joining.effects,
             attributes_dirty: true,
             attrs_sent: Vec::new(),
+            attrs_touched: Vec::new(),
             data_packed: false,
             frost_marked: false,
             pending_sounds: Vec::new(),
