@@ -1187,6 +1187,7 @@ public class ContainerVectors {
             for (int x = -3; x <= 5; x++)
                 for (int z = -3; z <= 3; z++) s.block(x, -1, z, "minecraft:stone");
             int[] f = dirs[d];
+            s.state(0, 0, 0).state(f[0], f[1], f[2]).state(2 * f[0], 2 * f[1], 2 * f[2]);
             s.block(0, 0, 0, (sticky ? "minecraft:sticky_piston" : "minecraft:piston") + "[facing=" + dirNames[d] + ",extended=false]");
             if (front != null) s.block(f[0], f[1], f[2], front);
             // A wall behind the pushed block half the time.
