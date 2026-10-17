@@ -940,6 +940,11 @@ impl SimLevel<'_, '_, '_> {
             };
             kind && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area)
         };
+        // An item entity's box is its position and the type's fixed size, and the list keeps its position as its state
+        // has it (no turn moves another entity; a riding item is moved in its own turn): items clearly away from the area
+        // are passed over without reading their state (a pile has thousands in a section). (A block of margin.)
+        let (ilo, ihi) = ([area.min_x - 1.2, area.min_y - 1.3, area.min_z - 1.2], [area.max_x + 1.2, area.max_y + 1.0, area.max_z + 1.2]);
+        let maybe = |e: &Entity| !is_item(e) || (0..3).all(|k| e.pos[k] > ilo[k] && e.pos[k] < ihi[k]);
         // Within a section vanilla keeps insertion order, which id order follows here. The
         // sections within 2 blocks of the area hold every entity whose box can touch it.
         let lo = section_of([area.min_x - 2.0, area.min_y - 2.0, area.min_z - 2.0]);
@@ -947,14 +952,14 @@ impl SimLevel<'_, '_, '_> {
         let mut found: SmallVec<[((i32, i64), i32); 32]> = SmallVec::new();
         let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
         if span > self.grid.cells.len() as i64 * 4 {
-            found.extend(self.list.iter().filter_map(|e| e.phys.as_deref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+            found.extend(self.list.iter().filter(|e| maybe(e)).filter_map(|e| e.phys.as_deref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
         } else {
             for x in lo.0..=hi.0 {
                 for y in lo.1..=hi.1 {
                     for z in lo.2..=hi.2 {
                         let Some(v) = self.grid.cells.get(&(x, y, z)) else { continue };
                         for &i in v {
-                            if let Some(e) = self.list.get(i).and_then(|e| e.phys.as_deref())
+                            if let Some(e) = self.list.get(i).filter(|e| maybe(e)).and_then(|e| e.phys.as_deref())
                                 && wanted(e)
                             {
                                 found.push((section_key(e), e.id));

@@ -10,6 +10,7 @@ mkdir -p ~/wp76/prof
 python3 "$tools/bench76.py" run K -k "$scene" --window $((secs + delay + 10)) --bin "$bin" > ~/wp76/prof/$name.bench.log 2>&1 &
 benchpid=$!
 fn="${scene%%[0-9]*}"
+for _ in $(seq 600); do grep -q "up after" ~/wp76/prof/$name.bench.log 2>/dev/null && break; sleep 1; done
 for _ in $(seq 600); do grep -q "Running function wp76:$scene\b\|Running function wp76:${fn}" ~/wp76/K/server.log 2>/dev/null && break; sleep 1; done
 sleep "$delay"
 pid=$(pgrep -x kiln-run76 | head -1)
