@@ -142,6 +142,11 @@ fn absolute(cmd: &str) -> String {
         .join(" ")
 }
 
+/// Whether an item standing at height `y` is in the box the harness records (an item is 0.25 tall).
+fn p_inside_y(y: f64) -> bool {
+    y + 0.25 > (BASE[1] - 8) as f64 && y < (BASE[1] + 12) as f64
+}
+
 /// Replays one scenario; returns (values compared, mismatches).
 fn run_scenario(line: &Value) -> (usize, Vec<String>) {
     let mut config = SimConfig::new(2, 3, None);
@@ -336,6 +341,11 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                     }
                 };
                 let (pos, mot) = (triple("Pos"), triple("Motion"));
+                // (Only what the harness's box, 8 below to 12 above `BASE`, holds: by the item's bounding box.)
+                let inside = |p: f64, base: i32| p + 0.125 > (base - 8) as f64 && p - 0.125 < (base + 12) as f64;
+                if !(inside(pos[0], BASE[0]) && p_inside_y(pos[1]) && inside(pos[2], BASE[2])) {
+                    continue;
+                }
                 let ground = if t.get("OnGround").and_then(Tag::as_i64).unwrap_or(0) != 0 { 1.0 } else { 0.0 };
                 got.push([pos[0], pos[1], pos[2], mot[0], mot[1], mot[2], ground]);
             }
