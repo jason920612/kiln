@@ -1645,6 +1645,12 @@ public class ContainerVectors {
             if (!(left instanceof net.minecraft.world.entity.player.Player)) left.discard();
         }
         command(server, "kill @e[type=item]");
+        // wp75: block events and tickers the clearing left (a piston that was on the move) run out before the next scenario begins.
+        if (s.trackItems) {
+            setRunsNormally(level, true);
+            for (int i = 0; i < 4; i++) level.tick(() -> true);
+            setRunsNormally(level, false);
+        }
         Map<String, Object> line = s.json();
         line.put("result", ticks);
         return toJson(line);
