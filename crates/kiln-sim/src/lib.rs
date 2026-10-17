@@ -98,6 +98,10 @@ mod hazards;
 mod health;
 mod mobs;
 mod spawner;
+/// The natural spawner's decision counters so far (`KILN_SPAWN_COUNTERS`; empty while they are off).
+pub fn spawn_counters() -> std::collections::BTreeMap<String, u64> {
+    spawner::stats::snapshot()
+}
 mod movement;
 mod persist;
 mod players;
