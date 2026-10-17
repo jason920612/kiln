@@ -1179,11 +1179,16 @@ public class ContainerVectors {
         String[] dirNames = {"east", "up", "north", "west"};
         String[] fronts = {null, "minecraft:stone", "minecraft:slime_block", "minecraft:honey_block", "minecraft:dirt"};
         String[] items = {"cobblestone", "stick", "diamond"};
+        // Family 0: the head extends (items beside, on and in front of it); family 1: it extends and pulls back what it pushed or
+        // stuck to (items on the pushed block). (Items that get inside a moving block are pushed out by vanilla with the entity's
+        // unseeded random: no comparison there.)
+        for (int fam = 0; fam < 2; fam++)
         for (int k = 0; k < 64; k++) {
             int d = k % 4;
             boolean sticky = (k / 4) % 2 == 1;
             String front = fronts[(k / 8) % fronts.length];
-            Scenario s = new Scenario("piston_items/" + k, 50).trackItems();
+            if (fam == 1 && front == null) continue;
+            Scenario s = new Scenario((fam == 0 ? "piston_items/" : "piston_pull/") + k, fam == 0 ? 25 : 45).trackItems();
             for (int x = -3; x <= 5; x++)
                 for (int z = -3; z <= 3; z++) s.block(x, -1, z, "minecraft:stone");
             int[] f = dirs[d];
@@ -1207,7 +1212,7 @@ public class ContainerVectors {
             int[] side = d == 1 || d == 2 ? new int[] {1, 0, 0} : new int[] {0, 0, 1};
             String where = String.format(Locale.ROOT, "~%d ~%d ~%d", side[0], side[1], side[2]);
             s.at(3, "setblock " + where + " minecraft:redstone_block");
-            s.at(26, "setblock " + where + " minecraft:air");
+            if (fam == 1) s.at(26, "setblock " + where + " minecraft:air");
             out.add(s);
         }
     }
