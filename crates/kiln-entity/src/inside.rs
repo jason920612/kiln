@@ -32,6 +32,10 @@ pub enum Action {
     LavaHurt,
     /// `PowderSnowBlock`: a burning entity melts the powder snow.
     MeltPowderSnow(BlockPos),
+    /// `CampfireBlock.entityInside`: a lit campfire hurts a living entity (1, a soul campfire 2).
+    CampfireHurt(f32),
+    /// `WitherRoseBlock.entityInside`: the wither effect for 2 seconds.
+    WitherRose,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -213,11 +217,21 @@ impl Entity {
     fn apply_action(&mut self, level: &mut dyn EntityLevel, a: Action) {
         match a {
             // (A mob mid-tick cannot take damage here: its own tick does, `crate::mob::apply_deferred_hurts`.)
-            Action::FireHurt(_) | Action::LavaHurt if matches!(self.kind, EntityKind::MobTicking { .. }) => self.inside.deferred.push(a),
+            Action::FireHurt(_) | Action::LavaHurt | Action::CampfireHurt(_) | Action::WitherRose if matches!(self.kind, EntityKind::MobTicking { .. }) => self.inside.deferred.push(a),
             Action::FireHurt(damage) => {
                 self.hurt(level, DamageKind::InFire, damage, None);
             }
             Action::LavaHurt => self.lava_hurt(level),
+            Action::CampfireHurt(damage) => {
+                self.hurt(level, DamageKind::of_type("minecraft:campfire"), damage, None);
+            }
+            Action::WitherRose => {
+                if level.difficulty() != 0
+                    && let Some(fx) = crate::effect::Effect::named("minecraft:wither", 40, 0)
+                {
+                    level.add_effect_instance(self.id, fx, None);
+                }
+            }
             Action::MeltPowderSnow(pos) => {
                 if self.is_on_fire() && level.mob_griefing() {
                     level.destroy_block(pos, false);
@@ -496,6 +510,15 @@ impl Entity {
             Kind::Cactus => {
                 self.hurt(level, DamageKind::Cactus, 1.0, None);
             }
+            // (Players are handled by kiln-sim; armor stands are not simulated here.)
+            Kind::Campfire if matches!(self.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) => {
+                let info = kiln_data::blocks_types::block_of(state);
+                if info.property(state, "lit") == Some("true") {
+                    let damage = if crate::blocks::block_name(state) == "minecraft:soul_campfire" { 2.0 } else { 1.0 };
+                    self.apply_action(level, Action::CampfireHurt(damage));
+                }
+            }
+            Kind::WitherRose if matches!(self.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) => self.apply_action(level, Action::WitherRose),
             Kind::LavaCauldron => {
                 self.inside.apply(EffectType::LavaIgnite);
                 self.inside.run_after(EffectType::LavaIgnite, Action::LavaHurt);

@@ -880,6 +880,38 @@ fn wither_skeletons_wither_their_target() {
     assert!(withered, "a wither skeleton's hit withers");
 }
 
+/// wp74: a hazard matrix against vanilla found that mobs took nothing from lit campfires, wither roses and powder snow. Vanilla (a frozen reading
+/// after 200 ticks, NoAI mobs standing in the block): a cow in powder snow loses 2 (1 every 40 ticks once fully frozen), a blaze 10 (5 each), a
+/// polar bear nothing (`#freeze_immune_entity_types`); a cow in a lit campfire or a wither rose dies, a blaze in the campfire (fire immune) lives.
+#[test]
+fn mobs_are_hurt_by_campfires_wither_roses_and_powder_snow() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.console("difficulty normal");
+    let cell = |w: &mut World, at: f64, block: &str, mob: &str| {
+        let x = at.floor() as i32;
+        w.fill([x, 0, 0], [x, 0, 0], block);
+        w.summon(mob, [at + 0.5, 0.0, 0.5], "{PersistenceRequired:1b,NoAI:1b}");
+    };
+    cell(&mut w, 4.0, "minecraft:powder_snow", "minecraft:cow");
+    cell(&mut w, 6.0, "minecraft:powder_snow", "minecraft:blaze");
+    cell(&mut w, 8.0, "minecraft:powder_snow", "minecraft:polar_bear");
+    cell(&mut w, 10.0, "minecraft:campfire[lit=true]", "minecraft:pig");
+    cell(&mut w, 12.0, "minecraft:campfire[lit=true]", "minecraft:blaze");
+    cell(&mut w, 14.0, "minecraft:wither_rose", "minecraft:sheep");
+    w.ticks(200);
+    let hp = |w: &World, kind: &str| w.mobs(kind).iter().map(|m| m.2).collect::<Vec<_>>();
+    let cows = hp(&w, "minecraft:cow");
+    assert_eq!(cows, vec![8.0], "frozen cow: two hits of 1");
+    let blazes = hp(&w, "minecraft:blaze");
+    assert_eq!(blazes.len(), 2);
+    assert!(blazes.contains(&10.0), "frozen blaze: two hits of 5 ({blazes:?})");
+    assert!(blazes.contains(&20.0), "the fire immune blaze in the campfire lives ({blazes:?})");
+    assert_eq!(hp(&w, "minecraft:polar_bear"), vec![30.0], "polar bears do not freeze");
+    assert!(w.mobs("minecraft:pig").is_empty(), "the pig burned in the campfire");
+    assert!(w.mobs("minecraft:sheep").is_empty(), "the sheep withered");
+}
+
 /// `EntityTypeTags.CAN_BREATHE_UNDER_WATER` (wp74: a playthrough found turtles and copper golems drowning in Kiln where vanilla keeps
 /// them alive; the same 700 ticks under water kill an ordinary cow).
 #[test]

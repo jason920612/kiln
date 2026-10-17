@@ -1892,6 +1892,9 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             e.play_block_fall_sound(level);
         }
     }
+    // `canFreeze()` for the powder snow the block effects find: the type and the worn items.
+    e.freeze_immune = entity_type_tag(e.type_name, "minecraft:freeze_immune_entity_types")
+        || [FEET, LEGS, CHEST, HEAD].iter().any(|&i| !m.equipment[i].is_empty() && item_tag(m.equipment[i].item(), "minecraft:freeze_immune_wearables"));
     {
         crate::prof!("mob", "apply_effects_from_blocks");
         e.apply_effects_from_blocks(level);
@@ -1900,6 +1903,17 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             match action {
                 crate::inside::Action::FireHurt(damage) => {
                     hurt(e, m, level, DamageSource::of(DamageKind::InFire), damage);
+                }
+                crate::inside::Action::CampfireHurt(damage) => {
+                    hurt(e, m, level, DamageSource::of(DamageKind::of_type("minecraft:campfire")), damage);
+                }
+                crate::inside::Action::WitherRose => {
+                    // (`isInvulnerableTo(wither)` is the effect's own immunity check.)
+                    if level.difficulty() != 0
+                        && let Some(fx) = crate::effect::Effect::named("minecraft:wither", 40, 0)
+                    {
+                        effects::add(e, m, level, fx, None);
+                    }
                 }
                 crate::inside::Action::LavaHurt if !m.kind.fire_immune() => {
                     if hurt(e, m, level, DamageSource::of(DamageKind::Lava), 4.0) {
@@ -1910,9 +1924,13 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             }
         }
     }
-    // Freezing.
-    if !e.is_in_powder_snow {
+    // Freezing (`LivingEntity.tick`): thaw, and a fully frozen mob that can freeze takes 1 damage every 40 ticks (5 for `#freeze_hurts_extra_types`).
+    if !e.is_in_powder_snow || !e.can_freeze() {
         e.ticks_frozen = (e.ticks_frozen - 2).max(0);
+    }
+    if e.tick_count % 40 == 0 && e.ticks_frozen >= 140 && e.can_freeze() && is_alive(e, m) {
+        let amount = if entity_type_tag(e.type_name, "minecraft:freeze_hurts_extra_types") { 5.0 } else { 1.0 };
+        hurt(e, m, level, DamageSource::of(DamageKind::Freeze), amount);
     }
     {
         crate::prof!("mob", "push_entities");
