@@ -673,6 +673,12 @@ pub(crate) fn is_item(e: &Entity) -> bool {
     e.kind.id == kiln_data::entities::types::ITEM.id
 }
 
+/// `KILN_CHECK_PREFILTER=1`: every item an area search passes over by its position is checked against its state (tests).
+fn check_prefilter() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KILN_CHECK_PREFILTER").is_some_and(|v| v != "0"))
+}
+
 pub(crate) fn chunk_of(pos: [f64; 3]) -> ChunkPos {
     ChunkPos::of_block(pos[0].floor() as i32, pos[2].floor() as i32)
 }
@@ -943,9 +949,15 @@ impl SimLevel<'_, '_, '_> {
         };
         // An item entity's box is its position and the type's fixed size, and the list keeps its position as its state
         // has it (no turn moves another entity; a riding item is moved in its own turn): items clearly away from the area
-        // are passed over without reading their state (a pile has thousands in a section). (A block of margin.)
-        let (ilo, ihi) = ([area.min_x - 1.2, area.min_y - 1.3, area.min_z - 1.2], [area.max_x + 1.2, area.max_y + 1.0, area.max_z + 1.2]);
-        let maybe = |e: &Entity| !is_item(e) || (0..3).all(|k| e.pos[k] > ilo[k] && e.pos[k] < ihi[k]);
+        // are passed over without reading their state (a pile has thousands in a section). (The box is 0.25 wide and high; twice that of margin.)
+        let (ilo, ihi) = ([area.min_x - 0.25, area.min_y - 0.5, area.min_z - 0.25], [area.max_x + 0.25, area.max_y + 0.25, area.max_z + 0.25]);
+        let maybe = |e: &Entity| {
+            let near = !is_item(e) || (0..3).all(|k| e.pos[k] > ilo[k] && e.pos[k] < ihi[k]);
+            if !near && check_prefilter() {
+                assert!(!e.phys.as_deref().is_some_and(|p| p.bounding_box().intersects(area)), "item {} passed over at {:?} meets {area:?}", e.id, e.pos);
+            }
+            near
+        };
         // Within a section vanilla keeps insertion order, which id order follows here. The
         // sections within 2 blocks of the area hold every entity whose box can touch it.
         let lo = section_of([area.min_x - 2.0, area.min_y - 2.0, area.min_z - 2.0]);
