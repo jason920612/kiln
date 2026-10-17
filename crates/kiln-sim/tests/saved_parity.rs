@@ -201,6 +201,13 @@ fn saved_attributes_and_brain_match_vanilla() {
         }
         step(&mut sim, &mut client, vec![format!("kill @e[type={ty}]")]);
         step(&mut sim, &mut client, vec!["kill @e[type=!player]".into()]);
+        if matches!(ty, "minecraft:slime" | "minecraft:magma_cube" | "minecraft:sulfur_cube") {
+            // (A killed cube splits into children that fall in the next case's samples.)
+            for _ in 0..25 {
+                step(&mut sim, &mut client, vec![]);
+            }
+            step(&mut sim, &mut client, vec!["kill @e[type=!player]".into()]);
+        }
     }
     let mut grouped: Vec<(String, String, Vec<usize>)> = Vec::new();
     for (n, m, t) in &failed {
