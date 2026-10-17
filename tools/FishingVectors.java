@@ -148,6 +148,7 @@ public class FishingVectors {
         }
         int[] palette = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
         StringBuilder blocks = new StringBuilder();
+        StringBuilder names = new StringBuilder();
         for (int dx = -4; dx <= 4; dx++)
             for (int dz = -4; dz <= 4; dz++)
                 for (int dy = -3; dy <= 4; dy++) level.setBlock(new BlockPos(X + dx, H + dy, Z + dz), Blocks.AIR.defaultBlockState(), 2);
@@ -165,6 +166,7 @@ public class FishingVectors {
                     if (centre && dy < 0) s = Blocks.WATER.defaultBlockState();
                     level.setBlock(new BlockPos(X + dx, H + dy, Z + dz), s, 2);
                     blocks.append(blocks.length() > 0 ? "," : "").append(Block.getId(s));
+                    names.append(names.length() > 0 ? "," : "").append('"').append(s.toString().replace("Block{", "").replace("}", "").replace("\"", "'")).append('"');
                 }
         // the rod
         int luck = r.nextInt(4), lure = r.nextInt(4);
@@ -212,8 +214,8 @@ public class FishingVectors {
                     hook.isOpenWaterFishing(), Double.toString(p.x), Double.toString(p.y), Double.toString(p.z), Double.toString(d.x), Double.toString(d.y), Double.toString(d.z), seesSky, above.getX(), above.getY(), above.getZ()));
         }
         hook.discard();
-        return String.format(Locale.ROOT, "{\"name\":\"fishing_%d\",\"luck_level\":%d,\"lure_level\":%d,\"luck\":%d,\"lure_speed\":%d,\"seed\":\"%d\",\"uuid_lsb\":\"%d\",\"game_time\":%d,\"blocks\":[%s],\"ticks\":[%s]}",
-                index, luck, lure, hookLuck, hookLure, seed, uuidLsb, gameTime, blocks, ticks);
+        return String.format(Locale.ROOT, "{\"name\":\"fishing_%d\",\"luck_level\":%d,\"lure_level\":%d,\"luck\":%d,\"lure_speed\":%d,\"seed\":\"%d\",\"uuid_lsb\":\"%d\",\"game_time\":%d,\"blocks\":[%s],\"names\":[%s],\"ticks\":[%s]}",
+                index, luck, lure, hookLuck, hookLure, seed, uuidLsb, gameTime, blocks, names, ticks);
     }
 
     static void writeServerFiles() throws Exception {
