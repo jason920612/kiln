@@ -144,6 +144,9 @@ pub struct PlayerView {
     /// wp32 parrots: `ServerPlayer.setEntityOnShoulder` would take a parrot (a shoulder is free
     /// and the player stands on the ground, not riding, in water or in powder snow).
     pub parrot_can_sit: bool,
+    /// `isSleeping` (in a bed) and `getSleepTimer` (`sleepCounter`: up to 100 while asleep, 100..110 while waking up; a cat's morning gift asks).
+    pub sleeping: bool,
+    pub sleep_timer: i32,
 }
 
 impl PlayerView {
@@ -184,6 +187,8 @@ impl PlayerView {
             hero_of_the_village: None,
             parrot_may_land: false,
             parrot_can_sit: false,
+            sleeping: false,
+            sleep_timer: 0,
         }
     }
 

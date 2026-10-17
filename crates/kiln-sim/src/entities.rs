@@ -3838,6 +3838,8 @@ pub(crate) fn view(p: &Player, now: i64) -> PlayerView {
         // (filled in by `shoulder::mark_views` where parrots are about)
         parrot_may_land: false,
         parrot_can_sit: false,
+        sleeping: p.sleep.pos.is_some(),
+        sleep_timer: p.sleep.counter,
     }
 }
 
