@@ -69,6 +69,7 @@ pub(crate) fn push(entities: &mut Entities, level: &mut RegionLevel, players: &m
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),

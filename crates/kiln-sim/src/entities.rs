@@ -719,6 +719,9 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     /// How many times an entity changed a player (speculation: what read the players before
     /// may be out of date).
     player_writes: u32,
+    /// How many times an entity took or gave back a point of interest (speculation: what read them before may be out
+    /// of date).
+    poi_writes: u32,
     /// While an entity's turn runs in place of its speculation: the entities it reached with
     /// `entity_mut`, with their box and whether they were alive before.
     touched: Option<Vec<(i32, Aabb, bool)>>,
@@ -1031,10 +1034,13 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let kinds = crate::poi::kinds_of(types);
         let accept = |k: u8, p: [i32; 3]| accept(kiln_world::poi::TYPES[k as usize].name, BlockPos::new(p[0], p[1], p[2]));
         let level = self.level.region()?;
-        crate::poi::take(&mut *level.cells, &kinds, [center.x, center.y, center.z], radius, &accept).map(|p| BlockPos::new(p[0], p[1], p[2]))
+        let taken = crate::poi::take(&mut *level.cells, &kinds, [center.x, center.y, center.z], radius, &accept).map(|p| BlockPos::new(p[0], p[1], p[2]));
+        self.poi_writes += u32::from(taken.is_some());
+        taken
     }
 
     fn poi_release(&mut self, pos: BlockPos) {
+        self.poi_writes += 1;
         if let Some(level) = self.level.region() {
             crate::poi::release(&mut *level.cells, [pos.x, pos.y, pos.z]);
         }
@@ -2201,6 +2207,7 @@ pub(crate) fn tick(
         view_index,
         despawn: Some(&nearest),
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -2650,6 +2657,7 @@ pub(crate) fn with_mob<R>(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -2738,6 +2746,7 @@ pub(crate) fn anger_piglins(entities: &mut Entities, level: &mut RegionLevel, pl
             view_index: Default::default(),
             despawn: None,
             player_writes: 0,
+            poi_writes: 0,
             touched: None,
             current_info: None,
             owner_hints: Vec::new(),
@@ -2788,6 +2797,7 @@ pub(crate) fn stab_mob(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -2898,6 +2908,7 @@ pub(crate) fn hurt_by_block(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -2959,6 +2970,7 @@ pub(crate) fn tick_spawns(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -3097,6 +3109,7 @@ pub(crate) fn interact_mob(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -3284,6 +3297,7 @@ pub(crate) fn with_entity<R>(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -3339,6 +3353,7 @@ pub(crate) fn with_level<R>(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),

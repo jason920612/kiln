@@ -34,6 +34,21 @@ pub(crate) struct Pace {
     pub(crate) wanted: bool,
 }
 
+/// The kinds of [`islands::SERIAL`] that keep a whole region's turns in order: what they change in place may be read
+/// by other turns without a trace. The others (villagers take points of interest, which speculations log reading;
+/// copper golems work containers, which only they read) just run in place.
+const SERIAL_REGION: [&str; 9] = [
+    "minecraft:sulfur_cube",
+    "minecraft:warden",
+    "minecraft:allay",
+    "minecraft:creaking",
+    "minecraft:hopper_minecart",
+    "minecraft:lightning_bolt",
+    "minecraft:ender_dragon",
+    "minecraft:end_crystal",
+    "minecraft:wither",
+];
+
 /// Ran-in-place share (numerator, denominator) above which speculation pauses.
 const RERUN_SHARE: (u32, u32) = (2, 5);
 const PAUSE: u32 = 40;
@@ -57,6 +72,8 @@ struct Log {
     areas: Vec<Aabb>,
     /// The players' own state (not their views) was read.
     players: bool,
+    /// Points of interest (and the villages they make) were read.
+    pois: bool,
     /// Something it cannot leave for later was asked for.
     abort: bool,
 }
@@ -138,14 +155,17 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
     }
 
     fn village_centers_near(&self, section: (i32, i32, i32), radius: i32) -> Option<Vec<(i32, i32, i32)>> {
+        self.log.borrow_mut().pois = true;
         self.base.village_centers_near(section, radius)
     }
 
     fn sections_to_village(&self, pos: BlockPos) -> i32 {
+        self.log.borrow_mut().pois = true;
         self.base.sections_to_village(pos)
     }
 
     fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: kiln_entity::level::PoiOccupancy) -> Vec<BlockPos> {
+        self.log.borrow_mut().pois = true;
         self.base.poi_in_range(types, center, radius, occupancy)
     }
 
@@ -159,6 +179,7 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
     }
 
     fn poi_type(&self, pos: BlockPos) -> Option<&'static str> {
+        self.log.borrow_mut().pois = true;
         self.base.poi_type(pos)
     }
 
@@ -654,6 +675,10 @@ fn speculate(sim: &SimLevel, i: usize, ticking: &blocks::Ticking, any_player: bo
     if e.removed || !ticking.contains(chunk_of(e.pos)) {
         return None;
     }
+    // (Kinds whose tick needs region state a speculation cannot leave for later run in place.)
+    if islands::SERIAL.contains(&e.kind.name) {
+        return None;
+    }
     let base = e.phys.as_deref()?;
     if base.vehicle.is_some() || !base.passengers.is_empty() || !base.pending_hurts.is_empty() || !base.pending_effects.is_empty() {
         return None;
@@ -696,6 +721,7 @@ struct Dirty {
     boxes: FastMap<(i32, i32, i32), Vec<Aabb>>,
     any_box: bool,
     player_writes: u32,
+    poi_writes: u32,
     edits: u64,
 }
 
@@ -775,10 +801,11 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
     }
     {
         let Some(region) = sim.level.region_ref() else { return false };
-        if !region.blocks.hearts.is_empty() || crate::sculk::listening(region) {
-            return off("spec.off_listening");
+        // (Listeners are fine: a turn that would tell them anything runs in place, see [`SpecLevel`].)
+        if !region.blocks.hearts.is_empty() {
+            return off("spec.off_hearts");
         }
-        if sim.list.iter().any(|e| islands::SERIAL.contains(&e.kind.name)) {
+        if sim.list.iter().any(|e| SERIAL_REGION.contains(&e.kind.name)) {
             return off("spec.off_serial");
         }
     }
@@ -808,6 +835,7 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
         boxes: Default::default(),
         any_box: false,
         player_writes: sim.player_writes,
+        poi_writes: sim.poi_writes,
         edits: edits(sim),
     };
     let (mut kept, mut ran) = (0u32, 0u32);
@@ -825,6 +853,8 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
                 "spec.why_edits"
             } else if s.log.players && sim.player_writes != dirty.player_writes {
                 "spec.why_players"
+            } else if s.log.pois && sim.poi_writes != dirty.poi_writes {
+                "spec.why_pois"
             } else if !s.log.ids.iter().all(|id| !dirty.ids.contains(id)) {
                 "spec.why_ids"
             } else if !s.log.areas.iter().all(|a| !dirty.meets(a)) {
@@ -932,6 +962,7 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
         pace.paused = PAUSE;
     }
     crate::diag::add("spec.kept", std::time::Duration::from_nanos(kept as u64 * 1000));
+    crate::testing::SPEC_KEPT.fetch_add(kept as u64, std::sync::atomic::Ordering::Relaxed);
     crate::diag::add("spec.ran", std::time::Duration::from_nanos(ran as u64 * 1000));
     true
 }
