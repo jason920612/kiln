@@ -113,6 +113,9 @@ class Farm:
             self.killblock(box, dim)
         for r in range(self.rounds):
             sprint(self.t, self.round_ticks)
+            if os.environ.get("DEBUGBOX"):
+                bx = (min(box[0], box[3]), min(box[1], box[4]), min(box[2], box[5]), abs(box[3] - box[0]), abs(box[4] - box[1]), abs(box[5] - box[2]))
+                F(self.t, "entities in the box:", count(self.t, "@e[type=!player,x=%d,y=%d,z=%d,dx=%d,dy=%d,dz=%d]" % bx), "all entities:", count(self.t, "@e[type=!player]"), "| command block:", self.cmd("execute in minecraft:%s run data get block %d %d %d" % (self.kb[0], self.kb[1], self.kb[2], self.kb[3]), wait=0.4)[-230:].replace(chr(10), " ") if getattr(self, "kb", None) else "")
             counts = self.measure(types, box)
             # splits: kill the children without counting them
             for _ in range(2):

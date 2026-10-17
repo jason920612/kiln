@@ -225,19 +225,23 @@ def run_case(seed, palette, cmds=None):
         # the dupes themselves: item entities and TNT left in the box
         ik = (count_items(ka_t := "K"), count_items("V"))
         if ik[0] != ik[1]:
-            diffs.append((t, [f"items K {ik[0]}"], [f"items V {ik[1]}"]))
+            diffs.append((t, [f"item total K {ik[0]}"], [f"item total V {ik[1]}"]))
     return cmds, diffs
 
 
 def count_items(t):
+    """The total stack count of the item entities of the box (merging and despawn timing do not matter, a duplicated item does)."""
     sel = f"@e[type=item,x={X0 - 3},y={Y0 - 3},z={Z0 - 3},dx={W + 6},dy={H + 80},dz={D + 6}]"
-    o = since(t, 0) if False else None
     n = logpos(t)
-    w(t, f"execute if entity {sel}")
-    time.sleep(0.5)
+    w(t, f"execute as {sel} run data get entity @s Item.count")
+    time.sleep(0.8)
     txt = since(t, n)
-    m = re.search(r"pass_count\[(\d+)\]|Count: (\d+)", txt)
-    return int(m.group(1) or m.group(2)) if m else (1 if re.search(r"conditional\.pass|Test passed", txt) else 0)
+    tot = 0
+    for line in txt.splitlines():
+        m = re.search(r"query\[[^,\]]+, (\d+)\]|entity data: (\d+)\s*$", line)
+        if m:
+            tot += int(m.group(1) or m.group(2))
+    return tot
 
 
 def minimize(seed, palette):
