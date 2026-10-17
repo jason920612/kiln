@@ -263,6 +263,9 @@ pub struct SimConfig {
     /// dedicated server's `difficulty` property, which it applies over the save's at every start.
     /// Without it a world starts in its saved difficulty, a new one in normal.
     pub difficulty: Option<u8>,
+    /// Tests: entities that console commands and functions summon join the level after the tick, as they did before wp72 (the
+    /// recorders of some vanilla vectors add entities without ticking them; vanilla's `/summon` ticks the entity in the same tick).
+    pub summons_join_late: bool,
 }
 
 /// How a region with many entities ticks them (`entities/islands.rs`). Every choice is
@@ -343,6 +346,7 @@ impl SimConfig {
             profile_lookup: None,
             replies: None,
             difficulty: None,
+            summons_join_late: false,
         }
     }
 }
@@ -1833,10 +1837,14 @@ impl Sim {
         }
         lap(&mut self.stats, "g.console");
         // What console commands summoned is in the level when the tick starts (vanilla adds the entity at once and its first tick is this one).
-        self.materialize_spawns();
+        if !self.config.summons_join_late {
+            self.materialize_spawns();
+        }
         self.tick_global();
         // ... and so is what the tick functions and scheduled functions summoned (they run first in `MinecraftServer.tickChildren`).
-        self.materialize_spawns();
+        if !self.config.summons_join_late {
+            self.materialize_spawns();
+        }
         lap(&mut self.stats, "g.tick_global");
         self.flush_stat_scores();
         lap(&mut self.stats, "g.stat_scores");
