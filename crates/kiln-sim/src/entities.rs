@@ -3474,8 +3474,8 @@ fn carry_out(
             }
         }
         Event::LevelEvent { event, pos, data } => level.effect(Effect::LevelEvent { id: event, pos: kb(pos), data }),
-        Event::BlockExploded { pos, state, decay, radius, .. } => {
-            level.effect(if decay { Effect::ExplosionDrop { pos: kb(pos), state, radius } } else { Effect::Drop { pos: kb(pos), state } })
+        Event::BlockExploded { pos, state, decay, radius, blast, .. } => {
+            level.effect(Effect::ExplosionDrop { pos: kb(pos), state, radius: decay.then_some(radius), blast })
         }
         Event::BlockEvent { pos, a, b } => {
             let at = kb(pos);

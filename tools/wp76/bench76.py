@@ -33,8 +33,8 @@ W = HOME / "wp76"
 TOOLS = Path(__file__).resolve().parent
 P99 = re.compile(r"P50: ([\d.]+) ?ms P95: ([\d.]+) ?ms P99: ([\d.]+) ?ms")
 AVG = re.compile(r"Average time per tick: ([\d.]+) ?ms")
-COUNT = re.compile(r"Test passed, count: (\d+)")
-BOT = HOME / "wt/wp76-items-perf/target/release/kiln-bot"
+COUNT = re.compile(r"Test passed[.,] [Cc]ount: (\d+)")
+BOT = HOME / "wp76/bin/base/kiln-bot"
 
 FULL = ["rotten_flesh", "bone", "arrow", "string", "gunpowder", "spider_eye", "iron_ingot", "redstone", "glass_bottle", "stick"]
 GEAR = ["bow", "golden_sword", "iron_helmet", "golden_chestplate", "iron_shovel", "crossbow", "fishing_rod"]
@@ -48,7 +48,9 @@ PLACES = {
     "stream": (264, 150, 520),
     "hopper": (520, 150, 520),
     "reload": (776, 150, 776),
+    "scatter": (2008, None, 2008),
 }
+SCATTER_R = 120
 
 
 def item(i, rng):
@@ -94,7 +96,8 @@ def write_pack():
     (fn / "load.mcfunction").write_text("scoreboard objectives add wp76 dummy\n")
     (fn / "tick.mcfunction").write_text(
         "execute if score farm wp76 matches 1.. run function wp76:farm_emit\n"
-        "execute if score stream wp76 matches 1.. run function wp76:stream_emit\n")
+        "execute if score stream wp76 matches 1.. run function wp76:stream_emit\n"
+        "execute if score killer wp76 matches 1.. run function wp76:killer\n")
     # chambers
     for scene in ("pile", "farm", "reload"):
         x, y, z = PLACES[scene]
@@ -167,6 +170,21 @@ def write_pack():
         lines.append(f"summon item {x - 8 + rng.random() * 16:.3f} {y + 0.2 + rng.random():.3f} {z - 8 + rng.random() * 16:.3f} "
                      f"{{Item:{{id:\"minecraft:{kind}\",count:{c}}}}}")
     (fn / "hopper5000.mcfunction").write_text("\n".join(lines) + "\n")
+    # scatter: a farm's drops spread over the simulated area (mobs killed where they stood), on the surface
+    x, _, z = PLACES["scatter"]
+    drops = ["rotten_flesh", "bone", "arrow", "string", "gunpowder", "spider_eye", "carrot", "feather", "leather", "ink_sac"]
+    for n in (1000, 5000, 10000):
+        rng = random.Random(83 + n)
+        lines = []
+        for i in range(n):
+            px = x - SCATTER_R + rng.random() * 2 * SCATTER_R
+            pz = z - SCATTER_R + rng.random() * 2 * SCATTER_R
+            c = 1 if i % 3 else rng.randint(1, 3)
+            lines.append(f"execute positioned {px:.3f} 0 {pz:.3f} positioned over motion_blocking run summon item ~ ~0.1 ~ "
+                         f"{{Item:{{id:\"minecraft:{drops[i % len(drops)]}\",count:{c}}}}}")
+        (fn / f"scatter{n}.mcfunction").write_text("\n".join(lines) + "\n")
+    # the farm's killer (wp74): every tick, everything but players and items
+    (fn / "killer.mcfunction").write_text("kill @e[type=!player,type=!item]\n")
     print("pack written to", pack)
 
 
@@ -270,7 +288,7 @@ def run(args):
         if scene != "reload":
             s.run(f"forceload add {x - 24} {z - 24} {x + 24 + (140 if scene == 'stream' else 0)} {z + 24}")
     bot = subprocess.Popen([str(BOT), "--addr", f"127.0.0.1:{25590 if which == 'K' else 25597}",
-                            "--count", "1", "--behavior", "idle", "--duration", "36000", "--name-prefix", "Bench", "--report-interval", "36000"],
+                            "--count", "1", "--behavior", "idle", "--view-distance", "10", "--duration", "36000", "--name-prefix", "Bench", "--report-interval", "36000"],
                            stdout=open(W / f"bot_{which}.log", "w"), stderr=subprocess.STDOUT)
     results = []
     scenes = args.k.split(",")
@@ -287,7 +305,28 @@ def run(args):
                 break
         results.append(measure(s, 15, "idle"))
         for scene in scenes:
-            if scene.startswith("pile"):
+            if scene.startswith("scatter"):
+                x, _, z = PLACES["scatter"]
+                if not getattr(s, "scatter_ready", False):
+                    s.run(f"tp Bench0 {x + 0.5} 140 {z + 0.5}")
+                    settle = time.time()
+                    while time.time() - settle < 300:
+                        time.sleep(10)
+                        avg, p50, _, p99 = s.query()
+                        print(f"[{which}] scatter settling: avg {avg} p99 {p99}", flush=True)
+                        if p99 < 15 and time.time() - settle > 40:
+                            break
+                    s.scatter_ready = True
+                    results.append(measure(s, 15, "scatter idle"))
+                s.run(f"function wp76:{scene}")
+                time.sleep(10)
+                results.append(measure(s, args.window, scene))
+                s.run("scoreboard players set killer wp76 1")
+                time.sleep(3)
+                results.append(measure(s, args.window, scene + "+killer"))
+                s.run("scoreboard players set killer wp76 0")
+                s.run("kill @e[type=item]")
+            elif scene.startswith("pile"):
                 n = int(scene[4:])
                 tp(s, "pile")
                 s.run("function wp76:pile_build")
@@ -367,7 +406,7 @@ def main():
     sub.add_parser("pack")
     r = sub.add_parser("run")
     r.add_argument("which", choices=["K", "V"])
-    r.add_argument("-k", default="pile1000,pile5000,pile10000,farm5000,merge5000,tnt,stream,hopper5000,reload5000")
+    r.add_argument("-k", default="scatter1000,scatter5000,scatter10000,pile1000,pile5000,pile10000,farm5000,merge5000,tnt,stream,hopper5000,reload5000")
     r.add_argument("--out")
     r.add_argument("--bin")
     r.add_argument("--window", type=int, default=30)
