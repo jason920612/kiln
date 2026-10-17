@@ -42,7 +42,11 @@ pub(crate) struct SpawnerEntry {
 impl SpawnerEntry {
     fn load(type_id: u16, nbt: &Tag) -> SpawnerEntry {
         let be = if type_name(type_id) == TRIAL_TYPE { Be::Trial(TrialBe::load(nbt)) } else { Be::Mob(SpawnerBe::load(nbt)) };
-        SpawnerEntry { be, type_id, dirty: false }
+        let mut e = SpawnerEntry { be, type_id, dirty: false };
+        // A spawner loads with the defaults of what the save lacks (`BaseSpawner.load`) and saves them: the chunk's copy, which is what
+        // `data get block` shows far from any player, follows at once.
+        e.dirty = !is_saved_as(&e.save(), nbt);
+        e
     }
 
     /// The saved compound (`saveCustomOnly`, with the block entity's `id`).
@@ -55,6 +59,19 @@ impl SpawnerEntry {
         f.extend(fields);
         Tag::Compound(f)
     }
+}
+
+/// Whether every field of `saved` is in `raw` with the same value (order of compound keys aside).
+fn is_saved_as(saved: &Tag, raw: &Tag) -> bool {
+    fn same(a: &Tag, b: &Tag) -> bool {
+        match (a, b) {
+            (Tag::Compound(x), Tag::Compound(y)) => x.len() == y.len() && x.iter().all(|(k, v)| y.iter().find(|(k2, _)| k2 == k).is_some_and(|(_, v2)| same(v, v2))),
+            (Tag::List(x), Tag::List(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| same(p.unwrap_list_element(), q.unwrap_list_element())),
+            _ => a == b,
+        }
+    }
+    let (Tag::Compound(fields), Tag::Compound(have)) = (saved, raw) else { return true };
+    fields.iter().filter(|(k, _)| k != "id").all(|(k, v)| have.iter().find(|(k2, _)| k2 == k).is_some_and(|(_, v2)| same(v, v2)))
 }
 
 fn chunk_of(pos: BlockPos) -> ChunkPos {
