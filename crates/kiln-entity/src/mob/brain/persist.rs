@@ -59,7 +59,8 @@ fn decode(m: Mem, t: &Tag) -> Option<Val> {
             Val::Positions(t.as_list()?.iter().filter_map(read_global_pos).collect())
         }
         BreezeJumpTarget => Val::Block(read_block_pos(t)?),
-        m if m.serializable() => Val::Unit,
+        // (`Unit.CODEC` is a map codec: anything but a compound is an error and the entry is dropped.)
+        m if m.serializable() => matches!(t, Tag::Compound(_)).then_some(Val::Unit)?,
         _ => return None,
     })
 }

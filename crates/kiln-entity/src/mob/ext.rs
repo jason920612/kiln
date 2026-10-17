@@ -278,6 +278,12 @@ pub trait Kind: Sync + Send {
         None
     }
 
+    /// A saved `Brain` tag replaces the brain (`LivingEntity.readAdditionalSaveData`: `makeBrain(packed)`): what the constructor put
+    /// into the first one besides what the provider makes (the copper golem's first transport cooldown) is gone.
+    fn brain_replaced(&self, b: &mut super::brain::Brain) {
+        let _ = b;
+    }
+
     /// `makeBrain`: the brain of a brain-driven type (built after the constructor's yaw draw;
     /// its sensors' first scans are delayed by draws from `random`). `None` for goal-driven types.
     fn make_brain(&self, m: &MobData, random: &mut dyn RandomSource) -> Option<super::brain::Brain> {

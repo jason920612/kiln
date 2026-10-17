@@ -178,6 +178,9 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
     if let Some(b) = m.brain.as_mut()
         && let Some(t) = saved_brain
     {
+        if let Some(k) = kind.ext() {
+            k.brain_replaced(b);
+        }
         super::brain::persist::load(b, t);
     }
     if let Some(k) = kind.ext() {

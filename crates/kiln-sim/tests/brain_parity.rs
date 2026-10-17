@@ -41,35 +41,15 @@ fn canon(t: &Tag) -> String {
     }
 }
 
-/// The types and keys of a tag with the numbers taken out.
-fn shape(t: &Tag) -> String {
-    match t {
-        Tag::Compound(fields) => {
-            let mut v: Vec<String> = fields.iter().map(|(k, v)| format!("{k}:{}", shape(v))).collect();
-            v.sort();
-            format!("{{{}}}", v.join(","))
-        }
-        Tag::List(items) => format!("[{}]", items.first().map(|t| shape(t.unwrap_list_element())).unwrap_or_default()),
-        Tag::Byte(_) => "b".into(),
-        Tag::Short(_) => "s".into(),
-        Tag::Int(_) => "i".into(),
-        Tag::Long(_) => "L".into(),
-        Tag::Float(_) => "f".into(),
-        Tag::Double(_) => "d".into(),
-        Tag::String(_) => "str".into(),
-        Tag::IntArray(_) => "ia".into(),
-        other => format!("{other:?}"),
-    }
-}
-
-/// The saved memories as text: the entries the case gave exactly (values and lifetimes), the others (the brain made them itself, from random
-/// draws) by their shape.
+/// The saved memories as text: the entries the case gave, with their values and lifetimes. The others (the brain made them itself, by
+/// random draws and at moments that depend on them: a goat's ram cooldown) are left out; `saved_parity` has the defaults.
 fn memories(brain: Option<&Tag>, nbt: &str) -> String {
     let Some(b) = brain else { return "(no Brain)".into() };
     let Some(Tag::Compound(mems)) = b.get("memories") else { return "(no memories)".into() };
     let mut v: Vec<String> = mems
         .iter()
-        .map(|(k, t)| if nbt.contains(&format!("\"{k}\"")) { format!("{k}:{}", canon(t)) } else { format!("{k}:~{}", shape(t)) })
+        .filter(|(k, _)| nbt.contains(&format!("\"{k}\"")))
+        .map(|(k, t)| format!("{k}:{}", canon(t)))
         .collect();
     v.sort();
     v.join(",")
