@@ -17,14 +17,14 @@ stop() {
 }
 if [ $cmd = stop ]; then stop; exit 0; fi
 stop
-if [ $cmd = fresh ]; then rm -rf $D/world; fi
+if [ $cmd = fresh ]; then rm -rf $D/world $D/trace.out; fi
 cd $D
 rm -f console; mkfifo console
 (sleep 100000000 > console 2>/dev/null </dev/null &)
 if [ $who = K ]; then
   cp -f $HOME/wt/wp77-gaps/target/release/kiln $D/kiln-run77
   export KILN_VIEW_DISTANCE=$view KILN_SIMULATION_DISTANCE=$sim KILN_PORT=25599 KILN_GENERATOR=noise KILN_SEED=$seed KILN_DATAPACK=$HOME/kiln/work/generated KILN_WORLD=$D/world KILN_ENABLE_COMMAND_BLOCK=true KILN_OPS=${OPS:-W0} KILN_WORK=$HOME/kiln/work RUST_LOG=info
-  [ -n "$COUNTERS" ] && export KILN_SPAWN_COUNTERS=$D/counters.out KILN_SPAWN_BOX=${BOX:-0,0,0,0,0,0}
+  [ -n "$COUNTERS" ] && export KILN_SPAWN_TRACE=$D/trace.out KILN_SPAWN_COUNTERS=$D/counters.out KILN_SPAWN_BOX=${BOX:-0,0,0,0,0,0}
   nohup $D/kiln-run77 < console > server.log 2>&1 &
 else
   [ -f eula.txt ] || echo eula=true > eula.txt
@@ -51,7 +51,7 @@ PROPS
   W=$HOME/kiln/work
   if [ -n "$AGENT" ]; then
     CP=$(ls $W/versions/*/server-*.jar $(find $W/libraries -name '*.jar') | tr '\n' ':')
-    W72_OUT=$D/agent.out nohup java -Xmx2G -Dwp77vanilla-marker=1 -Dw72.box=${BOX:-0,0,0,0,0,0} -javaagent:$HOME/wp77/agent77.jar --add-opens java.base/java.lang=ALL-UNNAMED -cp "$CP" net.minecraft.server.Main --nogui < console > server.log 2>&1 &
+    W72_OUT=$D/agent.out nohup java -Xmx2G -Dwp77vanilla-marker=1 -Dw72.box=${BOX:-0,0,0,0,0,0} -Dw72.trace=$D/trace.out -javaagent:$HOME/wp77/agent77.jar --add-opens java.base/java.lang=ALL-UNNAMED -cp "$CP" net.minecraft.server.Main --nogui < console > server.log 2>&1 &
   else
     nohup java -Xmx2G -Dwp77vanilla-marker=1 -jar $W/server.jar nogui < console > server.log 2>&1 &
   fi

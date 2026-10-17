@@ -83,9 +83,10 @@ public final class W72Agent {
                     })));
                     byte[] b1 = cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("isValidSpawnPostitionForType"), onReturn(b -> {
                         b.dup();
+                        b.aload(0);
                         b.aload(4);
                         b.aload(5);
-                        b.invokestatic(HOOK, "validPos", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_int, ConstantDescs.CD_Object, ConstantDescs.CD_Object));
+                        b.invokestatic(HOOK, "validPos", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_int, ConstantDescs.CD_Object, ConstantDescs.CD_Object, ConstantDescs.CD_Object));
                     })));
                     byte[] b2 = cf.transformClass(cf.parse(b1), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("isValidPositionForMob"), onReturn(b -> {
                         b.dup();

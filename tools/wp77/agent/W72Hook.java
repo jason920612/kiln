@@ -41,7 +41,7 @@ public final class W72Hook {
         }
     }
 
-    public static void validPos(int result, Object data, Object pos) {
+    public static void validPos(int result, Object level, Object data, Object pos) {
         add("validPosition " + typeName(data) + " -> " + (result != 0));
         String bx = System.getProperty("w72.box");
         if (bx != null && pos instanceof BlockPos p) {
@@ -51,6 +51,16 @@ public final class W72Hook {
             if (p.getX() >= n[0] && p.getX() <= n[3] && p.getY() >= n[1] && p.getY() <= n[4] && p.getZ() >= n[2] && p.getZ() <= n[5]) {
                 add("validPosition IN-BOX " + typeName(data) + " -> " + (result != 0));
                 add("validPosition IN-BOX Y=" + p.getY() + " " + typeName(data) + " -> " + (result != 0));
+                String tr = System.getProperty("w72.trace");
+                if (tr != null) {
+                    try {
+                        long t = ((net.minecraft.server.level.ServerLevel) level).getGameTime();
+                        java.nio.file.Files.writeString(java.nio.file.Path.of(tr), t + " " + typeName(data) + " " + p.getX() + " " + p.getY() + " " + p.getZ() + " " + (result != 0) + "
+", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                    } catch (Exception e) {
+                        add("trace error " + e);
+                    }
+                }
             }
         }
     }

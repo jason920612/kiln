@@ -424,7 +424,7 @@ pub mod stats {
     }
 
     /// `validPosition` of the vanilla agent: per type, and per type for positions in the box.
-    pub(crate) fn valid_position(type_name: &str, pos: [i32; 3], ok: bool) {
+    pub(crate) fn valid_position(type_name: &str, pos: [i32; 3], ok: bool, game_time: i64) {
         let Some(c) = config() else { return };
         let name = type_name.strip_prefix("minecraft:").unwrap_or(type_name);
         add(format!("validPosition {name} -> {ok}"));
@@ -433,6 +433,12 @@ pub mod stats {
         {
             add(format!("validPosition IN-BOX {name} -> {ok}"));
             add(format!("validPosition IN-BOX Y={} {name} -> {ok}", pos[1]));
+            if let Some(file) = std::env::var_os("KILN_SPAWN_TRACE") {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
+                    let _ = writeln!(f, "{game_time} {name} {} {} {} {ok}", pos[0], pos[1], pos[2]);
+                }
+            }
         }
     }
 
@@ -930,7 +936,7 @@ fn spawn_category_for_chunk(
                 let scale = kiln_entity::spawner::spawn_dimensions_scale(t.name);
                 no_collision(level, [fx, y as f64, fz], t.width * scale, t.height * scale)
             };
-            stats::valid_position(d_.type_name, [pos.x, pos.y, pos.z], valid);
+            stats::valid_position(d_.type_name, [pos.x, pos.y, pos.z], valid, env.game_time);
             if !valid {
                 continue;
             }
