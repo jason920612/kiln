@@ -2176,6 +2176,12 @@ impl Sim {
         Host::block_entity(self, dimension, [x, y, z])
     }
 
+    /// The id the next entity gets (for tests: an item at rest moves in the ticks where `tickCount + id` is a multiple of four, so
+    /// replays of vanilla vectors hand out vanilla's ids).
+    pub fn set_next_entity_id(&mut self, id: i32) {
+        self.next_entity_id = id;
+    }
+
     /// The live `Age` of the end gateway at an overworld position (for tests): what `portalTick` has counted.
     pub fn gateway_age(&self, x: i32, y: i32, z: i32) -> Option<i64> {
         let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;

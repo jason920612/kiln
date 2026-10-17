@@ -1579,6 +1579,14 @@ public class ContainerVectors {
                     }
                     all.sort(Comparator.<List<Object>>comparingDouble(l -> (Double) l.get(0)).thenComparingDouble(l -> (Double) l.get(2)).thenComparingDouble(l -> (Double) l.get(1)));
                     tick.put("items", new ArrayList<Object>(all));
+                    if (t == 1) {
+                        // The ids the items got (consecutive, in the order they were summoned): Kiln numbers its entities by itself, and an item at rest
+                        // moves in the ticks where (tick count + id) % 4 == 0, so the replay hands out the same ids.
+                        List<Object> ids = new ArrayList<>();
+                        for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, box)) ids.add(e.getId());
+                        ids.sort(Comparator.comparingInt(o -> (Integer) o));
+                        tick.put("item_ids", ids);
+                    }
                 }
                 if (s.watchMobs) {
                     var box = new net.minecraft.world.phys.AABB(BASE[0] - 8, BASE[1] - 8, BASE[2] - 8, BASE[0] + 12, BASE[1] + 12, BASE[2] + 12);

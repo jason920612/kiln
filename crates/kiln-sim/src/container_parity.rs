@@ -196,6 +196,10 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             inbox.push(ToSim::Console("kill @e[type=item]".into()));
         }
         if tick == 1 {
+            // (The items summoned this tick get the ids vanilla gave them: see `ContainerVectors` `item_ids`.)
+            if let Some(first) = want["item_ids"].as_array().and_then(|a| a.first()).and_then(Value::as_i64) {
+                sim.set_next_entity_id(first as i32);
+            }
             for b in line["blocks"].as_array().unwrap() {
                 let p = pos_of(b);
                 inbox.push(ToSim::Console(format!("setblock {} {} {} {}", p.x, p.y, p.z, b[3].as_str().unwrap())));
@@ -319,9 +323,7 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             }
         }
         if line["track_items"].as_bool() == Some(true) {
-            // `ContainerVectors`: each item entity's position, motion and whether it stands, sorted by x, z, y. The vertical motion
-            // of an item that stands is not compared: it depends on the entity id (an item at rest moves every fourth tick by
-            // `tickCount + id`), which the two servers number differently.
+            // `ContainerVectors`: each item entity's position, motion and whether it stands, sorted by x, z, y.
             let mut got: Vec<[f64; 7]> = Vec::new();
             for t in sim.entity_nbt() {
                 if t.get("id").and_then(Tag::as_str) != Some("minecraft:item") {
@@ -342,10 +344,7 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             compared += 1;
             let same = got.len() == want_items.len()
                 && got.iter().zip(&want_items).all(|(g, w)| {
-                    (0..7).all(|i| {
-                        let skip = i == 4 && g[6] == 1.0 && w[6] == 1.0;
-                        skip || g[i].to_bits() == w[i].to_bits() || g[i] == w[i]
-                    })
+                    (0..7).all(|i| g[i].to_bits() == w[i].to_bits() || g[i] == w[i])
                 });
             if !same {
                 errors.push(format!("tick {tick} items: kiln {got:?}, vanilla {want_items:?}"));
