@@ -935,11 +935,11 @@ impl SimLevel<'_, '_, '_> {
             let kind = match filter {
                 EntityFilter::Any => true,
                 EntityFilter::Item => matches!(e.kind, EntityKind::Item(_)),
-                EntityFilter::MergeableItem => matches!(e.kind, EntityKind::Item(_)) && kiln_entity::item::is_mergable(e),
+                EntityFilter::MergeableItem => matches!(e.kind, EntityKind::Item(_)),
                 EntityFilter::ExperienceOrb => matches!(e.kind, EntityKind::ExperienceOrb(_)),
                 EntityFilter::Living => matches!(e.kind, EntityKind::Other { .. } | EntityKind::Player(_) | EntityKind::Mob(_)),
             };
-            kind && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area)
+            kind && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area) && (filter != EntityFilter::MergeableItem || kiln_entity::item::is_mergable(e))
         };
         // An item entity's box is its position and the type's fixed size, and the list keeps its position as its state
         // has it (no turn moves another entity; a riding item is moved in its own turn): items clearly away from the area

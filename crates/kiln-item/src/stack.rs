@@ -158,7 +158,13 @@ impl ItemStack {
 
     /// `max_stack_size`, 1 if absent.
     pub fn max_stack_size(&self) -> i32 {
-        self.get(keys::MAX_STACK_SIZE).copied().unwrap_or(1)
+        if self.is_empty() {
+            return 1;
+        }
+        match self.patch.get(keys::MAX_STACK_SIZE.id) {
+            Some(v) => v.and_then(|c| keys::MAX_STACK_SIZE.get(c)).copied().unwrap_or(1),
+            None => crate::defaults::default_max_stack_size(self.item),
+        }
     }
 
     /// `ItemStack.isStackable`.
