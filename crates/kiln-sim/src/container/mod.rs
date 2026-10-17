@@ -301,8 +301,6 @@ pub(crate) struct ContainerBe {
     /// first). A new block entity gets the next number; `/data` keeps the one it replaces.
     pub order: u64,
     pub items: Vec<ItemStack>,
-    /// `Items` entries that did not decode, written back unchanged.
-    undecoded: Vec<(i32, Tag)>,
     /// `CustomName` (a text component) as saved.
     pub custom_name: Option<Tag>,
     /// `lock` (an item predicate) as saved.
@@ -397,6 +395,12 @@ impl ContainerBe {
         };
         // `JukeboxBlockEntity.loadAdditional`: the disc, and how far its song had got.
         let mut list = list;
+        // An item that did not load is gone from the saved form too (the chunk's copy is rewritten).
+        let single = |key: &str| nbt.get(key).is_some_and(|t| ItemStack::from_nbt(t).ok().is_none_or(|s| s.is_empty()));
+        let dropped = list.dropped
+            || (kind == BeKind::Jukebox && single("RecordItem"))
+            || (kind == BeKind::Lectern && single("Book"))
+            || (matches!(kind, BeKind::DecoratedPot | BeKind::Brushable) && loot_table.is_none() && single("item"));
         let (mut song, mut song_unchecked) = (None, false);
         if kind == BeKind::Jukebox {
             let disc = nbt.get("RecordItem").and_then(|t| ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty()).unwrap_or_else(ItemStack::empty);
@@ -431,7 +435,6 @@ impl ContainerBe {
             serial,
             order: serial,
             items: list.stacks,
-            undecoded: list.undecoded,
             custom_name: nbt.get("CustomName").cloned(),
             lock: nbt.get("lock").cloned(),
             loot_table,
@@ -469,7 +472,7 @@ impl ContainerBe {
             command: (kind == BeKind::CommandBlock).then(|| Box::new(crate::command_block::Data::load(nbt))),
             structure: (kind == BeKind::StructureBlock).then(|| Box::new(crate::structure_block::Data::load(nbt))),
             jigsaw: (kind == BeKind::Jigsaw).then(|| Box::new(crate::structure_block::Jigsaw::load(nbt))),
-            dirty: false,
+            dirty: dropped,
             extra,
         };
         if kind == BeKind::Campfire {
@@ -593,7 +596,7 @@ impl ContainerBe {
                         }
                     }
                     // (`ContainerHelper.saveAllItems(.., alwaysPut)`: a shulker box with nothing in it saves no list.)
-                    None if self.kind == BeKind::ShulkerBox && self.items.iter().all(ItemStack::is_empty) && self.undecoded.is_empty() => {}
+                    None if self.kind == BeKind::ShulkerBox && self.items.iter().all(ItemStack::is_empty) => {}
                     None => out.push(("Items".into(), self.item_list().save())),
                 }
                 if self.kind == BeKind::Hopper {
@@ -631,7 +634,7 @@ impl ContainerBe {
     }
 
     fn item_list(&self) -> ItemList {
-        ItemList { stacks: self.items.clone(), undecoded: self.undecoded.clone() }
+        ItemList { stacks: self.items.clone(), dropped: false }
     }
 
     /// `BlockEntity.setChanged`.

@@ -450,7 +450,6 @@ struct Player {
     /// Main slots, equipment and the selected hotbar slot.
     inv: kiln_inventory::PlayerInventory,
     /// Saved inventory entries Kiln could not decode, written back unchanged.
-    inv_extra: kiln_inventory::persist::PlayerItemsExtra,
     /// The inventory menu (container 0), always open underneath.
     menu: kiln_inventory::Menu,
     /// A block or entity menu the player has open.
@@ -3858,7 +3857,6 @@ impl Sim {
             chunks_per_tick: 9.0,
             unacked_batches: 0,
             inv: joining.inv,
-            inv_extra: joining.inv_extra,
             menu: kiln_inventory::Menu::inventory(),
             open_menu: None,
             maps: self.maps.clone(),

@@ -114,7 +114,6 @@ pub struct State {
     /// `AbstractHorse.inventory`: the chest's slots (`3 * columns`, none without a chest).
     pub inventory: Vec<ItemStack>,
     /// Saved `Items` entries that did not decode, written back unchanged.
-    inv_undecoded: Vec<(i32, Tag)>,
     /// `EquipmentSlot.BODY`: horse armor (a llama's carpet).
     pub body: ItemStack,
     /// What `dropChances` says about the saddle and the body slot (a slot filled by a player
@@ -482,7 +481,6 @@ impl Kind for Equine {
             saddle: ItemStack::empty(),
             chest: false,
             inventory: Vec::new(),
-            inv_undecoded: Vec::new(),
             body: ItemStack::empty(),
             saddle_drop: 0.085,
             body_drop: 0.085,
@@ -998,7 +996,6 @@ impl Kind for Equine {
                 let list = kiln_inventory::persist::ItemList::load(items.as_ref(), n);
                 let s = st_mut(m);
                 s.inventory = list.stacks;
-                s.inv_undecoded = list.undecoded;
             }
         }
         if self.0 == Which::Skeleton {
@@ -1048,7 +1045,7 @@ impl Kind for Equine {
         } else if self.chested() {
             o.put("ChestedHorse", Tag::Byte(s.chest as i8));
             if s.chest {
-                o.put("Items", kiln_inventory::persist::ItemList { stacks: s.inventory.clone(), undecoded: s.inv_undecoded.clone() }.save());
+                o.put("Items", kiln_inventory::persist::ItemList { stacks: s.inventory.clone(), dropped: false }.save());
             }
         }
         if self.0 == Which::Skeleton {

@@ -189,6 +189,25 @@ impl DataComponentPatch {
         Ok(patch)
     }
 
+    /// Decodes saved data the way vanilla's partial decoding reads it: an entry that does not decode (a component type that does not
+    /// exist, a value that does not fit) is left off, and the lists of items in `container`, `bundle_contents` and `charged_projectiles`
+    /// lose their invalid elements (what the `ItemStack` codec gives `ValueInput.read` and the container loaders: the stack stays).
+    pub fn from_value_lenient(v: &Value) -> Self {
+        let mut patch = DataComponentPatch::new();
+        let Ok(m) = v.as_map() else { return patch };
+        for (k, v) in m.entries() {
+            let Ok(key) = k.as_str() else { continue };
+            let decoded = Self::decode_entry(key, v).or_else(|e| match salvage(key, v) {
+                Some(kept) => Self::decode_entry(key, &kept),
+                None => Err(e),
+            });
+            if let Ok((id, value)) = decoded {
+                patch.put(id, value);
+            }
+        }
+        patch
+    }
+
     /// Decodes the persistent form like vanilla does: any invalid entry is an error.
     pub fn from_value_strict(v: &Value) -> DataResult<Self> {
         let mut patch = DataComponentPatch::new();
@@ -213,6 +232,24 @@ impl DataComponentPatch {
         }
         let c = Component::from_value(id, v).map_err(|e| DataError(format!("{name}: {e}")))?;
         Ok((id, Some(c)))
+    }
+}
+
+/// The value of a component made of lists of items with the elements that do not decode taken out (`None` for other components).
+fn salvage(key: &str, v: &Value) -> Option<Value> {
+    use crate::stack::ItemStackTemplate;
+    let Value::List(items) = v else { return None };
+    let keep = |item: &Value| ItemStackTemplate::from_value(item).is_ok();
+    match key {
+        "minecraft:bundle_contents" | "minecraft:charged_projectiles" => Some(Value::List(items.iter().filter(|i| keep(i)).cloned().collect())),
+        "minecraft:container" => Some(Value::List(
+            items
+                .iter()
+                .filter(|e| e.as_map().ok().is_some_and(|m| m.get("slot").is_some_and(|s| s.as_i32().is_ok()) && m.get("item").is_some_and(keep)))
+                .cloned()
+                .collect(),
+        )),
+        _ => None,
     }
 }
 

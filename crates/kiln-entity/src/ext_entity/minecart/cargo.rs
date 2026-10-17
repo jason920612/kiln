@@ -19,7 +19,6 @@ use kiln_proto::nbt::Tag;
 pub struct Contents {
     pub items: Vec<ItemStack>,
     /// Saved `Items` entries that did not decode, written back unchanged.
-    undecoded: Vec<(i32, Tag)>,
     /// `LootTable` not yet rolled (`ContainerEntity.getContainerLootTable`).
     pub loot_table: Option<String>,
     pub loot_seed: i64,
@@ -27,7 +26,7 @@ pub struct Contents {
 
 impl Contents {
     pub fn new(size: usize) -> Contents {
-        Contents { items: vec![ItemStack::empty(); size], undecoded: Vec::new(), loot_table: None, loot_seed: 0 }
+        Contents { items: vec![ItemStack::empty(); size], loot_table: None, loot_seed: 0 }
     }
 
     /// `readChestVehicleSaveData`: a loot table replaces the saved items.
@@ -36,7 +35,7 @@ impl Contents {
         let seed = r.get("LootTableSeed").and_then(Tag::as_i64).unwrap_or(0);
         let saved = r.get("Items");
         let list = if table.is_none() { ItemList::load(saved, size) } else { ItemList::load(None, size) };
-        Contents { items: list.stacks, undecoded: list.undecoded, loot_table: table, loot_seed: seed }
+        Contents { items: list.stacks, loot_table: table, loot_seed: seed }
     }
 
     /// `addChestVehicleSaveData`.
@@ -48,7 +47,7 @@ impl Contents {
                     o.put("LootTableSeed", Tag::Long(self.loot_seed));
                 }
             }
-            None => o.put("Items", ItemList { stacks: self.items.clone(), undecoded: self.undecoded.clone() }.save()),
+            None => o.put("Items", ItemList { stacks: self.items.clone(), dropped: false }.save()),
         }
     }
 

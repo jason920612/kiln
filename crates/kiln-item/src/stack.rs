@@ -289,8 +289,16 @@ impl ItemStack {
         self.to_value().to_nbt()
     }
 
+    /// Saved data read the way `ValueInput` reads an item (partial decoding): the id decides (an unknown one fails the stack), a count that
+    /// is missing or outside 1 to 99 is 1, and components that do not decode are left off ([`DataComponentPatch::from_value_lenient`]).
     pub fn from_nbt(tag: &Tag) -> DataResult<ItemStack> {
-        ItemStack::from_value(&Value::from_nbt(tag))
+        let v = Value::from_nbt(tag);
+        let m = v.as_map()?;
+        let item = m.req_with("id", |v| registry::ITEM.id_from_value(v))?;
+        let count = m.lenient_or("count", 1, Value::as_i32);
+        let count = if (1..=99).contains(&count) { count } else { 1 };
+        let patch = m.get("components").map_or_else(DataComponentPatch::new, DataComponentPatch::from_value_lenient);
+        Ok(ItemStack::from_parts(item, count, patch))
     }
 
     /// Decodes a stack that kiln-proto read with `read_untrusted_slot` (component values still

@@ -44,7 +44,6 @@ pub(crate) struct Joining {
     pub rot: [f32; 2],
     pub game_mode: u8,
     pub inv: kiln_inventory::PlayerInventory,
-    pub inv_extra: kiln_inventory::persist::PlayerItemsExtra,
     pub health: f32,
     pub food: i32,
     pub saturation: f32,
@@ -157,14 +156,13 @@ impl Sim {
             .and_then(Tag::as_str)
             .and_then(crate::dim_id)
             .unwrap_or(crate::OVERWORLD_ID);
-        let (mut inv, inv_extra) = kiln_inventory::persist::load_player_inventory(saved.raw());
+        let mut inv = kiln_inventory::persist::load_player_inventory(saved.raw());
         inv.selected = saved.selected_slot as usize;
         Joining {
             pos,
             rot: saved.rot.unwrap_or(self.spawn_rot),
             game_mode: saved.game_mode.unwrap_or_else(|| self.default_game_mode()),
             inv,
-            inv_extra,
             health: saved.raw().get("Health").and_then(Tag::as_f64).map_or(crate::health::MAX_HEALTH, |h| h as f32),
             food: saved.raw().get("foodLevel").and_then(Tag::as_i64).map_or(20, |f| f as i32),
             saturation: saved.raw().get("foodSaturationLevel").and_then(Tag::as_f64).map_or(5.0, |s| s as f32),
@@ -321,7 +319,7 @@ impl Sim {
                 None => fields.push(("respawn".into(), r)),
             }
         }
-        kiln_inventory::persist::save_player_inventory(&p.inv, &p.inv_extra, &mut nbt);
+        kiln_inventory::persist::save_player_inventory(&p.inv, &mut nbt);
         p.containers.save_into(&mut nbt);
         if let Tag::Compound(fields) = &mut nbt {
             // (`storeNullable`: absent when there is none.)
