@@ -32,9 +32,23 @@ fn tag_of(v: &Value) -> Tag {
     }
 }
 
+/// The attributes saved, each as `id base [modifier ids]` (the amounts of random modifiers differ from world to world).
 fn attr_set(t: Option<&Tag>) -> BTreeSet<String> {
     match t {
-        Some(Tag::List(l)) => l.iter().filter_map(|a| a.unwrap_list_element().get("id").and_then(Tag::as_str).map(str::to_owned)).collect(),
+        Some(Tag::List(l)) => l
+            .iter()
+            .filter_map(|a| {
+                let a = a.unwrap_list_element();
+                let id = a.get("id").and_then(Tag::as_str)?;
+                let base = a.get("base").and_then(Tag::as_f64).map_or("-".to_owned(), |b| format!("{b}"));
+                let mut mods: Vec<String> = match a.get("modifiers") {
+                    Some(Tag::List(m)) => m.iter().filter_map(|m| m.unwrap_list_element().get("id").and_then(Tag::as_str).map(str::to_owned)).collect(),
+                    _ => Vec::new(),
+                };
+                mods.sort();
+                Some(format!("{id} {base} {mods:?}"))
+            })
+            .collect(),
         _ => BTreeSet::new(),
     }
 }

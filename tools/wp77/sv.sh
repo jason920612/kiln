@@ -20,7 +20,7 @@ stop
 if [ $cmd = fresh ]; then rm -rf $D/world; fi
 cd $D
 rm -f console; mkfifo console
-(sleep 100000000 > console &)
+(sleep 100000000 > console 2>/dev/null </dev/null &)
 if [ $who = K ]; then
   cp -f $HOME/wt/wp77-gaps/target/release/kiln $D/kiln-run77
   export KILN_VIEW_DISTANCE=$view KILN_SIMULATION_DISTANCE=$sim KILN_PORT=25599 KILN_GENERATOR=noise KILN_SEED=$seed KILN_DATAPACK=$HOME/kiln/work/generated KILN_WORLD=$D/world KILN_ENABLE_COMMAND_BLOCK=true KILN_OPS=${OPS:-W0} KILN_WORK=$HOME/kiln/work RUST_LOG=info
@@ -45,6 +45,8 @@ spawn-protection=0
 sync-chunk-writes=false
 view-distance=$view
 enforce-secure-profile=false
+white-list=false
+enforce-whitelist=false
 PROPS
   W=$HOME/kiln/work
   if [ -n "$AGENT" ]; then
