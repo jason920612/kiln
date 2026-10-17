@@ -759,17 +759,27 @@ fn shape(sim: &SimLevel, id: i32) -> Option<(Aabb, bool)> {
 /// The region's entity turns with speculation ([`self`]); `false` if the region does not qualify
 /// (the caller runs the turns in order).
 pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &blocks::Ticking, any_player: bool, ctx: &kiln_sched::Ctx<'_>) -> bool {
-    if !sim.level.env().speculate || !pace.wanted || sim.list.len() < MIN_ENTITIES || ctx.workers() < 2 {
+    let off = |why: &'static str| {
+        crate::diag::add(why, std::time::Duration::from_nanos(1000));
+        false
+    };
+    if !sim.level.env().speculate || sim.list.len() < MIN_ENTITIES || ctx.workers() < 2 {
         return false;
+    }
+    if !pace.wanted {
+        return off("spec.off_unwanted");
     }
     if pace.paused > 0 {
         pace.paused -= 1;
-        return false;
+        return off("spec.off_paused");
     }
     {
         let Some(region) = sim.level.region_ref() else { return false };
-        if !region.blocks.hearts.is_empty() || crate::sculk::listening(region) || sim.list.iter().any(|e| islands::SERIAL.contains(&e.kind.name)) {
-            return false;
+        if !region.blocks.hearts.is_empty() || crate::sculk::listening(region) {
+            return off("spec.off_listening");
+        }
+        if sim.list.iter().any(|e| islands::SERIAL.contains(&e.kind.name)) {
+            return off("spec.off_serial");
         }
     }
     let t0 = std::time::Instant::now();
