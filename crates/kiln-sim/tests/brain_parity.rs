@@ -123,6 +123,15 @@ fn loaded_brain_memories_match_vanilla() {
         let (ty, nbt) = (v["type"].as_str().unwrap(), v["nbt"].as_str().unwrap_or(""));
         step(&mut sim, &mut client, vec![format!("summon {ty} 8.5 80 8.5 {nbt}")]);
         let mut done = 1;
+        if std::env::var_os("KILN_BRAIN_TRACE").is_some() {
+            for t in 1..=20 {
+                if let Some(s) = sim.entity_nbt().into_iter().rfind(|n| n.get("id").and_then(Tag::as_str) == Some(ty)) {
+                    eprintln!("TRACE {name} t={t}: {}", memories(s.get("Brain"), nbt));
+                }
+                step(&mut sim, &mut client, vec![]);
+            }
+            done = 21;
+        }
         for s in v["samples"].as_array().unwrap() {
             let t = s["t"].as_i64().unwrap() as usize;
             if t == 0 {
