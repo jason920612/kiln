@@ -327,7 +327,9 @@ fn a_raid_in_progress_survives_a_restart() {
         pillagers.iter().map(|&id| w.sim.raider(id)).collect::<Vec<_>>()
     );
     assert_eq!(after[0].5, before[0].5, "all of them count");
-    assert!(after[0].6 > 0.0 && (after[0].6 - hurt[0].6).abs() < 0.2, "the bar shows what is left: {} then {}", hurt[0].6, after[0].6);
+    // `Raid.joinRaid` adds the health of each raider that finds the raid again to the wave's total (which was saved) and updates the bar:
+    // about half of what it was.
+    assert!(after[0].6 > 0.3 && after[0].6 < 0.7, "the bar after the raiders found the raid again: {} then {}", hurt[0].6, after[0].6);
     // The raid goes on: kill the wave and the next one comes.
     w.console("kill @e[type=minecraft:pillager]");
     w.ticks(400);

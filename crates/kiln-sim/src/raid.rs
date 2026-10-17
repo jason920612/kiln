@@ -444,7 +444,19 @@ impl Sim {
             // bar at the health the raiders had before the last of them, unless a raider died (then at the health they have).
             let mut before: BTreeMap<i32, BTreeMap<i32, f32>> = BTreeMap::new();
             let mut died: BTreeSet<i32> = BTreeSet::new();
+            // `Raid.joinRaid` updates the bar as each raider joins: the raiders of the group map are the ones that joined before.
+            let joining: BTreeSet<i32> = events.iter().filter_map(|e| if let RaidEvent::Joined { entity, .. } = e { Some(*entity) } else { None }).collect();
+            let mut joined: BTreeSet<i32> = BTreeSet::new();
             for ev in events {
+                if let RaidEvent::Joined { raid, entity, .. } = &ev {
+                    joined.insert(*entity);
+                    self.raid_event(dim, ev.clone());
+                    if let Some(total) = self.dims[dim].raids.raids.get(raid).map(|r| r.total_health).filter(|t| *t > 0.0) {
+                        let health: f32 = raiders_of(&self.dims[dim], *raid).iter().filter(|r| !joining.contains(&r.id) || joined.contains(&r.id)).map(|r| r.health).sum();
+                        self.set_bar_progress(dim, *raid, (health / total).clamp(0.0, 1.0));
+                    }
+                    continue;
+                }
                 match &ev {
                     RaidEvent::Hurt { raid, entity, health } => {
                         before.entry(*raid).or_default().insert(*entity, *health);
