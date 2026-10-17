@@ -101,8 +101,8 @@ def main():
     except Exception:
         pass
     sv("kill @e[type=!player]", show=False)
-    say("== 4. gold block broken (iron pickaxe), no helmet")
-    sv(f"item replace entity {ME} armor.head with minecraft:air", show=False)
+    say("== 4. gold block broken (iron pickaxe), gold helmet on")
+    sv(f"item replace entity {ME} armor.head with minecraft:golden_helmet", show=False)
     sv(f"give {ME} minecraft:iron_pickaxe", show=False)
     time.sleep(0.5)
     a.select("minecraft:iron_pickaxe")
@@ -116,6 +116,7 @@ def main():
     time.sleep(3.5)
     a.mouse("left", "up")
     say("gold block now:", blk(a, NX + 12, NY, NZ + 14))
+    say("   piglin brain right after the block broke:", brain("@e[type=piglin,limit=1]")[-170:].replace(chr(10), " "), "| piglins:", sv("execute if entity @e[type=piglin]", show=False)[-60:].replace(chr(10), " "))
     watch("after gold block", "@e[type=piglin,limit=1]")
     sv("kill @e[type=!player]", show=False)
     say("== 5. hoglin and a warped fungus / respawn anchor")

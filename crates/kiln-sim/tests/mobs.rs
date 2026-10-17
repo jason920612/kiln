@@ -900,6 +900,33 @@ fn piglins_turn_on_a_player_who_opens_a_chest() {
     assert!(w.health() < 20.0, "the piglin attacked after the chest was opened (health {})", w.health());
 }
 
+/// `Block.playerWillDestroy`: a player in gold armour who breaks a block of `#guarded_by_piglins` (gold block, gold ores...) is attacked by the
+/// piglins around, seen or not; stone does not matter.
+#[test]
+fn piglins_turn_on_a_player_who_breaks_gold() {
+    let attacked_after_breaking = |block: &str| -> bool {
+        let mut w = World::new();
+        w.console("difficulty normal");
+        w.console("gamemode survival Hunter");
+        w.console("item replace entity Hunter armor.head with minecraft:golden_helmet");
+        w.console("effect give Hunter minecraft:haste 999 100 true");
+        let p = w.pos().map(|v| v.floor() as i32);
+        let at = [p[0] + 2, p[1], p[2]];
+        w.console(&format!("setblock {} {} {} {block}", at[0], at[1], at[2]));
+        w.summon("minecraft:piglin", [-6.0, 0.0, 0.0], "{PersistenceRequired:1b,IsImmuneToZombification:1b,HandItems:[{id:\"minecraft:golden_sword\",count:1},{}]}");
+        w.ticks(100);
+        assert_eq!(w.health(), 20.0, "a player in gold armour is left alone");
+        for (action, sequence) in [(0, 1), (2, 2)] {
+            assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action, pos: at, face: 1, sequence })]));
+            w.ticks(2);
+        }
+        w.ticks(200);
+        w.health() < 20.0
+    };
+    assert!(!attacked_after_breaking("minecraft:stone"), "breaking stone angers nobody");
+    assert!(attacked_after_breaking("minecraft:gold_block"), "breaking a gold block does");
+}
+
 /// wp74: a hazard matrix against vanilla found that mobs took nothing from lit campfires, wither roses and powder snow. Vanilla (a frozen reading
 /// after 200 ticks, NoAI mobs standing in the block): a cow in powder snow loses 2 (1 every 40 ticks once fully frozen), a blaze 10 (5 each), a
 /// polar bear nothing (`#freeze_immune_entity_types`); a cow in a lit campfire or a wither rose dies, a blaze in the campfire (fire immune) lives.
