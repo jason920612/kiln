@@ -358,7 +358,7 @@ public class CombatVectors {
         s.target.dy = 0.8;
         out.add(s);
 
-        for (String mat : new String[] {"leather", "golden", "chainmail", "iron", "diamond", "netherite"}) {
+        for (String mat : new String[] {"leather", "golden", "copper", "chainmail", "iron", "diamond", "netherite"}) {
             s = new Scenario("armor_" + mat);
             s.attacker.mainHand = "minecraft:diamond_sword";
             s.target.armor = new String[] {"minecraft:" + mat + "_boots", "minecraft:" + mat + "_leggings",
@@ -2300,7 +2300,7 @@ class MeleeVectors {
     static void weapons(List<Case> out) {
         String[] weapons = {null, "minecraft:stick", "minecraft:wooden_sword", "minecraft:stone_sword", "minecraft:iron_sword", "minecraft:diamond_sword",
                 "minecraft:netherite_sword", "minecraft:golden_sword", "minecraft:wooden_axe", "minecraft:iron_axe", "minecraft:diamond_axe", "minecraft:netherite_axe",
-                "minecraft:iron_shovel", "minecraft:diamond_pickaxe", "minecraft:iron_hoe", "minecraft:trident", "minecraft:shears", "minecraft:copper_sword", "minecraft:copper_axe"};
+                "minecraft:iron_shovel", "minecraft:diamond_pickaxe", "minecraft:iron_hoe", "minecraft:trident", "minecraft:shears", "minecraft:copper_sword", "minecraft:copper_axe", "minecraft:copper_pickaxe", "minecraft:copper_shovel", "minecraft:copper_hoe"};
         for (String w : weapons) {
             for (int ticker : new int[] {100, 13, 6, 0}) {
                 String n = (w == null ? "fist" : w.substring(10)) + "/" + ticker;
@@ -2419,7 +2419,7 @@ class MeleeVectors {
     }
 
     static void armorOnMobs(List<Case> out) {
-        for (String mat : new String[] {"leather", "golden", "chainmail", "iron", "diamond", "netherite", "turtle"}) {
+        for (String mat : new String[] {"leather", "golden", "copper", "chainmail", "iron", "diamond", "netherite", "turtle"}) {
             String set = mat.equals("turtle") ? equipment("head", "minecraft:turtle_helmet", "") : equipment("head", "minecraft:" + mat + "_helmet", "", "chest", "minecraft:" + mat + "_chestplate", "",
                     "legs", "minecraft:" + mat + "_leggings", "", "feet", "minecraft:" + mat + "_boots", "");
             for (String t : new String[] {"zombie", "skeleton"}) {
@@ -2611,7 +2611,7 @@ class MeleeVectors {
             out.add(c);
         }
         // Armor variants against the smash (and breach).
-        for (String mat : new String[] {"leather", "iron", "diamond", "netherite"}) {
+        for (String mat : new String[] {"leather", "copper", "iron", "diamond", "netherite"}) {
             for (int breach : new int[] {0, 1, 4}) {
                 Case c = new Case("mace/armor_" + mat + "/breach_" + breach + "/player").weapon(mace).fall(2.5).player(armored(side(0.0, 2.0), mat));
                 if (breach > 0) c.ench("minecraft:breach", breach);
