@@ -701,12 +701,62 @@ class Scenarios {
 
     static void items(List<EntityVectors.Scenario> out) {
         offsets(out);
+        rests(out);
         floors(out);
         clutter(out);
         fluids(out);
         effects(out);
         merges(out);
         misc(out);
+    }
+
+    /**
+     * wp75: items at rest for a long time (the on-ground snap, the every-fourth-tick move, friction of the block below) on every
+     * floor, in bubble columns going up and down, and beside pistons: the ticks each moved and each stood still are all compared.
+     */
+    static void rests(List<EntityVectors.Scenario> out) {
+        Random r = new Random(75);
+        String[] floors = {"minecraft:stone", "minecraft:soul_sand", "minecraft:blue_ice", "minecraft:honey_block", "minecraft:slime_block", "minecraft:cactus",
+            "minecraft:magma_block", "minecraft:piston[extended=false,facing=up]", "minecraft:piston[extended=true,facing=up]",
+            "minecraft:sticky_piston[extended=false,facing=north]", "minecraft:piston_head[facing=up,short=false,type=normal]",
+            "minecraft:piston_head[facing=north,short=true,type=sticky]", "minecraft:moving_piston[facing=up,type=normal]",
+            "minecraft:oak_slab[type=top]", "minecraft:farmland[moisture=7]", "minecraft:hopper[enabled=true,facing=down]"};
+        for (int k = 0; k < floors.length * 3; k++) {
+            String floor = floors[k % floors.length];
+            var s = new EntityVectors.Scenario("item_rest/" + floor + "/" + k / floors.length, r.nextLong());
+            s.fill(-3, 0, -3, 3, 0, 3, "minecraft:stone");
+            s.fill(-2, 0, -2, 2, 0, 2, floor);
+            // A piston beside the floor too, so the item may drift against it.
+            s.block(3, 1, 0, "minecraft:piston[extended=false,facing=west]");
+            for (int i = 0; i < 4; i++) {
+                s.entity("item", rnd(r, -1.5, 1.5), rnd(r, 1.1, 2.5), rnd(r, -1.5, 1.5), k % 3 == 0 ? 0 : rnd(r, -0.1, 0.1), 0, k % 3 == 0 ? 0 : rnd(r, -0.1, 0.1), r.nextLong())
+                        .with("pickup_delay", 32767);
+            }
+            s.ticks(500);
+            out.add(s);
+        }
+        for (int k = 0; k < 24; k++) {
+            boolean up = k % 2 == 0;
+            var s = new EntityVectors.Scenario("item_bubble/" + (up ? "up" : "down") + "/" + k / 2, r.nextLong());
+            s.fill(-3, 0, -3, 3, 0, 3, "minecraft:stone");
+            s.fill(-3, 1, -3, 3, 8, -3, "minecraft:glass");
+            s.fill(-3, 1, 3, 3, 8, 3, "minecraft:glass");
+            s.fill(-3, 1, -3, -3, 8, 3, "minecraft:glass");
+            s.fill(3, 1, -3, 3, 8, 3, "minecraft:glass");
+            s.fill(-2, 1, -2, 2, 6, 2, "minecraft:water");
+            // A column or two in the pool.
+            int cols = 1 + r.nextInt(2);
+            for (int c = 0; c < cols; c++) {
+                int x = r.nextInt(5) - 2, z = r.nextInt(5) - 2;
+                s.block(x, 0, z, up ? "minecraft:soul_sand" : "minecraft:magma_block");
+                for (int y = 1; y <= 6; y++) s.block(x, y, z, "minecraft:bubble_column[drag=" + !up + "]");
+            }
+            for (int i = 0; i < 3; i++) {
+                s.entity("item", rnd(r, -1.9, 1.9), rnd(r, 1.1, 5.5), rnd(r, -1.9, 1.9), 0, rnd(r, -0.1, 0.1), 0, r.nextLong()).with("pickup_delay", 32767);
+            }
+            s.ticks(300);
+            out.add(s);
+        }
     }
 
     /** Bamboo and pointed dripstone: collision shapes shifted per position. */
