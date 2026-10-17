@@ -1023,7 +1023,7 @@ impl CustomGoal for FoxStrollThroughVillageGoal {
         }
         // `atBottomCenterOf(wanted).subtract(position).scale(0.4).add(position).subtract(position).normalize().scale(10).add(position)`.
         let bottom = Vec3::new(wanted.x as f64 + 0.5, wanted.y as f64, wanted.z as f64 + 0.5);
-        let toward = bottom.subtract(here).scale(0.4).add(here).subtract(here).normalize().scale(10.0).add(here);
+        let toward = (((bottom - here).scale(0.4) + here) - here).normalize().scale(10.0) + here;
         let target = BlockPos::containing(toward.x, toward.y, toward.z);
         let y = level.motion_blocking_no_leaves_height(target.x, target.z);
         if !path::move_to(e, m, level, target.x as f64, y as f64, target.z as f64, 1.0) {
