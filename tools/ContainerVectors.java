@@ -60,6 +60,8 @@ public class ContainerVectors {
         boolean watchDrops;
         /** wp75: the blocks are placed in the order given (block entities tick in the order they were made), not sorted by position. */
         boolean placeInOrder;
+        /** wp75: the item entities (position, motion, on ground) are recorded every tick. */
+        boolean trackItems;
         /** The game time is a multiple of 20 when the first tick begins (daylight detectors work on it). */
         boolean align20;
         /** The items are made by the entity phase (Kiln has them a tick later). */
@@ -147,6 +149,11 @@ public class ContainerVectors {
             return this;
         }
 
+        Scenario trackItems() {
+            trackItems = true;
+            return this;
+        }
+
         Scenario mobs() {
             watchMobs = true;
             return this;
@@ -179,6 +186,7 @@ public class ContainerVectors {
             m.put("mobs", watchMobs);
             m.put("mobs_lag", mobsLag);
             m.put("track", track);
+            m.put("track_items", trackItems);
             return m;
         }
 
@@ -326,6 +334,7 @@ public class ContainerVectors {
                 .comparator(0, -1, 1, "north"));
         cartScenarios(out);
         hopperChainScenarios(out);
+        pistonItemScenarios(out);
         jukeboxScenarios(out);
         campfireScenarios(out);
         daylightScenarios(out);
@@ -1159,6 +1168,51 @@ public class ContainerVectors {
         }
     }
 
+    /**
+     * wp75: items beside and on pistons that push and pull (slime, honey, plain blocks in front): position, motion and whether they stand
+     * are compared every tick. (The entity ids differ between the two servers, and an item at rest moves only every fourth tick by
+     * (tick count + id): the vertical motion of an item that stands is not compared, only where it is.)
+     */
+    static void pistonItemScenarios(List<Scenario> out) {
+        java.util.Random r = new java.util.Random(7575);
+        int[][] dirs = {{1, 0, 0}, {0, 1, 0}, {0, 0, -1}, {-1, 0, 0}};
+        String[] dirNames = {"east", "up", "north", "west"};
+        String[] fronts = {null, "minecraft:stone", "minecraft:slime_block", "minecraft:honey_block", "minecraft:dirt"};
+        String[] items = {"cobblestone", "stick", "diamond"};
+        for (int k = 0; k < 64; k++) {
+            int d = k % 4;
+            boolean sticky = (k / 4) % 2 == 1;
+            String front = fronts[(k / 8) % fronts.length];
+            Scenario s = new Scenario("piston_items/" + k, 50).trackItems();
+            for (int x = -3; x <= 5; x++)
+                for (int z = -3; z <= 3; z++) s.block(x, -1, z, "minecraft:stone");
+            int[] f = dirs[d];
+            s.block(0, 0, 0, (sticky ? "minecraft:sticky_piston" : "minecraft:piston") + "[facing=" + dirNames[d] + ",extended=false]");
+            if (front != null) s.block(f[0], f[1], f[2], front);
+            // A wall behind the pushed block half the time.
+            if (k % 3 == 0) s.block(3 * f[0], 3 * f[1], 3 * f[2], "minecraft:stone");
+            int n = 1 + r.nextInt(3);
+            for (int i = 0; i < n; i++) {
+                double ox, oy, oz;
+                switch (r.nextInt(3)) {
+                    case 0 -> { ox = f[0] + 0.15 + r.nextDouble() * 0.7; oy = f[1] + 0.0 + r.nextDouble() * 0.1; oz = f[2] + 0.15 + r.nextDouble() * 0.7; }
+                    case 1 -> { ox = f[0] + 0.15 + r.nextDouble() * 0.7; oy = f[1] + 1.0 + r.nextDouble() * 0.5; oz = f[2] + 0.15 + r.nextDouble() * 0.7; }
+                    default -> { ox = 2 * f[0] + 0.15 + r.nextDouble() * 0.7; oy = 2 * f[1] + r.nextDouble() * 0.5; oz = 2 * f[2] + 0.15 + r.nextDouble() * 0.7; }
+                }
+                // (up: the cell in front is above; keep the others in the room above the floor)
+                if (d == 1) { oy = Math.max(oy, 1.0); }
+                s.at(1, String.format(Locale.ROOT, "summon minecraft:item ~%s ~%s ~%s {Item:{id:\"minecraft:%s\",count:1},Motion:[0d,0d,0d],PickupDelay:32767s}",
+                        ox, oy, oz, items[r.nextInt(items.length)]));
+            }
+            // The power: beside the piston, not in front.
+            int[] side = d == 1 || d == 2 ? new int[] {1, 0, 0} : new int[] {0, 0, 1};
+            String where = String.format(Locale.ROOT, "~%d ~%d ~%d", side[0], side[1], side[2]);
+            s.at(3, "setblock " + where + " minecraft:redstone_block");
+            s.at(26, "setblock " + where + " minecraft:air");
+            out.add(s);
+        }
+    }
+
     static void comparator(List<Scenario> out, String name, String block) {
         out.add(new Scenario(name, 8).container(0, 0, 1, block).comparator(0, 0, 0, "south"));
     }
@@ -1515,6 +1569,16 @@ public class ContainerVectors {
                     all.sort(Comparator.<List<Object>, String>comparing(l -> (String) l.get(0)).thenComparingDouble(l -> (Double) l.get(1))
                             .thenComparingDouble(l -> (Double) l.get(3)).thenComparingDouble(l -> (Double) l.get(2)));
                     tick.put("track", new ArrayList<Object>(all));
+                }
+                if (s.trackItems) {
+                    var box = new net.minecraft.world.phys.AABB(BASE[0] - 8, BASE[1] - 8, BASE[2] - 8, BASE[0] + 12, BASE[1] + 12, BASE[2] + 12);
+                    List<List<Object>> all = new ArrayList<>();
+                    for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, box)) {
+                        var d = e.getDeltaMovement();
+                        all.add(List.of(e.getX(), e.getY(), e.getZ(), d.x, d.y, d.z, e.onGround() ? 1.0 : 0.0));
+                    }
+                    all.sort(Comparator.<List<Object>>comparingDouble(l -> (Double) l.get(0)).thenComparingDouble(l -> (Double) l.get(2)).thenComparingDouble(l -> (Double) l.get(1)));
+                    tick.put("items", new ArrayList<Object>(all));
                 }
                 if (s.watchMobs) {
                     var box = new net.minecraft.world.phys.AABB(BASE[0] - 8, BASE[1] - 8, BASE[2] - 8, BASE[0] + 12, BASE[1] + 12, BASE[2] + 12);

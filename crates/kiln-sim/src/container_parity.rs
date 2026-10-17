@@ -318,6 +318,39 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                 errors.push(format!("tick {tick} tracked entities: kiln {got}, vanilla {}", want["track"]));
             }
         }
+        if line["track_items"].as_bool() == Some(true) {
+            // `ContainerVectors`: each item entity's position, motion and whether it stands, sorted by x, z, y. The vertical motion
+            // of an item that stands is not compared: it depends on the entity id (an item at rest moves every fourth tick by
+            // `tickCount + id`), which the two servers number differently.
+            let mut got: Vec<[f64; 7]> = Vec::new();
+            for t in sim.entity_nbt() {
+                if t.get("id").and_then(Tag::as_str) != Some("minecraft:item") {
+                    continue;
+                }
+                let triple = |key: &str| -> [f64; 3] {
+                    match t.get(key) {
+                        Some(Tag::List(l)) if l.len() == 3 => [l[0].as_f64().unwrap_or(0.0), l[1].as_f64().unwrap_or(0.0), l[2].as_f64().unwrap_or(0.0)],
+                        _ => [0.0; 3],
+                    }
+                };
+                let (pos, mot) = (triple("Pos"), triple("Motion"));
+                let ground = if t.get("OnGround").and_then(Tag::as_i64).unwrap_or(0) != 0 { 1.0 } else { 0.0 };
+                got.push([pos[0], pos[1], pos[2], mot[0], mot[1], mot[2], ground]);
+            }
+            got.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[2].total_cmp(&b[2])).then(a[1].total_cmp(&b[1])));
+            let want_items: Vec<Vec<f64>> = want["items"].as_array().unwrap().iter().map(|v| v.as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect()).collect();
+            compared += 1;
+            let same = got.len() == want_items.len()
+                && got.iter().zip(&want_items).all(|(g, w)| {
+                    (0..7).all(|i| {
+                        let skip = i == 4 && g[6] == 1.0 && w[6] == 1.0;
+                        skip || g[i].to_bits() == w[i].to_bits() || g[i] == w[i]
+                    })
+                });
+            if !same {
+                errors.push(format!("tick {tick} items: kiln {got:?}, vanilla {want_items:?}"));
+            }
+        }
         if line["mobs"].as_bool() == Some(true) {
             // `ContainerVectors`: each living thing's type, what it wears (by slot) and whether it carries a chest.
             let mut got: Vec<String> = Vec::new();
