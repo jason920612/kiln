@@ -442,6 +442,19 @@ pub mod stats {
         }
     }
 
+    /// `start` of the vanilla agent: a pack start (counted per height for the columns of the box).
+    pub(crate) fn start(category: kiln_entity::mob::Category, pos: [i32; 3]) {
+        let Some(c) = config() else { return };
+        if let Some(b) = c.bounds
+            && pos[0] >= b[0]
+            && pos[0] <= b[3]
+            && pos[2] >= b[2]
+            && pos[2] <= b[5]
+        {
+            add(format!("start {} Y={}", category_name(category), if (127..=134).contains(&pos[1]) { pos[1].to_string() } else { "other".to_owned() }));
+        }
+    }
+
     /// `chunkAttempt` of the vanilla agent: one try of a chunk for a category (counted per chunk for the chunks the box touches).
     pub(crate) fn chunk_attempt(category: kiln_entity::mob::Category, chunk: [i32; 2]) {
         let Some(c) = config() else { return };
@@ -861,6 +874,7 @@ fn spawn_category_for_chunk(
         return;
     }
     let start = KBlockPos::new(x, y, z);
+    stats::start(cat, [x, y, z]);
     if kiln_data::block_logic::is_redstone_conductor(level.block(start)) {
         return;
     }

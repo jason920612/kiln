@@ -82,6 +82,22 @@ public final class W72Hook {
         }
     }
 
+    /** NaturalSpawner.spawnCategoryForPosition(category, level, chunk, startPos, ...): a pack start, counted per height for the columns of the box. */
+    public static void start(Object category, Object pos) {
+        try {
+            String bx = System.getProperty("w72.box");
+            if (bx == null || !(pos instanceof BlockPos p)) return;
+            String[] v = bx.split(",");
+            int[] n = new int[6];
+            for (int i = 0; i < 6; i++) n[i] = Integer.parseInt(v[i].trim());
+            if (p.getX() >= n[0] && p.getX() <= n[3] && p.getZ() >= n[2] && p.getZ() <= n[5]) {
+                add("start " + category + " Y=" + (p.getY() >= 127 && p.getY() <= 134 ? String.valueOf(p.getY()) : "other"));
+            }
+        } catch (Throwable t) {
+            add("start error " + t);
+        }
+    }
+
     public static void validMob(int result, Object mob) {
         String n;
         try {
