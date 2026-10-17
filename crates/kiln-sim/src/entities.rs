@@ -2915,7 +2915,7 @@ pub(crate) fn tick_spawns(
         };
         (sim.current, sim.seeds) = (placeholder, 0);
         sim.current_info = Some((phys.type_name, arr(phys.position())));
-        sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
+        sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &sim));
         sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, placeholder);
         phys.common_tick();
         if !phys.is_removed() {
