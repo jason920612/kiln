@@ -19,7 +19,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 
 public class SavedStateVectors {
-    static final int[] SAMPLES = {0, 1, 2, 5, 20, 100, 300};
+    static final int[] SAMPLES = java.util.stream.IntStream.concat(java.util.stream.IntStream.rangeClosed(0, 40), java.util.stream.IntStream.of(60, 100, 300)).toArray();
 
     public static void main(String[] args) {
         try {
