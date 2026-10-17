@@ -290,9 +290,12 @@ fn a_raid_in_progress_survives_a_restart() {
     w.ticks(5);
     w.village();
     w.ticks(40);
+    assert!(w.sim.sections_to_village("minecraft:overworld", w.pos()) <= 1, "a village");
     w.console("gamemode survival Hunter");
     w.console("effect give Hunter minecraft:bad_omen 100 1");
     w.ticks(2);
+    let effects = w.sim.effects(1).unwrap();
+    assert!(effects.iter().any(|e| e.0 == "minecraft:raid_omen"), "raid omen: {effects:?}");
     w.ticks(600);
     w.console("gamemode creative Hunter");
     w.ticks(305);
