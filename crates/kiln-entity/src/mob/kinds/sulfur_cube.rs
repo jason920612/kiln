@@ -880,6 +880,11 @@ impl Kind for SulfurCube {
         Some(true)
     }
 
+    /// `requiresCustomPersistence` (on top of a passenger or a led mob): a cube with a body item or from a bucket.
+    fn requires_custom_persistence(&self, m: &MobData) -> bool {
+        has_body(m) || sul(m).from_bucket
+    }
+
     /// `requiresCustomPersistence`: a ball or a bucketed cube stays.
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
         (has_body(m) || sul(m).from_bucket).then_some(false)

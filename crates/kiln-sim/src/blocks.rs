@@ -360,6 +360,8 @@ pub(crate) struct BlockEnv {
     pub loot: Option<std::sync::Arc<kiln_loot::LootData>>,
     /// Game rules and difficulty for damage to players.
     pub damage: crate::health::DamageRules,
+    /// The mobs and spawn chunks of the whole level, added up before the regions run (`None`: a region is the level).
+    pub spawn_totals: Option<std::sync::Arc<crate::spawner::SpawnTotals>>,
     /// Time of day and game rules for mobs.
     pub mobs: crate::mobs::MobRules,
     /// Biome spawn lists for natural spawning (`None`: no datapack, no natural spawning).
@@ -1934,6 +1936,7 @@ mod tests {
             loot: None,
             damage: crate::health::DamageRules::default(),
             mobs: Default::default(),
+            spawn_totals: None,
             spawn_table: None,
             menus: Default::default(),
             trial_configs: Default::default(),

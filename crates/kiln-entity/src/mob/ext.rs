@@ -576,6 +576,12 @@ pub trait Kind: Sync + Send {
         let _ = (id, m, source);
         amount
     }
+    /// `requiresCustomPersistence` beyond `Mob`'s (a passenger or a led mob): what the type keeps from despawning and out of the
+    /// natural spawner's mob counts.
+    fn requires_custom_persistence(&self, m: &MobData) -> bool {
+        let _ = m;
+        false
+    }
     /// `removeWhenFarAway` for a type that despawns differently from its category.
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
         let _ = m;

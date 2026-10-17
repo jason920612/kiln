@@ -649,6 +649,12 @@ impl Kind for Axolotl {
         mob::play_sound(e, m, level, "minecraft:entity.axolotl.attack", 1.0, 1.0);
     }
 
+    /// `requiresCustomPersistence` (on top of a passenger or a led mob): a bucketed axolotl.
+    fn requires_custom_persistence(&self, m: &MobData) -> bool {
+        st(m).from_bucket
+    }
+
+
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
         Some(!st(m).from_bucket)
     }

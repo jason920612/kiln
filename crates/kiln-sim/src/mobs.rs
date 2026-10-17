@@ -45,6 +45,8 @@ pub(crate) struct MobRules {
     pub difficulty: u8,
     /// The world spawn (no natural spawns within 24 blocks).
     pub spawn_point: [i32; 3],
+    /// `minecraft:spectators_generate_chunks`: whether a spectator counts for the spawn range (`ChunkMap.skipPlayer`).
+    pub spectators_generate_chunks: bool,
 }
 
 impl Default for MobRules {
@@ -71,6 +73,7 @@ impl Default for MobRules {
             cramming: 24,
             difficulty: 2,
             spawn_point: [0, 64, 0],
+            spectators_generate_chunks: true,
         }
     }
 }

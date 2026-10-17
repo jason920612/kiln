@@ -3460,6 +3460,15 @@ fn sound_variant_count(kind: MobKind) -> i32 {
     };
     kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == reg).map_or(1, |(_, e)| e.len() as i32)
 }
+/// `isPersistenceRequired() || requiresCustomPersistence()`: the mobs `NaturalSpawner.createState` leaves out of its counts.
+pub fn persistent_for_counts(e: &Entity, m: &MobData) -> bool {
+    m.persistence_required
+        || e.vehicle.is_some()
+        || crate::leash::is_leashed(e)
+        || m.kind.ext().is_some_and(|k| k.requires_custom_persistence(m))
+        || kinds::raider::raider(m).is_some_and(|r| r.raid.is_some())
+}
+
 /// `Mob.checkDespawn`: `nearest` is the squared distance to the nearest player (`None`: no
 /// player in the dimension).
 pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f64>) {

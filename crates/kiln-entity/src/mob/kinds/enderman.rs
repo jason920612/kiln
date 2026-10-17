@@ -174,6 +174,12 @@ impl Kind for Enderman {
         Some(0.0)
     }
 
+    /// `requiresCustomPersistence` (on top of a passenger or a led mob): an enderman carrying a block.
+    fn requires_custom_persistence(&self, m: &MobData) -> bool {
+        st(m).carried.is_some()
+    }
+
+
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
         // `requiresCustomPersistence`: an enderman carrying a block stays.
         st(m).carried.is_some().then_some(false)

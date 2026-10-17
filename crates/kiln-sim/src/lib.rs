@@ -2716,7 +2716,9 @@ impl Sim {
                 cramming: self.rule_int("minecraft:max_entity_cramming"),
                 difficulty: self.commands.difficulty as u8,
                 spawn_point: self.spawn,
+                spectators_generate_chunks: self.rule_bool("minecraft:spectators_generate_chunks"),
             },
+            spawn_totals: None,
             spawn_table: self.spawn_table.clone(),
             menus: self.rules.clone(),
             trial_configs: self.trial_configs.clone(),
@@ -2899,6 +2901,24 @@ impl Sim {
             }
         }
         let dt = diag::lap("rr.work", dt);
+        // `NaturalSpawner.createState` counts the mobs of the whole level against the spawn range of all its players: with several regions
+        // in a level they are added up here, before any of them runs.
+        let mut envs = envs;
+        for (dim, env) in envs.iter_mut().enumerate() {
+            let Some(env) = env else { continue };
+            let mine: Vec<&RegionWork> = work.iter().filter(|w| w.dim == dim).collect();
+            if mine.len() < 2 {
+                continue;
+            }
+            let mut totals = spawner::SpawnTotals::default();
+            for w in &mine {
+                for (t, c) in totals.counts.iter_mut().zip(spawner::count_mobs(&w.entities.list)) {
+                    *t += c;
+                }
+            }
+            totals.chunks = spawner::spawn_chunk_count(mine.iter().flat_map(|w| spawner::players_for_chunks(&w.players, env.spectators_generate_chunks)));
+            env.blocks.spawn_totals = Some(std::sync::Arc::new(totals));
+        }
         let report = self.pool.run_units(&mut work, cost, |w, ctx| {
             w.light_new_chunks();
             f(w, envs[w.dim].as_ref().expect("the environment of a level with regions"), ctx)
