@@ -521,4 +521,35 @@ mod tests {
         let short = Tag::Compound(vec![("id".into(), Tag::String("stone".into()))]);
         assert_eq!(ItemStack::from_nbt(&short).unwrap(), stack("stone", 1));
     }
+
+    fn compound(fields: Vec<(&str, Tag)>) -> Tag {
+        Tag::Compound(fields.into_iter().map(|(k, v)| (k.to_owned(), v)).collect())
+    }
+
+    /// Saved items load like vanilla's partial decoding (checked against 26.3 by `LoadDropVectors`): a count that is not 1 to 99 is 1,
+    /// a component that does not decode is left off, and the lists of items inside components lose their invalid elements.
+    #[test]
+    fn saved_items_load_leniently() {
+        let id = || ("id", Tag::String("minecraft:stone".into()));
+        for count in [0, -1, 100, 1000] {
+            let s = ItemStack::from_nbt(&compound(vec![id(), ("count", Tag::Int(count))])).unwrap();
+            assert_eq!(s.count(), 1, "count {count}");
+        }
+        assert_eq!(ItemStack::from_nbt(&compound(vec![id(), ("count", Tag::Int(65))])).unwrap().count(), 65);
+        assert!(ItemStack::from_nbt(&compound(vec![("id", Tag::String("minecraft:no_such_item".into())), ("count", Tag::Int(1))])).is_err());
+        assert!(ItemStack::from_nbt(&compound(vec![("count", Tag::Int(1))])).is_err());
+        let components = compound(vec![("minecraft:no_such_component", Tag::Int(1)), ("minecraft:damage", Tag::String("x".into())), ("minecraft:repair_cost", Tag::Int(4))]);
+        let s = ItemStack::from_nbt(&compound(vec![id(), ("components", components)])).unwrap();
+        assert_eq!(s.get(keys::REPAIR_COST), Some(&4));
+        assert!(s.get(keys::DAMAGE).is_none());
+        assert_eq!(s.to_nbt(), compound(vec![("components", compound(vec![("minecraft:repair_cost", Tag::Int(4))])), ("count", Tag::Int(1)), ("id", Tag::String("minecraft:stone".into()))]));
+        // A bundle keeps the contents that load; so does a container.
+        let template = |name: &str, n: i32| compound(vec![("id", Tag::String(name.into())), ("count", Tag::Int(n))]);
+        let bundle = compound(vec![("minecraft:bundle_contents", Tag::List(vec![template("minecraft:no_such_item", 1), template("minecraft:stone", 2)]))]);
+        let b = ItemStack::from_nbt(&compound(vec![("id", Tag::String("minecraft:bundle".into())), ("components", bundle)])).unwrap();
+        let Tag::Compound(saved) = b.to_nbt() else { panic!() };
+        let contents = saved.iter().find(|(k, _)| k == "components").and_then(|(_, c)| c.get("minecraft:bundle_contents")).and_then(Tag::as_list).unwrap().to_vec();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0].get("count"), Some(&Tag::Int(2)));
+    }
 }
