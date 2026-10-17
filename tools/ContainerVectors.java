@@ -58,6 +58,10 @@ public class ContainerVectors {
         List<int[]> carts = new ArrayList<>();
         /** The item entities lying about (by item, with the sum of their counts) are recorded every tick. */
         boolean watchDrops;
+        /** wp75: the blocks are placed in the order given (block entities tick in the order they were made), not sorted by position. */
+        boolean placeInOrder;
+        /** wp75: the item entities (position, motion, on ground) are recorded every tick. */
+        boolean trackItems;
         /** The game time is a multiple of 20 when the first tick begins (daylight detectors work on it). */
         boolean align20;
         /** The items are made by the entity phase (Kiln has them a tick later). */
@@ -145,6 +149,11 @@ public class ContainerVectors {
             return this;
         }
 
+        Scenario trackItems() {
+            trackItems = true;
+            return this;
+        }
+
         Scenario mobs() {
             watchMobs = true;
             return this;
@@ -177,11 +186,13 @@ public class ContainerVectors {
             m.put("mobs", watchMobs);
             m.put("mobs_lag", mobsLag);
             m.put("track", track);
+            m.put("track_items", trackItems);
             return m;
         }
 
         /** Blocks in position order (x, then y, then z): block entities tick in this order. */
         List<Object[]> sortedBlocks() {
+            if (placeInOrder) return new ArrayList<>(blocks);
             List<Object[]> out = new ArrayList<>(blocks);
             out.sort(Comparator.<Object[]>comparingInt(b -> (Integer) b[0]).thenComparingInt(b -> (Integer) b[1])
                     .thenComparingInt(b -> (Integer) b[2]));
@@ -227,6 +238,21 @@ public class ContainerVectors {
                 .container(2, 0, 0, "minecraft:hopper[facing=west]")
                 .container(1, 0, 0, "minecraft:hopper[facing=west]")
                 .container(0, 0, 0, "minecraft:barrel[facing=up]"));
+        // wp75: block entities tick in the order they were made: a stack of hoppers made top first and bottom first.
+        for (int k = 0; k < 2; k++) {
+            Scenario s = new Scenario(k == 0 ? "hopper_stack_made_top_first" : "hopper_stack_made_bottom_first", 30);
+            String[][] parts = {
+                {"0", "3", "0", "minecraft:chest" + items(slot(0, "oak_log", 5), slot(13, "dirt", 2))},
+                {"0", "2", "0", "minecraft:hopper[facing=down]" + items(slot(0, "oak_log", 3))},
+                {"0", "1", "0", "minecraft:hopper[facing=down]"},
+                {"0", "0", "0", "minecraft:chest"}};
+            for (int i = 0; i < 4; i++) {
+                String[] p = parts[k == 0 ? i : 3 - i];
+                s.container(Integer.parseInt(p[0]), Integer.parseInt(p[1]), Integer.parseInt(p[2]), p[3]);
+            }
+            s.placeInOrder = true;
+            out.add(s);
+        }
         out.add(new Scenario("hopper_fills_a_nearly_full_chest", 60)
                 .container(0, 2, 0, "minecraft:hopper[facing=down]" + items(slot(0, "stone", 10), slot(2, "sand", 3)))
                 .container(0, 1, 0, "minecraft:chest" + items(fullChest("stone", 64, 26, 60))));
@@ -307,6 +333,8 @@ public class ContainerVectors {
                 .container(0, -1, 0, "minecraft:chest")
                 .comparator(0, -1, 1, "north"));
         cartScenarios(out);
+        hopperChainScenarios(out);
+        pistonItemScenarios(out);
         jukeboxScenarios(out);
         campfireScenarios(out);
         daylightScenarios(out);
@@ -1012,6 +1040,184 @@ public class ContainerVectors {
                 .cart(0, 1, 0, "hopper_minecart", 0.0, "{Enabled:0b,Items:[" + slot(0, "apple", 2) + "," + slot(3, "coal", 2) + "]}"));
     }
 
+    /**
+     * wp75: random hopper chains (different lengths and shapes: down steps, horizontal runs, turns, a
+     * hopper beside another's side that sucks from the one above it by accident), placed in
+     * different orders (block entities tick in the order they were made), with comparators, locks and
+     * minecart ends, compared tick by tick.
+     */
+    static void hopperChainScenarios(List<Scenario> out) {
+        String[] things = {"stone", "dirt", "apple", "coal", "oak_log", "sand"};
+        int[][] dirs = {{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}};
+        String[] names = {"east", "west", "south", "north", "down"};
+        for (int n = 0; n < 160; n++) {
+            java.util.Random r = new java.util.Random(7500 + n);
+            Scenario s = new Scenario("hc_" + n, 70 + r.nextInt(40));
+            java.util.Set<String> used = new java.util.HashSet<>();
+            List<int[]> path = new ArrayList<>();
+            List<Integer> facing = new ArrayList<>();
+            int len = 2 + r.nextInt(6);
+            int[] at = {0, 4, 0};
+            path.add(at.clone());
+            used.add(at[0] + "," + at[1] + "," + at[2]);
+            // The source sits above the first hopper (or the hopper holds the items itself).
+            used.add(at[0] + "," + (at[1] + 1) + "," + at[2]);
+            for (int i = 0; i < len; i++) {
+                int d = -1;
+                for (int tries = 0; tries < 12 && d < 0; tries++) {
+                    int c = r.nextInt(5);
+                    // Down steps are likelier than turns.
+                    if (r.nextInt(3) == 0) c = 4;
+                    String key = (at[0] + dirs[c][0]) + "," + (at[1] + dirs[c][1]) + "," + (at[2] + dirs[c][2]);
+                    if (!used.contains(key)) {
+                        d = c;
+                        used.add(key);
+                    }
+                }
+                if (d < 0) break;
+                facing.add(d);
+                at = new int[] {at[0] + dirs[d][0], at[1] + dirs[d][1], at[2] + dirs[d][2]};
+                path.add(at.clone());
+            }
+            // path.size() blocks: every one but the last is a hopper facing the next; the last is the end.
+            int ends = r.nextInt(4);
+            String endBlock = switch (ends) {
+                case 0 -> "minecraft:chest";
+                case 1 -> "minecraft:barrel[facing=up]";
+                case 2 -> "minecraft:hopper[facing=" + names[r.nextInt(4)] + "]";
+                default -> "minecraft:dropper[facing=up]";
+            };
+            // Items for the source and some hoppers.
+            String sourceItems = items(slot(0, things[r.nextInt(things.length)], 1 + r.nextInt(64)), slot(1 + r.nextInt(8), things[r.nextInt(things.length)], 1 + r.nextInt(40)),
+                    slot(10 + r.nextInt(10), things[r.nextInt(things.length)], 1 + r.nextInt(64)));
+            List<Object[]> blocks = new ArrayList<>();
+            boolean sourceHopper = r.nextInt(3) == 0;
+            int[] p0 = path.get(0);
+            String srcBlock = sourceHopper ? "minecraft:hopper[facing=down]" + sourceItems : "minecraft:chest" + sourceItems;
+            if (sourceHopper) {
+                // Hopper slots are 0..4.
+                srcBlock = "minecraft:hopper[facing=down]" + items(slot(r.nextInt(5), things[r.nextInt(things.length)], 1 + r.nextInt(64)), slot(r.nextInt(5), things[r.nextInt(things.length)], 1 + r.nextInt(20)));
+            }
+            List<int[]> watched = new ArrayList<>();
+            // The later scenarios have minecarts at the source or the end (their own random, so the others stay as they were).
+            java.util.Random r2 = new java.util.Random(9100 + n);
+            boolean cartSource = n >= 100 && r2.nextInt(2) == 0, cartEnd = n >= 100 && r2.nextInt(2) == 0;
+            String endCart = r2.nextBoolean() ? "hopper_minecart" : "chest_minecart";
+            if (cartSource) {
+                s.cart(p0[0], p0[1] + 1, p0[2], "chest_minecart", 0.0, sourceItems);
+            } else {
+                blocks.add(new Object[] {p0[0], p0[1] + 1, p0[2], srcBlock});
+                watched.add(new int[] {p0[0], p0[1] + 1, p0[2]});
+            }
+            for (int i = 0; i < path.size() - 1; i++) {
+                int[] p = path.get(i);
+                String pre = "";
+                if (r.nextInt(4) == 0) pre = items(slot(r.nextInt(5), things[r.nextInt(things.length)], 1 + r.nextInt(30)));
+                blocks.add(new Object[] {p[0], p[1], p[2], "minecraft:hopper[facing=" + names[facing.get(i)] + "]" + pre});
+                watched.add(p);
+            }
+            int[] last = path.get(path.size() - 1);
+            if (cartEnd) {
+                s.cart(last[0], last[1], last[2], endCart, 0.0, "");
+            } else {
+                blocks.add(new Object[] {last[0], last[1], last[2], endBlock});
+                watched.add(last);
+            }
+            // A comparator beside some hopper, reading it.
+            if (r.nextInt(2) == 0) {
+                int i = r.nextInt(path.size());
+                int[] p = path.get(i);
+                for (int tries = 0; tries < 8; tries++) {
+                    int c = r.nextInt(4);
+                    int[] q = {p[0] + dirs[c][0], p[1], p[2] + dirs[c][2]};
+                    int[] support = {q[0], q[1] - 1, q[2]};
+                    String k = q[0] + "," + q[1] + "," + q[2], ks = support[0] + "," + support[1] + "," + support[2];
+                    if (used.contains(k) || used.contains(ks)) continue;
+                    used.add(k);
+                    used.add(ks);
+                    s.comparators.add(q);
+                    blocks.add(new Object[] {support[0], support[1], support[2], "minecraft:stone"});
+                    blocks.add(new Object[] {q[0], q[1], q[2], "minecraft:comparator[facing=" + names[c ^ 1] + "]"});
+                    break;
+                }
+            }
+            for (int[] w : watched) s.containers.add(w);
+            // Placement order.
+            int mode = n % 5;
+            switch (mode) {
+                case 0 -> blocks.sort(Comparator.<Object[]>comparingInt(b -> (Integer) b[0]).thenComparingInt(b -> (Integer) b[1]).thenComparingInt(b -> (Integer) b[2]));
+                case 1 -> blocks.sort(Comparator.<Object[]>comparingInt(b -> -(Integer) b[0]).thenComparingInt(b -> -(Integer) b[1]).thenComparingInt(b -> -(Integer) b[2]));
+                case 2 -> java.util.Collections.shuffle(blocks, r);
+                case 3 -> { }
+                default -> java.util.Collections.reverse(blocks);
+            }
+            for (Object[] b : blocks) s.block((int) b[0], (int) b[1], (int) b[2], (String) b[3]);
+            s.placeInOrder = true;
+            // A redstone lock on the second hopper for a while.
+            if (r.nextInt(3) == 0 && path.size() > 2) {
+                int[] p = path.get(1);
+                int c = r.nextInt(4);
+                String where = String.format(Locale.ROOT, "~%d ~%d ~%d", p[0] + dirs[c][0], p[1], p[2] + dirs[c][2]);
+                String k = (p[0] + dirs[c][0]) + "," + p[1] + "," + (p[2] + dirs[c][2]);
+                if (!used.contains(k)) {
+                    s.at(8 + r.nextInt(10), "setblock " + where + " minecraft:redstone_block");
+                    s.at(30 + r.nextInt(15), "setblock " + where + " minecraft:air");
+                }
+            }
+            out.add(s);
+        }
+    }
+
+    /**
+     * wp75: items beside and on pistons that push and pull (slime, honey, plain blocks in front): position, motion and whether they stand
+     * are compared every tick. (The entity ids differ between the two servers, and an item at rest moves only every fourth tick by
+     * (tick count + id): the vertical motion of an item that stands is not compared, only where it is.)
+     */
+    static void pistonItemScenarios(List<Scenario> out) {
+        java.util.Random r = new java.util.Random(7575);
+        int[][] dirs = {{1, 0, 0}, {0, 1, 0}, {0, 0, -1}, {-1, 0, 0}};
+        String[] dirNames = {"east", "up", "north", "west"};
+        String[] fronts = {null, "minecraft:stone", "minecraft:slime_block", "minecraft:honey_block", "minecraft:dirt"};
+        String[] items = {"cobblestone", "stick", "diamond"};
+        // Family 0: the head extends (items beside, on and in front of it); family 1: it extends and pulls back what it pushed or
+        // stuck to (items on the pushed block). (Items that get inside a moving block are pushed out by vanilla with the entity's
+        // unseeded random: no comparison there.)
+        for (int fam = 0; fam < 2; fam++)
+        for (int k = 0; k < 64; k++) {
+            int d = k % 4;
+            boolean sticky = (k / 4) % 2 == 1;
+            String front = fronts[(k / 8) % fronts.length];
+            if (fam == 1 && front == null) continue;
+            Scenario s = new Scenario((fam == 0 ? "piston_items/" : "piston_pull/") + k, fam == 0 ? 25 : 45).trackItems();
+            for (int x = -3; x <= 5; x++)
+                for (int z = -3; z <= 3; z++) s.block(x, -1, z, "minecraft:stone");
+            int[] f = dirs[d];
+            s.state(0, 0, 0).state(f[0], f[1], f[2]).state(2 * f[0], 2 * f[1], 2 * f[2]);
+            s.block(0, 0, 0, (sticky ? "minecraft:sticky_piston" : "minecraft:piston") + "[facing=" + dirNames[d] + ",extended=false]");
+            if (front != null) s.block(f[0], f[1], f[2], front);
+            int n = 1 + r.nextInt(3);
+            for (int i = 0; i < n; i++) {
+                double ox, oy, oz;
+                switch (front != null ? 1 : r.nextInt(3)) {
+                    case 0 -> { ox = f[0] + 0.15 + r.nextDouble() * 0.7; oy = f[1] + 0.0 + r.nextDouble() * 0.1; oz = f[2] + 0.15 + r.nextDouble() * 0.7; }
+                    case 1 -> { ox = f[0] + 0.15 + r.nextDouble() * 0.7; oy = f[1] + 1.0 + r.nextDouble() * 0.5; oz = f[2] + 0.15 + r.nextDouble() * 0.7; }
+                    default -> { ox = 2 * f[0] + 0.15 + r.nextDouble() * 0.7; oy = 2 * f[1] + r.nextDouble() * 0.5; oz = 2 * f[2] + 0.15 + r.nextDouble() * 0.7; }
+                }
+                // (up: the cell in front is above; keep the others in the room above the floor)
+                if (d == 1) { oy = Math.max(oy, 1.0); }
+                s.at(1, String.format(Locale.ROOT, "summon minecraft:item ~%s ~%s ~%s {Item:{id:\"minecraft:%s\",count:1},Motion:[0d,0d,0d],PickupDelay:32767s}",
+                        ox, oy, oz, items[r.nextInt(items.length)]));
+            }
+            // The power: beside the piston, not in front.
+            int[] side = d == 1 || d == 2 ? new int[] {1, 0, 0} : new int[] {0, 0, 1};
+            String where = String.format(Locale.ROOT, "~%d ~%d ~%d", side[0], side[1], side[2]);
+            s.state(side[0], side[1], side[2]);
+            s.at(3, "setblock " + where + " minecraft:redstone_block");
+            if (fam == 1) s.at(26, "setblock " + where + " minecraft:air");
+            out.add(s);
+        }
+    }
+
     static void comparator(List<Scenario> out, String name, String block) {
         out.add(new Scenario(name, 8).container(0, 0, 1, block).comparator(0, 0, 0, "south"));
     }
@@ -1369,6 +1575,24 @@ public class ContainerVectors {
                             .thenComparingDouble(l -> (Double) l.get(3)).thenComparingDouble(l -> (Double) l.get(2)));
                     tick.put("track", new ArrayList<Object>(all));
                 }
+                if (s.trackItems) {
+                    var box = new net.minecraft.world.phys.AABB(BASE[0] - 8, BASE[1] - 8, BASE[2] - 8, BASE[0] + 12, BASE[1] + 12, BASE[2] + 12);
+                    List<List<Object>> all = new ArrayList<>();
+                    for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, box)) {
+                        var d = e.getDeltaMovement();
+                        all.add(List.of(e.getX(), e.getY(), e.getZ(), d.x, d.y, d.z, e.onGround() ? 1.0 : 0.0));
+                    }
+                    all.sort(Comparator.<List<Object>>comparingDouble(l -> (Double) l.get(0)).thenComparingDouble(l -> (Double) l.get(2)).thenComparingDouble(l -> (Double) l.get(1)));
+                    tick.put("items", new ArrayList<Object>(all));
+                    if (t == 1) {
+                        // The ids the items got (consecutive, in the order they were summoned): Kiln numbers its entities by itself, and an item at rest
+                        // moves in the ticks where (tick count + id) % 4 == 0, so the replay hands out the same ids.
+                        List<Object> ids = new ArrayList<>();
+                        for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, box)) ids.add(e.getId());
+                        ids.sort(Comparator.comparingInt(o -> (Integer) o));
+                        tick.put("item_ids", ids);
+                    }
+                }
                 if (s.watchMobs) {
                     var box = new net.minecraft.world.phys.AABB(BASE[0] - 8, BASE[1] - 8, BASE[2] - 8, BASE[0] + 12, BASE[1] + 12, BASE[2] + 12);
                     List<Object> sigs = new ArrayList<>();
@@ -1422,6 +1646,14 @@ public class ContainerVectors {
             if (!(left instanceof net.minecraft.world.entity.player.Player)) left.discard();
         }
         command(server, "kill @e[type=item]");
+        // wp75: block events and tickers the clearing left (a piston that was on the move) run out before the next scenario begins.
+        if (s.trackItems) {
+            // (Sticky blocks drag the floor along: what was pushed beyond the cleared area goes too.)
+            command(server, String.format(Locale.ROOT, "fill %d %d %d %d %d %d air strict", BASE[0] - 9, BASE[1] - 4, BASE[2] - 9, BASE[0] + 11, BASE[1] + 8, BASE[2] + 9));
+            setRunsNormally(level, true);
+            for (int i = 0; i < 4; i++) level.tick(() -> true);
+            setRunsNormally(level, false);
+        }
         Map<String, Object> line = s.json();
         line.put("result", ticks);
         return toJson(line);

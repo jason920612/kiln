@@ -2,9 +2,9 @@
 //! `equipment` compound (playerdata), and container block entities' `Items` list
 //! (`ContainerHelper.loadAllItems` / `saveAllItems`).
 //!
-//! Loading is lossless: entries that do not decode (an unknown item, a count out of range, a
-//! slot outside the container) are kept verbatim and written back, unless a stack now occupies
-//! their slot. Component entries this build cannot decode are kept by kiln-item itself.
+//! Loading is vanilla's (`ValueInput.list` with the `ItemStackWithSlot` codec): an entry that does not decode (an unknown item, no
+//! id) or whose slot is outside the container is dropped, and is gone when the data is saved again; a count that is missing or out
+//! of range is 1; components that do not decode are left off (see [`ItemStack::from_nbt`]).
 
 use crate::container::Container;
 use crate::inventory::{EQUIPMENT, MAIN_SIZE, PlayerInventory};
@@ -12,12 +12,12 @@ use kiln_item::ItemStack;
 use kiln_item::component::EquipmentSlot;
 use kiln_proto::nbt::Tag;
 
-/// Items by slot, plus the saved entries that did not decode.
+/// Items by slot.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ItemList {
     pub stacks: Vec<ItemStack>,
-    /// (slot as saved, compound without `Slot`).
-    pub undecoded: Vec<(i32, Tag)>,
+    /// Whether loading dropped an entry, so that what is saved differs from what was read.
+    pub dropped: bool,
 }
 
 /// `ItemStackWithSlot.Slot`: an unsigned byte (0 when absent).
@@ -42,37 +42,20 @@ fn with_slot(slot: i32, item: Tag) -> Tag {
 impl ItemList {
     /// `ContainerHelper.loadAllItems` for a container of `size` slots.
     pub fn load(list: Option<&Tag>, size: usize) -> ItemList {
-        let mut out = ItemList { stacks: vec![ItemStack::empty(); size], undecoded: Vec::new() };
+        let mut out = ItemList { stacks: vec![ItemStack::empty(); size], dropped: false };
         for entry in list.and_then(Tag::as_list).unwrap_or(&[]) {
             let slot = slot_of(entry);
-            let item = without_slot(entry);
-            match ItemStack::from_nbt(&item) {
+            match ItemStack::from_nbt(&without_slot(entry)) {
                 Ok(stack) if (slot as usize) < size => out.stacks[slot as usize] = stack,
-                _ => out.undecoded.push((slot, item)),
+                _ => out.dropped = true,
             }
         }
-        out.undecoded.sort_by_key(|(slot, _)| *slot);
         out
     }
 
-    /// `ContainerHelper.saveAllItems`: non-empty slots in slot order, with the undecoded entries
-    /// whose slot is still free.
+    /// `ContainerHelper.saveAllItems`: the non-empty slots in slot order.
     pub fn save(&self) -> Tag {
-        let mut entries: Vec<(i32, Tag)> = self
-            .stacks
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| !s.is_empty())
-            .map(|(i, s)| (i as i32, with_slot(i as i32, s.to_nbt())))
-            .collect();
-        for (slot, item) in &self.undecoded {
-            let taken = usize::try_from(*slot).ok().and_then(|i| self.stacks.get(i)).is_some_and(|s| !s.is_empty());
-            if !taken {
-                entries.push((*slot, with_slot(*slot, item.clone())));
-            }
-        }
-        entries.sort_by_key(|(slot, _)| *slot);
-        Tag::List(entries.into_iter().map(|(_, t)| t).collect())
+        Tag::List(self.stacks.iter().enumerate().filter(|(_, s)| !s.is_empty()).map(|(i, s)| with_slot(i as i32, s.to_nbt())).collect())
     }
 
     /// The stacks as a container (block entity contents).
@@ -95,33 +78,20 @@ pub fn equipment_key(slot: EquipmentSlot) -> &'static str {
     }
 }
 
-/// Saved player items that did not decode, kept for writing back.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct PlayerItemsExtra {
-    /// `Inventory` entries: (slot, compound without `Slot`).
-    pub main: Vec<(i32, Tag)>,
-    /// `equipment` entries by key (including keys other than the seven inventory slots).
-    pub equipment: Vec<(String, Tag)>,
-}
-
 /// Reads `Inventory`, `equipment` and `SelectedItemSlot` from a player compound
-/// (`Player.readAdditionalSaveData`).
-pub fn load_player_inventory(player: &Tag) -> (PlayerInventory, PlayerItemsExtra) {
+/// (`Player.readAdditionalSaveData`): what does not decode is dropped.
+pub fn load_player_inventory(player: &Tag) -> PlayerInventory {
     let mut inv = PlayerInventory::new();
-    let list = ItemList::load(player.get("Inventory"), MAIN_SIZE);
-    inv.items = list.stacks;
-    let mut extra = PlayerItemsExtra { main: list.undecoded, equipment: Vec::new() };
+    inv.items = ItemList::load(player.get("Inventory"), MAIN_SIZE).stacks;
     if let Some(Tag::Compound(eq)) = player.get("equipment") {
         for (key, item) in eq {
-            let slot = EQUIPMENT.iter().position(|s| equipment_key(*s) == key);
-            match (slot, ItemStack::from_nbt(item)) {
-                (Some(i), Ok(stack)) => inv.equipment[i] = stack,
-                _ => extra.equipment.push((key.clone(), item.clone())),
+            if let (Some(i), Ok(stack)) = (EQUIPMENT.iter().position(|s| equipment_key(*s) == key), ItemStack::from_nbt(item)) {
+                inv.equipment[i] = stack;
             }
         }
     }
     inv.selected = player.get("SelectedItemSlot").and_then(Tag::as_i64).filter(|s| (0..9).contains(s)).unwrap_or(0) as usize;
-    (inv, extra)
+    inv
 }
 
 fn put(compound: &mut Tag, key: &str, value: Tag) {
@@ -139,21 +109,14 @@ fn remove(compound: &mut Tag, key: &str) {
     }
 }
 
-/// Writes `Inventory`, `equipment` and `SelectedItemSlot` into a player compound, keeping the
-/// entries that did not decode on load.
-pub fn save_player_inventory(inv: &PlayerInventory, extra: &PlayerItemsExtra, player: &mut Tag) {
-    let list = ItemList { stacks: inv.items.clone(), undecoded: extra.main.clone() };
-    put(player, "Inventory", list.save());
+/// Writes `Inventory`, `equipment` and `SelectedItemSlot` into a player compound.
+pub fn save_player_inventory(inv: &PlayerInventory, player: &mut Tag) {
+    put(player, "Inventory", ItemList { stacks: inv.items.clone(), dropped: false }.save());
     let mut eq: Vec<(String, Tag)> = Vec::new();
     for (i, slot) in EQUIPMENT.iter().enumerate() {
         let stack = inv.item(MAIN_SIZE + i);
         if !stack.is_empty() {
             eq.push((equipment_key(*slot).to_owned(), stack.to_nbt()));
-        }
-    }
-    for (key, item) in &extra.equipment {
-        if !eq.iter().any(|(k, _)| k == key) {
-            eq.push((key.clone(), item.clone()));
         }
     }
     if eq.is_empty() {
@@ -178,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn container_items_round_trip_losslessly() {
+    fn container_items_drop_what_vanilla_drops() {
         let list = Tag::List(vec![
             slotted(0, item("minecraft:stone", 5)),
             slotted(3, item("minecraft:not_an_item", 1)),
@@ -187,11 +150,13 @@ mod tests {
         ]);
         let loaded = ItemList::load(Some(&list), 27);
         assert_eq!(loaded.stacks[0].count(), 5);
-        assert_eq!(loaded.undecoded.len(), 3);
+        // The unknown item and the slot outside the container are gone; a count of 120 is 1.
+        assert!(loaded.dropped);
+        assert_eq!(loaded.stacks[4].count(), 1);
         let saved = loaded.save();
         let slots: Vec<i32> = saved.as_list().unwrap().iter().map(slot_of).collect();
-        assert_eq!(slots, [0, 3, 4, 40]);
-        assert_eq!(ItemList::load(Some(&saved), 27), loaded);
+        assert_eq!(slots, [0, 4]);
+        assert_eq!(ItemList::load(Some(&saved), 27).stacks, loaded.stacks);
     }
 
     #[test]
@@ -210,18 +175,18 @@ mod tests {
             ),
             ("SelectedItemSlot".into(), Tag::Int(2)),
         ]);
-        let (inv, extra) = load_player_inventory(&player);
+        let inv = load_player_inventory(&player);
         assert_eq!(inv.items[2].count(), 3);
         assert_eq!(inv.equipped(EquipmentSlot::Head), &enchanted);
         assert_eq!(inv.equipped(EquipmentSlot::Body).item_name(), "minecraft:stone");
         assert_eq!(inv.selected, 2);
-        assert_eq!(extra.main.len(), 1);
-        assert_eq!(extra.equipment.len(), 1);
+        // (The unknown item and the unknown boots are not kept.)
+        assert!(inv.equipped(EquipmentSlot::Feet).is_empty());
         let mut out = Tag::Compound(vec![("Health".into(), Tag::Float(20.0))]);
-        save_player_inventory(&inv, &extra, &mut out);
-        let (again, extra2) = load_player_inventory(&out);
+        save_player_inventory(&inv, &mut out);
+        let again = load_player_inventory(&out);
         assert_eq!(again, inv);
-        assert_eq!(extra2, extra);
+        assert_eq!(out.get("equipment").and_then(|e| e.get("feet")), None);
         assert_eq!(out.get("Health"), Some(&Tag::Float(20.0)));
     }
 }

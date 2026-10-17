@@ -617,10 +617,11 @@ fn encode_movement(target: &mut Player) -> Encoded {
         to_self.push(pkt.clone());
         packets.push(pkt);
     }
-    packets.append(&mut target.pending_sounds);
+    // `LivingEntity.hurtServer`: the damage event as the damage is dealt, then the hurt sound.
     if let Some((damage_type, cause, direct)) = target.damaged.take() {
         packets.push(entity::damage_event(target.entity_id, damage_type, cause, direct, None));
     }
+    packets.append(&mut target.pending_sounds);
     for event in std::mem::take(&mut target.entity_events) {
         packets.push(entity::entity_event(target.entity_id, event));
     }

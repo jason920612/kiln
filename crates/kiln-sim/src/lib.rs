@@ -154,6 +154,10 @@ mod item_parity;
 #[cfg(test)]
 mod lid_parity;
 #[cfg(test)]
+mod load_parity;
+#[cfg(test)]
+mod attr_parity;
+#[cfg(test)]
 mod interact_parity;
 
 use bytes::Bytes;
@@ -448,7 +452,6 @@ struct Player {
     /// Main slots, equipment and the selected hotbar slot.
     inv: kiln_inventory::PlayerInventory,
     /// Saved inventory entries Kiln could not decode, written back unchanged.
-    inv_extra: kiln_inventory::persist::PlayerItemsExtra,
     /// The inventory menu (container 0), always open underneath.
     menu: kiln_inventory::Menu,
     /// A block or entity menu the player has open.
@@ -579,6 +582,8 @@ struct Player {
     attributes_dirty: bool,
     /// The syncable attributes as the last Update Attributes left them (empty: the next one lists them all).
     attrs_sent: Vec<combat::AttributeList>,
+    /// The attributes that have had a modifier or another base (their instance exists in the attribute map for good).
+    attrs_touched: Vec<&'static str>,
     /// This tick's entity data pack was not empty (it opens `ServerEntity.sendChanges`' main block, where the
     /// attributes go out, in a tick that is not an update tick).
     data_packed: bool,
@@ -922,6 +927,9 @@ struct Dim {
     unloads: Vec<ChunkPos>,
     /// Entities spawned in a serial phase, waiting for ids.
     spawns: Vec<entities::Spawn>,
+    /// What `/summon` made: they get their ids in the order the commands ran (vanilla numbers entities as they are made), after the
+    /// regions' spawns, which are numbered by where they are.
+    serial_spawns: Vec<entities::Spawn>,
     /// Cells emptied by unloads; vacated when the regionizer runs, unless refilled first.
     emptied: Vec<kiln_world::CellPos>,
     /// Generation threads, when missing chunks come from an expensive generator.
@@ -1043,6 +1051,7 @@ impl Dim {
             requests: Vec::new(),
             unloads: Vec::new(),
             spawns: Vec::new(),
+            serial_spawns: Vec::new(),
             emptied: Vec::new(),
             generation,
             loading: HashSet::new(),
@@ -2176,6 +2185,12 @@ impl Sim {
         Host::block_entity(self, dimension, [x, y, z])
     }
 
+    /// The id the next entity gets (for tests: an item at rest moves in the ticks where `tickCount + id` is a multiple of four, so
+    /// replays of vanilla vectors hand out vanilla's ids).
+    pub fn set_next_entity_id(&mut self, id: i32) {
+        self.next_entity_id = id;
+    }
+
     /// The live `Age` of the end gateway at an overworld position (for tests): what `portalTick` has counted.
     pub fn gateway_age(&self, x: i32, y: i32, z: i32) -> Option<i64> {
         let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;
@@ -3193,7 +3208,9 @@ impl Sim {
             // Entities built during a tick carry placeholder (negative) ids that other new
             // entities refer to as their vehicle or passengers: (placeholder, id, chunk).
             let mut placeholders: Vec<(i32, i32, ChunkPos)> = Vec::new();
-            for spawn in entities::canonical(std::mem::take(&mut d.spawns)) {
+            let mut batch = entities::canonical(std::mem::take(&mut d.spawns));
+            batch.append(&mut d.serial_spawns);
+            for spawn in batch {
                 let chunk = entities::chunk_of(spawn.pos);
                 // Into a region ticking away: once it is back.
                 if d.lent_at(chunk) {
@@ -3844,7 +3861,6 @@ impl Sim {
             chunks_per_tick: 9.0,
             unacked_batches: 0,
             inv: joining.inv,
-            inv_extra: joining.inv_extra,
             menu: kiln_inventory::Menu::inventory(),
             open_menu: None,
             maps: self.maps.clone(),
@@ -3914,6 +3930,7 @@ impl Sim {
             effects: joining.effects,
             attributes_dirty: true,
             attrs_sent: Vec::new(),
+            attrs_touched: Vec::new(),
             data_packed: false,
             frost_marked: false,
             pending_sounds: Vec::new(),

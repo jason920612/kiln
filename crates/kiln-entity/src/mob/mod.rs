@@ -573,6 +573,11 @@ pub enum Species {
 #[derive(Clone, Debug)]
 pub struct MobData {
     pub kind: MobKind,
+    /// `getArrowCount` and `getStingerCount` (entity data 12 and 13): what is stuck in the body, and the time to the next one falling out.
+    pub arrow_count: i32,
+    pub stinger_count: i32,
+    pub remove_arrow_time: i32,
+    pub remove_stinger_time: i32,
     pub attrs: Attributes,
     pub health: f32,
     pub absorption: f32,
@@ -693,6 +698,32 @@ pub struct Mount {
 }
 
 impl MobData {
+    /// `LivingEntity.tick`'s timers for what is stuck in the body: the arrow count (and the stinger count) loses one every
+    /// `20 * (30 - count)` ticks, the time worked out when the count is above 0 and the timer has run out.
+    pub fn tick_stuck_in_body(&mut self) {
+        for (count, timer) in [(&mut self.arrow_count, &mut self.remove_arrow_time), (&mut self.stinger_count, &mut self.remove_stinger_time)] {
+            let n = *count;
+            if n > 0 {
+                if *timer <= 0 {
+                    *timer = 20 * (30 - n);
+                }
+                *timer -= 1;
+                if *timer <= 0 {
+                    *count = n - 1;
+                }
+            }
+        }
+    }
+
+    /// `setArrowCount(getArrowCount() + 1)` / `setStingerCount(getStingerCount() + 1)`.
+    pub fn stick_in_body(&mut self, stinger: bool) {
+        if stinger {
+            self.stinger_count += 1;
+        } else {
+            self.arrow_count += 1;
+        }
+    }
+
     /// A mob as its constructor leaves it (`EntityType.create`): full health, default
     /// attributes, the type's goals. The constructor's random draws (the initial yaw, a
     /// chicken's egg timer) come from `random`.
@@ -711,8 +742,14 @@ impl MobData {
             MobKind::Spider | MobKind::CaveSpider => Species::Spider { climbing: false },
             _ => Species::Plain,
         };
+        let mut attrs = attrs;
+        attrs.create_for(kind.type_name());
         let mut m = MobData {
             kind,
+            arrow_count: 0,
+            stinger_count: 0,
+            remove_arrow_time: 0,
+            remove_stinger_time: 0,
             attrs,
             health,
             absorption: 0.0,
@@ -1511,6 +1548,9 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if let Some(t) = m.using_item.as_mut() {
         *t += 1;
     }
+    m.tick_stuck_in_body();
+    // The first step of a mob asks for its movement speed (`getAttribute`): the instance is there from then on.
+    m.attrs.touch_by_step(Attr::MovementSpeed);
     sync_equipment_modifiers(m);
     if let Some(k) = m.kind.ext() {
         k.detect_equipment_updates(e, m, level);

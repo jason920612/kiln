@@ -59,7 +59,6 @@ pub(crate) struct PlayerContainers {
     pub cart_serial: Option<u32>,
     /// A menu closed while the entity was ticking: its `container_close` still to post.
     pub cart_closed: Option<[f64; 3]>,
-    ender_undecoded: Vec<(i32, Tag)>,
     /// Workstation effects of the last menu operation (grindstone and anvil use), for the
     /// region to carry out at the workstation.
     pub pending: Vec<kiln_inventory::Effect>,
@@ -84,7 +83,6 @@ impl PlayerContainers {
             cart_event_pos: None,
             cart_serial: None,
             cart_closed: None,
-            ender_undecoded: list.undecoded,
             pending: Vec::new(),
             enchantment_seed: player.get("XpSeed").and_then(Tag::as_i64).unwrap_or(0) as i32,
             bookshelves: 0,
@@ -96,7 +94,7 @@ impl PlayerContainers {
     /// Writes `EnderItems` into saved player data.
     pub fn save_into(&self, player: &mut Tag) {
         let Tag::Compound(fields) = player else { return };
-        let list = ItemList { stacks: self.ender.items.clone(), undecoded: self.ender_undecoded.clone() }.save();
+        let list = ItemList { stacks: self.ender.items.clone(), dropped: false }.save();
         for (key, value) in [("EnderItems", list), ("XpSeed", Tag::Int(self.enchantment_seed))] {
             match fields.iter_mut().find(|(k, _)| k == key) {
                 Some((_, v)) => *v = value,

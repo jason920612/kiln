@@ -34,6 +34,8 @@ pub struct PiglinState {
     pub play_first_anger_sound_in: i32,
     /// `persistentAngerEndTime` (game time; -1 or 0 for none).
     pub anger_end: i64,
+    /// `AngerTime` of old saved data: ticks left, counted from the first update.
+    pub anger_pending: Option<i64>,
     /// `persistentAngerTarget`: (entity id, UUID); the id is -1 until a loaded reference is found.
     pub anger_target: Option<(i32, u128)>,
     pub ticks_until_next_alert: i32,
@@ -87,6 +89,9 @@ fn uuid_of(level: &dyn EntityLevel, id: i32) -> u128 {
 
 /// `updatePersistentAnger(level, true)`.
 fn update_persistent_anger(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
+    if let Some(left) = st_mut(m).anger_pending.take() {
+        st_mut(m).anger_end = level.game_time() + left;
+    }
     let reference = st(m).anger_target.map(|(id, _)| id);
     if let Some(u) = m.target.and_then(|id| goals::living(level, id))
         && !u.alive
@@ -219,17 +224,12 @@ impl Kind for ZombifiedPiglin {
 
     fn load(&self, e: &mut Entity, m: &mut MobData, r: &mut Input) {
         zombie::load(e, m, r);
-        let end = match r.num("anger_end_time") {
-            Some(t) => t as i64,
-            None => match r.num("AngerTime") {
-                // Legacy relative ticks (the load happens at game time 0 as far as Kiln knows).
-                Some(t) => t as i64,
-                None => -1,
-            },
-        };
+        let end = r.num("anger_end_time").map(|t| t as i64);
+        let legacy = r.num("AngerTime").map(|t| t as i64);
         let uuid = r.uuid("angry_at");
         let s = st_mut(m);
-        s.anger_end = end;
+        s.anger_end = end.unwrap_or(-1);
+        s.anger_pending = if end.is_none() { legacy } else { None };
         s.anger_target = uuid.map(|u| (-1, u));
     }
 

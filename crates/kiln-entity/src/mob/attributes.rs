@@ -151,6 +151,14 @@ pub struct Instance {
     pub attr: Attr,
     pub base: f64,
     pub modifiers: Vec<Modifier>,
+    /// Whether the attribute map has an instance of it (`AttributeMap.getInstance` makes one the first time something asks to change
+    /// it; reading a value does not). Only those are in `getSyncableAttributes`, so only those are told to the clients.
+    pub created: bool,
+    /// The base value the instance was made with (the type's own; a change from it is something to tell the viewers).
+    pub initial: f64,
+    /// Made by the mob's first step (not by its constructor): a mob paired in the tick it was made, before that step in vanilla's order,
+    /// is not told of it.
+    pub by_step: bool,
 }
 
 impl Instance {
@@ -210,12 +218,15 @@ impl Attributes {
             Bounciness,
         ]
         .into_iter()
-        .map(|a| Instance { attr: a, base: a.info().1, modifiers: Vec::new() })
+        .map(|a| Instance { attr: a, base: a.info().1, modifiers: Vec::new(), created: false, initial: a.info().1, by_step: false })
         .collect();
         for &(a, v) in extra {
             match list.iter_mut().find(|i| i.attr == a) {
-                Some(i) => i.base = v,
-                None => list.push(Instance { attr: a, base: v, modifiers: Vec::new() }),
+                Some(i) => {
+                    i.base = v;
+                    i.initial = v;
+                }
+                None => list.push(Instance { attr: a, base: v, modifiers: Vec::new(), created: false, initial: v, by_step: false }),
             }
         }
         list.sort_by_key(|i| i.attr);
@@ -226,8 +237,37 @@ impl Attributes {
         self.list.iter().find(|i| i.attr == a)
     }
 
+    /// `getInstance`: the instance of `a`, made if it was not there.
     pub fn get_mut(&mut self, a: Attr) -> Option<&mut Instance> {
-        self.list.iter_mut().find(|i| i.attr == a)
+        let i = self.list.iter_mut().find(|i| i.attr == a)?;
+        i.created = true;
+        Some(i)
+    }
+
+    /// The first step of a mob asks for its movement speed (`getAttribute`).
+    pub fn touch_by_step(&mut self, a: Attr) {
+        if let Some(i) = self.list.iter_mut().find(|i| i.attr == a)
+            && !i.created
+        {
+            i.created = true;
+            i.by_step = true;
+        }
+    }
+
+    /// The instances a new mob of type `type_name` already has (what its constructor and `finalizeSpawn` ask for; read off a 26.3 server
+    /// by `tools/AttributeVectors.java`).
+    pub fn create_for(&mut self, type_name: &str) {
+        use Attr::*;
+        let made: &[Attr] = match type_name {
+            "minecraft:zombie" | "minecraft:husk" | "minecraft:drowned" | "minecraft:zombie_villager" | "minecraft:zombified_piglin" | "minecraft:piglin" | "minecraft:enderman" => &[MovementSpeed],
+            "minecraft:slime" | "minecraft:sulfur_cube" => &[MaxHealth, MovementSpeed],
+            "minecraft:magma_cube" => &[MaxHealth, MovementSpeed, Armor],
+            "minecraft:wolf" => &[MaxHealth],
+            _ => &[],
+        };
+        for &a in made {
+            let _ = self.get_mut(a);
+        }
     }
 
     /// `getAttributeValue` (0 for an attribute the mob does not have, as vanilla's map
@@ -252,5 +292,37 @@ impl Attributes {
         if let Some(i) = self.get_mut(a) {
             i.modifiers.retain(|m| m.id != id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn created(a: &Attributes) -> Vec<Attr> {
+        a.list.iter().filter(|i| i.created).map(|i| i.attr).collect()
+    }
+
+    /// `AttributeMap.getSyncableAttributes` lists the instances that exist, and an instance is made when something asks to change the
+    /// attribute (`getInstance`), not when its value is read; a new mob has the few its constructor asks for (read off 26.3 by
+    /// `tools/AttributeVectors.java`).
+    #[test]
+    fn an_attribute_has_an_instance_once_it_is_asked_for() {
+        let mut a = Attributes::new(&[(Attr::FollowRange, 16.0)]);
+        assert!(created(&a).is_empty());
+        let _ = a.value(Attr::MovementSpeed);
+        let _ = a.get(Attr::MaxHealth);
+        assert!(created(&a).is_empty(), "reading makes none");
+        a.set_modifier(Attr::MovementSpeed, "x", 0.1, Op::AddValue);
+        assert_eq!(created(&a), [Attr::MovementSpeed]);
+        let mut zombie = Attributes::new(&[]);
+        zombie.create_for("minecraft:zombie");
+        assert_eq!(created(&zombie), [Attr::MovementSpeed]);
+        let mut slime = Attributes::new(&[]);
+        slime.create_for("minecraft:magma_cube");
+        assert_eq!(created(&slime), [Attr::MaxHealth, Attr::MovementSpeed, Attr::Armor]);
+        let mut pig = Attributes::new(&[]);
+        pig.create_for("minecraft:pig");
+        assert!(created(&pig).is_empty());
     }
 }

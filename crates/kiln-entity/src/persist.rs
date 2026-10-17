@@ -521,7 +521,7 @@ pub fn save_with<'a>(e: &'a Entity, owner_uuid: &dyn Fn(i32) -> Option<u128>, lo
             write_projectile(&mut o, owner(d.owner), d.left_owner, d.has_been_shot);
             // (A potion saves what it breaks with; one without an item is the plain potion.)
             let item = d.item.clone().or_else(|| matches!(d.kind, Throwable::SplashPotion | Throwable::LingeringPotion).then(|| ItemStack::of(d.kind.type_name(), 1)).flatten());
-            o.put("Item", item.as_ref().map(ItemStack::to_nbt).or_else(|| extra("Item")).unwrap_or_else(|| item_tag(d.kind.type_name())));
+            o.put("Item", item.as_ref().map(ItemStack::to_nbt).unwrap_or_else(|| item_tag(d.kind.type_name())));
         }
         EntityKind::Arrow(d) => {
             write_projectile(&mut o, owner(d.owner), d.left_owner, d.has_been_shot);

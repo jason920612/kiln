@@ -142,6 +142,20 @@ fn absolute(cmd: &str) -> String {
         .join(" ")
 }
 
+/// Whether an item standing at height `y` is in the box the harness records (an item is 0.25 tall).
+fn p_inside_y(y: f64) -> bool {
+    y + 0.25 > (BASE[1] - 8) as f64 && y < (BASE[1] + 12) as f64
+}
+
+/// Scenarios whose vanilla trace is not repeatable: two runs of `ContainerVectors` on a fresh server give different traces
+/// (an item that ends up inside a retracting piston is pushed out with `Entity.random`, which vanilla does not seed). Found by running
+/// the vectors twice and comparing; they are not compared.
+const VANILLA_NOT_REPEATABLE: &[&str] = &[
+    "piston_pull/8", "piston_pull/10", "piston_pull/11", "piston_pull/12", "piston_pull/14", "piston_pull/15", "piston_pull/23", "piston_pull/27",
+    "piston_pull/28", "piston_pull/30", "piston_pull/31", "piston_pull/32", "piston_pull/34", "piston_pull/35", "piston_pull/36", "piston_pull/39",
+    "piston_pull/48", "piston_pull/50", "piston_pull/52", "piston_pull/54", "piston_pull/55", "piston_pull/60", "piston_pull/62", "piston_pull/63",
+];
+
 /// Replays one scenario; returns (values compared, mismatches).
 fn run_scenario(line: &Value) -> (usize, Vec<String>) {
     let mut config = SimConfig::new(2, 3, None);
@@ -196,6 +210,10 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             inbox.push(ToSim::Console("kill @e[type=item]".into()));
         }
         if tick == 1 {
+            // (The items summoned this tick get the ids vanilla gave them: see `ContainerVectors` `item_ids`.)
+            if let Some(first) = want["item_ids"].as_array().and_then(|a| a.first()).and_then(Value::as_i64) {
+                sim.set_next_entity_id(first as i32);
+            }
             for b in line["blocks"].as_array().unwrap() {
                 let p = pos_of(b);
                 inbox.push(ToSim::Console(format!("setblock {} {} {} {}", p.x, p.y, p.z, b[3].as_str().unwrap())));
@@ -318,6 +336,40 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                 errors.push(format!("tick {tick} tracked entities: kiln {got}, vanilla {}", want["track"]));
             }
         }
+        if line["track_items"].as_bool() == Some(true) {
+            // `ContainerVectors`: each item entity's position, motion and whether it stands, sorted by x, z, y.
+            let mut got: Vec<[f64; 7]> = Vec::new();
+            for t in sim.entity_nbt() {
+                if t.get("id").and_then(Tag::as_str) != Some("minecraft:item") {
+                    continue;
+                }
+                let triple = |key: &str| -> [f64; 3] {
+                    match t.get(key) {
+                        Some(Tag::List(l)) if l.len() == 3 => [l[0].as_f64().unwrap_or(0.0), l[1].as_f64().unwrap_or(0.0), l[2].as_f64().unwrap_or(0.0)],
+                        _ => [0.0; 3],
+                    }
+                };
+                let (pos, mot) = (triple("Pos"), triple("Motion"));
+                // (Only what the harness's box, 8 below to 12 above `BASE`, holds: by the item's bounding box.)
+                let inside = |p: f64, base: i32| p + 0.125 > (base - 8) as f64 && p - 0.125 < (base + 12) as f64;
+                if !(inside(pos[0], BASE[0]) && p_inside_y(pos[1]) && inside(pos[2], BASE[2])) {
+                    continue;
+                }
+                let ground = if t.get("OnGround").and_then(Tag::as_i64).unwrap_or(0) != 0 { 1.0 } else { 0.0 };
+                got.push([pos[0], pos[1], pos[2], mot[0], mot[1], mot[2], ground]);
+            }
+            got.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[2].total_cmp(&b[2])).then(a[1].total_cmp(&b[1])));
+            let want_items: Vec<Vec<f64>> = want["items"].as_array().unwrap().iter().map(|v| v.as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect()).collect();
+            compared += 1;
+            let same = got.len() == want_items.len()
+                && got.iter().zip(&want_items).all(|(g, w)| {
+                    (0..7).all(|i| g[i].to_bits() == w[i].to_bits() || g[i] == w[i])
+                });
+            if !same {
+                let ids: Vec<(i32, [f64; 3])> = sim.dims[OVERWORLD_ID].regions.iter().flat_map(|r| r.part().0.list.iter().filter(|e| e.kind.name == "minecraft:item").map(|e| (e.id, e.pos)).collect::<Vec<_>>()).collect();
+                errors.push(format!("tick {tick} items: kiln {got:?}, vanilla {want_items:?} (kiln ids {ids:?}, vanilla {:?})", want["item_ids"]));
+            }
+        }
         if line["mobs"].as_bool() == Some(true) {
             // `ContainerVectors`: each living thing's type, what it wears (by slot) and whether it carries a chest.
             let mut got: Vec<String> = Vec::new();
@@ -394,6 +446,9 @@ fn container_parity() {
         let name = v["name"].as_str().unwrap().to_owned();
         assert!(v.get("error").is_none(), "{name}: vanilla failed: {}", v["error"]);
         if filter.as_deref().is_some_and(|f| !name.contains(f)) {
+            continue;
+        }
+        if VANILLA_NOT_REPEATABLE.contains(&name.as_str()) {
             continue;
         }
         let (n, errors) = run_scenario(&v);

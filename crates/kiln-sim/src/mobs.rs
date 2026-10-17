@@ -120,6 +120,13 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
         d.set(data::living_entity::EFFECT_AMBIENCE, &DataValue::Boolean(true));
     }
     d.set(data::living_entity::HEALTH, &DataValue::Float(m.health));
+    // `DATA_ARROW_COUNT_ID` and `DATA_STINGER_COUNT_ID`: the viewers get the count while it is above 0 (and 0 when it falls back).
+    if m.arrow_count > 0 {
+        d.set(data::living_entity::ARROW_COUNT, &DataValue::Int(m.arrow_count));
+    }
+    if m.stinger_count > 0 {
+        d.set(data::living_entity::STINGER_COUNT, &DataValue::Int(m.stinger_count));
+    }
     // `Mob.DATA_MOB_FLAGS_ID` (15): a mannequin is no `Mob`, and its field 15 is the `Avatar`'s main hand.
     if m.kind.is_mob() {
         let mob_flags = (m.no_ai as i8) | ((m.left_handed as i8) << 1) | ((m.aggressive as i8) << 2);
@@ -657,15 +664,19 @@ mod tests {
     }
 }
 
-/// The client-syncable attributes of a mob (`AttributeMap.getSyncableAttributes`) as an Update
-/// Attributes packet; `None` when it has none.
-pub(crate) fn attributes_packet(entity_id: i32, m: &MobData) -> Option<bytes::Bytes> {
+/// The pairing packet: a mob paired in the tick it was made (`fresh`) is paired before its first step, so without the instances that step makes.
+pub(crate) fn attributes_pairing_packet(entity_id: i32, m: &MobData, fresh: bool) -> Option<bytes::Bytes> {
+    attributes_packet_of(entity_id, m, None, fresh)
+}
+
+/// [`attributes_packet`] with only the attributes in `only` (`AttributeMap.getAttributesToSync`).
+pub(crate) fn attributes_packet_of(entity_id: i32, m: &MobData, only: Option<&[mob::attributes::Attr]>, skip_made_by_step: bool) -> Option<bytes::Bytes> {
     use kiln_proto::packets::entity::{AttributeModifier, AttributeSnapshot, ModifierOperation};
     let list: Vec<(i32, &mob::attributes::Instance)> = m
         .attrs
         .list
         .iter()
-        .filter(|i| i.attr.is_client_syncable())
+        .filter(|i| i.created && !(skip_made_by_step && i.by_step) && i.attr.is_client_syncable() && only.is_none_or(|o| o.contains(&i.attr)))
         .filter_map(|i| Some((kiln_data::builtin_id("minecraft:attribute", i.attr.name())?, i)))
         .collect();
     if list.is_empty() {
@@ -683,11 +694,11 @@ pub(crate) fn attributes_packet(entity_id: i32, m: &MobData) -> Option<bytes::By
     Some(kiln_proto::packets::entity::update_attributes(entity_id, &snapshots))
 }
 
-/// A hash of what [`attributes_packet`] would say (never 0), to tell when the viewers' copy is stale.
+/// A hash of what [`attributes_packet`] would say (never 0), to tell when some viewers' copy is stale at all.
 pub(crate) fn attributes_hash(m: &MobData) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut mix = |v: u64| h = (h ^ v).wrapping_mul(0x0000_0100_0000_01b3);
-    for i in m.attrs.list.iter().filter(|i| i.attr.is_client_syncable()) {
+    for i in m.attrs.list.iter().filter(|i| i.created && i.attr.is_client_syncable()) {
         mix(i.attr as u64);
         mix(i.base.to_bits());
         for x in &i.modifiers {
@@ -700,6 +711,29 @@ pub(crate) fn attributes_hash(m: &MobData) -> u64 {
         mix(u64::MAX);
     }
     h | 1
+}
+
+/// A hash per existing client-syncable attribute of what [`attributes_packet`] would say about it (never 0), to tell which of them the
+/// viewers' copy has stale.
+pub(crate) fn attribute_hashes(m: &MobData) -> Vec<(mob::attributes::Attr, u64)> {
+    m.attrs
+        .list
+        .iter()
+        .filter(|i| i.created && i.attr.is_client_syncable())
+        .map(|i| {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            let mut mix = |v: u64| h = (h ^ v).wrapping_mul(0x0000_0100_0000_01b3);
+            mix(i.base.to_bits());
+            for x in &i.modifiers {
+                mix(x.amount.to_bits());
+                mix(x.op as u64);
+                for b in x.id.bytes() {
+                    mix(b as u64);
+                }
+            }
+            (i.attr, h | 1)
+        })
+        .collect()
 }
 
 /// `StructureTemplate.placeEntities` / the pieces' data markers: `finalizeSpawn` with

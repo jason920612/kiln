@@ -113,6 +113,15 @@ impl<'a, 'l> World<'a, 'l> {
         })
     }
 
+    /// Sets the progress of the moving piston at `pos` (a region's own; an island's are read only).
+    pub fn set_piston_progress(&mut self, pos: BlockPos, progress: f32) {
+        if let World::Region(l) = self
+            && let Some(m) = l.blocks.data.pistons.get_mut(pos)
+        {
+            m.progress = progress;
+        }
+    }
+
     /// The shown progress of the lid of the shulker box at `pos` while it moves, as collision reads it.
     pub fn shulker_lid(&self, pos: BlockPos) -> Option<f32> {
         let pistons = match self {

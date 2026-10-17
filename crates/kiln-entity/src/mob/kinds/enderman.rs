@@ -59,6 +59,8 @@ pub struct EndermanState {
     pub seen_target: Option<i32>,
     /// `NeutralMob`: `persistentAngerEndTime` and `persistentAngerTarget`.
     pub anger_end: i64,
+    /// `AngerTime` of old saved data: ticks left, counted from the first update.
+    pub anger_pending: Option<i64>,
     pub angry_at: Option<Reference>,
 }
 
@@ -89,6 +91,7 @@ impl Kind for Enderman {
             target_change_time: 0,
             seen_target: None,
             anger_end: 0,
+            anger_pending: None,
             angry_at: None,
         }))
     }
@@ -185,10 +188,9 @@ impl Kind for Enderman {
         s.carried = carried;
         s.anger_end = match (end, legacy) {
             (Some(t), _) => t,
-            // Relative to the load time; Kiln has no clock here (approximation: from 0).
-            (None, Some(t)) => t as i64,
             _ => -1,
         };
+        s.anger_pending = if end.is_none() { legacy.map(|t| t as i64) } else { None };
         s.angry_at = angry.map(|uuid| Reference { id: None, uuid });
     }
 
@@ -273,6 +275,9 @@ fn start_persistent_anger_timer(e: &mut Entity, m: &mut MobData, level: &dyn Ent
 
 /// `NeutralMob.updatePersistentAnger`.
 fn update_persistent_anger(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, always_refresh: bool) {
+    if let Some(left) = st_mut(m).anger_pending.take() {
+        st_mut(m).anger_end = level.game_time() + left;
+    }
     let r = st(m).angry_at;
     if let Some(u) = m.target
         && let Some(l) = goals::living(level, u)

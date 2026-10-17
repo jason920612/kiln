@@ -289,8 +289,16 @@ impl ItemStack {
         self.to_value().to_nbt()
     }
 
+    /// Saved data read the way `ValueInput` reads an item (partial decoding): the id decides (an unknown one fails the stack), a count that
+    /// is missing or outside 1 to 99 is 1, and components that do not decode are left off ([`DataComponentPatch::from_value_lenient`]).
     pub fn from_nbt(tag: &Tag) -> DataResult<ItemStack> {
-        ItemStack::from_value(&Value::from_nbt(tag))
+        let v = Value::from_nbt(tag);
+        let m = v.as_map()?;
+        let item = m.req_with("id", |v| registry::ITEM.id_from_value(v))?;
+        let count = m.lenient_or("count", 1, Value::as_i32);
+        let count = if (1..=99).contains(&count) { count } else { 1 };
+        let patch = m.get("components").map_or_else(DataComponentPatch::new, DataComponentPatch::from_value_lenient);
+        Ok(ItemStack::from_parts(item, count, patch))
     }
 
     /// Decodes a stack that kiln-proto read with `read_untrusted_slot` (component values still
@@ -512,5 +520,36 @@ mod tests {
         // count defaults to 1; the id may omit the namespace.
         let short = Tag::Compound(vec![("id".into(), Tag::String("stone".into()))]);
         assert_eq!(ItemStack::from_nbt(&short).unwrap(), stack("stone", 1));
+    }
+
+    fn compound(fields: Vec<(&str, Tag)>) -> Tag {
+        Tag::Compound(fields.into_iter().map(|(k, v)| (k.to_owned(), v)).collect())
+    }
+
+    /// Saved items load like vanilla's partial decoding (checked against 26.3 by `LoadDropVectors`): a count that is not 1 to 99 is 1,
+    /// a component that does not decode is left off, and the lists of items inside components lose their invalid elements.
+    #[test]
+    fn saved_items_load_leniently() {
+        let id = || ("id", Tag::String("minecraft:stone".into()));
+        for count in [0, -1, 100, 1000] {
+            let s = ItemStack::from_nbt(&compound(vec![id(), ("count", Tag::Int(count))])).unwrap();
+            assert_eq!(s.count(), 1, "count {count}");
+        }
+        assert_eq!(ItemStack::from_nbt(&compound(vec![id(), ("count", Tag::Int(65))])).unwrap().count(), 65);
+        assert!(ItemStack::from_nbt(&compound(vec![("id", Tag::String("minecraft:no_such_item".into())), ("count", Tag::Int(1))])).is_err());
+        assert!(ItemStack::from_nbt(&compound(vec![("count", Tag::Int(1))])).is_err());
+        let components = compound(vec![("minecraft:no_such_component", Tag::Int(1)), ("minecraft:damage", Tag::String("x".into())), ("minecraft:repair_cost", Tag::Int(4))]);
+        let s = ItemStack::from_nbt(&compound(vec![id(), ("components", components)])).unwrap();
+        assert_eq!(s.get(keys::REPAIR_COST), Some(&4));
+        assert!(s.get(keys::DAMAGE).is_none());
+        assert_eq!(s.to_nbt(), compound(vec![("components", compound(vec![("minecraft:repair_cost", Tag::Int(4))])), ("count", Tag::Int(1)), ("id", Tag::String("minecraft:stone".into()))]));
+        // A bundle keeps the contents that load; so does a container.
+        let template = |name: &str, n: i32| compound(vec![("id", Tag::String(name.into())), ("count", Tag::Int(n))]);
+        let bundle = compound(vec![("minecraft:bundle_contents", Tag::List(vec![template("minecraft:no_such_item", 1), template("minecraft:stone", 2)]))]);
+        let b = ItemStack::from_nbt(&compound(vec![("id", Tag::String("minecraft:bundle".into())), ("components", bundle)])).unwrap();
+        let Tag::Compound(saved) = b.to_nbt() else { panic!() };
+        let contents = saved.iter().find(|(k, _)| k == "components").and_then(|(_, c)| c.get("minecraft:bundle_contents")).and_then(Tag::as_list).unwrap().to_vec();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0].get("count"), Some(&Tag::Int(2)));
     }
 }

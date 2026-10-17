@@ -808,6 +808,25 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 未覆蓋/沒結論 | 女巫小屋、末影人、黃金農場、海龜蛋、交易大廳/突襲/貓、徒步下界、以物易物、複製機 |
 
 
+### 6.19 wp75(`wp75-gaps`):前幾個套件列為「還沒修」的九個小差異
+
+細節見 `docs/wp75.md`。全部用 vanilla 向量位元比對(新工具:`LoadDropVectors`、`AttributeVectors`、`ContainerVectors` 的隨機漏斗鏈與活塞物品、`EntityVectors` 的靜止物品與泡泡柱)。
+
+| 區域 | 結果 |
+|---|---|
+| 漏斗鏈(160 條隨機鏈,5 種放置順序,含礦車、比較器、紅石鎖;97,343 個值) | **修**:方塊實體依建立順序 tick(載入的區塊依 Java `HashMap` 走訪順序);修前(tick 順序改回座標順序)160 條裡 92 條失敗,修後 0;`hopper_order.rs`、`java_hash_map_order_of_block_positions` |
+| 靜止物品 `Motion`(570 個物品場景,含泡泡柱、靈魂沙、仙人掌、活塞旁、藍冰、蜜) | 物品物理位元相同;**修** 2 處:活塞推物品用 tick 開始時的進度、指令召喚的實體依指令順序配 id(靜止物品的 `(tickCount + id) % 4` 相位);活塞向量 88 個場景相同,24 個是 vanilla 自己不重複的 |
+| 載入不能載入的物品(110 個方塊實體案例 + 66 個實體案例 + `/setblock` 6 個) | **修**:部分解碼(未知 id、壞槽位丟掉、count 超界為 1、壞元件只丟元件、束口袋/潛影盒裡壞元素丟掉;實體逐格);裝飾罐 `sherds` 用 26.3 的複合形式 |
+| 中立生物的憤怒(6 種 × 5 案例) | **修**:`angry_at`(UUID)存取;`AngerTime` 從第一次更新算起;`anger.rs` 測試 |
+| 生物身上的箭與蜂針 | **修**:生物也計數、掉落、送資料(0 時重設);`an_arrow_sticks_in_a_mobs_body_and_falls_out_in_time` |
+| 屬性清單(89 種生物 × 新建立與第一 tick 之後;玩家登入) | **修**:只列已建立實例的屬性(玩家 4 個);89 種的實例集合與 vanilla 相同(隨機裝備帶來的護甲屬性不比,piglin 的金盔甲抽籤與向量世界不同);`crowd_golden` 封包摘要重錄 |
+| 傷害事件與受傷聲音;同 tick 生成又移除的投射物 | **修**(旁觀者的傷害事件先於聲音;補送 `AddEntity`+`RemoveEntities`);傷害事件對直接送出的 level event 的先後**沒做** |
+| 被後面的實體丟棄的實體(`container49-wind` 先召喚的盔甲架被後召喚的風彈打掉) | **修**:晚一個 tick 才消失,改成 tick 結束時就是已移除;`removed_in_tick.rs`;容器場景 27/27 |
+| 重啟後的突襲 | **修**:襲擊者載入時回到突襲、血條與領隊恢復;`a_raid_in_progress_survives_a_restart` |
+| 刷怪籠 `data get block`、裝飾罐 `/setblock` 資料 | **修**;`NoAI` 牛的 `Motion` 殘留沒修(只是 NBT 數字) |
+| 重錘(重擊/密度/突破/風爆/擊退爆發)與銅工具/銅盔甲 | 沒有差異:combat 115、melee 763、spear 148、mount 240、riptide 110 全部位元相同 |
+
+
 ## 7. 重跑
 
 ```sh
@@ -905,6 +924,15 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 #   bash tools/wp58/wp68_start.sh / wp68_vanilla.sh、switch.sh K split（演員連 Kiln、第二個客戶端連 vanilla）、然後 bash tools/wp58/par.sh p68_<場景>.py [子場景…]
 #   雙客戶端同伺服器：switch.sh K|V both，再 TARGET=K|V python3 p68_vault2.py；重啟持久化：p68_persist.py setup|dump before、restart_both.sh、dump after、persist_cmp.py / persist_kv.py
 #   負向檢查（拿掉修正，測試要失敗）：python3 tools/wp68_neg.py [case…]
+# wp75：九個小差異(見 docs/wp75.md;都在 cwd 為 scratch 伺服器目錄、KILN_HARNESS_PORT 另取的環境下跑)
+#   java ... tools/ContainerVectors.java work/wp75/containers/hc.jsonl hc_           # 160 條隨機漏斗鏈
+#   java ... tools/ContainerVectors.java work/wp75/containers/pi.jsonl piston_       # 活塞旁的物品(含 vanilla 自己不重複的,container_parity 跳過)
+#   java ... tools/EntityVectors.java work/wp75/entities/items.jsonl item_           # 物品實體(靜止、泡泡柱)
+#   java ... tools/LoadDropVectors.java work/wp75/load/ld.jsonl                      # 載入壞物品、憤怒、/setblock 資料
+#   java ... tools/AttributeVectors.java work/wp75/attrs/at.jsonl                    # 每種生物的屬性實例
+#   java ... tools/CombatVectors.java work/wp75/combat/vectors.jsonl [spear]         # 含銅工具與盔甲
+#   python tools/parity_suites.py --only hopper_chains75,piston_items75,items75,load75_blocks,load75_entities,attrs75,combat75
+#   負向檢查(拿掉修正,測試要失敗,VM):python3 tools/wp75_neg.py [case…]
 # 登入等封包的 golden 由原版驗證後寫入
 python tools/packet_vectors.py --bless
 ```

@@ -170,14 +170,11 @@ impl Kind for PolarBear {
     }
 
     fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
-        st_mut(m).anger.end = match r.get("anger_end_time") {
-            Some(Tag::Long(t)) => *t,
-            _ => -1,
-        };
+        st_mut(m).anger.load(r);
     }
 
     fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
-        o.put("anger_end_time", Tag::Long(st(m).anger.end));
+        st(m).anger.save(o);
     }
 
     fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {

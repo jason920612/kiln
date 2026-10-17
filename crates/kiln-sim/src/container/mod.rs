@@ -9,9 +9,10 @@
 //! ([`Containers::block_changed`]): a container whose block goes away drops its contents
 //! (`BlockEntity.preRemoveSideEffects`, except shulker boxes).
 //!
-//! Block entities tick in position order within a region (vanilla ticks them in the order they
-//! were added to the level), so the result never depends on how the world is split into
-//! regions (an approximation, I class).
+//! Block entities tick in the order they were created (vanilla's `Level.blockEntityTickers`
+//! list): [`ContainerBe::order`] is stamped when the block entity is first made, travels with it
+//! through region merges and splits, and for a chunk read from disk follows the order of the
+//! `HashMap<BlockPos, BlockEntity>` vanilla builds from it ([`java_hash_order`]).
 
 pub(crate) mod beacon;
 pub(crate) mod brewing;
@@ -296,9 +297,10 @@ pub(crate) struct ContainerBe {
     /// Tells this block entity from one that replaced it at the same position (menus stay
     /// valid only on the block entity they were opened on).
     pub serial: u64,
+    /// Where this block entity stands in the level's list of block entity tickers (lower ticks
+    /// first). A new block entity gets the next number; `/data` keeps the one it replaces.
+    pub order: u64,
     pub items: Vec<ItemStack>,
-    /// `Items` entries that did not decode, written back unchanged.
-    undecoded: Vec<(i32, Tag)>,
     /// `CustomName` (a text component) as saved.
     pub custom_name: Option<Tag>,
     /// `lock` (an item predicate) as saved.
@@ -387,12 +389,21 @@ impl ContainerBe {
             Some(Tag::Compound(fields)) => fields.iter().filter_map(|(k, v)| Some((k.clone(), v.as_i64()? as i32))).collect(),
             _ => Vec::new(),
         };
-        let extra = match nbt {
+        let mut extra: Vec<(String, Tag)> = match nbt {
             Tag::Compound(fields) => fields.iter().filter(|(k, _)| !MODELED.contains(&k.as_str())).cloned().collect(),
             _ => Vec::new(),
         };
+        if kind == BeKind::DecoratedPot {
+            normalize_pot_decorations(&mut extra);
+        }
         // `JukeboxBlockEntity.loadAdditional`: the disc, and how far its song had got.
         let mut list = list;
+        // An item that did not load is gone from the saved form too (the chunk's copy is rewritten).
+        let single = |key: &str| nbt.get(key).is_some_and(|t| ItemStack::from_nbt(t).ok().is_none_or(|s| s.is_empty()));
+        let dropped = list.dropped
+            || (kind == BeKind::Jukebox && single("RecordItem"))
+            || (kind == BeKind::Lectern && single("Book"))
+            || (matches!(kind, BeKind::DecoratedPot | BeKind::Brushable) && loot_table.is_none() && single("item"));
         let (mut song, mut song_unchecked) = (None, false);
         if kind == BeKind::Jukebox {
             let disc = nbt.get("RecordItem").and_then(|t| ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty()).unwrap_or_else(ItemStack::empty);
@@ -420,12 +431,13 @@ impl ContainerBe {
         // `BrewingStandBlockEntity.loadAdditional`: brewing under way remembers its ingredient.
         let ingredient = (kind == BeKind::BrewingStand && int("BrewTime", 0) > 0).then(|| list.stacks.get(3).map_or(0, ItemStack::item));
         static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut loaded = ContainerBe {
             kind,
             type_id,
-            serial: SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            serial,
+            order: serial,
             items: list.stacks,
-            undecoded: list.undecoded,
             custom_name: nbt.get("CustomName").cloned(),
             lock: nbt.get("lock").cloned(),
             loot_table,
@@ -463,7 +475,7 @@ impl ContainerBe {
             command: (kind == BeKind::CommandBlock).then(|| Box::new(crate::command_block::Data::load(nbt))),
             structure: (kind == BeKind::StructureBlock).then(|| Box::new(crate::structure_block::Data::load(nbt))),
             jigsaw: (kind == BeKind::Jigsaw).then(|| Box::new(crate::structure_block::Jigsaw::load(nbt))),
-            dirty: false,
+            dirty: dropped,
             extra,
         };
         if kind == BeKind::Campfire {
@@ -587,7 +599,7 @@ impl ContainerBe {
                         }
                     }
                     // (`ContainerHelper.saveAllItems(.., alwaysPut)`: a shulker box with nothing in it saves no list.)
-                    None if self.kind == BeKind::ShulkerBox && self.items.iter().all(ItemStack::is_empty) && self.undecoded.is_empty() => {}
+                    None if self.kind == BeKind::ShulkerBox && self.items.iter().all(ItemStack::is_empty) => {}
                     None => out.push(("Items".into(), self.item_list().save())),
                 }
                 if self.kind == BeKind::Hopper {
@@ -625,7 +637,7 @@ impl ContainerBe {
     }
 
     fn item_list(&self) -> ItemList {
-        ItemList { stacks: self.items.clone(), undecoded: self.undecoded.clone() }
+        ItemList { stacks: self.items.clone(), dropped: false }
     }
 
     /// `BlockEntity.setChanged`.
@@ -874,6 +886,8 @@ pub(crate) struct Containers {
     /// an idle tick with thousands of chests. Kept by [`Containers::insert`] and
     /// [`Containers::remove`], the only ways in and out of `map`.
     index: BTreeMap<BlockPos, BeKind>,
+    /// The block entities that tick, in the order they tick (their [`ContainerBe::order`]).
+    ticking: BTreeMap<u64, BlockPos>,
 }
 
 /// The block entities that tick (`Level.tickBlockEntities`).
@@ -913,11 +927,22 @@ impl Containers {
         self.index.iter().filter(move |(_, k)| keep(**k)).map(|(p, k)| (*p, *k))
     }
 
+    /// The block entities that tick, in the order they tick.
+    pub fn in_tick_order(&self) -> impl Iterator<Item = (BlockPos, BeKind)> {
+        self.ticking.values().map(|p| (*p, self.index[p]))
+    }
+
     pub fn insert(&mut self, pos: BlockPos, c: ContainerBe) {
         if indexed(c.kind) {
             self.index.insert(pos, c.kind);
         } else {
             self.index.remove(&pos);
+        }
+        if let Some(old) = self.map.get(&pos).filter(|o| ticks(o.kind)) {
+            self.ticking.remove(&old.order);
+        }
+        if ticks(c.kind) {
+            self.ticking.insert(c.order, pos);
         }
         self.map.insert(pos, c);
     }
@@ -926,6 +951,9 @@ impl Containers {
         let c = self.map.remove(pos)?;
         if indexed(c.kind) {
             self.index.remove(pos);
+        }
+        if ticks(c.kind) {
+            self.ticking.remove(&c.order);
         }
         Some(c)
     }
@@ -940,7 +968,12 @@ impl Containers {
 
     /// A chunk entered the region: its containers are decoded.
     pub fn chunk_loaded(&mut self, pos: ChunkPos, chunk: &Chunk) {
-        for ((x, y, z), be) in chunk.block_entities() {
+        // Vanilla registers a loaded chunk's block entities in the iteration order of its
+        // `HashMap<BlockPos, BlockEntity>`.
+        let all: Vec<((usize, i32, usize), &BlockEntity)> = chunk.block_entities().collect();
+        let keys: Vec<BlockPos> = all.iter().map(|((x, y, z), _)| be_pos(pos, *x, *y, *z)).collect();
+        for i in java_hash_order(&keys) {
+            let ((x, y, z), be) = all[i];
             if let Some(kind) = kind_of(be) {
                 self.insert(be_pos(pos, x, y, z), ContainerBe::load(kind, be.kind, &be.nbt));
             }
@@ -984,6 +1017,10 @@ impl Containers {
         match be.and_then(|be| Some((kind_of(be)?, be))) {
             Some((kind, be)) => {
                 let mut loaded = ContainerBe::load(kind, be.kind, &be.nbt);
+                // The same block entity with new data keeps its place in the ticker list.
+                if let Some(old) = self.map.get(&pos).filter(|o| o.type_id == be.kind) {
+                    loaded.order = old.order;
+                }
                 // (A command block's plain last output is kept for tests while the output itself stays.)
                 if let (Some(new), Some(old)) = (loaded.command.as_deref_mut(), self.map.get(&pos).and_then(|c| c.command.as_deref()))
                     && new.last_output == old.last_output
@@ -1035,6 +1072,7 @@ impl Containers {
     /// Moves the containers of chunks `owner` assigns elsewhere into `parts`.
     pub fn split_into(&mut self, parts: &mut [&mut Containers], owner: impl Fn(ChunkPos) -> usize) {
         self.index.clear();
+        self.ticking.clear();
         for (p, c) in std::mem::take(&mut self.map) {
             parts[owner(chunk_of(p))].insert(p, c);
         }
@@ -1043,6 +1081,7 @@ impl Containers {
     pub fn merge(&mut self, from: Containers) {
         self.map.extend(from.map);
         self.index.extend(from.index);
+        self.ticking.extend(from.ticking);
     }
 
     pub fn len(&self) -> usize {
@@ -1168,9 +1207,54 @@ pub(crate) fn scheduled_tick(level: &mut RegionLevel, pos: BlockPos, s: u16) {
     }
 }
 
-/// `Level.tickBlockEntities` for hoppers and furnaces in ticking chunks, in position order.
+/// `DecoratedPotBlockEntity.loadAdditional`: `sherds` is a compound of up to four items (`PotDecorations.CODEC`); anything that does not
+/// decode as one is not loaded, and what does is saved in the codec's own form. The `pot_decorations` of `components` (kept as given, not
+/// applied) goes the same way.
+fn normalize_pot_decorations(extra: &mut Vec<(String, Tag)>) {
+    use kiln_item::component::{ComponentValue, PotDecorations};
+    let canonical = |t: &Tag| PotDecorations::from_value(&kiln_item::Value::from_nbt(t)).ok().map(|d| (d.to_value().to_nbt(), d == PotDecorations::default()));
+    if let Some(i) = extra.iter().position(|(k, _)| k == "sherds") {
+        match canonical(&extra[i].1) {
+            Some((tag, false)) => extra[i].1 = tag,
+            _ => {
+                extra.remove(i);
+            }
+        }
+    }
+    if let Some((_, Tag::Compound(components))) = extra.iter_mut().find(|(k, _)| k == "components")
+        && let Some(j) = components.iter().position(|(k, _)| k == "minecraft:pot_decorations")
+    {
+        match canonical(&components[j].1) {
+            Some((tag, _)) => components[j].1 = tag,
+            None => {
+                components.remove(j);
+            }
+        }
+    }
+}
+
+/// The order a Java `HashMap<BlockPos, _>` iterates `keys` in, given they were put in the list's
+/// order: by bucket (`hash ^ hash >>> 16` modulo the table size, which doubles from 16 whenever
+/// it holds more than three quarters of its size), and in one bucket in the order they went in.
+pub(crate) fn java_hash_order(keys: &[BlockPos]) -> Vec<usize> {
+    let mut size = 16usize;
+    while keys.len() > size / 4 * 3 {
+        size *= 2;
+    }
+    let bucket = |p: &BlockPos| {
+        // `Vec3i.hashCode`.
+        let h = p.y.wrapping_add(p.z.wrapping_mul(31)).wrapping_mul(31).wrapping_add(p.x);
+        ((h ^ ((h as u32) >> 16) as i32) as u32 as usize) & (size - 1)
+    };
+    let mut order: Vec<usize> = (0..keys.len()).collect();
+    order.sort_by_key(|&i| bucket(&keys[i]));
+    order
+}
+
+/// `Level.tickBlockEntities` for hoppers and furnaces in ticking chunks, in the order the block
+/// entities were added.
 pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hopper::ItemEntities, ticking: &crate::blocks::Ticking) {
-    let due: Vec<(BlockPos, BeKind)> = level.blocks.containers.of_kind(ticks).filter(|(p, _)| ticking.contains(chunk_of(*p))).collect();
+    let due: Vec<(BlockPos, BeKind)> = level.blocks.containers.in_tick_order().filter(|(p, _)| ticking.contains(chunk_of(*p))).collect();
     for (pos, kind) in due {
         // Removed by an earlier tick this phase.
         if level.blocks.containers.get(pos).is_none_or(|c| c.kind != kind) {
@@ -1356,6 +1440,46 @@ mod tests {
         let hopper = [stone(64), stone(64), ItemStack::empty(), ItemStack::empty(), ItemStack::empty()];
         // 2/5 full: floor(0.4 * 14) + 1 = 6.
         assert_eq!(signal_from_items(hopper.iter(), 5), 6);
+    }
+
+    /// A pot's `sherds` is a compound of up to four items in 26.3 (an old list of four ids does not load), saved in the codec's own form.
+    #[test]
+    fn a_decorated_pot_loads_sherds_in_the_codec_form() {
+        let type_id = kiln_world::block_entity::type_id("minecraft:decorated_pot").unwrap();
+        let load = |nbt: Vec<(&str, Tag)>| ContainerBe::load(BeKind::DecoratedPot, type_id, &Tag::Compound(nbt.into_iter().map(|(k, v)| (k.to_owned(), v)).collect())).save();
+        let old = load(vec![("sherds", Tag::List(vec![Tag::String("minecraft:brick".into()); 4]))]);
+        assert!(old.get("sherds").is_none(), "the list of four ids is not the 26.3 form");
+        let bare = Tag::Compound(vec![("back".into(), Tag::String("minecraft:brick".into()))]);
+        let new = load(vec![("sherds", bare.clone())]);
+        assert_eq!(new.get("sherds"), Some(&Tag::Compound(vec![("back".into(), Tag::Compound(vec![("id".into(), Tag::String("minecraft:brick".into()))]))])));
+        let components = load(vec![("components", Tag::Compound(vec![("minecraft:pot_decorations".into(), bare)]))]);
+        let decorations = components.get("components").and_then(|c| c.get("minecraft:pot_decorations")).expect("kept in the components");
+        assert!(decorations.get("back").and_then(|b| b.get("id")).is_some(), "in the codec form: {decorations:?}");
+    }
+
+    /// Positions put in a `HashMap<BlockPos, _>` come out by bucket (the orders were read off Java `HashMap`s of the same keys).
+    #[test]
+    fn java_hash_map_order_of_block_positions() {
+        let pos = |v: &[[i32; 3]]| v.iter().map(|p| BlockPos::new(p[0], p[1], p[2])).collect::<Vec<_>>();
+        // Five keys (a table of 16).
+        let keys = pos(&[[11, -4, 4], [6, 30, 10], [3, 48, 13], [5, 27, 10], [13, -40, 11]]);
+        assert_eq!(java_hash_order(&keys), vec![2, 4, 1, 0, 3]);
+        // Thirteen keys: the table doubled to 32 at the 13th.
+        let keys = pos(&[
+            [11, -20, 3], [2, -29, 3], [7, -44, 14], [0, -28, 0], [15, 32, 12], [11, -10, 0], [0, -47, 1], [7, 63, 1], [7, 8, 5], [7, 74, 7], [7, -61, 1],
+            [0, -48, 11], [15, 24, 3],
+        ]);
+        assert_eq!(java_hash_order(&keys), vec![2, 0, 1, 3, 8, 9, 7, 5, 6, 10, 12, 4, 11]);
+        // Thirty keys (a table of 64), with keys sharing a bucket.
+        let keys = pos(&[
+            [11, 43, 7], [7, 28, 13], [12, 58, 1], [9, -43, 2], [5, -23, 9], [11, 10, 8], [12, 63, 1], [15, 57, 14], [11, 53, 0], [12, -40, 7], [15, 66, 5],
+            [11, -5, 0], [6, -12, 0], [15, -38, 4], [5, 55, 12], [15, 57, 9], [8, 46, 3], [2, 9, 9], [14, 47, 13], [3, -33, 14], [15, -33, 0], [14, 2, 4],
+            [11, -44, 10], [14, 12, 14], [0, -17, 2], [14, 38, 0], [15, 41, 3], [1, -21, 2], [3, 75, 13], [1, 55, 6],
+        ]);
+        assert_eq!(
+            java_hash_order(&keys),
+            vec![22, 7, 4, 0, 5, 26, 18, 11, 21, 23, 10, 19, 2, 3, 16, 17, 28, 25, 12, 6, 20, 29, 24, 8, 1, 27, 13, 14, 9, 15]
+        );
     }
 }
 

@@ -42,7 +42,11 @@ pub(crate) struct SpawnerEntry {
 impl SpawnerEntry {
     fn load(type_id: u16, nbt: &Tag) -> SpawnerEntry {
         let be = if type_name(type_id) == TRIAL_TYPE { Be::Trial(TrialBe::load(nbt)) } else { Be::Mob(SpawnerBe::load(nbt)) };
-        SpawnerEntry { be, type_id, dirty: false }
+        let mut e = SpawnerEntry { be, type_id, dirty: false };
+        // A spawner loads with the defaults of what the save lacks (`BaseSpawner.load`) and saves them: the chunk's copy, which is what
+        // `data get block` shows far from any player, follows at once.
+        e.dirty = !is_saved_as(&e.save(), nbt);
+        e
     }
 
     /// The saved compound (`saveCustomOnly`, with the block entity's `id`).
@@ -55,6 +59,19 @@ impl SpawnerEntry {
         f.extend(fields);
         Tag::Compound(f)
     }
+}
+
+/// Whether every field of `saved` is in `raw` with the same value (order of compound keys aside).
+fn is_saved_as(saved: &Tag, raw: &Tag) -> bool {
+    fn same(a: &Tag, b: &Tag) -> bool {
+        match (a, b) {
+            (Tag::Compound(x), Tag::Compound(y)) => x.len() == y.len() && x.iter().all(|(k, v)| y.iter().find(|(k2, _)| k2 == k).is_some_and(|(_, v2)| same(v, v2))),
+            (Tag::List(x), Tag::List(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| same(p.unwrap_list_element(), q.unwrap_list_element())),
+            _ => a == b,
+        }
+    }
+    let (Tag::Compound(fields), Tag::Compound(have)) = (saved, raw) else { return true };
+    fields.iter().filter(|(k, _)| k != "id").all(|(k, v)| have.iter().find(|(k2, _)| k2 == k).is_some_and(|(_, v2)| same(v, v2)))
 }
 
 fn chunk_of(pos: BlockPos) -> ChunkPos {
@@ -359,5 +376,26 @@ impl TrialConfigs {
 
     pub fn len(&self) -> usize {
         self.map.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A spawner whose save lacks what vanilla writes loads with the defaults and has them written back into its chunk's copy (what
+    /// `data get block` shows far from a player); one saved complete is left alone.
+    #[test]
+    fn a_spawner_missing_its_defaults_is_rewritten() {
+        let type_id = kiln_world::block_entity::type_id(TYPE).unwrap();
+        let bare = Tag::Compound(vec![("id".into(), Tag::String(TYPE.into()))]);
+        let entry = SpawnerEntry::load(type_id, &bare);
+        assert!(entry.dirty, "the defaults are not in the chunk's copy yet");
+        let saved = entry.save();
+        for key in ["SpawnCount", "MaxNearbyEntities", "RequiredPlayerRange", "MinSpawnDelay", "MaxSpawnDelay", "SpawnRange"] {
+            assert!(saved.get(key).is_some(), "{key} is saved");
+        }
+        let full = SpawnerEntry::load(type_id, &saved);
+        assert!(!full.dirty, "a complete save stays as it is");
     }
 }

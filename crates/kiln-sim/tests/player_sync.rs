@@ -515,6 +515,76 @@ fn an_arrow_sticks_in_the_body_and_falls_out_in_time() {
     assert!(!ticks.iter().any(|t| t.0.iter().any(|d| contains(d, &w1))), "an invulnerable player takes none");
 }
 
+/// wp75: the same for a mob (`LivingEntity` keeps the counts, not `Player`): the viewers are told of the arrow, and when it falls
+/// out the count goes back to 0 (a mob's entity data lists non-default values only, so the reset has to be sent).
+#[test]
+fn an_arrow_sticks_in_a_mobs_body_and_falls_out_in_time() {
+    use kiln_data::entities::data::living_entity::ARROW_COUNT;
+    let mut w = World::new();
+    w.run("gamerule minecraft:natural_health_regeneration false");
+    w.ticks(2);
+    let p = w.actor.pos;
+    w.run(&format!("summon minecraft:pig {} {} {} {{NoAI:1b,Health:100f,Attributes:[{{id:\"minecraft:max_health\",base:100.0d}}]}}", p[0] + 3.0, p[1], p[2]));
+    w.ticks(3);
+    let pig = w.sim.entity_ids_of("minecraft:pig")[0];
+    let (one, none) = (one(ARROW_COUNT, DataValue::Int(1)), one(ARROW_COUNT, DataValue::Int(0)));
+    w.watcher_log();
+    let summon = format!("summon minecraft:arrow {} {} {} {{Motion:[0.0,-1.5,0.0]}}", p[0] + 3.0, p[1] + 2.5, p[2]);
+    let mut ticks = Vec::new();
+    w.run(&summon);
+    ticks.push(data_of(&w.watcher_log(), pig));
+    for _ in 1..700 {
+        w.ticks(1);
+        ticks.push(data_of(&w.watcher_log(), pig));
+    }
+    let at = |want: &[u8]| ticks.iter().position(|t| t.iter().any(|d| contains(d, want)));
+    let added = at(&one).expect("the viewer is told of the arrow in the pig");
+    assert!(added < 5, "the arrow hit at once: tick {added}");
+    let gone = at(&none).expect("and of the arrow falling out");
+    assert_eq!(gone - added, 580, "20 * (30 - 1) ticks");
+}
+
+/// wp75: `LivingEntity.hurtServer` broadcasts the damage event as the damage is dealt and plays the hurt sound after it: the viewers get
+/// the damage event first, whether the one hurt is a player or a mob.
+#[test]
+fn the_damage_event_comes_before_the_hurt_sound() {
+    let mut w = World::new();
+    w.run("gamerule minecraft:natural_health_regeneration false");
+    w.ticks(2);
+    let p = w.actor.pos;
+    w.run(&format!("summon minecraft:pig {} {} {} {{NoAI:1b}}", p[0] + 2.0, p[1], p[2]));
+    w.ticks(3);
+    let sound = |i: i32| i == id::SOUND || i == id::SOUND_ENTITY;
+    let order = |log: &[Bytes]| -> Vec<i32> { ids(log).into_iter().filter(|i| *i == id::DAMAGE_EVENT || sound(*i)).collect() };
+    // A mob.
+    w.watcher_log();
+    w.run("damage @e[type=minecraft:pig,limit=1] 1 minecraft:generic");
+    w.ticks(2);
+    let seen = order(&w.watcher_log());
+    assert_eq!(seen.first(), Some(&id::DAMAGE_EVENT), "a mob: {seen:?}");
+    assert!(seen.iter().any(|i| sound(*i)), "and its hurt sound: {seen:?}");
+    // A player.
+    w.run("damage Actor 1 minecraft:generic");
+    w.ticks(2);
+    let seen = order(&w.watcher_log());
+    assert_eq!(seen.first(), Some(&id::DAMAGE_EVENT), "a player: {seen:?}");
+    assert!(seen.iter().any(|i| sound(*i)), "and its hurt sound: {seen:?}");
+}
+
+/// wp75: a projectile made and gone within one tick (a snowball summoned against the ground) is still seen by the players around: the tracker pairs
+/// it at the start of the tick it is made in, and `ServerEntity.removePairing` tells them it is gone.
+#[test]
+fn a_projectile_gone_in_its_first_tick_is_added_and_removed() {
+    let mut w = World::new();
+    w.ticks(2);
+    let p = w.actor.pos;
+    w.watcher_log();
+    w.run(&format!("summon minecraft:snowball {} {} {} {{Motion:[0.0,-3.0,0.0]}}", p[0] + 3.0, p[1] + 1.0, p[2]));
+    w.ticks(40);
+    let seen: Vec<i32> = ids(&w.watcher_log()).into_iter().filter(|i| *i == id::ADD_ENTITY || *i == id::REMOVE_ENTITIES).collect();
+    assert_eq!(seen, vec![id::ADD_ENTITY, id::REMOVE_ENTITIES], "a snowball that hit the ground at once");
+}
+
 /// `Bee.doHurtTarget`: a sting raises the stinger count (entity data 13), which falls out like the arrows do.
 #[test]
 fn a_sting_leaves_a_stinger_in_the_body() {
@@ -717,4 +787,61 @@ fn a_frozen_player_gets_the_speed_attribute_every_tick() {
     assert!(n.iter().all(|c| *c == 1), "{n:?}");
     w.ticks(20);
     assert!(listed(&w.watcher_log()).is_empty(), "nothing once the frost is gone");
+}
+
+/// The attribute ids each Update Attributes packet of `log` lists.
+fn listed(log: &[Bytes]) -> Vec<Vec<i32>> {
+    log.iter()
+        .filter(|p| packet_id(p) == id::UPDATE_ATTRIBUTES)
+        .map(|p| {
+            let mut r = Reader::new(p);
+            r.varint().unwrap();
+            r.varint().unwrap();
+            let n = r.varint().unwrap();
+            (0..n)
+                .map(|_| {
+                    let attribute = r.varint().unwrap();
+                    r.bytes(8).unwrap();
+                    for _ in 0..r.varint().unwrap() {
+                        r.string(256).unwrap();
+                        r.bytes(8).unwrap();
+                        r.varint().unwrap();
+                    }
+                    attribute
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// wp75: `AttributeMap.getSyncableAttributes` lists the attributes the map has an instance of: a new player has 4 (max health, movement speed
+/// and the two interaction ranges), not every syncable attribute; one that something changes (a speed effect's modifier on the movement
+/// speed is one of the four; luck effect's on luck is not) joins them.
+#[test]
+fn a_player_is_told_of_the_attributes_that_exist() {
+    let mut w = World::new();
+    let login = listed(&w.actor_log());
+    assert_eq!(login.first().map(Vec::len), Some(4), "at login: {login:?}");
+    w.run("effect give Actor minecraft:luck 100 0 true");
+    w.ticks(3);
+    let later = listed(&w.actor_log());
+    assert_eq!(later.iter().map(Vec::len).collect::<Vec<_>>(), [1], "only luck changed: {later:?}");
+}
+
+/// wp75: a mob is told of the attributes that change, not of the instances made (its first step asks for the movement speed: `getInstance`
+/// makes the instance without marking it changed).
+#[test]
+fn a_mob_is_told_of_the_attributes_that_change_not_of_those_made() {
+    let mut w = World::new();
+    w.ticks(2);
+    let p = w.actor.pos;
+    w.watcher_log();
+    w.run(&format!("summon minecraft:pig {} {} {} {{NoAI:0b}}", p[0] + 3.0, p[1], p[2]));
+    w.ticks(8);
+    assert!(listed(&w.watcher_log()).is_empty(), "the pig has none at pairing and its movement speed is not news");
+    w.run("attribute @e[type=minecraft:pig,limit=1] minecraft:movement_speed base set 0.5");
+    w.ticks(2);
+    let told = listed(&w.watcher_log());
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0].len(), 1, "only the movement speed: {told:?}");
 }

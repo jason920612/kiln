@@ -84,7 +84,11 @@ pub(crate) struct Entity {
     /// The entity data last sent (what the next change is worked out against; `None`: the viewers got it with the pairing).
     meta_prev: Option<EntityData>,
     /// Hash of a mob's syncable attributes as its viewers last got them (0: none yet).
-    attrs_sent: u64,
+    /// The attributes the viewers have been told (`ServerEntity.sendChanges`: only the ones that change are sent again), and whether
+    /// the first look has been taken.
+    attrs_sent: Vec<(kiln_entity::mob::attributes::Attr, u64)>,
+    attrs_total: u64,
+    attrs_primed: bool,
     /// Passengers as viewers last got them (Set Passengers).
     passengers_sent: Vec<i32>,
     equipment_sent: Vec<(u8, kiln_item::ItemStack)>,
@@ -380,7 +384,9 @@ impl Entity {
             section: None,
             meta_sent: Vec::new(),
             meta_prev: None,
-            attrs_sent: 0,
+            attrs_sent: Vec::new(),
+            attrs_total: 0,
+            attrs_primed: false,
             passengers_sent: Vec::new(),
             equipment_sent: Vec::new(),
             leash_sent: None,
@@ -441,7 +447,9 @@ impl Entity {
         self.sent_vel = self.vel;
         self.meta_sent = Vec::new();
         self.meta_prev = None;
-        self.attrs_sent = 0;
+        self.attrs_sent = Vec::new();
+        self.attrs_total = 0;
+        self.attrs_primed = false;
         self.passengers_sent = Vec::new();
         self.equipment_sent = Vec::new();
         self.leash_sent = None;
@@ -549,7 +557,7 @@ impl Entity {
         let mut out = vec![entity::bundle_delimiter(), spawn, entity::set_entity_data(self.id, &self.metadata())];
         // `ServerEntity.sendPairingData`: a living entity's syncable attributes (a horse's speed and jump).
         if let EntityKind::Mob(m) = &self.phys().kind
-            && let Some(pkt) = crate::mobs::attributes_packet(self.id, m)
+            && let Some(pkt) = crate::mobs::attributes_pairing_packet(self.id, m, self.phys().tick_count <= 1)
         {
             out.push(pkt);
         }
@@ -1759,6 +1767,8 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     fn stick_in_body(&mut self, id: i32, stinger: bool) {
         if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) {
             p.stick_in_body(stinger);
+        } else if let Some(m) = self.entity_mut(id).and_then(kiln_entity::mob::data_mut) {
+            m.stick_in_body(stinger);
         }
     }
 
@@ -2291,6 +2301,13 @@ pub(crate) fn tick_list(sim: &mut SimLevel, ticking: &blocks::Ticking, any_playe
             continue;
         }
         tick_turn(sim, i, ticking, any_player);
+    }
+    // An entity another one discarded after its own turn (a charge that killed a stand ticked before it) is gone from this tick on, as
+    // vanilla's `remove` is at once; `settle` only looks at an entity in its own turn.
+    for e in sim.list.iter_mut() {
+        if !e.removed && e.phys.as_deref().is_some_and(|p| p.is_removed()) {
+            e.sync();
+        }
     }
 }
 
@@ -4072,7 +4089,26 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
     let mut t = Tracked::default();
     let section = e.pos.map(|c| c.floor() as i32 >> 4);
     let moved = e.section != Some(section);
+    // An entity that was made and is gone before tracking looked at it (a snowball thrown at a wall): vanilla's tracker paired it at the
+    // start of the tick it was made in, so its viewers are told of it and of its going (`AddEntity`, then `RemoveEntities`).
+    let never_looked_at = e.removed && e.section.is_none() && e.kind.tracking_range != 0;
     e.section = Some(section);
+    if never_looked_at {
+        let range = (e.kind.tracking_range as f64 * 16.0).min(f64::MAX);
+        for p in viewers {
+            let (dx, dz) = (p.pos[0] - e.pos[0], p.pos[2] - e.pos[2]);
+            let (pc, ec) = (chunk_of(p.pos), chunk_of(e.pos));
+            if dx * dx + dz * dz <= range.min(p.view as f64 * 16.0).powi(2) && (pc.x - ec.x).abs() <= p.view && (pc.z - ec.z).abs() <= p.view {
+                t.added.push(p.conn);
+            }
+        }
+        t.removed = t.added.clone();
+        if !t.added.is_empty() {
+            t.spawn = e.spawn_packets();
+            t.despawn = Some(entity::remove_entities(&[e.id]));
+        }
+        return t;
+    }
     {
         let (added, removed) = (&mut t.added, &mut t.removed);
         let mut check = |p: &Viewer, seen: bool| match (sees(p, e), seen) {
@@ -4174,14 +4210,30 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
         let meta = crate::mobs::metadata(phys, m);
         push_dirty_data(e.id, meta, &mut e.meta_sent, &mut e.meta_prev, &mut packets, false);
         // `ServerEntity.sendDirtyEntityData`: attributes that changed (effects, babies, taming, `/attribute`).
-        let hash = crate::mobs::attributes_hash(m);
-        if hash != e.attrs_sent {
-            if e.attrs_sent != 0
-                && let Some(pkt) = crate::mobs::attributes_packet(e.id, m)
-            {
-                packets.push(pkt);
+        // An instance made without a change (the first step asks for the movement speed) is not told.
+        let total = crate::mobs::attributes_hash(m);
+        if total != e.attrs_total || !e.attrs_primed {
+            let now = crate::mobs::attribute_hashes(m);
+            if e.attrs_primed {
+                let unchanged = |a: kiln_entity::mob::attributes::Attr| m.attrs.get(a).is_some_and(|i| i.modifiers.is_empty() && i.base == i.initial);
+                let changed: Vec<kiln_entity::mob::attributes::Attr> = now
+                    .iter()
+                    .filter(|(a, h)| match e.attrs_sent.iter().find(|(o, _)| o == a) {
+                        Some((_, was)) => was != h,
+                        // (An instance that is new and unchanged is in the viewers' pairing data once they are paired later.)
+                        None => !unchanged(*a),
+                    })
+                    .map(|(a, _)| *a)
+                    .collect();
+                if !changed.is_empty()
+                    && let Some(pkt) = crate::mobs::attributes_packet_of(e.id, m, Some(&changed), false)
+                {
+                    packets.push(pkt);
+                }
             }
-            e.attrs_sent = hash;
+            e.attrs_primed = true;
+            e.attrs_sent = now;
+            e.attrs_total = total;
         }
         let worn = crate::mobs::shown_equipment(m);
         if worn.len() != e.equipment_sent.len() || worn.iter().zip(&e.equipment_sent).any(|(a, b)| a.0 != b.0 || !kiln_inventory::stack::matches(&a.1, &b.1)) {

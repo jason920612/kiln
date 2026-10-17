@@ -370,8 +370,15 @@ impl Kind for Allay {
     }
 
     fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
+        // `SimpleContainer.fromItemList`: every stack that loads is added (the one slot takes the first, and more of the same).
         let inv = match r.get("Inventory") {
-            Some(Tag::List(l)) => l.first().and_then(|t| ItemStack::from_nbt(t).ok()),
+            Some(Tag::List(l)) => {
+                let mut slot = ItemStack::empty();
+                for stack in l.iter().filter_map(|t| ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty()) {
+                    add_item(&mut slot, &stack);
+                }
+                Some(slot)
+            }
             _ => None,
         };
         let cooldown = r.num("DuplicationCooldown").map_or(0, |v| v as i64);

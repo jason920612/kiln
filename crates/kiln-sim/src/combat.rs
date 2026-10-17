@@ -401,14 +401,31 @@ impl Player {
         attribute_value(attr, mods.iter().map(|m| (m.1, m.2)))
     }
 
-    /// Every client-syncable attribute with its base value and modifiers (`AttributeMap.getSyncableAttributes`).
+    /// The client-syncable attributes the player's attribute map has an instance of, with base value and modifiers
+    /// (`AttributeMap.getSyncableAttributes`). A player has these four from the start (what the server asks for when it is made; seen
+    /// on a 26.3 server, wp64); the others once something has changed them: a modifier from an effect, an item or a command.
     fn attribute_lists(&self) -> Vec<AttributeList> {
+        const MADE: [&str; 4] = ["minecraft:max_health", "minecraft:movement_speed", "minecraft:block_interaction_range", "minecraft:entity_interaction_range"];
         let equipment = self.equipment_modifiers();
         crate::command_data::PLAYER_ATTRIBUTES
             .iter()
             .filter(|a| kiln_entity::mob::attributes::syncable_name(a.name))
-            .filter_map(|a| Some((kiln_data::builtin_id("minecraft:attribute", a.name)?, self.with_base(*a).base, self.attribute_modifiers_with(*a, &equipment))))
+            .filter_map(|a| {
+                let (base, mods) = (self.with_base(*a).base, self.attribute_modifiers_with(*a, &equipment));
+                let made = MADE.contains(&a.name) || self.attrs_touched.contains(&a.name) || !mods.is_empty() || base != a.base;
+                made.then(|| Some((kiln_data::builtin_id("minecraft:attribute", a.name)?, base, mods))).flatten()
+            })
             .collect()
+    }
+
+    /// Remembers the attributes that have been changed: their instance stays.
+    fn touch_attributes(&mut self) {
+        let equipment = self.equipment_modifiers();
+        for a in crate::command_data::PLAYER_ATTRIBUTES.iter() {
+            if !self.attrs_touched.contains(&a.name) && (self.with_base(*a).base != a.base || !self.attribute_modifiers_with(*a, &equipment).is_empty()) {
+                self.attrs_touched.push(a.name);
+            }
+        }
     }
 
     /// `ClientboundUpdateAttributesPacket(entity, attributes)` for `lists`.
@@ -442,6 +459,7 @@ impl Player {
     /// off and put on again every tick the player is frozen (`removeFrost`, `tryAddFrost`), which marks
     /// its attribute changed whether its value did or not.
     pub(crate) fn attributes_changes(&mut self) -> Option<bytes::Bytes> {
+        self.touch_attributes();
         let now = self.attribute_lists();
         let frost = std::mem::take(&mut self.frost_marked);
         let speed = kiln_data::builtin_id("minecraft:attribute", MOVEMENT_SPEED.name);

@@ -269,3 +269,75 @@ fn a_raid_is_lost_when_the_village_is_gone() {
     w.ticks(620);
     assert!(w.sim.raids("minecraft:overworld").is_empty(), "the celebration is over");
 }
+
+/// wp75: a raid in progress survives a restart (`raids.dat`: id, waves spawned, omen level, status, center; the boss bar and the
+/// raiders' membership are rebuilt: a raider finds the raid at its position every second, `Raider.aiStep`).
+#[test]
+fn a_raid_in_progress_survives_a_restart() {
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("raid-restart");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let start = |dir: &std::path::Path| {
+        let mut sim = Sim::new(SimConfig::new(8, 4, Some(dir.to_owned())));
+        let (msg, stats) = join(1, "Hunter", 2);
+        assert!(sim.step([msg]));
+        World { sim, clients: vec![Client::new(1, stats)] }
+    };
+    let mut w = start(&dir);
+    for c in ["gamerule minecraft:natural_health_regeneration false", "gamerule minecraft:spawn_mobs false", "difficulty normal", "gamemode creative Hunter"] {
+        w.console(c);
+    }
+    w.ticks(5);
+    // (A saved world has no ground by itself.)
+    let [x, y, z] = w.pos();
+    w.console(&format!("fill {} {} {} {} {} {} minecraft:stone", x - 12, y - 1, z - 12, x + 14, y - 1, z + 14));
+    w.village();
+    w.ticks(40);
+    assert!(w.sim.sections_to_village("minecraft:overworld", w.pos()) <= 1, "a village: {:?} at {:?}", w.sim.mobs(), w.pos());
+    w.console("gamemode survival Hunter");
+    w.console("effect give Hunter minecraft:bad_omen 100 1");
+    w.ticks(2);
+    let effects = w.sim.effects(1).unwrap();
+    assert!(effects.iter().any(|e| e.0 == "minecraft:raid_omen"), "raid omen: {effects:?}");
+    w.ticks(600);
+    w.console("gamemode creative Hunter");
+    w.ticks(305);
+    let before = w.sim.raids("minecraft:overworld");
+    assert_eq!(before.len(), 1, "{before:?}");
+    assert_eq!(before[0].2, 1, "the first wave is out");
+    let raiders = w.mobs("minecraft:pillager").len();
+    assert!(raiders >= 4);
+    // Hurt one, so the bar is not full.
+    w.console("damage @e[type=minecraft:pillager,limit=1] 3 minecraft:generic");
+    w.ticks(2);
+    let hurt = w.sim.raids("minecraft:overworld");
+    let (done, _wait) = std::sync::mpsc::channel();
+    assert!(!w.sim.step([ToSim::Shutdown { done }]));
+    drop(w);
+    let mut w = start(&dir);
+    w.ticks(60);
+    let after = w.sim.raids("minecraft:overworld");
+    assert_eq!(after.len(), 1, "the raid is still there: {after:?}");
+    assert_eq!((after[0].0, after[0].1, after[0].2, after[0].3, after[0].4), (before[0].0, "ongoing", 1, 2, before[0].4), "id, status, waves, omen level, center");
+    let pillagers = w.mobs("minecraft:pillager");
+    assert_eq!(pillagers.len(), raiders, "the raiders came back");
+    assert!(
+        pillagers.iter().all(|&id| w.sim.raider(id).is_some_and(|r| r.0 == Some(after[0].0) && r.1 == 1)),
+        "and found their raid again: {:?}",
+        pillagers.iter().map(|&id| w.sim.raider(id)).collect::<Vec<_>>()
+    );
+    assert_eq!(after[0].5, before[0].5, "all of them count");
+    // `Raider.readAdditionalSaveData` takes a raider back into its raid (`RaidId`) without adding its health to the total again, and
+    // updates the bar: it shows what is left, as before the restart.
+    assert!(after[0].6 > 0.8 && (after[0].6 - hurt[0].6).abs() < 0.1, "the bar after the restart: {} then {}", hurt[0].6, after[0].6);
+    // The raid goes on: kill the wave and the next one comes.
+    let village = w.sim.sections_to_village("minecraft:overworld", w.pos());
+    assert!(village <= 1, "the village is still one after the restart: {village}, villagers {:?}", w.mobs("minecraft:villager"));
+    w.console("kill @e[type=!minecraft:villager,type=!minecraft:player]");
+    w.ticks(30);
+    let mid = w.sim.raids("minecraft:overworld");
+    assert_eq!(mid[0].1, "ongoing", "{mid:?} village {}", w.sim.sections_to_village("minecraft:overworld", w.pos()));
+    w.ticks(370);
+    let later = w.sim.raids("minecraft:overworld");
+    assert_eq!(later[0].2, 2, "the second wave: {later:?}");
+}
