@@ -230,6 +230,21 @@ public class ContainerVectors {
                 .container(2, 0, 0, "minecraft:hopper[facing=west]")
                 .container(1, 0, 0, "minecraft:hopper[facing=west]")
                 .container(0, 0, 0, "minecraft:barrel[facing=up]"));
+        // wp75: block entities tick in the order they were made: a stack of hoppers made top first and bottom first.
+        for (int k = 0; k < 2; k++) {
+            Scenario s = new Scenario(k == 0 ? "hopper_stack_made_top_first" : "hopper_stack_made_bottom_first", 30);
+            String[][] parts = {
+                {"0", "3", "0", "minecraft:chest" + items(slot(0, "oak_log", 5), slot(13, "dirt", 2))},
+                {"0", "2", "0", "minecraft:hopper[facing=down]" + items(slot(0, "oak_log", 3))},
+                {"0", "1", "0", "minecraft:hopper[facing=down]"},
+                {"0", "0", "0", "minecraft:chest"}};
+            for (int i = 0; i < 4; i++) {
+                String[] p = parts[k == 0 ? i : 3 - i];
+                s.container(Integer.parseInt(p[0]), Integer.parseInt(p[1]), Integer.parseInt(p[2]), p[3]);
+            }
+            s.placeInOrder = true;
+            out.add(s);
+        }
         out.add(new Scenario("hopper_fills_a_nearly_full_chest", 60)
                 .container(0, 2, 0, "minecraft:hopper[facing=down]" + items(slot(0, "stone", 10), slot(2, "sand", 3)))
                 .container(0, 1, 0, "minecraft:chest" + items(fullChest("stone", 64, 26, 60))));
