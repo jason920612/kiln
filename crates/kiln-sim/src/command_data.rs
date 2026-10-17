@@ -851,7 +851,7 @@ impl Sim {
                     1 => Op::AddMultipliedBase,
                     _ => Op::AddMultipliedTotal,
                 };
-                i.modifiers.push(Modifier { id, amount, op });
+                i.modifiers.push(Modifier { id, amount, op, transient: false });
                 true
             }
             AttributeChange::RemoveModifier(id) => {
