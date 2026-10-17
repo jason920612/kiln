@@ -172,9 +172,11 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
         m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
     }
     super::reassess_weapon_goal(m, false);
-    // The saved memories (`Brain` tag) of a brain-driven type.
+    // The saved memories (`Brain` tag) of a brain-driven type; any other living entity has a brain without memory types, which drops
+    // them all (the tag is read, not kept as an unknown field).
+    let saved_brain = r.get("Brain");
     if let Some(b) = m.brain.as_mut()
-        && let Some(t) = r.get("Brain")
+        && let Some(t) = saved_brain
     {
         super::brain::persist::load(b, t);
     }

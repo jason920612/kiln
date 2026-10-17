@@ -41,11 +41,38 @@ fn canon(t: &Tag) -> String {
     }
 }
 
-fn memories(brain: Option<&Tag>) -> String {
-    match brain {
-        None => "(no Brain)".into(),
-        Some(b) => b.get("memories").map_or("(no memories)".into(), canon),
+/// The types and keys of a tag with the numbers taken out.
+fn shape(t: &Tag) -> String {
+    match t {
+        Tag::Compound(fields) => {
+            let mut v: Vec<String> = fields.iter().map(|(k, v)| format!("{k}:{}", shape(v))).collect();
+            v.sort();
+            format!("{{{}}}", v.join(","))
+        }
+        Tag::List(items) => format!("[{}]", items.first().map(|t| shape(t.unwrap_list_element())).unwrap_or_default()),
+        Tag::Byte(_) => "b".into(),
+        Tag::Short(_) => "s".into(),
+        Tag::Int(_) => "i".into(),
+        Tag::Long(_) => "L".into(),
+        Tag::Float(_) => "f".into(),
+        Tag::Double(_) => "d".into(),
+        Tag::String(_) => "str".into(),
+        Tag::IntArray(_) => "ia".into(),
+        other => format!("{other:?}"),
     }
+}
+
+/// The saved memories as text: the entries the case gave exactly (values and lifetimes), the others (the brain made them itself, from random
+/// draws) by their shape.
+fn memories(brain: Option<&Tag>, nbt: &str) -> String {
+    let Some(b) = brain else { return "(no Brain)".into() };
+    let Some(Tag::Compound(mems)) = b.get("memories") else { return "(no memories)".into() };
+    let mut v: Vec<String> = mems
+        .iter()
+        .map(|(k, t)| if nbt.contains(&format!("\"{k}\"")) { format!("{k}:{}", canon(t)) } else { format!("{k}:~{}", shape(t)) })
+        .collect();
+    v.sort();
+    v.join(",")
 }
 
 fn world() -> (Sim, Client) {
@@ -110,7 +137,7 @@ fn loaded_brain_memories_match_vanilla() {
                 break;
             };
             let vb = (!s["saved"]["brain"].is_null()).then(|| tag_of(&s["saved"]["brain"]));
-            let (k, w) = (memories(saved.get("Brain")), memories(vb.as_ref()));
+            let (k, w) = (memories(saved.get("Brain"), nbt), memories(vb.as_ref(), nbt));
             if k == w {
                 ok += 1;
             } else {
