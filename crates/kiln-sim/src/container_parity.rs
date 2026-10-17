@@ -155,9 +155,8 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
     }
-    // Vanilla's `/summon` adds the entity at once; here entities summoned by a command join the
-    // level in the next tick, so the summons of tick `t` are sent with tick `t - 1` (tick 1's in
-    // a step of their own before it).
+    // Vanilla's `/summon` adds the entity at once, and so does Kiln (wp72: it is in the level when the tick starts and
+    // has its first tick in that tick); the summons come after the other commands of their tick.
     let actions = |t: usize, summons: bool| -> Vec<ToSim> {
         line["actions"].get(t.to_string()).and_then(Value::as_array).map_or(Vec::new(), |a| {
             a.iter()
@@ -166,12 +165,6 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                 .collect()
         })
     };
-    let first_summons = actions(1, true);
-    if !first_summons.is_empty() {
-        let mut inbox = first_summons;
-        client.tick(None, &mut inbox);
-        assert!(sim.step(inbox));
-    }
     // The game time is a multiple of 20 as the scenario begins (daylight detectors work on it).
     if line["align20"].as_bool() == Some(true) {
         // (The harness ticks the level alone, which leaves the world clock where `/time` put it.)
@@ -209,7 +202,7 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             }
         }
         inbox.extend(actions(tick, false));
-        inbox.extend(actions(tick + 1, true));
+        inbox.extend(actions(tick, true));
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
         for (i, &p) in containers.iter().enumerate() {
