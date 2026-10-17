@@ -761,6 +761,9 @@ impl Entity {
             self.collide_memo(level, movement)
         };
         let d = collided.length_sqr();
+        if mover == MoverType::Piston && std::env::var_os("KILN_PISTON_DEBUG").is_some() {
+            eprintln!("    DOMOVE id {} movement {movement:?} collided {collided:?} noclip {:?} bb {:?}", self.id, self.piston_noclip, self.bb);
+        }
         if d > 1.0e-7 || movement.length_sqr() - d < 1.0e-7 {
             if self.fall_distance != 0.0 && d >= 1.0 {
                 let len = jmin(collided.length(), 8.0);
