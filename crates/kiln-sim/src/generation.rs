@@ -76,8 +76,34 @@ pub(crate) struct GenPool {
     /// Finished chunks not installed yet (still in `in_flight`, so not asked for again).
     ready: std::collections::BTreeMap<ChunkPos, Chunk>,
     claims: Arc<Mutex<HashMap<ChunkPos, Claim>>>,
-    /// A fork of the generator kept for its statistics.
+    /// The urgent queue as the threads see it, for [`GenPool::help`].
+    urgent_jobs: Receiver<ChunkPos>,
+    dimension: Dimension,
+    /// A fork of the generator kept for its statistics, and for [`GenPool::help`].
     probe: Box<dyn ChunkGenerator>,
+}
+
+/// Takes a queued chunk for the calling thread; `false` if another took it or it was dropped.
+fn claim(claims: &Mutex<HashMap<ChunkPos, Claim>>, pos: ChunkPos) -> bool {
+    match claims.lock().unwrap().get_mut(&pos) {
+        Some(c @ Claim::Queued) => {
+            *c = Claim::Taken;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Generates a chunk, with its own light (off the tick: its region adds what crosses the borders
+/// when it takes the chunk in).
+fn make(generator: &mut dyn ChunkGenerator, pos: ChunkPos, dimension: Dimension) -> Chunk {
+    let started = Instant::now();
+    let mut chunk = generator.generate(pos, dimension);
+    chunk = kiln_world::light::light_alone(chunk, pos);
+    chunkstats::count(&chunkstats::GEN_DONE);
+    chunkstats::add_ns(&chunkstats::GEN_BUSY_NS, started.elapsed());
+    chunk.mark_new();
+    chunk
 }
 
 impl GenPool {
@@ -102,21 +128,10 @@ impl GenPool {
                                 recv(jobs) -> p => match p { Ok(p) => p, Err(_) => break },
                             },
                         };
-                        {
-                            let mut claims = claims.lock().unwrap();
-                            match claims.get_mut(&pos) {
-                                Some(c @ Claim::Queued) => *c = Claim::Taken,
-                                _ => continue,
-                            }
+                        if !claim(&claims, pos) {
+                            continue;
                         }
-                        let started = Instant::now();
-                        let mut chunk = generator.generate(pos, dimension);
-                        // Its own light here, off the tick: its region adds what crosses the
-                        // borders when it takes the chunk in.
-                        chunk = kiln_world::light::light_alone(chunk, pos);
-                        chunkstats::count(&chunkstats::GEN_DONE);
-                        chunkstats::add_ns(&chunkstats::GEN_BUSY_NS, started.elapsed());
-                        chunk.mark_new();
+                        let chunk = make(generator.as_mut(), pos, dimension);
                         if done.send((pos, chunk)).is_err() {
                             break;
                         }
@@ -124,7 +139,18 @@ impl GenPool {
                 })
                 .expect("spawning a generation thread");
         }
-        Self { requests, urgent, results, in_flight: HashMap::new(), urgent_sent: Default::default(), ready: Default::default(), claims, probe: generator.fork() }
+        Self {
+            requests,
+            urgent,
+            results,
+            in_flight: HashMap::new(),
+            urgent_sent: Default::default(),
+            ready: Default::default(),
+            claims,
+            urgent_jobs,
+            dimension,
+            probe: generator.fork(),
+        }
     }
 
     /// Queues `pos` unless it is already queued; `false` when the queue is full.
@@ -196,6 +222,23 @@ impl GenPool {
                 self.ready.insert(pos, chunk);
             }
         }
+    }
+
+    /// Generates an urgent chunk no thread took yet on the calling thread: the tick, while a command
+    /// waits for its chunks (vanilla's main thread runs tasks while it waits for a chunk too). Whether
+    /// there was one.
+    pub fn help(&mut self) -> bool {
+        while let Ok(pos) = self.urgent_jobs.try_recv() {
+            if !claim(&self.claims, pos) {
+                continue;
+            }
+            let chunk = make(self.probe.as_mut(), pos, self.dimension);
+            if self.in_flight.contains_key(&pos) {
+                self.ready.entry(pos).or_insert(chunk);
+            }
+            return true;
+        }
+        false
     }
 
     /// Blocks until the threads finish another chunk, and collects it.
