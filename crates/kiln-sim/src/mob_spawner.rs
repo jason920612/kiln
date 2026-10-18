@@ -93,6 +93,9 @@ impl Spawners {
         self.map.is_empty()
     }
 
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
 
     /// A chunk entered the region: its spawners are decoded.
     pub fn chunk_loaded(&mut self, pos: ChunkPos, chunk: &Chunk) {
