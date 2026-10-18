@@ -207,23 +207,6 @@ elif MODE == "portal2":
     time.sleep(0.5)
     for t in "KV":
         w(t, f"summon cow {px + 1.5} {py + 1} {pz + 0.5} {{Age:-24000,NoAI:1b,PersistenceRequired:1b,Tags:[\"trav_{CX}\"]}}")
-    step(6)
-    for t in "KV":
-        w(t, "execute in minecraft:the_nether run tp W0 110 100 110")
-    time.sleep(0.5)
-    step(40)
-
-    def where(t):
-        tag = f"trav_{CX}"
-        res = []
-        for dim in ("overworld", "the_nether"):
-            out = ask(t, f"execute in minecraft:{dim} if entity @e[tag={tag},x=-100000,y=-64,z=-100000,dx=200000,dy=500,dz=200000]", wait=0.12)
-            if "pass" in out.lower():
-                pos = ask(t, f"execute in minecraft:{dim} run data get entity @e[tag={tag},x=-100000,y=-64,z=-100000,dx=200000,dy=500,dz=200000,limit=1] Pos", wait=0.12)
-                m = re.search(r"\[(-?[\d.]+)d, (-?[\d.]+)d, (-?[\d.]+)d\]", pos)
-                res.append((dim[:3], tuple(round(float(x)) for x in m.groups()) if m else None))
-        return res or [None]
-
     for i in range(0, length, 10):
         step(10)
         print(i + 46, "K", where("K"), " V", where("V"))
