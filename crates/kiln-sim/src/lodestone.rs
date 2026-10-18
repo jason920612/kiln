@@ -2,6 +2,7 @@
 //! (the target is only judged in the level it points at; a level the player is not in leaves it alone).
 
 use kiln_item::component::LodestoneTracker;
+use kiln_world::Blocks;
 
 impl crate::Sim {
     pub(crate) fn tick_compasses(&mut self) {
