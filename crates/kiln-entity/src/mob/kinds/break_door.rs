@@ -61,6 +61,7 @@ impl Interact {
 
     /// `DoorInteractGoal.canUse`.
     fn can_use(&mut self, e: &Entity, m: &MobData, level: &dyn EntityLevel) -> bool {
+        eprintln!("DBG door can_use hc={} path={:?} pos={:?}", e.horizontal_collision, m.nav.path.as_ref().map(|p| (p.next, p.nodes.len(), p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())), e.position());
         if m.nav.water_bound || !e.horizontal_collision {
             return false;
         }
