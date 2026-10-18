@@ -555,12 +555,17 @@ impl RegionWork<'_> {
             }
         }
         crate::diag::lap("c.packets", dt);
-        for (p, missing) in self.players.iter_mut().zip(missing).filter(|(_, m)| !m.is_empty()) {
-            send_chunks(p, missing, &mut *self.cells, env, &mut self.out.wanted);
+        for (p, missing) in self.players.iter_mut().zip(missing) {
+            if !missing.is_empty() {
+                send_chunks(p, missing, &mut *self.cells, env, &mut self.out.wanted);
+            }
+            if !p.disconnected {
+                load_ahead(p, &*self.cells, env, &mut self.out.wanted);
+            }
         }
         // The same tick everywhere, so when chunks unload does not depend on the regions.
         if env.game_time % 20 == 0 {
-            self.find_unloads();
+            self.find_unloads(env.max_view);
         }
         // Encoded chunk packets are shared by the players a chunk goes to around the same time;
         // a minute on they only take memory (a later viewer gets the chunk encoded again, the
@@ -888,8 +893,11 @@ impl RegionWork<'_> {
     }
 
     /// Chunks outside every player's view (plus one chunk of margin) can go.
-    fn find_unloads(&mut self) {
-        let mut centers: Vec<(ChunkPos, i32)> = self.players.iter().map(|p| (p.center, p.view_distance + 1)).collect();
+    ///
+    /// Vanilla keeps the chunks within the *server's* view distance of a player loaded (the
+    /// `PLAYER_LOADING` tickets), whatever view distance the client asked for.
+    fn find_unloads(&mut self, max_view: i32) {
+        let mut centers: Vec<(ChunkPos, i32)> = self.players.iter().map(|p| (p.center, p.view_distance.max(max_view) + 1)).collect();
         centers.sort_unstable_by_key(|&(c, r)| (c, r));
         centers.dedup();
         let mut near = HashSet::new();
@@ -2004,6 +2012,49 @@ fn send_chunks(p: &mut Player, missing: Vec<ChunkPos>, cells: &mut CellSet<Cell>
     }
     p.send(packets::chunk_batch_finished(batch.len() as i32));
     p.unacked_batches += 1;
+}
+
+/// Rank of the requests for chunks only loaded (not sent): after every player's own needs.
+const LOAD_AHEAD_RANK: u32 = 1 << 16;
+/// Most chunks asked for per player and tick for loading only.
+const LOAD_AHEAD_PER_TICK: usize = 64;
+
+/// Vanilla loads the chunks within the server's view distance of a player (the
+/// `PLAYER_LOADING` tickets of `DistanceManager.PlayerTicketTracker`, which know nothing of the
+/// client's `requestedViewDistance`); the client's own view distance only decides which of them
+/// are sent (`ChunkMap.getPlayerViewDistance`, clamped to 2..server view). A player who plays
+/// with a render distance of 2 keeps the farms within the simulation distance running, so the
+/// chunks between the client's view and the server's are asked for too (nearest first, after
+/// everything a player is waiting to be sent), and not unloaded.
+fn load_ahead(p: &mut Player, cells: &CellSet<Cell>, env: &Env, wanted: &mut Vec<(u32, ConnId, ChunkPos)>) {
+    let r = env.max_view;
+    // Spectators hold no tickets (`ChunkMap.skipPlayer`) unless `spectators_generate_chunks`.
+    if r <= p.view_distance || (p.game_mode == 3 && !env.spectators_generate_chunks) {
+        return;
+    }
+    let center = p.center;
+    if p.load_checked == Some((center, r)) {
+        return;
+    }
+    let v = p.view_distance;
+    let mut missing: Vec<ChunkPos> = Vec::new();
+    for x in center.x - r..=center.x + r {
+        for z in center.z - r..=center.z + r {
+            let inside = (x - center.x).abs() <= v && (z - center.z).abs() <= v;
+            let c = ChunkPos::new(x, z);
+            if !inside && cells.chunk(c).is_none() {
+                missing.push(c);
+            }
+        }
+    }
+    if missing.is_empty() {
+        p.load_checked = Some((center, r));
+        return;
+    }
+    missing.sort_by_key(|c| (c.x - center.x).pow(2) + (c.z - center.z).pow(2));
+    for (i, c) in missing.into_iter().take(LOAD_AHEAD_PER_TICK).enumerate() {
+        wanted.push((LOAD_AHEAD_RANK + i as u32, p.conn, c));
+    }
 }
 
 /// De-duplicated union of chunk requests, keeping the first occurrence.
