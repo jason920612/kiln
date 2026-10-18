@@ -57,7 +57,8 @@ class NBT:
             while True:
                 tt = self.u(">b")
                 if tt == 0: return d
-                d[self.string()] = self.payload(tt)
+                k = self.string()
+                d[k] = self.payload(tt)
         if t == 11:
             n = self.u(">i"); return [self.u(">i") for _ in range(n)]
         if t == 12:
@@ -114,8 +115,8 @@ for p in TRADES:
         same = "SAME" if re.sub(r"\s+", "", res["K"]) == re.sub(r"\s+", "", res["V"]) else "DIFF"
         print(name, (x, z), same)
         if same == "DIFF":
-            print("   K", res["K"][:600])
-            print("   V", res["V"][:600])
+            print("   K", res["K"][:700])
+            print("   V", res["V"][:700])
         sys.stdout.flush()
 for t in "KV":
     w(t, "save-all flush")
