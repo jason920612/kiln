@@ -465,8 +465,8 @@ impl CustomGoal for CatRelaxOnOwnerGoal {
                 let (dx, dz) = (owner.pos.x - e.position().x, owner.pos.z - e.position().z);
                 let dy = (owner.pos.y + owner.eye_height as f64) - e.eye_y();
                 let h = (dx * dx + dz * dz).sqrt();
-                let yaw = (dz.atan2(dx) * 57.2957763671875) as f32 - 90.0;
-                let pitch = (-(dy.atan2(h) * 57.2957763671875)) as f32;
+                let yaw = (crate::mob::mth::atan2(dz, dx) * 57.2957763671875) as f32 - 90.0;
+                let pitch = (-(crate::mob::mth::atan2(dy, h) * 57.2957763671875)) as f32;
                 e.x_rot = crate::mob::control::rotlerp(e.x_rot, pitch, 45.0);
                 e.y_rot = crate::mob::control::rotlerp(e.y_rot, yaw, 45.0);
                 st_mut(m).relax_one = true;
