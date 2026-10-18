@@ -364,6 +364,9 @@ impl EntityExt for FishingHook {
                 if d.abs() < 0.01 {
                     d += d.signum() * 0.1;
                 }
+                if std::env::var_os("KILN_FISH_DBG").is_some() {
+                    eprintln!("FISHDBG gt={} pos={:?} blockpos={:?} height={} in_water={} d={} vy={}", level.game_time(), e.position(), pos, height, in_water, d, v.y);
+                }
                 e.delta = Vec3::new(v.x * 0.9, v.y - d * e.random.next_float() as f64 * 0.2, v.z * 0.9);
                 if self.nibble <= 0 && self.time_until_hooked <= 0 {
                     self.open_water = true;
