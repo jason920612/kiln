@@ -8,7 +8,7 @@
 
 use crate::entity::Entity;
 use crate::ext_entity::{fireball, wither_skull};
-use crate::level::{DamageKind, EntityFilter, EntityLevel, Event};
+use crate::level::{EntityFilter, EntityLevel, Event};
 use crate::math::{BlockPos, Vec3};
 use crate::mob::attributes::Attr::{self, *};
 use crate::mob::control::{self, Operation};
@@ -450,9 +450,10 @@ impl Kind for Wither {
             return Some(false);
         }
         if is_powered(m) {
+            // (`getDirectEntity() instanceof AbstractArrow || WindCharge`: the entity decides, never the damage type, so `/damage … minecraft:arrow`
+            // without a projectile hurts.)
             let direct = type_of(source.direct);
-            let arrow = matches!(direct, Some("minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:trident" | "minecraft:wind_charge"))
-                || (direct.is_none() && matches!(source.kind, DamageKind::Arrow | DamageKind::Trident));
+            let arrow = matches!(direct, Some("minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:trident" | "minecraft:wind_charge"));
             if arrow {
                 return Some(false);
             }
