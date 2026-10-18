@@ -229,14 +229,14 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 
 | 家族 | 類型 | 級別 | 向量數（主角 scenario） | 缺口 |
 |---|---|---|---|---|
-| 被動動物 | `pig` `cow` `sheep` `chicken` `rabbit` `fox` `wolf` `cat` `ocelot` `panda` `polar_bear` `turtle` `mooshroom` `armadillo` `sniffer` `axolotl` `goat` `frog` `tadpole` `parrot` `bat` | A（多數另有 B） | 3–29 | 豬鞍與胡蘿蔔釣竿騎乘在 wp50 補上（`eq50_pig*`）；狼鎧甲缺；貓晨間送禮不發生；`FoxStrollThroughVillage` 不執行。苦力怕、骷髏、蜘蛛、襲擊者會躲貓、狼、犰狳、嚎叫者（wp41，`avoid_*` 向量） |
+| 被動動物 | `pig` `cow` `sheep` `chicken` `rabbit` `fox` `wolf` `cat` `ocelot` `panda` `polar_bear` `turtle` `mooshroom` `armadillo` `sniffer` `axolotl` `goat` `frog` `tadpole` `parrot` `bat` | A（多數另有 B） | 3–29 | 豬鞍與胡蘿蔔釣竿騎乘在 wp50 補上（`eq50_pig*`）；狼鎧甲本來就有（wp77 重查）；貓晨間送禮與 `FoxStrollThroughVillageGoal` 在 wp77 補上（`cat_gift.rs`、`village_goals.rs`）。苦力怕、骷髏、蜘蛛、襲擊者會躲貓、狼、犰狳、嚎叫者（wp41，`avoid_*` 向量） |
 | 載具與坐騎 | `horse` `donkey` `mule` `llama` `trader_llama` `skeleton_horse` `zombie_horse` `camel` `camel_husk` `nautilus` `zombie_nautilus` | A | 2–25 | 鸚鵡螺（含殭屍鸚鵡螺）的鞍與護甲在 wp50 補上（`eq50_nautilus*`、`eq50_zombie_nautilus*`）；玩家操控坐騎只有 C；背包畫面未建模；wp63：馬／驢／騾／羊駝繁殖 4,000 次與原版逐位元相同（`EquineBreedVectors`），`eq63_*` 14 個（繁殖路徑、12 隻長商隊），修正 `FollowParentGoal` 子類別與 `checkDespawn` 亂數順序 |
-| 敵對（主世界） | `zombie` `husk` `drowned` `zombie_villager` `skeleton` `stray` `bogged` `parched` `creeper` `spider` `cave_spider` `silverfish` `slime` `enderman` `endermite` `witch` `phantom` `creaking` `warden` `breeze` `guardian` `elder_guardian` `vex` | A | 2–63（不少僅 2–4 個） | **殭屍破門缺（hard 難度）**；`MoveThroughVillage` 不啟動 |
-| 襲擊者 | `pillager` `vindicator` `evoker` `illusioner` `ravager` | A | 4–9＋27 個波次 | 襲擊裝備附魔擲了沒套用、破門缺、鐘不由玩家敲 |
-| 下界 | `zombified_piglin` `piglin` `piglin_brute` `hoglin` `zoglin` `blaze` `ghast` `magma_cube` `wither_skeleton` `strider` | A | 3–27 | 要塞生怪覆寫缺，烈焰人與凋零骷髏在自然世界遇不到；strider 無自然生成規則（**wp65 已補，見 6.13**）；strider 的鞍與胡蘿蔔釣竿在 wp50 補上（`eq50_strider*`） |
+| 敵對（主世界） | `zombie` `husk` `drowned` `zombie_villager` `skeleton` `stray` `bogged` `parched` `creeper` `spider` `cave_spider` `silverfish` `slime` `enderman` `endermite` `witch` `phantom` `creaking` `warden` `breeze` `guardian` `elder_guardian` `vex` | A | 2–63（不少僅 2–4 個） | 殭屍破門（hard）與 `MoveThroughVillageGoal`（夜晚往村莊走）在 wp77 補上（`door_break.rs`、`village_goals.rs`） |
+| 襲擊者 | `pillager` `vindicator` `evoker` `illusioner` `ravager` | A | 4–9＋27 個波次 | 襲擊裝備附魔、玩家敲鐘本來就有（wp77 重查：`raiders_get_their_enchanted_weapons`）；破門與開門（`BreakDoorGoal`、`RaiderOpenDoorGoal`）在 wp77 補上 |
+| 下界 | `zombified_piglin` `piglin` `piglin_brute` `hoglin` `zoglin` `blaze` `ghast` `magma_cube` `wither_skeleton` `strider` | A | 3–27 | 要塞生怪覆寫本來就有（`structure_spawns.rs`，wp77 重查），烈焰人與凋零骷髏只在要塞裡生；wp77：屋頂金農場起點高度多一格（Kiln 多 1.3~2 倍）已修，傳送門方塊的殭屍豬人補上；strider 無自然生成規則（**wp65 已補，見 6.13**）；strider 的鞍與胡蘿蔔釣竿在 wp50 補上（`eq50_strider*`） |
 | 終界與頭目 | `ender_dragon` `shulker` `wither` | A | 12／7／6 | 無世界邊界 |
-| 水生 | `squid` `glow_squid` `cod` `salmon` `tropical_fish` `pufferfish` | A | 3–6 | 神殿生怪覆寫缺 |
-| 村民與 NPC | `villager` `wandering_trader` `iron_golem` `snow_golem` `allay` | A | 3–61 | 交易表擲法與原版不同；鐵傀儡不回村、不保衛村；堆肥不模擬 |
+| 水生 | `squid` `glow_squid` `cod` `salmon` `tropical_fish` `pufferfish` | A | 3–6 | 神殿生怪覆寫本來就有（`structure_spawns.rs`，wp77 重查） |
+| 村民與 NPC | `villager` `wandering_trader` `iron_golem` `snow_golem` `allay` | A | 3–61 | 交易表擲法：設計取捨（vanilla 用世界共用亂數序列，Kiln 以世界種子、tick 與村民 id 為種子；分布相同，逐位元不同）；鐵傀儡回村與保衛、農夫堆肥本來就有（wp77 重查）；補貨、折扣、八卦 wp77 的 400 個向量案例位元相同 |
 | wp49 補上的 6 種 | `bee`（30）`dolphin`（27）`happy_ghast`（20）`copper_golem`（34；含箱子搬運、風化與雕像、蜜蠟與斧、雷擊、鐵傀儡送花）`giant`（4）`sulfur_cube`（29；12 種原型、吞物、剪、餵食、分裂、TNT 球） | A | 144 個 scenario 併入 `m6-mobs2` | 硫磺方塊的玩家推擠、衝刺擊退、接觸傷害對生物沒有向量可比（harness 不 tick 玩家）；快樂恐懼魔騎乘與鞍具只有 C |
 
 能力面向：
