@@ -2471,6 +2471,24 @@ def start_bot(port: int, exe: Path, prefix: str, log: Path):
     return subprocess.Popen(argv, stdout=open(log, "w", encoding="utf-8"), stderr=subprocess.STDOUT)
 
 
+_WAYPOINT_LIST = re.compile(r"^(d+ waypoint(s) in [^:]+: )(.*)$")
+
+
+def same_lines(want, got):
+    """Equal console lines, except that the names of `/waypoint list` are compared as a set: vanilla lists them in `HashSet` order of the
+    transmitters' entity ids (`Entity.hashCode`), and the ids of the two bots depend on how many entities each server made before they
+    joined (wp79: the same order only by luck once the chunks around the bots are loaded by the server's view distance)."""
+
+    def norm(lines):
+        out = []
+        for line in lines:
+            m = _WAYPOINT_LIST.match(line)
+            out.append(m.group(1) + ", ".join(sorted(m.group(2).split(", "))) if m else line)
+        return out
+
+    return norm(want) == norm(got)
+
+
 def parse_cases(text):
     cases, section = [], ""
     for line in text.strip().splitlines():
@@ -2646,7 +2664,7 @@ def main():
                     run(server, command)
                 continue
             want, got = run(vanilla, command), run(kiln, command)
-            ok = want == got
+            ok = same_lines(want, got)
             if ok:
                 passed += 1
             else:
