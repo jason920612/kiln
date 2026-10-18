@@ -258,8 +258,18 @@ fn next_int_between(r: &mut dyn RandomSource, lo: i32, hi: i32) -> i32 {
 
 /// `BoneMealItem.useOn`: `growCrop` on a bonemealable block (the bone meal is used up whether
 /// or not it took), with the growth particles.
-fn bone_meal(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, _face: Direction, off_hand: bool, spawns: &mut Vec<Spawn>) -> bool {
+fn bone_meal(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, face: Direction, off_hand: bool, spawns: &mut Vec<Spawn>) -> bool {
     if !bone_meal_block(level, pos, spawns) {
+        // `BoneMealItem.useOn`: against a solid face, the water in front of it takes the bone meal (seagrass, corals).
+        let clicked = level.block(pos);
+        let relative = pos.relative(face);
+        if logic::face_sturdy(clicked, face as u8, logic::Support::Full) && kiln_blocks::behaviour::bonemeal::grow_water_plant(level, relative, Some(face)) {
+            let i = p.hand_index(off_hand);
+            kiln_inventory::Container::item_mut(&mut p.inv, i).shrink(1);
+            p.inv.times_changed += 1;
+            level.effect(Effect::LevelEvent { id: 1505, pos: relative, data: 15 });
+            return true;
+        }
         return false;
     }
     let i = p.hand_index(off_hand);

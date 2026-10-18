@@ -418,6 +418,67 @@ fn small_dripleaf<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
     }
 }
 
+/// `BoneMealItem.growWaterPlant`: bone meal on the water beside a solid face: 128 tries to scatter seagrass (and in a warm ocean corals and coral fans, a wall coral
+/// on the first try when `face` is a side) in a growing cloud around `pos`, ripening seagrass already there one time in ten. False when `pos` is not still water.
+pub fn grow_water_plant<L: Level>(level: &mut L, pos: BlockPos, face: Option<Direction>) -> bool {
+    let is_full_water = |level: &L, p: BlockPos| {
+        let b = level.block(p);
+        let f = logic::fluid(b);
+        is_named(b, "minecraft:water") && f.kind == logic::FluidKind::Water && f.amount == 8
+    };
+    if !is_full_water(level, pos) {
+        return false;
+    }
+    let wall_corals = tags::members("minecraft:wall_corals");
+    let underwater = tags::members("minecraft:underwater_bonemeals");
+    'tries: for i in 0..128 {
+        let mut at = pos;
+        let mut plant = named("minecraft:seagrass");
+        for _ in 0..i / 16 {
+            let dx = level.random().next_int_bounded(3) - 1;
+            let dy = (level.random().next_int_bounded(3) - 1) * level.random().next_int_bounded(3) / 2;
+            let dz = level.random().next_int_bounded(3) - 1;
+            at = at.offset(dx, dy, dz);
+            let b = level.block(at);
+            if (0..6u8).all(|d| logic::face_sturdy(b, d, logic::Support::Full)) {
+                continue 'tries;
+            }
+        }
+        if level.biome_name(at).as_deref() == Some("minecraft:warm_ocean") {
+            if i == 0 && face.is_some_and(|f| f.is_horizontal()) {
+                if !wall_corals.is_empty() {
+                    let pick = level.random().next_int_bounded(wall_corals.len() as i32) as usize;
+                    plant = wall_corals[pick].default_state();
+                }
+                if state::has(plant, "facing") {
+                    plant = state::set(plant, "facing", face.map_or("north", |f| f.name()));
+                }
+            } else if level.random().next_int_bounded(4) == 0 && !underwater.is_empty() {
+                let pick = level.random().next_int_bounded(underwater.len() as i32) as usize;
+                plant = underwater[pick].default_state();
+            }
+        }
+        if state::has(plant, "facing") && wall_corals.contains(&BlockId::of(plant)) {
+            let mut k = 0;
+            while !crate::behaviour::support::can_survive(level, plant, at) && k < 4 {
+                let dir = Direction::HORIZONTAL[level.random().next_int_bounded(4) as usize];
+                plant = state::set(plant, "facing", dir.name());
+                k += 1;
+            }
+        }
+        if !crate::behaviour::support::can_survive(level, plant, at) {
+            continue;
+        }
+        let existing = level.block(at);
+        if is_full_water(level, at) {
+            crate::update::set_block_and_update(level, at, plant);
+        } else if is_named(existing, "minecraft:seagrass") && is_named(level.block(at.above()), "minecraft:water") && level.random().next_int_bounded(10) == 0 {
+            grow(level, at);
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
