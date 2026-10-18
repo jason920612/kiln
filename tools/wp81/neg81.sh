@@ -5,7 +5,7 @@ export PATH="$HOME/.cargo/bin:$PATH" KILN_WORK="$HOME/kiln/work" CARGO_BUILD_JOB
 cd "$HOME/wt/wp81-gaps" || exit 2
 declare -A FILE EDIT TEST
 add() { FILE[$1]=$2; EDIT[$1]=$3; TEST[$1]=$4; ORDER+=("$1"); }
-add rings      crates/kiln-sim/src/lib.rs        's~rings\.extend\(tickets::ring_chunks\(c, r\)\);~rings.extend(tickets::ring_chunks(c, 0));~' "-p kiln-sim --test tickets a_forced_chunk_loads_two_rings"
+add rings      crates/kiln-sim/src/lib.rs        's~tickets::ring_chunks\(c, r\)\.filter~tickets::ring_chunks(c, 0).filter~' "-p kiln-sim --test tickets a_forced_chunk_loads_two_rings"
 add blockring  crates/kiln-sim/src/blocks.rs     's~\(&mut self\.block, radius - 1\)~(&mut self.block, radius - 2)~' "-p kiln-sim --test tickets water_flows_from_the_block"
 add vplus2     crates/kiln-sim/src/region.rs     's~const LOADED_BEYOND_VIEW: i32 = 2;~const LOADED_BEYOND_VIEW: i32 = 0;~' "-p kiln-sim --test tickets the_server_loads_two_chunks"
 add pearl      crates/kiln-entity/src/projectile.rs 's~pearl_ticket\(e, level, chunk_before\);~();~' "-p kiln-sim --test tickets a_pearl_keeps_its_chunk"
