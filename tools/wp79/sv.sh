@@ -9,7 +9,7 @@ mkdir -p $D
 stop() {
   if [ -p $D/console ]; then (exec 3<>$D/console; echo stop >&3); fi
   for i in $(seq 1 60); do
-    if [ $who = K ]; then pgrep -f "$D/kiln-run77" > /dev/null || break; else pgrep -f "wp79vanilla-marker" > /dev/null || break; fi
+    if [ $who = K ]; then pgrep -f "$D/kiln-run79" > /dev/null || break; else pgrep -f "wp79vanilla-marker" > /dev/null || break; fi
     sleep 1
   done
   pkill -f "sleep 100000000 > $D/console" 2>/dev/null
@@ -22,10 +22,10 @@ cd $D
 rm -f console; mkfifo console
 (sleep 100000000 > console 2>/dev/null </dev/null &)
 if [ $who = K ]; then
-  cp -f $HOME/wt/wp79-gaps/target/release/kiln $D/kiln-run77
+  cp -f $HOME/wt/wp79-gaps/target/release/kiln $D/kiln-run79
   export KILN_VIEW_DISTANCE=$view KILN_SIMULATION_DISTANCE=$sim KILN_PORT=25599 KILN_GENERATOR=noise KILN_SEED=$seed KILN_DATAPACK=$HOME/kiln/work/generated KILN_WORLD=$D/world KILN_ENABLE_COMMAND_BLOCK=true KILN_OPS=${OPS:-W0} KILN_WORK=$HOME/kiln/work RUST_LOG=info
   [ -n "$COUNTERS" ] && export KILN_SPAWN_TRACE=$D/trace.out KILN_SPAWN_COUNTERS=$D/counters.out KILN_SPAWN_BOX=${BOX:-0,0,0,0,0,0}
-  nohup $D/kiln-run77 < console > server.log 2>&1 &
+  nohup $D/kiln-run79 < console > server.log 2>&1 &
 else
   [ -f eula.txt ] || echo eula=true > eula.txt
   cat > server.properties <<PROPS

@@ -1,4 +1,4 @@
-"""wp79: the spawner's decision counters of Kiln (K/counters.out) and vanilla (V/agent.out) side by side: cmp77.py [prefix ...]
+"""wp79: the spawner's decision counters of Kiln (K/counters.out) and vanilla (V/agent.out) side by side: cmp79.py [prefix ...]
 Counts are per tick of spawning, so the two servers must have run the same number of ticks; the chi-square is per group of keys."""
 import os, sys
 HOME = os.path.expanduser("~")

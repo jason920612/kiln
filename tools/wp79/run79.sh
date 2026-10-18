@@ -1,5 +1,5 @@
 #!/bin/bash
-# wp79 (on the VM): run77.sh SCENARIO ROUNDS TICKS BOX [SIMDIST]  fresh Kiln + vanilla (seed 77) with the spawn counters, one bot each, the farm scenario in lock step,
+# wp79 (on the VM): run79.sh SCENARIO ROUNDS TICKS BOX [SIMDIST]  fresh Kiln + vanilla (seed 77) with the spawn counters, one bot each, the farm scenario in lock step,
 # then the counters side by side. Output in ~/wp79/run_<scenario>.out
 sc=$1; rounds=${2:-6}; ticks=${3:-1200}; box=$4; sim=${5:-6}
 cd ~/wp79
@@ -11,12 +11,12 @@ sleep 45
 ./bot.sh K W 1 > /dev/null 2>&1
 ./bot.sh V W 1 > /dev/null 2>&1
 sleep 15
-python3 farm77.py $sc $rounds $ticks
+python3 farm79.py $sc $rounds $ticks
 ./bot.sh stop > /dev/null 2>&1
 ./sv.sh V stop > /dev/null 2>&1
 sleep 3
 ./sv.sh K stop > /dev/null 2>&1
-echo "== validPosition IN-BOX"; python3 cmp77.py "validPosition IN-BOX"
-echo "== global/categories"; python3 cmp77.py global categories
-echo "== pick"; python3 cmp77.py pick
-echo "== validMob"; python3 cmp77.py validMob
+echo "== validPosition IN-BOX"; python3 cmp79.py "validPosition IN-BOX"
+echo "== global/categories"; python3 cmp79.py global categories
+echo "== pick"; python3 cmp79.py pick
+echo "== validMob"; python3 cmp79.py validMob

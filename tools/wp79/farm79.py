@@ -2,7 +2,7 @@
 console commands and `tick sprint` rounds; the mobs inside the farm's box are counted and killed after every round, the ones outside are cleared
 (so the mob caps stay comparable). Both servers count the spawner's decisions: vanilla through the java agent (`tools/wp74/agent`, `W72_OUT`),
 Kiln through `KILN_SPAWN_COUNTERS`; the box of the `validPosition IN-BOX` counts is `BOX` at server start (see sv.sh).
-usage: farm77.py SCENARIO [ROUNDS] [ROUND_TICKS]    SCENARIO: nether | end | open
+usage: farm79.py SCENARIO [ROUNDS] [ROUND_TICKS]    SCENARIO: nether | end | open
 Prints a RESULT line {K: {...}, V: {...}} with the kill counts, then the counters' chi-square (cmp_counts style) from the two files."""
 import json, os, re, sys, threading, time
 from lk import *
