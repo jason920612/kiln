@@ -571,6 +571,41 @@ fn the_damage_event_comes_before_the_hurt_sound() {
     assert!(seen.iter().any(|i| sound(*i)), "and its hurt sound: {seen:?}");
 }
 
+/// wp77: `ThrownSplashPotion.onHit` applies the effects (a harming potion hurts: the damage event goes out as the damage is dealt) and then
+/// plays level event 2002; the players around get the damage event before the level event, which is sent at once.
+#[test]
+fn the_damage_event_comes_before_a_level_event_sent_at_once() {
+    let mut w = World::new();
+    w.run("gamerule minecraft:natural_health_regeneration false");
+    w.ticks(2);
+    let p = w.actor.pos;
+    let order = |log: &[Bytes]| -> Vec<i32> { ids(log).into_iter().filter(|i| *i == id::DAMAGE_EVENT || *i == id::LEVEL_EVENT).collect() };
+    let potion = format!(
+        "summon minecraft:splash_potion {} {} {} {{Motion:[0.0,-1.0,0.0],Item:{{id:\"minecraft:splash_potion\",count:1,components:{{\"minecraft:potion_contents\":{{potion:\"minecraft:harming\"}}}}}}}}",
+        p[0], p[1] + 1.0, p[2]
+    );
+    // A mob and then the player himself.
+    w.run(&format!("summon minecraft:pig {} {} {} {{NoAI:1b,Health:100f,Attributes:[{{id:\"minecraft:max_health\",base:100.0d}}]}}", p[0] + 1.0, p[1], p[2]));
+    w.ticks(3);
+    w.watcher_log();
+    w.run(&potion);
+    w.ticks(10);
+    let seen = order(&w.watcher_log());
+    let (hurt, event) = (seen.iter().position(|i| *i == id::DAMAGE_EVENT), seen.iter().position(|i| *i == id::LEVEL_EVENT));
+    assert!(hurt.is_some() && event.is_some(), "both reach the watcher: {seen:?}");
+    assert!(hurt < event, "the damage event first: {seen:?}");
+    // Splashed at the player's feet: the damage event (if the potion reaches him) before the level event for the watcher too.
+    w.run("kill @e[type=minecraft:pig]");
+    w.ticks(3);
+    w.watcher_log();
+    w.run(&potion);
+    w.ticks(10);
+    let seen = order(&w.watcher_log());
+    if let (Some(hurt), Some(event)) = (seen.iter().position(|i| *i == id::DAMAGE_EVENT), seen.iter().position(|i| *i == id::LEVEL_EVENT)) {
+        assert!(hurt < event, "the player hurt, then the level event: {seen:?}");
+    }
+}
+
 /// wp75: a projectile made and gone within one tick (a snowball summoned against the ground) is still seen by the players around: the tracker pairs
 /// it at the start of the tick it is made in, and `ServerEntity.removePairing` tells them it is gone.
 #[test]
