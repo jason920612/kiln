@@ -1494,7 +1494,7 @@ mod start_tests {
     #[test]
     fn a_start_reaches_no_higher_than_the_first_free_block_above_the_column() {
         let (air, bedrock, gold) = (kiln_data::blocks::default_state::AIR, kiln_data::blocks::default_state::BEDROCK, kiln_data::blocks::default_state::STONE);
-        let mut chunk = Chunk::new((0..8).map(|_| Section::filled(air, 0)).collect(), 0);
+        let mut chunk = Chunk::new((0..9).map(|_| Section::filled(air, 0)).collect(), 0);
         chunk.set(3, 127, 5, bedrock);
         assert_eq!(start_top(&chunk, 3, 5), 128, "bedrock to 127: the bound is 128");
         chunk.set(4, 128, 5, gold);
