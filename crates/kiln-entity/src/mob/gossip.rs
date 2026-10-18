@@ -173,22 +173,39 @@ impl Gossips {
                 }
             }
         }
+        self.transfer_picked(&all, random, max)
+    }
+
+    /// The core of `transferFrom` over the unpacked gossips of the source in the order vanilla's `unpack()` yields them
+    /// (a `HashMap` of UUIDs holding enum-keyed maps, so the order is not ours to choose: tests pass vanilla's).
+    pub fn transfer_picked(&mut self, all: &[(u128, GossipType, i32)], random: &mut dyn kiln_javamath::random::RandomSource, max: i32) -> usize {
         if all.is_empty() {
             return 0;
         }
         let mut cumulative = Vec::with_capacity(all.len());
         let mut total = 0;
-        for (_, t, v) in &all {
+        for (_, t, v) in all {
             total += (v * t.info().1).abs();
             cumulative.push(total - 1);
         }
         let mut picked: Vec<usize> = Vec::new();
         for _ in 0..max {
             let r = random.next_int_bounded(total);
-            let i = match cumulative.binary_search(&r) {
-                Ok(i) => i,
-                Err(i) => i,
-            };
+            // `Arrays.binarySearch`, whose pick among equal keys differs from Rust's.
+            let (mut low, mut high) = (0i32, cumulative.len() as i32 - 1);
+            let mut found = None;
+            while low <= high {
+                let mid = (low + high) >> 1;
+                match cumulative[mid as usize].cmp(&r) {
+                    std::cmp::Ordering::Less => low = mid + 1,
+                    std::cmp::Ordering::Greater => high = mid - 1,
+                    std::cmp::Ordering::Equal => {
+                        found = Some(mid as usize);
+                        break;
+                    }
+                }
+            }
+            let i = found.unwrap_or(low as usize);
             if !picked.contains(&i) {
                 picked.push(i);
             }

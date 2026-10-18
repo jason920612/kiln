@@ -143,8 +143,26 @@ public class VillagerVectors {
             } else {
                 long seed = r.nextLong();
                 int max = 1 + r.nextInt(10);
+                // The order of `unpack()` is the one of a HashMap of UUIDs and of enum-keyed maps (identity hashes), so the vector carries it.
+                StringBuilder order = new StringBuilder();
+                try {
+                    var m = GossipContainer.class.getDeclaredMethod("unpack");
+                    m.setAccessible(true);
+                    for (Object e : ((java.util.stream.Stream<?>) m.invoke(other)).toList()) {
+                        var t = e.getClass().getDeclaredMethod("target");
+                        t.setAccessible(true);
+                        var ty = e.getClass().getDeclaredMethod("type");
+                        ty.setAccessible(true);
+                        UUID who2 = (UUID) t.invoke(e);
+                        Object type2 = ty.invoke(e);
+                        int pi = java.util.Arrays.asList(PEOPLE).indexOf(who2), ti = java.util.Arrays.asList(TYPES).indexOf(type2);
+                        order.append(order.length() > 0 ? "," : "").append("[").append(pi).append(",").append(ti).append("]");
+                    }
+                } catch (Exception ex) {
+                    throw new RuntimeException(ex);
+                }
                 int picked = g.transferFrom(other, new net.minecraft.world.level.levelgen.LegacyRandomSource(seed), max);
-                op = String.format("[\"transfer\",\"%d\",%d,%d]", seed, max, picked);
+                op = String.format("[\"transfer\",\"%d\",%d,%d,[%s]]", seed, max, picked, order);
             }
             ops.append(ops.length() > 0 ? "," : "").append("{\"op\":").append(op).append(",\"state\":[").append(gossipState(g)).append("]}");
         }

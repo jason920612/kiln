@@ -92,7 +92,18 @@ fn villager_trading_matches_vanilla() {
                         "transfer" => {
                             let seed: i64 = op[1].as_str().unwrap().parse().unwrap();
                             let mut r = kiln_javamath::random::LegacyRandom::new(seed);
-                            let picked = g.transfer_from(&other, &mut r, i(2));
+                            // Vanilla's `unpack()` order of the source (HashMap / identity-hashed enum maps), as recorded.
+                            let all: Vec<(u128, GossipType, i32)> = op[4]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .map(|pt| {
+                                    let (p, ty) = (pt[0].as_u64().unwrap() as usize, pt[1].as_u64().unwrap() as usize);
+                                    let entry = other.entries.iter().find(|(t, _)| *t == person(p)).unwrap();
+                                    (person(p), GossipType::ALL[ty], entry.1[ty])
+                                })
+                                .collect();
+                            let picked = g.transfer_picked(&all, &mut r, i(2));
                             if picked as i64 != op[3].as_i64().unwrap() {
                                 failures.push(format!("{name} step {k}: transfer picked {picked}, vanilla {}", op[3]));
                             }
