@@ -476,7 +476,7 @@ impl Sim {
                                 };
                                 // `Entity.setAsInsidePortal`: an entity standing in a portal while its cooldown runs starts the cooldown over (it arrived
                                 // in the portal of the other level and does not go back until it has been out of the portal for the whole cooldown).
-                                if d.portal_cooldowns.contains_key(&e.uuid.as_u128()) {
+                                if d.portal_cooldowns.contains_key(&e.uuid.as_u128()) || phys.portal_cooldown > 0 {
                                     standing.push((dim, e.uuid.as_u128()));
                                 } else {
                                     trips.push((dim, e.id, kind, BlockPos::new(x, y, z)));
@@ -490,6 +490,14 @@ impl Sim {
         }
         for (dim, uuid) in standing {
             self.dims[dim].portal_cooldowns.insert(uuid, now + ENTITY_PORTAL_COOLDOWN);
+            // (the entity's own count, which it saves and runs down: `Entity.setPortalCooldown`)
+            for r in self.dims[dim].regions.iter_mut() {
+                if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.uuid.as_u128() == uuid)
+                    && let Some(phys) = e.phys.as_deref_mut()
+                {
+                    phys.portal_cooldown = ENTITY_PORTAL_COOLDOWN as i32;
+                }
+            }
         }
         // The destination may be a region ticking away (independent mode).
         if !trips.is_empty() {
@@ -549,6 +557,8 @@ impl Sim {
             phys.set_pos(v);
             phys.set_old_pos_and_rot();
             phys.delta = kiln_entity::math::Vec3::ZERO;
+            // (`Entity.teleportCrossDimension`... the arrival waits out the dimension changing delay: saved as `PortalCooldown`)
+            phys.portal_cooldown = ENTITY_PORTAL_COOLDOWN as i32;
             (phys.y_rot, phys.x_rot) = (rot[0], rot[1]);
             // `placePortalTicket`: the arrival chunks load.
             self.load_area(to, floor_pos(pos), 1);
