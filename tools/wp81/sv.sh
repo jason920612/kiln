@@ -51,9 +51,9 @@ PROPS
   W=$HOME/kiln/work
   if [ -n "$AGENT" ]; then
     CP=$(ls $W/versions/*/server-*.jar $(find $W/libraries -name '*.jar') | tr '\n' ':')
-    W72_OUT=$D/agent.out nohup java -Xmx1500m -Dwp81vanilla-marker=1 -Dw72.box=${BOX:-0,0,0,0,0,0} -Dw72.trace=$D/trace.out -javaagent:$HOME/wp81/agent81.jar --add-opens java.base/java.lang=ALL-UNNAMED -cp "$CP" net.minecraft.server.Main --nogui < console > server.log 2>&1 &
+    W72_OUT=$D/agent.out nohup java -Xmx1g -Dwp81vanilla-marker=1 -Dw72.box=${BOX:-0,0,0,0,0,0} -Dw72.trace=$D/trace.out -javaagent:$HOME/wp81/agent81.jar --add-opens java.base/java.lang=ALL-UNNAMED -cp "$CP" net.minecraft.server.Main --nogui < console > server.log 2>&1 &
   else
-    nohup java -Xmx1500m -Dwp81vanilla-marker=1 -jar $W/server.jar nogui < console > server.log 2>&1 &
+    nohup java -Xmx1g -Dwp81vanilla-marker=1 -jar $W/server.jar nogui < console > server.log 2>&1 &
   fi
 fi
 echo started $who

@@ -64,11 +64,26 @@ public final class W72Agent {
                             })));
                 }
                 if ("net/minecraft/world/level/NaturalSpawner$SpawnState".equals(name)) {
-                    return cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("canSpawnForCategoryGlobal"), onReturn(b -> {
+                    bytes = cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("canSpawnForCategoryGlobal"), onReturn(b -> {
                         b.dup();
                         b.aload(0);
                         b.aload(1);
                         b.invokestatic(HOOK, "globalCap", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_int, ConstantDescs.CD_Object, ConstantDescs.CD_Object));
+                    })));
+                    // wp81: the per-player cap, the spawn potential (charge) check and the spawns themselves.
+                    bytes = cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("canSpawnForCategoryLocal"), onReturn(b -> {
+                        b.dup();
+                        b.aload(1);
+                        b.invokestatic(HOOK, "localCap", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_int, ConstantDescs.CD_Object));
+                    })));
+                    bytes = cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("canSpawn"), onReturn(b -> {
+                        b.dup();
+                        b.aload(1);
+                        b.invokestatic(HOOK, "potential", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_int, ConstantDescs.CD_Object));
+                    })));
+                    return cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("afterSpawn"), onReturn(b -> {
+                        b.aload(1);
+                        b.invokestatic(HOOK, "spawned", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_Object));
                     })));
                 }
                 if ("net/minecraft/world/level/NaturalSpawner".equals(name)) {

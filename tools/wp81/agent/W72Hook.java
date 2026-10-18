@@ -149,6 +149,39 @@ public final class W72Hook {
         }
     }
 
+    public static void localCap(int result, Object category) {
+        add("localCap " + category + " -> " + (result != 0));
+    }
+
+    public static void potential(int result, Object type) {
+        try {
+            add("potential " + net.minecraft.world.entity.EntityType.getKey((net.minecraft.world.entity.EntityType<?>) type).getPath() + " -> " + (result != 0));
+        } catch (Throwable t) {
+            add("potential error " + t);
+        }
+    }
+
+    /** SpawnState.afterSpawn: a natural spawn happened (per type, and per height for the box). */
+    public static void spawned(Object mob) {
+        try {
+            var m = (net.minecraft.world.entity.Mob) mob;
+            String n = net.minecraft.world.entity.EntityType.getKey(m.getType()).getPath();
+            add("spawned " + n);
+            String bx = System.getProperty("w72.box");
+            var p = m.blockPosition();
+            if (bx != null) {
+                String[] v = bx.split(",");
+                int[] b = new int[6];
+                for (int i = 0; i < 6; i++) b[i] = Integer.parseInt(v[i].trim());
+                if (p.getX() >= b[0] && p.getX() <= b[3] && p.getY() >= b[1] && p.getY() <= b[4] && p.getZ() >= b[2] && p.getZ() <= b[5]) {
+                    add("spawned IN-BOX " + n);
+                }
+            }
+        } catch (Throwable t) {
+            add("spawned error " + t);
+        }
+    }
+
     public static void cats(Object list) {
         add("categories " + String.valueOf(list));
     }
