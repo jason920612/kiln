@@ -234,6 +234,17 @@ public class FishingVectors {
         return sb.toString();
     }
 
+    /** wp79: the blocks the swept box of a tick visits (BlockGetter.forEachBlockIntersectedBetween, as Entity.checkInsideBlocks asks for them). */
+    static String visits(ServerLevel level, FishingHook hook, Vec3 from, Vec3 to) {
+        StringBuilder sb = new StringBuilder();
+        net.minecraft.world.phys.AABB box = hook.makeBoundingBox(to).deflate(9.999999747378752E-6);
+        net.minecraft.world.level.BlockGetter.forEachBlockIntersectedBetween(from, to, box, (pos, i) -> {
+            sb.append(" ").append(pos.toShortString()).append(":").append(level.getBlockState(pos).getBlock().getDescriptionId().replace("block.minecraft.", ""));
+            return true;
+        });
+        return sb.toString();
+    }
+
     static void writeServerFiles() throws Exception {
         Files.writeString(Path.of("eula.txt"), "eula=true\n");
         Files.writeString(Path.of("server.properties"), String.join("\n",
