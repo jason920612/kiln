@@ -44,6 +44,13 @@ fn levels_of_pyramid(levels: i32, up: i32, near_chunk_border: bool, blocker: Opt
 }
 
 #[test]
+fn debug_levels() {
+    for up in [1, 2, 3, 6, 20] {
+        eprintln!("up {up}: {}", levels_of_pyramid(1, up, false, None));
+    }
+}
+
+#[test]
 fn a_beacon_reads_its_pyramid_whatever_its_height_and_wherever_it_stands() {
     assert_eq!(levels_of_pyramid(1, 6, false, None), 1);
     assert_eq!(levels_of_pyramid(4, 6, false, None), 4, "four levels floating in the air");
