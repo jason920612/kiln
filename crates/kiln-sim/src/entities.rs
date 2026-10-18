@@ -410,10 +410,6 @@ impl Entity {
     pub(crate) fn sync(&mut self) {
         let p = self.phys();
         let (pos, vel, on_ground, removed) = (arr(p.position()), arr(p.delta), p.on_ground, p.is_removed());
-        if std::env::var_os("KILN_DBG_GHAST").is_some() && self.id == 99 && self.vel != vel {
-            eprintln!("DBGG sync id=99 vel {:?} -> {:?}
-{}", self.vel, vel, std::backtrace::Backtrace::force_capture());
-        }
         self.pos = pos;
         self.vel = vel;
         self.on_ground = on_ground;

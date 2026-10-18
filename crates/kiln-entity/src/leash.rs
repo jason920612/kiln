@@ -595,9 +595,6 @@ pub fn shear_off_all(e: &mut Entity, level: &mut dyn EntityLevel, player: i32) -
 pub fn bind_player_mobs(level: &mut dyn EntityLevel, who: i32, pos: BlockPos) -> bool {
     let centre = Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
     let list = leashed_to(level, who, centre);
-    if std::env::var_os("KILN_DBG_GHAST").is_some() && !list.is_empty() {
-        eprintln!("DBGG bind who={who} gt={} pos={pos:?} list={list:?} holders={:?}", level.game_time(), list.iter().map(|&i| level.entity(i).map(|e| (e.type_name, holder_of(e)))).collect::<Vec<_>>());
-    }
     if list.is_empty() {
         return false;
     }
