@@ -4295,7 +4295,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
     }
     // `ServerBossEvent`: a boss's bar for the players that see it.
     let boss = e.phys.as_deref().and_then(kiln_entity::mob::data).and_then(kiln_entity::mob::kinds::wither::boss_bar);
-    let bar_id = Uuid::from_u128(e.uuid.as_u128() ^ 0x626f_7373_6261_72);
+    let bar_id = boss_bar_id(e);
     if let Some(progress) = boss {
         let name = kiln_proto::nbt::Tag::Compound(vec![("translate".into(), kiln_proto::nbt::Tag::String("entity.minecraft.wither".into()))]);
         let op = hud::BossEvent::Add {
@@ -4628,4 +4628,9 @@ mod level_random_tests {
             assert!(chi(&counts) < 160.0, "the first draws of {name} are not independent: chi-square {}", chi(&counts));
         }
     }
+}
+
+/// The id of the boss bar an entity shows (`ServerBossEvent`'s uuid).
+pub(crate) fn boss_bar_id(e: &kiln_entity::Entity) -> Uuid {
+    Uuid::from_u128(e.uuid.as_u128() ^ 0x626f_7373_6261_72)
 }

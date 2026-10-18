@@ -190,3 +190,35 @@ fn a_cow_killed_by_anything_else_leaves_no_wither_rose() {
     let (spot, _) = kill_cow_by(&mut w, "kill", true);
     assert_eq!(w.name(spot), "minecraft:air");
 }
+
+/// Boss event actions the client was sent about the wither's bar since the log started: 0 add, 1 remove.
+fn boss_actions(w: &World) -> Vec<i32> {
+    let log = w.client.stats.log.lock().unwrap().replace(Vec::new()).unwrap_or_default();
+    let mut out = Vec::new();
+    for p in log {
+        let mut r = kiln_proto::codec::Reader::new(&p);
+        if r.varint().ok() == Some(kiln_data::packets::play::clientbound::BOSS_EVENT) {
+            let _ = r.uuid();
+            if let Ok(a) = r.varint() {
+                out.push(a);
+            }
+        }
+    }
+    out
+}
+
+/// wp78 (real client side by side): a wither's bar stayed on the screen of a player who left its level or went out of its range (vanilla's
+/// `ServerBossEvent.removePlayer` follows the entity ceasing to be seen). Kiln only removed it when the wither itself went.
+#[test]
+fn the_withers_bar_goes_when_the_player_leaves_its_range() {
+    let mut w = World::new();
+    *w.client.stats.log.lock().unwrap() = Some(Vec::new());
+    let p = w.client.pos;
+    w.run(&format!("summon minecraft:wither {} {} {} {{NoAI:1b,Invul:0}}", p[0] + 5.0, p[1] + 3.0, p[2]));
+    w.ticks(5);
+    assert!(boss_actions(&w).contains(&0), "the bar appeared");
+    // To another dimension: the wither is not seen any more.
+    w.run("execute in minecraft:the_nether run tp Builder 0 100 0");
+    w.ticks(10);
+    assert!(boss_actions(&w).contains(&1), "the bar was taken away with the level");
+}
