@@ -139,7 +139,7 @@ fn execute_if_loaded_follows_the_loading_level_not_just_loaded() {
         sim.console_now(&format!("execute if loaded {x} 100 {z} run setblock {x} 100 {z} minecraft:diamond_block"));
     }
     let diamond = |d: i32| sim.block_at((px + d) * 16 + 8, 100, pz * 16 + 8) == Some(kiln_data::blocks::default_state::DIAMOND_BLOCK);
-    assert!((0..=3).all(diamond), "within the view distance (the simulation distance is 2: it does not matter)");
+    assert!((0..=3).all(diamond), "within the view distance (the simulation distance is 2: it does not matter): {:?}", (0..=5).map(diamond).collect::<Vec<_>>());
     assert!(!diamond(4) && !diamond(5), "the rings that are only loaded do not count");
     assert!(loaded(&sim, px + 5, pz), "although they are loaded");
     sim.console_now("forceload add 4008 4008");
