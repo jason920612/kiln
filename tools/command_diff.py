@@ -2202,7 +2202,7 @@ execute run unpublish
 help publish
 help unpublish
 
-# fetchprofile
+# fetchprofile (a name or id lookup that cannot reach the session server fails after about 5 s on both servers; the wait must clear that with room to spare, 5 s made it a coin flip)
 fetchprofile
 fetchprofile name
 fetchprofile id
@@ -2217,36 +2217,36 @@ fetchprofile entity @a
 fetchprofile entity @s
 fetchprofile bogus Diff0
 fetchprofile name Notch
-~ 5
+~ 8
 fetchprofile name Diff0
-~ 5
+~ 8
 fetchprofile name diff0
-~ 5
+~ 8
 fetchprofile name OTHER0
-~ 5
+~ 8
 fetchprofile name "Diff 0"
-~ 5
+~ 8
 fetchprofile name ""
-~ 5
+~ 8
 fetchprofile name Diff0 extra
-~ 5
+~ 8
 fetchprofile id 00000000-0000-0000-0000-000000000000
-~ 5
+~ 8
 fetchprofile id 00000000-0000-0000-0000-000000000001
-~ 5
+~ 8
 fetchprofile id 1-1-1-1-1
-~ 5
+~ 8
 fetchprofile id 00000000000000000000000000000001
 fetchprofile id @a
 execute as Diff0 run fetchprofile entity @s
 execute as Diff0 run fetchprofile name Other0
-~ 5
+~ 8
 execute as Other0 run fetchprofile entity Diff0
 execute at Diff0 run fetchprofile entity @p
 ! scoreboard objectives add fp dummy
 execute store success score fp fp run fetchprofile entity @a[limit=1]
 execute store result score fp fp run fetchprofile name Diff0
-~ 5
+~ 8
 """
 
 # ---- wp44-end: /locate structure on generated worlds (python tools/command_diff.py --structures) ----
