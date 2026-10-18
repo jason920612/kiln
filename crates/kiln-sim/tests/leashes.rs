@@ -267,3 +267,48 @@ fn every_mob_on_a_knot_is_sent_the_knots_id() {
         assert_eq!(last.get(&id), Some(&knots[0]), "sheep {id} is shown on the knot {} ({last:?})", knots[0]);
     }
 }
+
+/// wp77: a NoAI cow tied to a knot 7.5 blocks away is pulled by the lead (`Leashable.elasticRangeLeashBehaviour` adds to its motion every tick) and, since a
+/// NoAI mob neither steers nor moves (`Mob.isEffectiveAi`), that motion builds up in the cow without friction and without moving it. The first fourteen
+/// ticks of `Motion` as the vanilla 26.3 server saved them (a cow at 5.5, 7.5 blocks west of a knot, `tools/wp77/leash9.py`): bit for bit.
+#[test]
+fn a_noai_cow_pulled_by_a_lead_keeps_the_motion_vanilla_does() {
+    let mut w = World::new();
+    let p = w.client.pos;
+    let (x, y, z) = (p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32);
+    w.run(&format!("setblock {} {y} {z} minecraft:oak_fence", x + 8));
+    w.run(&format!("summon minecraft:leash_knot {} {y} {z}", x + 8));
+    w.run(&format!("summon minecraft:cow {}.5 {y} {z}.5 {{NoAI:1b,Tags:[\"c9\"],leash:[I;{},{y},{z}]}}", x, x + 8));
+    let want: [(f64, f64); 14] = [
+        (0.48233573010025554, -0.027131384099403123),
+        (0.8946266405367114, -0.05022804403360129),
+        (1.2309288556042357, -0.06724215184050383),
+        (1.4953110094263193, -0.07528935228172424),
+        (1.7068109800970763, -0.07284186066065444),
+        (1.8930190800462425, -0.06077874881990561),
+        (2.0744228065174886, -0.04175329173700101),
+        (2.2558143316768695, -0.019292651816468637),
+        (2.430254750541128, 0.0033455101910393296),
+        (2.586921588155168, 0.023749874211152468),
+        (2.716723325436585, 0.04004531295274142),
+        (2.8157957483913343, 0.05056566256485745),
+        (2.8877701188519675, 0.05415852830940505),
+        (2.942899615342559, 0.050691513297309025),
+    ];
+    let motion = |w: &World| -> Option<(f64, f64, f64)> {
+        let cow = w.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:cow"))?;
+        let Some(Tag::List(m)) = cow.get("Motion") else { return None };
+        let d = |i: usize| if let Tag::Double(v) = &m[i] { *v } else { f64::NAN };
+        Some((d(0), d(1), d(2)))
+    };
+    let start = motion(&w).expect("the cow");
+    assert_eq!(start.0, 0.0, "it has not been pulled yet");
+    let at = |w: &World| w.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:cow")).and_then(|t| if let Some(Tag::List(p)) = t.get("Pos") { if let Tag::Double(v) = &p[0] { Some(*v) } else { None } } else { None });
+    let x0 = at(&w).unwrap();
+    for (i, (wx, wz)) in want.iter().enumerate() {
+        w.ticks(1);
+        let (mx, my, mz) = motion(&w).expect("the cow");
+        assert_eq!((mx, my, mz), (*wx, 0.0, *wz), "tick {i}");
+    }
+    assert_eq!(at(&w).unwrap(), x0, "a NoAI cow does not move");
+}
