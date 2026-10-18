@@ -99,8 +99,7 @@ public final class W72Hook {
             String tr = System.getProperty("w72.trace");
             if (tr != null && String.valueOf(category).equals("MONSTER")) {
                 try {
-                    java.nio.file.Files.writeString(java.nio.file.Path.of(tr), "S " + p.getX() + " " + p.getY() + " " + p.getZ() + "
-", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                    java.nio.file.Files.writeString(java.nio.file.Path.of(tr), "S " + p.getX() + " " + p.getY() + " " + p.getZ() + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
                 } catch (Exception e) {
                     add("trace error " + e);
                 }
