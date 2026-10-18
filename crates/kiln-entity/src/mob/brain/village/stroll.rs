@@ -3,6 +3,7 @@
 //! `JumpOnBed`, and the doors they open on the way (`InteractWithDoor`).
 
 use kiln_javamath::random::RandomSource;
+use crate::level::EntityLevel;
 use super::poi::bed_occupied_state;
 use super::{closer_to_center_than, mem_pos};
 use crate::behavior_boilerplate;
