@@ -155,6 +155,7 @@ elif MODE == "pearl2":
     for t in "KV":
         a = series[t]
         rise = ["1" if (a[i] is not None and a[i - 1] is not None and 0 < a[i] - a[i - 1] < 5) else "0" for i in range(1, len(a))]
+        print(t, "raw", a[:12], "...", a[-4:])
         print(t, "ticking per step (1 = the cow aged):", "".join(rise))
         last = max((i for i, c in enumerate(rise) if c == "1"), default=None)
         print(t, "pearl killed before step", kill_at, "- the cow's chunk ticked until step", None if last is None else last + 2)
