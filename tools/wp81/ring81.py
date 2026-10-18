@@ -127,6 +127,37 @@ if MODE in ("forced", "pearl"):
             ticking = sum(1 for r in rises if r)
             print(t, "ticks the cow still aged after the pearl was killed:", ticking, " series", a[:3], "...", a[-3:])
         report("after the ticket ran out")
+elif MODE == "pearl2":
+    # How long the chunk of a pearl ticks, step by step: the cow of the pearl's chunk is read after every step; the pearl is killed before step KILL_AT.
+    kill_at = int(sys.argv[2]) if len(sys.argv) > 2 else 30
+    setup()
+    both(f"forceload add {block_x(0)} {CZ * 16 + 8}")
+    time.sleep(40)
+    place_probes([0])
+    uuid_out = ask("V", "data get entity W0 UUID", wait=0.3)
+    m = re.search(r"\[I;\s*(-?\d+),\s*(-?\d+),\s*(-?\d+),\s*(-?\d+)\]", uuid_out)
+    owner = "[I;" + ",".join(m.groups()) + "]"
+    both("tick freeze")
+    time.sleep(0.5)
+    for t in "KV":
+        w(t, f"summon ender_pearl {block_x(0) + 0.5} {Y + 3} {CZ * 16 + 8.5} {{Owner:{owner},NoGravity:1b,Motion:[0.0d,0.0d,0.0d],Tags:[\"pearl\"]}}")
+    time.sleep(0.5)
+    step(3)
+    both(f"forceload remove {block_x(0)} {CZ * 16 + 8}")
+    series = {t: [] for t in "KV"}
+    for i in range(1, 121):
+        if i == kill_at:
+            both("kill @e[tag=pearl]")
+            time.sleep(0.3)
+        step(1)
+        for t in "KV":
+            series[t].append(ageof(t, "rt0"))
+    for t in "KV":
+        a = series[t]
+        rise = ["1" if (a[i] is not None and a[i - 1] is not None and 0 < a[i] - a[i - 1] < 5) else "0" for i in range(1, len(a))]
+        print(t, "ticking per step (1 = the cow aged):", "".join(rise))
+        last = max((i for i, c in enumerate(rise) if c == "1"), default=None)
+        print(t, "pearl killed before step", kill_at, "- the cow's chunk ticked until step", None if last is None else last + 2)
 elif MODE == "portal":
     # an overworld portal beside W0 at (1000, 200..204, 1000): obsidian frame on x, portal blocks inside; the cow stands in it.
     setup()
