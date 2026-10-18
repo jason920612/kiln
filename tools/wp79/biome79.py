@@ -1,6 +1,6 @@
 """wp79 item 3: do Kiln (K) and vanilla (V) agree on `level.getBiome(pos)` (the noise-shifted lookup the spawner uses) in the nether around the roof farm?
 Both servers (seed 77, fresh or kept) are asked `execute in minecraft:the_nether if biome X Y Z <biome>` on a grid; every answer is compared.
-usage: biome79.py [STEP] [HALF]    grid step (default 8) and half width (default 96) around the farm (-64, 64)"""
+usage: biome79.py [STEP] [HALF]    grid step (default 8) and half width (default 96) around the farm (-64, 64); BIOME_VECTORS=<file> writes vanilla's answers (the Rust test reads them)"""
 import os, re, sys, time
 from lk import *
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +24,7 @@ bad = 0
 total = 0
 agree = {"K": 0, "V": 0}
 by_biome = {t: {} for t in "KV"}
+rows = []
 for y in YS:
     for x in range(CX - HALF, CX + HALF + 1, STEP):
         for z in range(CZ - HALF, CZ + HALF + 1, STEP):
@@ -50,11 +51,19 @@ for y in YS:
             res["S"] = st
             for t in "KV":
                 agree[t] += res[t] == st
+            rows.append({"x": x, "y": y, "z": z, "vanilla": res["V"], "stored": st})
             for t in "KV":
                 by_biome[t][res[t]] = by_biome[t].get(res[t], 0) + 1
             if res["K"] != res["V"]:
                 bad += 1
                 print("DIFF", x, y, z, res, flush=True)
+import json
+out_path = os.environ.get("BIOME_VECTORS")
+if out_path:
+    with open(out_path, "w") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "
+")
 print("points", total, "different", bad, "agree with the stored quart: K", agree["K"], "V", agree["V"])
 print("K", by_biome["K"])
 print("V", by_biome["V"])
