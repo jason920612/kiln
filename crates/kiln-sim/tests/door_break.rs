@@ -59,7 +59,7 @@ fn a_zombie_breaks_a_door_on_hard_only() {
 
 /// `MoveThroughVillageGoal` of a zombie (wp77): at night a zombie with no target, 25 blocks from a village whose beds are claimed, walks to
 /// a point of interest of it; far from any village it only strolls. Kiln's goal never started.
-fn closest_approach(village: bool) -> f64 {
+fn closest_approach(village: bool, summon: &str, rounds: usize) -> f64 {
     let mut sim = Sim::new(SimConfig::new(8, 4, None));
     let (msg, stats) = join(1, "Victim", 2);
     assert!(sim.step([
@@ -90,11 +90,11 @@ fn closest_approach(village: bool) -> f64 {
         tick(&mut sim, &mut client, 60);
     }
     // A zombie that sees nothing (follow range 2) 25 blocks to the north of the village.
-    run(&mut sim, format!("summon minecraft:zombie {}.5 {y} {}.5 {{PersistenceRequired:1b,attributes:[{{id:\"minecraft:follow_range\",base:2.0d}}]}}", x + 5, z - 21));
+    run(&mut sim, format!("summon {summon} {}.5 {y} {}.5 {{PersistenceRequired:1b,attributes:[{{id:\"minecraft:follow_range\",base:2.0d}}]}}", x + 5, z - 21));
     let mut closest = f64::MAX;
-    for _ in 0..40 {
+    for _ in 0..rounds {
         tick(&mut sim, &mut client, 20);
-        let zombie = sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some("minecraft:zombie"));
+        let zombie = sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some(summon));
         let Some(zombie) = zombie else { continue };
         let kiln_proto::nbt::Tag::List(pos) = zombie.get("Pos").unwrap() else { panic!("Pos") };
         let v: Vec<f64> = pos.iter().map(|t| if let kiln_proto::nbt::Tag::Double(d) = t { *d } else { 0.0 }).collect();
@@ -107,8 +107,16 @@ fn closest_approach(village: bool) -> f64 {
 
 #[test]
 fn a_zombie_at_night_walks_to_the_village_it_is_close_to() {
-    let near = closest_approach(true);
-    let far = closest_approach(false);
+    let near = closest_approach(true, "minecraft:zombie", 40);
+    let far = closest_approach(false, "minecraft:zombie", 40);
     assert!(near < 10.0, "it reached the village: closest {near:.1}");
     assert!(far > near + 4.0, "and not just by strolling: {far:.1} without a village");
+}
+
+/// `FoxStrollThroughVillageGoal`: the same for a fox, which sets out one try in two hundred.
+#[test]
+fn a_fox_at_night_strolls_to_the_village_it_is_close_to() {
+    let near = closest_approach(true, "minecraft:fox", 150);
+    let far = closest_approach(false, "minecraft:fox", 150);
+    assert!(near < far - 4.0, "closer with a village: {near:.1} against {far:.1}");
 }
