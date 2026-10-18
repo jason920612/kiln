@@ -289,6 +289,22 @@ impl Player {
         self.pending_particles.push((at, pkt));
     }
 
+    /// `ServerLevel.sendParticles(BlockParticleOption(particle, state), at, count, 0, 0, 0, speed)` from the player's own tick (see [`Player::queue_particles`]).
+    pub(crate) fn queue_block_particles(&mut self, particle: &str, at: [f64; 3], state: u16, count: i32, speed: f32) {
+        let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", particle) else { return };
+        let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+            particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Block(state as i32) },
+            override_limiter: false,
+            always_show: false,
+            pos: at,
+            offset: [0.0; 3],
+            max_speed: [speed; 3],
+            count,
+            randomization: world_fx::ParticleRandomization::Default,
+        });
+        self.pending_particles.push((at, pkt));
+    }
+
     /// [`Player::queue_sound_at`] in another sound category (`level.playSound(null, ..., source, ...)`).
     pub(crate) fn queue_sound_in(&mut self, at: [f64; 3], sound: &str, source: world_fx::SoundSource, volume: f32, pitch: f32) {
         let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound) else { return };

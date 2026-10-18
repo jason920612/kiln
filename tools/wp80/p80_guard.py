@@ -20,7 +20,7 @@ for rep in range(R):
     OB(f"tp KilnTest {X}.5 {Y} {Z}.5")
     both_("tick freeze")
     time.sleep(1)
-    both_("effect give KilnTest minecraft:instant_health 1 20 true")
+    both_("effect give KilnTest minecraft:instant_health 1 10 true")
     step(2)
     OB(f"summon minecraft:{KIND} {X + 5}.5 {Y + 1} {Z + 5}.5 {{PersistenceRequired:1b}}")
     h0 = {t: health(t) for t in "KV"}

@@ -27,7 +27,7 @@ for name in names:
     OB(f"kill @e[type=!player]")
     OB(f"tp KilnTest {X}.5 {Y} {Z}.5")
     OB(f"summon minecraft:cow {X + 3}.5 {Y} {Z}.5 {{NoAI:1b,Tags:[\"src\"],Silent:1b}}")
-    both_("effect give KilnTest minecraft:instant_health 1 30 true")
+    both_("effect give KilnTest minecraft:instant_health 1 10 true")
     step(14)
     for c in cl.values():
         c.cmd("spy on"); c.cmd("spylog clear")

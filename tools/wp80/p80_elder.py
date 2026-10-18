@@ -13,7 +13,7 @@ for t in "KV":
 both_("kill @e[type=!player]")
 both_("effect clear KilnTest")
 both_("attribute KilnTest minecraft:max_health base set 1000")
-both_("effect give KilnTest minecraft:instant_health 1 20 true")
+both_("effect give KilnTest minecraft:instant_health 1 10 true")
 tank(X, Y, Z, 7, 4)
 OB(f"tp KilnTest {X}.5 {Y} {Z}.5")
 time.sleep(2)

@@ -30,7 +30,7 @@ both_("tick freeze")
 for name in names:
     OB("kill @e[type=!player]")
     OB(f"tp KilnTest {X}.5 {Y} {Z}.5")
-    both_("effect give KilnTest minecraft:instant_health 1 30 true")
+    both_("effect give KilnTest minecraft:instant_health 1 10 true")
     step(14)
     for c in cl.values():
         c.cmd("spy on"); c.cmd("spylog clear")
