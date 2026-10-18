@@ -7,7 +7,7 @@ use crate::level::{EntityLevel, PoiOccupancy};
 use crate::math::{BlockPos, Vec3};
 use crate::mob::ext::CustomGoal;
 use crate::mob::goals::MOVE;
-use crate::mob::memory_poi::JOB_SITES;
+use crate::memory_poi::JOB_SITES;
 use crate::mob::path::{self, Path};
 use crate::mob::{MobData, random_pos};
 
