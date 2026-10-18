@@ -2910,8 +2910,9 @@ impl Sim {
         let mut envs = envs;
         for (dim, env) in envs.iter_mut().enumerate() {
             let Some(env) = env else { continue };
+            // (A level with one region too: the same count, at the same moment, as with several.)
             let mine: Vec<&RegionWork> = work.iter().filter(|w| w.dim == dim).collect();
-            if mine.len() < 2 {
+            if mine.is_empty() {
                 continue;
             }
             let mut totals = spawner::SpawnTotals::default();
