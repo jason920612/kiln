@@ -62,8 +62,7 @@ out_path = os.environ.get("BIOME_VECTORS")
 if out_path:
     with open(out_path, "w") as f:
         for row in rows:
-            f.write(json.dumps(row) + "
-")
+            f.write(json.dumps(row) + chr(10))
 print("points", total, "different", bad, "agree with the stored quart: K", agree["K"], "V", agree["V"])
 print("K", by_biome["K"])
 print("V", by_biome["V"])
