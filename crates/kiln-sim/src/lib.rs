@@ -2079,6 +2079,11 @@ impl Sim {
             })
             .collect();
         ents.sort_unstable_by_key(|e| e.0);
+        if std::env::var_os("KILN_DBG_HASH").is_some() {
+            for e in &ents {
+                eprintln!("DBGENT gt={} {:?}", self.game_time, e);
+            }
+        }
         ents.hash(&mut h);
         // Container block entities by position.
         let mut containers: Vec<_> = self
