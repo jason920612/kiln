@@ -208,6 +208,13 @@ public class FishingVectors {
             boolean seesSky = level.canSeeSky(above);
             String dbg0 = System.getenv("FISHING_DEBUG") != null && Integer.parseInt(System.getenv("FISHING_DEBUG")) == index && t >= Integer.getInteger("fishing.from", 40) && t <= Integer.getInteger("fishing.to", 48) ? debug(hook) : null;
             hook.tick();
+            if (dbg0 != null && System.getenv("FISHING_STEPS") != null) {
+                for (String s : System.getenv("FISHING_STEPS").split(";")) {
+                    String[] q = s.split(",");
+                    Vec3 a = new Vec3(Double.parseDouble(q[0]), Double.parseDouble(q[1]), Double.parseDouble(q[2])), b = new Vec3(Double.parseDouble(q[3]), Double.parseDouble(q[4]), Double.parseDouble(q[5]));
+                    System.out.println("step " + s + " ->" + stepVisits(level, hook, a, b));
+                }
+            }
             if (dbg0 != null) System.out.println("t=" + t + " before " + dbg0 + "\n      after " + debug(hook) + "\n      visits" + visits(level, hook, hook.position(), hook.position()));
             if (hook.isRemoved()) {
                 ticks.append(ticks.length() > 0 ? "," : "").append("null");
@@ -241,6 +248,17 @@ public class FishingVectors {
         } catch (Exception e) {
             sb.append(" movements=?");
         }
+        return sb.toString();
+    }
+
+    /** wp79: the cells visited for one step, as Entity.checkInsideBlocks(from, to, ...) asks (the box at `to`, deflated). */
+    static String stepVisits(ServerLevel level, FishingHook hook, Vec3 from, Vec3 to) {
+        StringBuilder sb = new StringBuilder();
+        net.minecraft.world.phys.AABB box = hook.getDimensions(hook.getPose()).makeBoundingBox(to).deflate(9.999999747378752E-6);
+        net.minecraft.world.level.BlockGetter.forEachBlockIntersectedBetween(from, to, box, (pos, i) -> {
+            sb.append(" ").append(pos.toShortString()).append(":").append(level.getBlockState(pos).getBlock().getDescriptionId().replace("block.minecraft.", "")).append("@").append(i);
+            return true;
+        });
         return sb.toString();
     }
 
