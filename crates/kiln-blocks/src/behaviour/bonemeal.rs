@@ -494,6 +494,7 @@ mod tests {
     #[test]
     fn bone_meal_on_pitcher_crops_ages_them_and_builds_the_upper_half_from_age_three() {
         let mut l = level();
+        put(&mut l, 0, -63, 0, named("minecraft:farmland"));
         put(&mut l, 0, -62, 0, state::set(named("minecraft:pitcher_crop"), "half", "lower"));
         for expected in 1..=2 {
             assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(true));
@@ -517,9 +518,11 @@ mod tests {
         put(&mut l, 0, -50, 0, d::STONE);
         put(&mut l, 0, -51, 0, state::set_int(named("minecraft:weeping_vines"), "age", 3));
         assert_eq!(grow(&mut l, BlockPos::new(0, -51, 0)), Some(true));
-        let grown = (1..=30).filter(|&i| is_named(at(&l, 0, -51 - i, 0), "minecraft:weeping_vines")).count();
-        assert!(grown >= 1, "at least one more head below");
-        assert_eq!(state::get_int(at(&l, 0, -52, 0), "age"), 4, "the new head is one older");
+        let grown = (1..=30).filter(|&i| BlockId::of(at(&l, 0, -51 - i, 0)).name().starts_with("minecraft:weeping_vines")).count() as i32;
+        assert!(grown >= 1, "at least one more block below");
+        let head = at(&l, 0, -51 - grown, 0);
+        assert!(is_named(head, "minecraft:weeping_vines"), "the lowest is the head");
+        assert_eq!(state::get_int(head, "age"), 3 + grown, "each new block is one older");
         // Cave vines ripen.
         put(&mut l, 4, -50, 4, d::STONE);
         put(&mut l, 4, -51, 4, named("minecraft:cave_vines"));
