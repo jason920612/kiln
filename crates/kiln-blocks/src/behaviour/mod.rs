@@ -437,6 +437,7 @@ pub fn random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
             C::MushroomBlock => growth::mushroom_random_tick(level, s, pos),
             C::NyliumBlock => growth::nylium_random_tick(level, s, pos),
             C::ChorusFlowerBlock => growth::chorus_flower_random_tick(level, s, pos),
+            C::NetherPortalBlock => portal::random_tick(level, pos),
             _ => {}
         }
     }

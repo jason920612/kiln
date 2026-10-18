@@ -219,6 +219,7 @@ pub fn load(tag: &Tag, id: i32, seed: i64) -> Result<Entity, LoadError> {
     e.on_ground = r.bool_or("OnGround", false);
     e.invulnerable = r.bool_or("Invulnerable", false);
     e.invulnerable_time = r.int_or("invulnerable_time", 0);
+    e.portal_cooldown = r.int_or("PortalCooldown", 0);
     e.uuid = r.uuid("UUID").unwrap_or(0);
     e.silent = r.bool_or("Silent", false);
     e.no_gravity = r.bool_or("NoGravity", false);
@@ -459,7 +460,7 @@ pub fn save_with<'a>(e: &'a Entity, owner_uuid: &dyn Fn(i32) -> Option<u128>, lo
     o.put("Air", Tag::Short(e.air_supply as i16));
     o.put("OnGround", Tag::Byte(e.on_ground as i8));
     o.put("Invulnerable", Tag::Byte(e.invulnerable as i8));
-    o.put("PortalCooldown", extra("PortalCooldown").unwrap_or(Tag::Int(0)));
+    o.put("PortalCooldown", Tag::Int(e.portal_cooldown));
     if e.invulnerable_time > 0 {
         o.put("invulnerable_time", Tag::Int(e.invulnerable_time));
     }

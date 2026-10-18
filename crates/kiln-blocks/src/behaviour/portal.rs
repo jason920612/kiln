@@ -2,7 +2,8 @@
 //! block's `updateShape` (a broken frame takes the portal down) and fire lighting a frame
 //! (`BaseFireBlock.onPlace`, `BaseFireBlock.canBePlacedAt`).
 
-use crate::level::Level;
+use crate::level::{Effect, Level};
+use kiln_javamath::random::RandomSource;
 use crate::pos::{Axis, BlockPos, Direction};
 use crate::state;
 use kiln_data::blocks::default_state as d;
@@ -101,6 +102,21 @@ impl PortalShape {
 }
 
 /// `minecraft:nether_portal[axis=...]`.
+/// `NetherPortalBlock.randomTick`: in the overworld a portal block now and then lets a zombified piglin out, in proportion to the difficulty
+/// (`nextInt(2000) < difficulty id`), at the bottom of the portal column when a player is close and the block there can hold it.
+pub fn random_tick<L: Level>(level: &mut L, pos: BlockPos) {
+    if !level.portal_piglins_possible(pos) {
+        return;
+    }
+    let difficulty = level.difficulty();
+    if level.random().next_int_bounded(2000) >= difficulty {
+        return;
+    }
+    if let Some(at) = level.portal_piglin_spot(pos) {
+        level.effect(Effect::PortalPiglin { pos: at });
+    }
+}
+
 pub fn portal_state(axis: Axis) -> u16 {
     state::set(d::NETHER_PORTAL, "axis", if axis == Axis::Z { "z" } else { "x" })
 }

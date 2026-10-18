@@ -117,6 +117,8 @@ pub struct Entity {
     pub removed: Option<RemovalReason>,
     pub first_tick: bool,
     pub invulnerable_time: i32,
+    /// `Entity.portalCooldown`: ticks until the entity may use a portal again (`PortalCooldown`).
+    pub portal_cooldown: i32,
     /// Set when the velocity changed enough that trackers must resend it (`hasImpulse`/`needsSync`).
     pub needs_sync: bool,
     pub max_up_step: f32,
@@ -214,6 +216,7 @@ impl Entity {
             removed: None,
             first_tick: true,
             invulnerable_time: 0,
+            portal_cooldown: 0,
             needs_sync: false,
             max_up_step: 0.0,
             bounciness: 0.0,
@@ -442,6 +445,10 @@ impl Entity {
     pub fn common_tick(&mut self) {
         if self.invulnerable_time > 0 {
             self.invulnerable_time -= 1;
+        }
+        // `processPortalCooldown`.
+        if self.portal_cooldown > 0 {
+            self.portal_cooldown -= 1;
         }
         self.set_old_pos_and_rot();
         self.tick_count += 1;
