@@ -3634,6 +3634,7 @@ fn carry_out(
                     }
                 }
             }
+            flush_player_damage(players, target);
         }
         Event::Killed { entity, entity_type, credit, kind, attacker, direct, equipment } => {
             if let Some(p) = credit.and_then(|k| players.iter_mut().find(|p| p.entity_id == k)) {
