@@ -209,7 +209,7 @@ fn run_phased(
         burning += (0..PLAYERS).filter(|&i| sim.fire_and_air(i as u64 + 1).is_some_and(|(f, _)| f > -20)).count();
         max_regions = max_regions.max(sim.region_count());
         mob_ticks += sim.mobs().len();
-        if std::env::var_os("KILN_DBG_HASH").is_some() && tick >= 385 && tick % 100 != 99 {
+        if std::env::var_os("KILN_DBG_HASH").is_some() && tick >= 290 && tick % 100 != 99 {
             let _ = sim.state_hash();
         }
         if tick % 100 == 99 {
