@@ -28,7 +28,7 @@ fn door_after(difficulty: &str, ticks_to_run: usize) -> (bool, Vec<u16>) {
     let [x, y, z] = [p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32];
     let run = |sim: &mut Sim, c: String| assert!(sim.step([ToSim::Console(c)]));
     // A stone wall across the way with a door in it; the zombie is angry at the player (`HurtByTargetGoal` needs no sight).
-    run(&mut sim, format!("fill {} {} {} {} {} {} minecraft:stone", x + 3, y, z - 6, x + 3, y + 3, z + 6));
+    run(&mut sim, format!("fill {} {} {} {} {} {} minecraft:stone", x + 3, y, z - 24, x + 3, y + 3, z + 24));
     run(&mut sim, format!("setblock {} {y} {z} minecraft:oak_door[facing=east,half=lower,open=false]", x + 3));
     run(&mut sim, format!("setblock {} {} {z} minecraft:oak_door[facing=east,half=upper,open=false]", x + 3, y + 1));
     run(&mut sim, format!("summon minecraft:zombie {} {y} {} {{CanBreakDoors:1b,PersistenceRequired:1b}}", x + 6, z as f64 + 0.5));
