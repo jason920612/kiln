@@ -404,6 +404,7 @@ impl CustomGoal for CatRelaxOnOwnerGoal {
         }
         let Some(owner) = tame::owner(m, level) else { return false };
         self.owner = Some(owner.id);
+        eprintln!("DBG relax can_use sleeping={} dist={}", owner.sleeping, e.position().distance_to_sqr(owner.pos));
         if !owner.sleeping || e.position().distance_to_sqr(owner.pos) > 100.0 {
             return false;
         }
