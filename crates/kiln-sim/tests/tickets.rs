@@ -180,6 +180,10 @@ impl World {
         }
     }
 
+    fn run(&mut self, command: &str) {
+        assert!(self.sim.step([ToSim::Console(command.into())]));
+    }
+
     fn throw_pearl_up(&mut self) {
         let id = kiln_data::builtin_id("minecraft:item", "minecraft:ender_pearl").unwrap();
         let stack = ItemStack { item: id, count: 16, added: Vec::new(), removed: Vec::new() };
