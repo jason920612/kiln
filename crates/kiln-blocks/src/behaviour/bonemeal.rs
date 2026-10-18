@@ -417,3 +417,131 @@ fn small_dripleaf<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
         small_dripleaf(level, below, b);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_level::TestLevel;
+    use kiln_data::blocks::default_state as d;
+
+    fn level() -> TestLevel {
+        // bedrock at -64, dirt at -63: the ground is y = -63, plants stand at y = -62.
+        let mut l = TestLevel::flat(-64, 384, &[d::BEDROCK, d::DIRT]);
+        l.load_chunks((-1, -1), (1, 1));
+        l.set_random_seed(7);
+        l
+    }
+
+    fn put(l: &mut TestLevel, x: i32, y: i32, z: i32, s: u16) {
+        l.set_raw(BlockPos::new(x, y, z), s, 0);
+    }
+
+    fn at(l: &TestLevel, x: i32, y: i32, z: i32) -> u16 {
+        l.block(BlockPos::new(x, y, z))
+    }
+
+    #[test]
+    fn bone_meal_grows_a_bamboo_stalk_one_or_two_taller_with_small_leaves_on_the_new_one() {
+        let mut l = level();
+        put(&mut l, 0, -62, 0, named("minecraft:bamboo"));
+        assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(true));
+        let n = (-62..-50).take_while(|&y| is_named(at(&l, 0, y, 0), "minecraft:bamboo")).count();
+        assert!((2..=3).contains(&n), "grew by one or two: {n}");
+        let top = at(&l, 0, -62 + n as i32 - 1, 0);
+        assert_eq!(state::get(top, "leaves"), Some("small"), "the new top has small leaves");
+    }
+
+    #[test]
+    fn bone_meal_on_a_bamboo_sapling_puts_a_bamboo_on_top_of_it() {
+        let mut l = level();
+        put(&mut l, 0, -62, 0, named("minecraft:bamboo_sapling"));
+        assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(true));
+        assert!(is_named(at(&l, 0, -61, 0), "minecraft:bamboo"));
+    }
+
+    #[test]
+    fn bone_meal_spreads_a_bush_to_a_free_neighbour_that_can_hold_it() {
+        let mut l = level();
+        put(&mut l, 0, -62, 0, named("minecraft:bush"));
+        assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(true));
+        let n = Direction::HORIZONTAL.iter().filter(|&&dir| is_named(l.block(BlockPos::new(0, -62, 0).relative(dir)), "minecraft:bush")).count();
+        assert_eq!(n, 1, "one copy beside it");
+        // Boxed in by stone, there is nowhere to go: not a valid target.
+        let mut l = level();
+        put(&mut l, 0, -62, 0, named("minecraft:bush"));
+        for dir in Direction::HORIZONTAL {
+            let p = BlockPos::new(0, -62, 0).relative(dir);
+            put(&mut l, p.x, p.y, p.z, d::STONE);
+        }
+        assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(false));
+    }
+
+    #[test]
+    fn bone_meal_turns_short_dry_grass_tall_and_rooted_dirt_hangs_roots() {
+        let mut l = level();
+        put(&mut l, 0, -62, 0, named("minecraft:short_dry_grass"));
+        assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(true));
+        assert!(is_named(at(&l, 0, -62, 0), "minecraft:tall_dry_grass"));
+        put(&mut l, 5, -62, 5, named("minecraft:rooted_dirt"));
+        put(&mut l, 5, -63, 5, d::AIR);
+        put(&mut l, 5, -61, 5, d::AIR);
+        // (Rooted dirt over air: its roots hang below.)
+        put(&mut l, 5, -50, 5, named("minecraft:rooted_dirt"));
+        assert_eq!(grow(&mut l, BlockPos::new(5, -50, 5)), Some(true));
+        assert!(is_named(at(&l, 5, -51, 5), "minecraft:hanging_roots"));
+    }
+
+    #[test]
+    fn bone_meal_on_pitcher_crops_ages_them_and_builds_the_upper_half_from_age_three() {
+        let mut l = level();
+        put(&mut l, 0, -62, 0, state::set(named("minecraft:pitcher_crop"), "half", "lower"));
+        for expected in 1..=2 {
+            assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(true));
+            assert_eq!(state::get_int(at(&l, 0, -62, 0), "age"), expected);
+            assert!(is_air(at(&l, 0, -61, 0)), "still one block tall at age {expected}");
+        }
+        assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(true));
+        assert_eq!(state::get_int(at(&l, 0, -62, 0), "age"), 3);
+        assert_eq!(state::get(at(&l, 0, -61, 0), "half"), Some("upper"));
+        // From the upper half it is the same plant.
+        assert_eq!(grow(&mut l, BlockPos::new(0, -61, 0)), Some(true));
+        assert_eq!(state::get_int(at(&l, 0, -62, 0), "age"), 4);
+        assert_eq!(state::get_int(at(&l, 0, -61, 0), "age"), 4);
+        assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(false), "full grown");
+    }
+
+    #[test]
+    fn bone_meal_lengthens_vines_and_ages_their_heads_and_ripens_cave_vine_berries() {
+        let mut l = level();
+        // Weeping vines hanging from a ceiling at y = -50.
+        put(&mut l, 0, -50, 0, d::STONE);
+        put(&mut l, 0, -51, 0, state::set_int(named("minecraft:weeping_vines"), "age", 3));
+        assert_eq!(grow(&mut l, BlockPos::new(0, -51, 0)), Some(true));
+        let grown = (1..=30).filter(|&i| is_named(at(&l, 0, -51 - i, 0), "minecraft:weeping_vines")).count();
+        assert!(grown >= 1, "at least one more head below");
+        assert_eq!(state::get_int(at(&l, 0, -52, 0), "age"), 4, "the new head is one older");
+        // Cave vines ripen.
+        put(&mut l, 4, -50, 4, d::STONE);
+        put(&mut l, 4, -51, 4, named("minecraft:cave_vines"));
+        assert_eq!(grow(&mut l, BlockPos::new(4, -51, 4)), Some(true));
+        assert_eq!(state::get(at(&l, 4, -51, 4), "berries"), Some("true"));
+        assert_eq!(grow(&mut l, BlockPos::new(4, -51, 4)), Some(false), "already ripe");
+    }
+
+    #[test]
+    fn bone_meal_turns_a_small_dripleaf_into_a_big_one_on_a_stem_and_mangrove_leaves_hang_a_propagule() {
+        let mut l = level();
+        let mut small = named("minecraft:small_dripleaf");
+        small = state::set(small, "half", "lower");
+        put(&mut l, 0, -62, 0, small);
+        put(&mut l, 0, -61, 0, state::set(named("minecraft:small_dripleaf"), "half", "upper"));
+        assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(true));
+        assert!(is_named(at(&l, 0, -62, 0), "minecraft:big_dripleaf_stem"));
+        let top = (-62..-40).find(|&y| is_named(at(&l, 0, y, 0), "minecraft:big_dripleaf")).expect("a leaf on top");
+        assert!(top >= -61, "two to five high: {top}");
+        put(&mut l, 8, -50, 8, named("minecraft:mangrove_leaves"));
+        assert_eq!(grow(&mut l, BlockPos::new(8, -50, 8)), Some(true));
+        let p = at(&l, 8, -51, 8);
+        assert!(is_named(p, "minecraft:mangrove_propagule") && state::get(p, "hanging") == Some("true"));
+    }
+}
