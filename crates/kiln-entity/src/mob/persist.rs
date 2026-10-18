@@ -56,12 +56,9 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
         for a in list {
             let Some(name) = a.get("id").and_then(Tag::as_str) else { continue };
             let Some(attr) = Attr::by_name(name) else { continue };
-            if m.attrs.get(attr).is_none() {
-                continue;
-            }
-            if let Some(base) = a.get("base").and_then(Tag::as_f64)
-                && let Some(i) = m.attrs.get_mut(attr)
-            {
+            // `AttributeMap.apply`: `getInstance` for each entry (an instance now), none for an attribute the type lacks.
+            let Some(i) = m.attrs.get_mut(attr) else { continue };
+            if let Some(base) = a.get("base").and_then(Tag::as_f64) {
                 i.base = base;
             }
             if let Some(Tag::List(mods)) = a.get("modifiers") {
@@ -153,8 +150,7 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
                 *egg_time = t as i32;
             }
         }
-        Species::Zombie { can_break_doors, drowning } => {
-            *can_break_doors = r.bool_or("CanBreakDoors", false);
+        Species::Zombie { drowning, .. } => {
             m.zombie_baby = r.bool_or("IsBaby", false);
             drowning.load(r, "InWaterTime", "DrownedConversionTime");
         }
@@ -171,14 +167,23 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
         }
         _ => {}
     }
+    if matches!(m.species, Species::Zombie { .. }) {
+        // `setCanBreakDoors`: the navigation and the goal follow the flag.
+        super::kinds::zombie::set_can_break_doors(m, r.bool_or("CanBreakDoors", false));
+    }
     if m.zombie_baby {
-        m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
+        m.attrs.set_transient_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
     }
     super::reassess_weapon_goal(m, false);
-    // The saved memories (`Brain` tag) of a brain-driven type.
+    // The saved memories (`Brain` tag) of a brain-driven type; any other living entity has a brain without memory types, which drops
+    // them all (the tag is read, not kept as an unknown field).
+    let saved_brain = r.get("Brain");
     if let Some(b) = m.brain.as_mut()
-        && let Some(t) = r.get("Brain")
+        && let Some(t) = saved_brain
     {
+        if let Some(k) = kind.ext() {
+            k.brain_replaced(b);
+        }
         super::brain::persist::load(b, t);
     }
     if let Some(k) = kind.ext() {
@@ -195,27 +200,20 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     o.put("current_impulse_context_reset_grace_time", Tag::Int(0));
     o.put("DeathTime", Tag::Short(m.death_time as i16));
     o.put("AbsorptionAmount", Tag::Float(m.absorption));
-    // (A base `/attribute` set back to the registry default is still not the type's own: a horse's 53
-    // health set to 20 has to be saved or it comes back as 53.)
-    let type_defaults = m.kind.attributes();
+    // `AttributeMap.pack`: every instance the map has (`getInstance` makes one the first time something changes or asks for it), whether
+    // or not its value differs from the type's own.
     let attrs: Vec<Tag> = m
         .attrs
         .list
         .iter()
-        .filter(|i| {
-            !i.modifiers.is_empty()
-                || i.base != i.attr.info().1
-                || i.base != type_defaults.base(i.attr)
-                || (m.kind.is_mob() && matches!(i.attr, Attr::MovementSpeed | Attr::FollowRange))
-        })
-        // (A mannequin has the living entity attributes only.)
-        .filter(|i| m.kind.is_mob() || !matches!(i.attr, Attr::FollowRange | Attr::TemptRange | Attr::AttackDamage))
+        .filter(|i| i.created)
         .map(|i| {
             let mut c = vec![("id".to_owned(), Tag::String(i.attr.name().to_owned())), ("base".to_owned(), Tag::Double(i.base))];
-            if !i.modifiers.is_empty() {
+            if i.modifiers.iter().any(|md| !md.transient) {
                 let mods = i
                     .modifiers
                     .iter()
+                    .filter(|md| !md.transient)
                     .map(|md| {
                         Tag::Compound(vec![
                             ("id".into(), Tag::String(md.id.clone())),

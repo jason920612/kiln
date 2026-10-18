@@ -137,6 +137,12 @@ SUITES = {
         "KILN_ENCHANT_VECTORS": vec("wp75/combat/enchant_helpers.jsonl"),
         "KILN_SPEAR_VECTORS": vec("wp75/combat/spear.jsonl"),
     }),
+    # wp77 suites: recorded into <work>/wp77 (docs/wp77.md): saved attributes and Brain of every living entity (SavedStateVectors, BrainRoundTrip), fishing bobbers
+    # tick by tick (FishingVectors), villager gossip, offers, special prices and restocking (VillagerVectors); the rest of wp77 runs in the workspace tests.
+    "saved77": (["-p", "kiln-sim", "--test", "saved_parity"], {"KILN_SAVED_VECTORS": vec("wp77/saved.jsonl")}),
+    "brain77": (["-p", "kiln-sim", "--test", "brain_parity"], {"KILN_BRAIN_VECTORS": vec("wp77/brt.jsonl")}),
+    "fishing77": (["-p", "kiln-entity", "--test", "fishing_parity"], {"KILN_FISHING_VECTORS": vec("wp77/fishing.jsonl")}),
+    "villagers77": (["-p", "kiln-entity", "--test", "villager_parity"], {"KILN_VILLAGER_VECTORS": vec("wp77/villagers.jsonl")}),
     "plugin_compat": (["-p", "kiln-plugin-host", "--test", "api_compat", "--test", "wit_freeze"], {}),
 }
 

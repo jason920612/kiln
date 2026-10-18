@@ -144,7 +144,7 @@ impl Kind for Witch {
                     level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.witch.drink", source: "hostile", volume: 1.0, pitch });
                 }
                 m.attrs.remove_modifier(MovementSpeed, DRINKING);
-                m.attrs.set_modifier(MovementSpeed, DRINKING, -0.25, Op::AddValue);
+                m.attrs.set_transient_modifier(MovementSpeed, DRINKING, -0.25, Op::AddValue);
             }
         }
         if e.random.next_float() < 7.5e-4 {

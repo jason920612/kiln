@@ -1640,7 +1640,7 @@ pub fn sync_equipment_modifiers(m: &mut MobData) {
         m.attrs.remove_modifier(a, &id);
     }
     for (a, id, amount, op) in want {
-        m.attrs.set_modifier(a, &id, amount, op);
+        m.attrs.set_transient_modifier(a, &id, amount, op);
         m.equip_mods.push((a, id));
     }
 }
@@ -3367,6 +3367,11 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
     let mut m = take(e);
     let kind = m.kind;
     group.natural = natural;
+    // (`SummonCommand` finalizes only a `Mob`; a mannequin is a living entity but not one.)
+    if !kind.is_mob() {
+        put(e, m);
+        return;
+    }
     // `CaveSpider.finalizeSpawn` returns the group data as it is: nothing is drawn.
     if kind == MobKind::CaveSpider {
         put(e, m);
@@ -3455,6 +3460,15 @@ fn sound_variant_count(kind: MobKind) -> i32 {
     };
     kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == reg).map_or(1, |(_, e)| e.len() as i32)
 }
+/// `isPersistenceRequired() || requiresCustomPersistence()`: the mobs `NaturalSpawner.createState` leaves out of its counts.
+pub fn persistent_for_counts(e: &Entity, m: &MobData) -> bool {
+    m.persistence_required
+        || e.vehicle.is_some()
+        || crate::leash::is_leashed(e)
+        || m.kind.ext().is_some_and(|k| k.requires_custom_persistence(m))
+        || kinds::raider::raider(m).is_some_and(|r| r.raid.is_some())
+}
+
 /// `Mob.checkDespawn`: `nearest` is the squared distance to the nearest player (`None`: no
 /// player in the dimension).
 pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f64>) {

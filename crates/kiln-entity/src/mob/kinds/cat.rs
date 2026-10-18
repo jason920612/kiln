@@ -92,7 +92,7 @@ impl Kind for Cat {
         g.add(1, Goal::Float);
         g.add(1, Goal::Custom(Box::new(TamableAnimalPanicGoal::new(1.5, "minecraft:panic_causes"))));
         g.add(2, Goal::Custom(Box::new(SitWhenOrderedToGoal)));
-        g.add(3, Goal::Custom(Box::new(CatRelaxOnOwnerGoal)));
+        g.add(3, Goal::Custom(Box::new(CatRelaxOnOwnerGoal::default())));
         g.add(4, Goal::Custom(Box::new(CatTemptGoal { speed: 0.6, player: None, calm_down: 0, px: 0.0, py: 0.0, pz: 0.0, rot_x: 0.0, rot_y: 0.0, selected: None })));
         g.add(5, Goal::Custom(Box::new(MoveToBlock::new(BlockGoal::Lie, 1.1, 8, 6, -2))));
         g.add(6, Goal::Custom(Box::new(FollowOwnerGoal::new(1.0, 10.0, 5.0))));
@@ -123,7 +123,7 @@ impl Kind for Cat {
             s.sprinting = sprint;
             // `LivingEntity.setSprinting`: the sprint speed bonus.
             if sprint {
-                m.attrs.set_modifier(MovementSpeed, "minecraft:sprinting", 0.30000001192092896, Op::AddMultipliedTotal);
+                m.attrs.set_transient_modifier(MovementSpeed, "minecraft:sprinting", 0.30000001192092896, Op::AddMultipliedTotal);
             } else {
                 m.attrs.remove_modifier(MovementSpeed, "minecraft:sprinting");
             }
@@ -340,10 +340,55 @@ fn play_eating_sound(e: &Entity, m: &MobData, level: &mut dyn EntityLevel) {
 
 // ---------------------------------------------------------------------- goals
 
-/// `Cat.CatRelaxOnOwnerGoal`: lies next to its sleeping owner. Players do not sleep in Kiln's
-/// world yet, so it never starts.
-#[derive(Clone, Debug)]
-struct CatRelaxOnOwnerGoal;
+/// `minecraft:gameplay/cat_waking_up_gift_chance`: the overworld `day` timeline's track (a constant 0 from tick 362 to 23667 of the day, 0.7
+/// from 23667 on and until 362 of the next one, the last keyframe holding over the wrap).
+fn waking_up_gift_chance(day_time: i64) -> f32 {
+    let t = day_time.rem_euclid(24000);
+    if !(362..23667).contains(&t) { 0.7 } else { 0.0 }
+}
+
+fn cat_does_not_teleport_to(state: u16) -> bool {
+    block_in_tag(state, "minecraft:cat_does_not_teleport_to")
+}
+
+/// `Cat.CatRelaxOnOwnerGoal`: a tame cat goes to the bed its owner sleeps in (its foot end), lies next to them and, when the owner wakes up after
+/// sleeping at least 100 ticks, may leave a morning gift (`minecraft:gameplay/cat_morning_gift`) if the day's chance says so.
+#[derive(Clone, Debug, Default)]
+struct CatRelaxOnOwnerGoal {
+    owner: Option<i32>,
+    goal_pos: Option<BlockPos>,
+    on_bed_ticks: i32,
+}
+
+impl CatRelaxOnOwnerGoal {
+    /// `spaceIsOccupied`: another cat within two blocks of the spot lies there or is settling in.
+    fn space_is_occupied(&self, e: &Entity, level: &dyn EntityLevel) -> bool {
+        let Some(p) = self.goal_pos else { return false };
+        let area = Aabb::new(p.x as f64, p.y as f64, p.z as f64, (p.x + 1) as f64, (p.y + 1) as f64, (p.z + 1) as f64).inflate_all(2.0);
+        level.entities_in(&area, crate::level::EntityFilter::Any, e.id).into_iter().any(|id| {
+            level.entity(id).filter(|o| o.type_name == "minecraft:cat").and_then(crate::mob::data).is_some_and(|om| {
+                let s = st(om);
+                s.lying || s.relax_one
+            })
+        })
+    }
+
+    /// `giveMorningGift`: the cat hops to a spot within five blocks of where it is (or of what it is led by), and the loot lies by its side.
+    fn give_morning_gift(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let base = match crate::leash::holder_of(e).and_then(|h| level.entity(h)) {
+            Some(h) if crate::leash::is_leashed(e) => h.block_position(),
+            _ => e.block_position(),
+        };
+        let x = base.x + e.random.next_int_bounded(11) - 5;
+        let y = base.y + e.random.next_int_bounded(5) - 2;
+        let z = base.z + e.random.next_int_bounded(11) - 5;
+        super::enderman::random_teleport(e, m, level, x as f64, y as f64, z as f64, false, cat_does_not_teleport_to, &|_, _, _, _| true);
+        let at = e.block_position();
+        let rot = m.y_body_rot * 0.017453292;
+        let pos = Vec3::new(at.x as f64 - crate::mob::mth::sin(rot as f64) as f64, at.y as f64, at.z as f64 + crate::mob::mth::cos(rot as f64) as f64);
+        level.emit(Event::GiftLoot { entity: e.id, table: "minecraft:gameplay/cat_morning_gift", pos });
+    }
+}
 
 impl CustomGoal for CatRelaxOnOwnerGoal {
     custom_goal_boilerplate!();
@@ -353,8 +398,82 @@ impl CustomGoal for CatRelaxOnOwnerGoal {
     fn flags(&self) -> u8 {
         0
     }
-    fn can_use(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
-        false
+    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        if !tame::is_tame(m) || tame::ordered_to_sit(m) {
+            return false;
+        }
+        let Some(owner) = tame::owner(m, level) else { return false };
+        self.owner = Some(owner.id);
+        if !owner.sleeping || e.position().distance_to_sqr(owner.pos) > 100.0 {
+            return false;
+        }
+        let at = BlockPos::containing(owner.pos.x, owner.pos.y, owner.pos.z);
+        let state = level.block(at);
+        if !block_in_tag(state, "minecraft:cats_can_lie_on") {
+            return false;
+        }
+        // `BedBlock.FACING`: the spot is the block on the other side of the bed's head (no facing: the block itself).
+        self.goal_pos = Some(match kiln_data::blocks_types::block_of(state).property(state, "facing") {
+            Some(facing) => {
+                let (dx, dz) = match facing {
+                    "north" => (0, 1),
+                    "south" => (0, -1),
+                    "west" => (1, 0),
+                    _ => (-1, 0),
+                };
+                BlockPos::new(at.x + dx, at.y, at.z + dz)
+            }
+            None => at,
+        });
+        !self.space_is_occupied(e, level)
+    }
+    fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        tame::is_tame(m)
+            && !tame::ordered_to_sit(m)
+            && self.owner.and_then(|id| level.player(id)).is_some_and(|p| p.sleeping)
+            && self.goal_pos.is_some()
+            && !self.space_is_occupied(e, level)
+    }
+    fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        if let Some(p) = self.goal_pos {
+            tame::set_sitting(m, false);
+            path::move_to(e, m, level, p.x as f64, p.y as f64, p.z as f64, 1.100000023841858);
+        }
+    }
+    fn stop(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        st_mut(m).lying = false;
+        let timer = self.owner.and_then(|id| level.player(id)).map_or(0, |p| p.sleep_timer);
+        // `ownerPlayer.getSleepTimer() >= 100 && level.getRandom().nextFloat() < chance`.
+        if timer >= 100 && level.random().next_float() < waking_up_gift_chance(level.day_time()) {
+            self.give_morning_gift(e, m, level);
+        }
+        self.on_bed_ticks = 0;
+        st_mut(m).relax_one = false;
+        m.nav.stop();
+    }
+    fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let (Some(owner), Some(p)) = (self.owner.and_then(|id| level.player(id)), self.goal_pos) else { return };
+        tame::set_sitting(m, false);
+        path::move_to(e, m, level, p.x as f64, p.y as f64, p.z as f64, 1.100000023841858);
+        if e.position().distance_to_sqr(owner.pos) < 2.5 {
+            self.on_bed_ticks += 1;
+            if self.on_bed_ticks > reduced_tick_delay(16) {
+                st_mut(m).lying = true;
+                st_mut(m).relax_one = false;
+            } else {
+                // `Mob.lookAt(entity, 45, 45)`.
+                let (dx, dz) = (owner.pos.x - e.position().x, owner.pos.z - e.position().z);
+                let dy = (owner.pos.y + owner.eye_height as f64) - e.eye_y();
+                let h = (dx * dx + dz * dz).sqrt();
+                let yaw = (crate::mob::mth::atan2(dz, dx) * 57.2957763671875) as f32 - 90.0;
+                let pitch = (-(crate::mob::mth::atan2(dy, h) * 57.2957763671875)) as f32;
+                e.x_rot = crate::mob::control::rotlerp(e.x_rot, pitch, 45.0);
+                e.y_rot = crate::mob::control::rotlerp(e.y_rot, yaw, 45.0);
+                st_mut(m).relax_one = true;
+            }
+        } else {
+            st_mut(m).lying = false;
+        }
     }
 }
 

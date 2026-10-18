@@ -278,6 +278,12 @@ pub trait Kind: Sync + Send {
         None
     }
 
+    /// A saved `Brain` tag replaces the brain (`LivingEntity.readAdditionalSaveData`: `makeBrain(packed)`): what the constructor put
+    /// into the first one besides what the provider makes (the copper golem's first transport cooldown) is gone.
+    fn brain_replaced(&self, b: &mut super::brain::Brain) {
+        let _ = b;
+    }
+
     /// `makeBrain`: the brain of a brain-driven type (built after the constructor's yaw draw;
     /// its sensors' first scans are delayed by draws from `random`). `None` for goal-driven types.
     fn make_brain(&self, m: &MobData, random: &mut dyn RandomSource) -> Option<super::brain::Brain> {
@@ -569,6 +575,12 @@ pub trait Kind: Sync + Send {
     fn damage_after_magic_absorb(&self, id: i32, m: &MobData, source: &DamageSource, amount: f32) -> f32 {
         let _ = (id, m, source);
         amount
+    }
+    /// `requiresCustomPersistence` beyond `Mob`'s (a passenger or a led mob): what the type keeps from despawning and out of the
+    /// natural spawner's mob counts.
+    fn requires_custom_persistence(&self, m: &MobData) -> bool {
+        let _ = m;
+        false
     }
     /// `removeWhenFarAway` for a type that despawns differently from its category.
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {

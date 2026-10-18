@@ -144,6 +144,9 @@ pub struct PlayerView {
     /// wp32 parrots: `ServerPlayer.setEntityOnShoulder` would take a parrot (a shoulder is free
     /// and the player stands on the ground, not riding, in water or in powder snow).
     pub parrot_can_sit: bool,
+    /// `isSleeping` (in a bed) and `getSleepTimer` (`sleepCounter`: up to 100 while asleep, 100..110 while waking up; a cat's morning gift asks).
+    pub sleeping: bool,
+    pub sleep_timer: i32,
 }
 
 impl PlayerView {
@@ -184,6 +187,8 @@ impl PlayerView {
             hero_of_the_village: None,
             parrot_may_land: false,
             parrot_can_sit: false,
+            sleeping: false,
+            sleep_timer: 0,
         }
     }
 
@@ -301,6 +306,8 @@ pub enum Event {
     TakeItem { item: i32, collector: i32, amount: i32 },
     /// `Level.levelEvent` (block break particles 2001, fizz 1501, ...).
     LevelEvent { event: i32, pos: BlockPos, data: i32 },
+    /// `Level.destroyBlockProgress(entity, pos, stage)`: the cracks of a block a mob is breaking (-1 clears) to the players within 32 blocks.
+    BlockDestruction { entity: i32, pos: BlockPos, stage: i32 },
     /// `Level.blockEvent(pos, block, a, b)` for the block at `pos` (a spawner's delay reset).
     BlockEvent { pos: BlockPos, a: i32, b: i32 },
     /// `Entity.onExplosionHit(source)` of player `player`: an explosion (`source`, the entity that made it) reached it.
@@ -332,6 +339,9 @@ pub enum Event {
     Explosion { pos: Vec3, power: f32, blocks: Vec<BlockPos>, keep: bool, knockbacks: Vec<(i32, Vec3)>, source: Option<i32>, fx: Option<ExplosionFx> },
     /// A mob took a full hit (`broadcastDamageEvent`: the hurt animation for viewers).
     MobHurt { entity: i32, kind: DamageKind, attacker: Option<i32>, direct: Option<i32> },
+    /// A player was hurt during the tick: the damage event goes to the players that see it here, among the tick's other events (a level event
+    /// sent after the damage must come after the damage event).
+    PlayerHurt { target: i32 },
     /// A mob died: the simulation drops its loot table (`LivingEntity.dropFromLootTable`).
     /// `killer`: the player credited with the kill (`last_damage_player`).
     DeathLoot {

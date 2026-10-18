@@ -1,0 +1,60 @@
+"""wp77 item 9: a NoAI cow pulled by a leash, Motion and Pos per tick on Kiln (K) and vanilla (V) in lock step.
+usage: leash9.py [NOAI=1] [TICKS=40]"""
+import re, sys, time
+from lk import *
+
+noai = (sys.argv[1] if len(sys.argv) > 1 else "1") == "1"
+ticks = int(sys.argv[2]) if len(sys.argv) > 2 else 40
+holder = sys.argv[3] if len(sys.argv) > 3 else "knot"   # knot | player
+stride = int(sys.argv[4]) if len(sys.argv) > 4 else 1
+ME = "W0"
+
+
+def setup(t):
+    for c in ("gamerule spawn_mobs false", "gamerule advance_time false", "gamerule advance_weather false", "difficulty peaceful",
+              "forceload add 0 0 48 24", "kill @e[type=!player]"):
+        w(t, c)
+    time.sleep(2.0)
+    for c in ("fill -2 199 -2 44 199 20 stone", "fill -2 200 -2 44 215 20 air", f"tp {ME} 20 201 12",
+              "setblock 13 200 5 oak_fence", "kill @e[type=!player]"):
+        w(t, c)
+        time.sleep(0.3)
+    time.sleep(1.0)
+    w(t, "summon minecraft:leash_knot 13 200 5")
+    time.sleep(0.3)
+    if holder == "player":
+        out = ask(t, f"data get entity {ME} UUID", wait=0.4)
+        u = re.findall(r"\[I?;?\s*(-?\d+),\s*(-?\d+),\s*(-?\d+),\s*(-?\d+)\]", out)[-1]
+        lead = "leash:{UUID:[I;%s,%s,%s,%s]}" % u
+        w(t, f"tp {ME} 12 201 5")
+        time.sleep(0.5)
+    else:
+        lead = "leash:[I;13,200,5]"
+    nbt = '{Tags:["c9"],' + lead + (",NoAI:1b" if noai else "") + "}"
+    w(t, f"summon minecraft:cow 5.5 200 5.5 {nbt}")
+    time.sleep(0.5)
+
+
+def motion(t):
+    out = ask(t, "data get entity @e[tag=c9,limit=1] Motion", wait=0.25)
+    pos = ask(t, "data get entity @e[tag=c9,limit=1] Pos", wait=0.25)
+    m = re.findall(r"\[([-0-9.,dDeE+ ]+)\]", out)
+    p = re.findall(r"\[([-0-9.,dDeE+ ]+)\]", pos)
+    return (m[-1] if m else out.strip()[-80:]), (p[-1] if p else pos.strip()[-80:])
+
+
+for t in "KV":
+    setup(t)
+both("tick freeze")
+time.sleep(0.5)
+rows = []
+for i in range(ticks):
+    both(f"tick step {stride}")
+    time.sleep(0.2 + 0.055 * stride)
+    rows.append((i, motion("K"), motion("V")))
+same = 0
+for i, k, v in rows:
+    mark = "==" if k == v else "!="
+    same += k == v
+    print(i, mark, "K", k[0][:90], "|", k[1][:60], "   V", v[0][:90], "|", v[1][:60])
+print("same", same, "of", len(rows))

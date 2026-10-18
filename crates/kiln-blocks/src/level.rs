@@ -130,6 +130,8 @@ pub enum Effect {
     /// `DriedGhastBlock.spawnGhastling`: a baby happy ghast faces `yaw` degrees at the bottom
     /// center of `pos` (the block is gone).
     HatchGhastling { pos: BlockPos, yaw: f32 },
+    /// `NetherPortalBlock.randomTick`: a zombified piglin (`EntitySpawnReason.STRUCTURE`) appears at `pos`, with its portal cooldown set.
+    PortalPiglin { pos: BlockPos },
     /// `SpeleothemBlock.spawnFallingStalactite` for the tip of a falling stalactite: the block left
     /// `pos` as a falling entity that hurts what it lands on, `per_distance` (at most 40) per block
     /// fallen.
@@ -348,6 +350,18 @@ pub trait Level {
     /// `Difficulty.getId` (0 peaceful .. 3 hard).
     fn difficulty(&self) -> i32 {
         2
+    }
+
+    /// `NetherPortalBlock.randomTick`'s first conditions: `isSpawningMonsters`, a difficulty above peaceful and the dimension's
+    /// `minecraft:gameplay/nether_portal_spawns_piglin` (the overworld's).
+    fn portal_piglins_possible(&self, _pos: BlockPos) -> bool {
+        false
+    }
+
+    /// The rest of it once the dice came up: a player close enough for spawning, down the portal column to the block that holds the mob up
+    /// (`isValidSpawn` for a zombified piglin), and where the mob appears (the block above it).
+    fn portal_piglin_spot(&self, _pos: BlockPos) -> Option<BlockPos> {
+        None
     }
 
     /// The worldgen the level places features with when something grows (saplings, bone meal

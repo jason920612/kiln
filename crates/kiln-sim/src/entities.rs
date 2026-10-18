@@ -1719,6 +1719,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let env = self.level.env();
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
         p.hurt(5.0, &source, &mut ctx);
+        self.events.push(Event::PlayerHurt { target: id });
     }
 
     fn monsters_burn(&self) -> bool {
@@ -1761,6 +1762,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         if hurt && let Some(a) = source.attacker.as_ref().map(|a| a.id) {
             p.last_hurt_by_mob = Some((a, env.game_time));
         }
+        self.events.push(Event::PlayerHurt { target: id });
         hurt
     }
 
@@ -1878,6 +1880,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
                 };
                 let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
                 p.hurt(amount, &source, &mut ctx);
+                self.events.push(Event::PlayerHurt { target: id });
             }
             kiln_entity::effect::Kind::Saturation => p.eat(effect.amplifier + 1, (effect.amplifier + 1) as f32 * 2.0),
             _ => {}
@@ -3381,6 +3384,20 @@ fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
         .collect()
 }
 
+/// `broadcastDamageEvent` for a hurt player: the players that see it get the damage event now, at its place among what else happened (the player
+/// itself was told as it was hurt).
+fn flush_player_damage(players: &mut [&mut Player], target: i32) {
+    let Some(t) = players.iter_mut().find(|p| p.entity_id == target) else { return };
+    let Some((kind, attacker, direct)) = t.damaged.take() else { return };
+    let viewers = t.seen_by.clone();
+    let pkt = entity::damage_event(target, kind, attacker, direct, None);
+    for v in viewers {
+        if let Ok(j) = players.binary_search_by_key(&v, |q| q.conn) {
+            players[j].send(pkt.clone());
+        }
+    }
+}
+
 /// `BlockBehaviour.onProjectileHit` of the block at `pos`; `owner` is the projectile's owner.
 fn block_projectile_hit(level: &mut RegionLevel, players: &mut [&mut Player], pos: kiln_blocks::BlockPos, face: kiln_blocks::Direction, location: [f64; 3], projectile_type: &str, owner: Option<i32>, on_fire: bool) {
     use kiln_data::block_logic::BlockClass as C;
@@ -3473,6 +3490,13 @@ fn carry_out(
                 }
             }
         }
+        Event::BlockDestruction { entity, pos, stage } => {
+            let pkt = kiln_proto::packets::world_fx::block_destruction(entity, [pos.x, pos.y, pos.z], u8::try_from(stage).ok());
+            let c = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+            for p in players.iter_mut().filter(|p| (0..3).map(|i| (p.pos[i] - c[i]).powi(2)).sum::<f64>() < 32.0 * 32.0) {
+                p.send(pkt.clone());
+            }
+        }
         Event::LevelEvent { event, pos, data } => level.effect(Effect::LevelEvent { id: event, pos: kb(pos), data }),
         Event::BlockExploded { pos, state, decay, radius, .. } => {
             level.effect(if decay { Effect::ExplosionDrop { pos: kb(pos), state, radius } } else { Effect::Drop { pos: kb(pos), state } })
@@ -3496,7 +3520,9 @@ fn carry_out(
                 let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
                 p.hurt(amount, &source, &mut ctx);
             }
+            flush_player_damage(players, target);
         }
+        Event::PlayerHurt { target } => flush_player_damage(players, target),
         Event::EntityEvent { entity: id, event } => {
             if let Ok(i) = list.binary_search_by_key(&id, |e| e.id) {
                 let pkt = entity::entity_event(id, event);
@@ -3820,6 +3846,8 @@ pub(crate) fn view(p: &Player, now: i64) -> PlayerView {
         // (filled in by `shoulder::mark_views` where parrots are about)
         parrot_may_land: false,
         parrot_can_sit: false,
+        sleeping: p.sleep.pos.is_some(),
+        sleep_timer: p.sleep.counter,
     }
 }
 

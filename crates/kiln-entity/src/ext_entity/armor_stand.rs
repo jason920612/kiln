@@ -64,6 +64,8 @@ pub struct ArmorStand {
     pub health: f32,
     /// The game time of the last hit that did not break it.
     pub last_hit: i64,
+    /// Its first tick asked for the movement speed (`getInstance` made the attribute instance `attributes` lists).
+    pub speed_made: bool,
 }
 
 impl ArmorStand {
@@ -79,6 +81,7 @@ impl ArmorStand {
             poses: DEFAULT_POSES,
             health: 20.0,
             last_hit: 0,
+            speed_made: false,
         }
     }
 
@@ -375,6 +378,7 @@ impl EntityExt for ArmorStand {
     }
 
     fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {
+        self.speed_made = true;
         // `Entity.baseTick` (fire, fluids) then `aiStep`'s travel; a marker or a stand without
         // gravity does not move (`hasPhysics`).
         e.base_tick(level);
@@ -442,7 +446,13 @@ impl EntityExt for ArmorStand {
         o.put("DeathTime", Tag::Short(0));
         o.put("AbsorptionAmount", Tag::Float(0.0));
         o.put("FallFlying", Tag::Byte(0));
-        o.put("attributes", Tag::List(Vec::new()));
+        let made: Vec<Tag> = if self.speed_made {
+            let speed = crate::mob::attributes::Attr::MovementSpeed;
+            vec![Tag::Compound(vec![("id".into(), Tag::String(speed.name().into())), ("base".into(), Tag::Double(speed.info().1))])]
+        } else {
+            Vec::new()
+        };
+        o.put("attributes", Tag::List(made));
         o.put("Brain", Tag::Compound(vec![("memories".into(), Tag::Compound(Vec::new()))]));
         o.put("current_impulse_context_reset_grace_time", Tag::Int(0));
         let mut eq = Vec::new();

@@ -423,6 +423,12 @@ impl Kind for Fish {
     }
 
     /// `removeWhenFarAway`: not once it came out of a bucket (or has a name).
+    /// `requiresCustomPersistence` (on top of a passenger or a led mob): a bucketed fish.
+    fn requires_custom_persistence(&self, m: &MobData) -> bool {
+        st(m).from_bucket
+    }
+
+
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
         Some(!st(m).from_bucket)
     }

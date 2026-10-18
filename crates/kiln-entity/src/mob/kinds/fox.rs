@@ -16,7 +16,7 @@ use crate::mob::goals::{self, Goal, JUMP, LOOK, Living, MOVE, TARGET};
 use crate::mob::interact::{Interactor, Outcome};
 use crate::mob::kinds::wolf::{biome_is, block_in_tag};
 use crate::mob::path::{self, PathType};
-use crate::mob::{DamageSource, GroupData, MAINHAND, MobData, MobKind, SpawnContext, item_name, item_tag, mth};
+use crate::mob::{DamageSource, GroupData, MAINHAND, MobData, MobKind, SpawnContext, item_name, item_tag, mth, random_pos};
 use crate::persist::{Input, Output};
 use kiln_data::entities::data;
 use kiln_item::ItemStack;
@@ -324,7 +324,7 @@ impl Kind for Fox {
                 .after_start(|_, _, m, _| clear_states(m))
                 .boxed(),
         );
-        g.add(9, Goal::Custom(Box::new(FoxStrollThroughVillageGoal { interval: mth::reduced_tick_delay(200) })));
+        g.add(9, Goal::Custom(Box::new(FoxStrollThroughVillageGoal { interval: mth::reduced_tick_delay(200), wanted: None })));
         let mut berries = MoveToBlock::new(1.2000000476837158, 12, 1);
         berries.vrange = 1;
         g.add(10, Goal::Custom(Box::new(FoxEatBerriesGoal { mtb: berries, waited: 0 })));
@@ -953,11 +953,28 @@ impl CustomGoal for SleepGoal {
     }
 }
 
-/// `FoxStrollThroughVillageGoal`: at night near villages (Kiln has no village sections: the
-/// interval draw only).
+/// `FoxStrollThroughVillageGoal` (a `StrollThroughVillageGoal` that a fox runs only when it can move): at night, within six sections of a village,
+/// a fox walks to a spot picked by how close to the village it lies, and on the way keeps heading at it ten blocks at a time.
 #[derive(Clone, Debug)]
 struct FoxStrollThroughVillageGoal {
     interval: i32,
+    wanted: Option<BlockPos>,
+}
+
+impl FoxStrollThroughVillageGoal {
+    /// `canFoxMove`.
+    fn can_fox_move(m: &MobData) -> bool {
+        !flag(m, SLEEPING) && !flag(m, SITTING) && !is_defending(m) && m.target.is_none()
+    }
+
+    /// `StrollThroughVillageGoal.moveRandomly`.
+    fn move_randomly(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let b = e.block_position();
+        let x = b.x + e.random.next_int_bounded(16) - 8;
+        let z = b.z + e.random.next_int_bounded(16) - 8;
+        let y = level.motion_blocking_no_leaves_height(x, z);
+        path::move_to(e, m, level, x as f64, y as f64, z as f64, 1.0);
+    }
 }
 
 impl CustomGoal for FoxStrollThroughVillageGoal {
@@ -968,12 +985,50 @@ impl CustomGoal for FoxStrollThroughVillageGoal {
     fn flags(&self) -> u8 {
         MOVE
     }
-    fn can_use(&mut self, e: &mut Entity, _m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        // (`StrollThroughVillageGoal.canUse`; a fox carries no controlling passenger.)
         if level.is_bright_outside() {
             return false;
         }
-        let _ = e.random.next_int_bounded(self.interval) != 0;
-        false
+        if e.random.next_int_bounded(self.interval) != 0 {
+            return false;
+        }
+        // `isCloseToVillage(blockPosition, 6)`.
+        if level.sections_to_village(e.block_position()) > 6 {
+            return false;
+        }
+        let pos = {
+            let l: &dyn EntityLevel = &*level;
+            let weight = |p: BlockPos| -(l.sections_to_village(p) as f64);
+            random_pos::land_pos_weighted(e, m, l, 15, 7, &weight)
+        };
+        self.wanted = pos.map(|v| BlockPos::containing(v.x, v.y, v.z));
+        self.wanted.is_some() && Self::can_fox_move(m)
+    }
+    fn can_continue(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
+        self.wanted.is_some() && !m.nav.is_done() && m.nav.target_pos == self.wanted && Self::can_fox_move(m)
+    }
+    fn start(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+        clear_states(m);
+    }
+    fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let Some(wanted) = self.wanted else { return };
+        if !m.nav.is_done() {
+            return;
+        }
+        let here = e.position();
+        let centre = Vec3::new(wanted.x as f64 + 0.5, wanted.y as f64 + 0.5, wanted.z as f64 + 0.5);
+        if centre.distance_to_sqr(here) < 100.0 {
+            return;
+        }
+        // `atBottomCenterOf(wanted).subtract(position).scale(0.4).add(position).subtract(position).normalize().scale(10).add(position)`.
+        let bottom = Vec3::new(wanted.x as f64 + 0.5, wanted.y as f64, wanted.z as f64 + 0.5);
+        let toward = (((bottom - here).scale(0.4) + here) - here).normalize().scale(10.0) + here;
+        let target = BlockPos::containing(toward.x, toward.y, toward.z);
+        let y = level.motion_blocking_no_leaves_height(target.x, target.z);
+        if !path::move_to(e, m, level, target.x as f64, y as f64, target.z as f64, 1.0) {
+            Self::move_randomly(e, m, level);
+        }
     }
 }
 

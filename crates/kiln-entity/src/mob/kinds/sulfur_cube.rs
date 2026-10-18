@@ -196,7 +196,7 @@ fn apply_archetype(m: &mut MobData, a: &'static Archetype) {
     s.knockback = (a.horizontal_power, a.vertical_power);
     s.sound = (a.hit_sound, a.push_sound, a.push_sound_cooldown, a.push_sound_impulse_threshold);
     for (attr, id, amount, op) in a.modifiers() {
-        m.attrs.set_modifier(attr, id, amount, op);
+        m.attrs.set_transient_modifier(attr, id, amount, op);
     }
 }
 
@@ -878,6 +878,11 @@ impl Kind for SulfurCube {
 
     fn allowed_in_peaceful(&self) -> Option<bool> {
         Some(true)
+    }
+
+    /// `requiresCustomPersistence` (on top of a passenger or a led mob): a cube with a body item or from a bucket.
+    fn requires_custom_persistence(&self, m: &MobData) -> bool {
+        has_body(m) || sul(m).from_bucket
     }
 
     /// `requiresCustomPersistence`: a ball or a bucketed cube stays.

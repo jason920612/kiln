@@ -1374,4 +1374,35 @@ mod tests {
         }
         eprintln!("raid waves: {n} waves identical");
     }
+    /// wp77: `Raider.applyRaidBuffs` enchants a vindicator's axe and a pillager's crossbow with the raid's odds from `raid/*` providers (the
+    /// "rolled but not applied" of the older notes was out of date). Needs the vanilla datapack; skips without it.
+    #[test]
+    fn raiders_get_their_enchanted_weapons() {
+        let dir = match std::env::var_os("KILN_DATAPACK").filter(|d| !d.is_empty()) {
+            Some(d) => std::path::PathBuf::from(d),
+            None => {
+                let work = std::env::var_os("KILN_WORK").filter(|d| !d.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../work"));
+                work.join("generated")
+            }
+        };
+        if !dir.join("data").is_dir() {
+            return;
+        }
+        let loot = std::sync::Arc::new(kiln_loot::LootData::load(&dir).unwrap());
+        let _enchanting = crate::enchant::install_enchanter(Some(&loot));
+        let enchanted = |stack: &kiln_item::ItemStack| stack.get(kiln_item::keys::ENCHANTMENTS).is_some_and(|e| !e.0.is_empty());
+        let (mut axes, mut crossbows) = (0, 0);
+        for seed in 0..40 {
+            let mut e = mob::new(MobKind::Vindicator, 1, 0, seed);
+            let mut m = mob::data(&e).unwrap().clone();
+            mob::kinds::vindicator::apply_raid_buffs(&mut e, &mut m, 6, 5, 1.0);
+            axes += enchanted(&m.equipment[mob::MAINHAND]) as i32;
+            let mut e = mob::new(MobKind::Pillager, 2, 0, seed);
+            let mut m = mob::data(&e).unwrap().clone();
+            mob::kinds::pillager::apply_raid_buffs(&mut e, &mut m, 6, 1.0, 5, 3);
+            crossbows += enchanted(&m.equipment[mob::MAINHAND]) as i32;
+        }
+        assert!(axes > 30 && crossbows > 30, "axes {axes} crossbows {crossbows} of 40");
+    }
+
 }

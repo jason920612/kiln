@@ -201,18 +201,12 @@ struct Spawner<'a> {
     known: [bool; N],
     /// Per counted category and stand chunk, the players that had room when last looked at.
     room: [Vec<Vec<usize>>; N],
-    /// Players whose spawning squares (8 chunks around them) overlap form a cluster; each
-    /// cluster has vanilla's category cap for its chunks, so how players are grouped into
-    /// regions does not matter. Per cluster, mobs per category and the cap.
-    counts: Vec<[i32; N]>,
-    caps: Vec<[i32; N]>,
     table: &'a SpawnTable,
     /// The `PotentialCalculator`'s point charges: the block and charge of every counted mob whose biome has a spawn cost for its type
     /// (made at the start of the tick, and a spawn adds its own).
     charges: Vec<([i32; 3], f64)>,
-    /// The distinct chunks players stand in (sorted) and each one's cluster.
+    /// The distinct chunks players stand in (sorted).
     stands: Vec<ChunkPos>,
-    stand_cluster: Vec<usize>,
     /// The players standing in `stands[k]`: `order[starts[k]..starts[k + 1]]`. Distance checks
     /// look only at the players of stand chunks close enough to matter (a crowd stands in a
     /// few chunks), each checked exactly as a scan over all players would.
@@ -250,12 +244,6 @@ fn close_for_spawning(p: [f64; 3], c: ChunkPos) -> bool {
 }
 
 impl Spawner<'_> {
-    /// The cluster whose spawning squares hold chunk `c` (players within 8 chunks of one
-    /// chunk are all in one cluster, so any stand chunk that close tells).
-    fn cluster(&self, c: ChunkPos) -> Option<usize> {
-        self.stands_near(c, 8).next().map(|k| self.stand_cluster[k])
-    }
-
     /// The stand chunks at most `reach` chunks (chessboard) from `c`, in order (`stands` is
     /// sorted by x first, so only the run with x in range is looked at).
     fn stands_near(&self, c: ChunkPos, reach: i32) -> impl Iterator<Item = usize> + '_ {
@@ -381,9 +369,6 @@ impl Spawner<'_> {
             return;
         }
         let i = cat_index(cat);
-        if let Some(k) = self.cluster(c) {
-            self.counts[k][i] += 1;
-        }
         self.mobs.push((c, i));
         let near: smallvec::SmallVec<[usize; 32]> = self.stands_near(c, 8).collect();
         for k in near {
@@ -397,6 +382,224 @@ impl Spawner<'_> {
             }
         }
     }
+}
+
+/// Counters of the natural spawner's decisions, the same keys the java agent of `tools/wp74/agent` writes for a vanilla server
+/// (`NaturalSpawner.getRandomSpawnMobAt`, `isValidSpawnPostitionForType`, `isValidPositionForMob`, `canSpawnForCategoryGlobal`,
+/// `getFilteredSpawningCategories`), to compare spawn decisions on identical worlds. Off unless `KILN_SPAWN_COUNTERS=<file>` is set (the
+/// file is rewritten every 100 ticks; `KILN_SPAWN_BOX=x0,y0,z0,x1,y1,z1` adds the `IN-BOX` counts of `validPosition`). While on, the
+/// speculative pass is skipped so every attempt is counted once.
+pub mod stats {
+    use std::collections::BTreeMap;
+    use std::sync::{Mutex, OnceLock};
+
+    struct Config {
+        file: std::path::PathBuf,
+        bounds: Option<[i32; 6]>,
+    }
+
+    static CONFIG: OnceLock<Option<Config>> = OnceLock::new();
+    static COUNTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+
+    fn config() -> Option<&'static Config> {
+        CONFIG
+            .get_or_init(|| {
+                let file = std::env::var_os("KILN_SPAWN_COUNTERS").filter(|f| !f.is_empty())?;
+                let bounds = std::env::var("KILN_SPAWN_BOX").ok().and_then(|b| {
+                    let v: Vec<i32> = b.split(',').filter_map(|n| n.trim().parse().ok()).collect();
+                    <[i32; 6]>::try_from(v).ok()
+                });
+                Some(Config { file: file.into(), bounds })
+            })
+            .as_ref()
+    }
+
+    /// Whether the counters are on.
+    pub fn enabled() -> bool {
+        config().is_some()
+    }
+
+    pub(crate) fn add(key: String) {
+        *COUNTS.lock().unwrap().entry(key).or_insert(0) += 1;
+    }
+
+    /// `validPosition` of the vanilla agent: per type, and per type for positions in the box.
+    pub(crate) fn valid_position(type_name: &str, pos: [i32; 3], ok: bool, game_time: i64) {
+        let Some(c) = config() else { return };
+        let name = type_name.strip_prefix("minecraft:").unwrap_or(type_name);
+        add(format!("validPosition {name} -> {ok}"));
+        if let Some(b) = c.bounds
+            && (0..3).all(|a| pos[a] >= b[a] && pos[a] <= b[a + 3])
+        {
+            add(format!("validPosition IN-BOX {name} -> {ok}"));
+            add(format!("validPosition IN-BOX Y={} {name} -> {ok}", pos[1]));
+            if let Some(file) = std::env::var_os("KILN_SPAWN_TRACE") {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
+                    let _ = writeln!(f, "{game_time} {name} {} {} {} {ok}", pos[0], pos[1], pos[2]);
+                }
+            }
+        }
+    }
+
+    /// `start` of the vanilla agent: a pack start (counted per height for the columns of the box).
+    pub(crate) fn start(category: kiln_entity::mob::Category, pos: [i32; 3]) {
+        let Some(c) = config() else { return };
+        if let Some(b) = c.bounds
+            && pos[0] >= b[0]
+            && pos[0] <= b[3]
+            && pos[2] >= b[2]
+            && pos[2] <= b[5]
+        {
+            add(format!("start {} Y={}", category_name(category), if (127..=134).contains(&pos[1]) { pos[1].to_string() } else { "other".to_owned() }));
+        }
+        // Every monster pack start, so that the rows of the trace are told apart by the start they belong to.
+        if category == kiln_entity::mob::Category::Monster
+            && let Some(file) = std::env::var_os("KILN_SPAWN_TRACE")
+        {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
+                let _ = writeln!(f, "S {} {} {}", pos[0], pos[1], pos[2]);
+            }
+        }
+    }
+
+    /// `chunkAttempt` of the vanilla agent: one try of a chunk for a category (counted per chunk for the chunks the box touches).
+    pub(crate) fn chunk_attempt(category: kiln_entity::mob::Category, chunk: [i32; 2]) {
+        let Some(c) = config() else { return };
+        let name = category_name(category);
+        add(format!("chunkAttempt {name} all"));
+        if let Some(b) = c.bounds
+            && chunk[0] >= (b[0] >> 4)
+            && chunk[0] <= (b[3] >> 4)
+            && chunk[1] >= (b[2] >> 4)
+            && chunk[1] <= (b[5] >> 4)
+        {
+            add(format!("chunkAttempt {name} {},{}", chunk[0], chunk[1]));
+        }
+    }
+
+    pub(crate) fn valid_mob(type_name: &str, pos: [i32; 3], ok: bool) {
+        let Some(c) = config() else { return };
+        let name = type_name.strip_prefix("minecraft:").unwrap_or(type_name);
+        add(format!("validMob {name} -> {ok}"));
+        if let Some(b) = c.bounds
+            && (0..3).all(|a| pos[a] >= b[a] && pos[a] <= b[a + 3])
+        {
+            add(format!("validMob IN-BOX {name} -> {ok}"));
+        }
+    }
+
+    pub(crate) fn pick(type_name: Option<&str>, category: kiln_entity::mob::Category, pos: [i32; 3]) {
+        let Some(c) = config() else { return };
+        let name = type_name.map_or("(none)", |n| n.strip_prefix("minecraft:").unwrap_or(n));
+        add(format!("pick {name}"));
+        if let Some(b) = c.bounds
+            && (0..3).all(|a| pos[a] >= b[a] && pos[a] <= b[a + 3])
+        {
+            add(format!("pickAt IN-BOX {} {name}", category_name(category)));
+            add(format!("pickAt IN-BOX Y={} {} {name}", pos[1], category_name(category)));
+        }
+    }
+
+    /// The vanilla enum name of a category.
+    pub(crate) fn category_name(c: kiln_entity::mob::Category) -> &'static str {
+        use kiln_entity::mob::Category::*;
+        match c {
+            Monster => "MONSTER",
+            Creature => "CREATURE",
+            Misc => "MISC",
+            Ambient => "AMBIENT",
+            Axolotls => "AXOLOTLS",
+            UndergroundWaterCreature => "UNDERGROUND_WATER_CREATURE",
+            WaterCreature => "WATER_CREATURE",
+            WaterAmbient => "WATER_AMBIENT",
+        }
+    }
+
+    pub(crate) fn global(c: kiln_entity::mob::Category, chunks: i32, count: i32, ok: bool) {
+        if enabled() && matches!(c, kiln_entity::mob::Category::Creature | kiln_entity::mob::Category::Monster) {
+            add(format!("global {} chunks={chunks} count={count} -> {ok}", category_name(c)));
+        }
+    }
+
+    pub(crate) fn categories(list: &[kiln_entity::mob::Category]) {
+        if enabled() {
+            add(format!("categories [{}]", list.iter().map(|c| category_name(*c)).collect::<Vec<_>>().join(", ")));
+        }
+    }
+
+    /// The counters so far.
+    pub fn snapshot() -> BTreeMap<String, u64> {
+        COUNTS.lock().unwrap().clone()
+    }
+
+    /// Writes the counters to the file (`key<TAB>count` per line).
+    pub(crate) fn dump() {
+        let Some(c) = config() else { return };
+        let text: String = COUNTS.lock().unwrap().iter().map(|(k, v)| format!("{k}\t{v}\n")).collect();
+        let _ = std::fs::write(&c.file, text);
+    }
+}
+
+/// What `canSpawnForCategoryGlobal` reads for a whole level: the mobs `createState` counts per category and `getNaturalSpawnChunkCount`.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SpawnTotals {
+    pub counts: [i32; N],
+    pub chunks: i32,
+}
+
+/// `createState`'s counts over a list of entities: every mob that is not persistent (`isPersistenceRequired() ||
+/// requiresCustomPersistence()`) and not of the `MISC` category, wherever it stands.
+pub(crate) fn count_mobs(list: &[crate::entities::Entity]) -> [i32; N] {
+    let mut counts = [0; N];
+    for e in list {
+        if e.removed {
+            continue;
+        }
+        let Some(p) = e.phys.as_deref() else { continue };
+        let Some(m) = mob::data(p) else { continue };
+        if mob::persistent_for_counts(p, m) || !CATEGORIES.contains(&m.kind.category()) {
+            continue;
+        }
+        counts[cat_index(m.kind.category())] += 1;
+    }
+    counts
+}
+
+/// The positions (x, z) of the players `DistanceManager` tracks for the spawn range: every player that is not skipped (a spectator is, unless
+/// `spectators_generate_chunks`).
+pub(crate) fn players_for_chunks<'a>(players: &'a [&mut Player], spectators_generate_chunks: bool) -> impl Iterator<Item = [f64; 2]> + 'a {
+    players.iter().filter(move |p| !p.disconnected && (p.game_mode != 3 || spectators_generate_chunks)).map(|p| [p.pos[0], p.pos[2]])
+}
+
+/// `getNaturalSpawnChunkCount`: the chunks within 8 (chessboard) of the chunk any of the players stands in.
+pub(crate) fn spawn_chunk_count(players: impl Iterator<Item = [f64; 2]>) -> i32 {
+    let mut stands: Vec<ChunkPos> = players.map(|p| ChunkPos::of_block(p[0].floor() as i32, p[1].floor() as i32)).collect();
+    stands.sort_unstable();
+    stands.dedup();
+    // Per row of chunks, the x ranges of the squares that cover it, merged.
+    let mut rows: std::collections::BTreeMap<i32, Vec<(i32, i32)>> = std::collections::BTreeMap::new();
+    for c in &stands {
+        for z in c.z - 8..=c.z + 8 {
+            rows.entry(z).or_default().push((c.x - 8, c.x + 8));
+        }
+    }
+    let mut n = 0;
+    for ranges in rows.values_mut() {
+        ranges.sort_unstable();
+        let mut end = i32::MIN;
+        for &(lo, hi) in ranges.iter() {
+            if lo > end {
+                n += hi - lo + 1;
+                end = hi;
+            } else if hi > end {
+                n += hi - end;
+                end = hi;
+            }
+        }
+    }
+    n
 }
 
 /// One tick of natural spawning in a region (`ServerChunkCache.tickChunks`' spawning part).
@@ -419,41 +622,17 @@ pub(crate) fn tick(
     if spawn_enemies && rules.spawn_phantoms {
         phantoms(level, players, spawns);
     }
+    let players_all = players;
     let players: Vec<[f64; 3]> =
         players.iter().filter(|p| !p.disconnected && !p.dead && p.game_mode != 3).map(|p| p.pos).collect();
     if players.is_empty() {
         return;
     }
-    // Clusters of players with overlapping spawning squares: union-find over the distinct
-    // chunks players stand in (a crowd shares a few chunks), each player joining its chunk's.
+    // The distinct chunks players stand in (a crowd shares a few).
     let chunk_of = |p: &[f64; 3]| ChunkPos::of_block(p[0].floor() as i32, p[2].floor() as i32);
     let mut stands: Vec<ChunkPos> = players.iter().map(chunk_of).collect();
     stands.sort_unstable();
     stands.dedup();
-    let mut parent: Vec<usize> = (0..stands.len()).collect();
-    fn root(parent: &mut [usize], i: usize) -> usize {
-        let mut r = i;
-        while parent[r] != r {
-            r = parent[r];
-        }
-        parent[i] = r;
-        r
-    }
-    for i in 0..stands.len() {
-        for j in i + 1..stands.len() {
-            let (a, b) = (stands[i], stands[j]);
-            if (a.x - b.x).abs() <= 16 && (a.z - b.z).abs() <= 16 {
-                let (ra, rb) = (root(&mut parent, i), root(&mut parent, j));
-                parent[ra.max(rb)] = ra.min(rb);
-            }
-        }
-    }
-    let dt = crate::diag::lap("s.a_union", dt);
-    let roots: Vec<usize> = (0..stands.len()).map(|i| root(&mut parent, i)).collect();
-    let mut ids: Vec<usize> = roots.clone();
-    ids.sort_unstable();
-    ids.dedup();
-    let stand_cluster: Vec<usize> = roots.iter().map(|r| ids.binary_search(r).unwrap()).collect();
     // Players grouped by the chunk they stand in, in player order within a chunk.
     let mut keyed: Vec<(ChunkPos, usize)> = players.iter().enumerate().map(|(i, p)| (chunk_of(p), i)).collect();
     keyed.sort_unstable();
@@ -479,25 +658,20 @@ pub(crate) fn tick(
             b
         })
         .collect();
-    // `getNaturalSpawnChunkCount` per cluster: chunks within 8 of its players (chessboard),
-    // counted on a bitmap over the cluster's bounds.
-    let caps: Vec<[i32; N]> = (0..ids.len())
-        .map(|k| {
-            let mine = || stands.iter().zip(&stand_cluster).filter(move |(_, sc)| **sc == k).map(|(c, _)| *c);
-            let (x0, x1) = (mine().map(|c| c.x).min().unwrap() - 8, mine().map(|c| c.x).max().unwrap() + 8);
-            let (z0, z1) = (mine().map(|c| c.z).min().unwrap() - 8, mine().map(|c| c.z).max().unwrap() + 8);
-            let w = (x1 - x0 + 1) as usize;
-            let mut seen = vec![false; w * (z1 - z0 + 1) as usize];
-            for c in mine() {
-                for z in c.z - 8..=c.z + 8 {
-                    let row = (z - z0) as usize * w;
-                    seen[row + (c.x - 8 - x0) as usize..=row + (c.x + 8 - x0) as usize].fill(true);
-                }
-            }
-            let n = seen.iter().filter(|&&b| b).count() as i32;
-            CATEGORIES.map(|cat| cat.max_instances() * n / 289)
-        })
-        .collect();
+    // `canSpawnForCategoryGlobal`, once for the tick (`getFilteredSpawningCategories`): the mobs of the whole level (`createState` counts
+    // every loaded entity, near a player or not) against the cap of the chunks within 8 of any player. A level with several regions
+    // has them added up by [`crate::Sim`] before the regions run; else this region is the level.
+    let totals = match &env.spawn_totals {
+        Some(t) => (**t).clone(),
+        None => SpawnTotals {
+            counts: count_mobs(&entities.list),
+            chunks: spawn_chunk_count(players_for_chunks(players_all, rules.spectators_generate_chunks)),
+        },
+    };
+    let global_ok: [bool; N] = std::array::from_fn(|i| totals.counts[i] < CATEGORIES[i].max_instances() * totals.chunks / 289);
+    if stats::enabled() && env.game_time % 100 == 0 {
+        stats::dump();
+    }
     let dt = crate::diag::lap("s.b_caps", dt);
     let mut s = Spawner {
         pos: players.clone(),
@@ -506,12 +680,9 @@ pub(crate) fn tick(
         upper: vec![[0; N]; stands.len()],
         known: [false; N],
         room: Default::default(),
-        counts: vec![[0; N]; ids.len()],
-        caps,
         table: &table,
         charges: Vec::new(),
         stands,
-        stand_cluster,
         boxes,
         order,
         starts,
@@ -519,25 +690,32 @@ pub(crate) fn tick(
     // `createState`: mobs per category, persistent ones excluded.
     for e in &entities.list {
         let Some(m) = e.phys.as_deref().and_then(mob::data) else { continue };
-        if m.persistence_required || e.removed {
+        if e.removed || e.phys.as_deref().is_none_or(|p| mob::persistent_for_counts(p, m)) {
             continue;
         }
         s.add(crate::entities::chunk_of(e.pos), m.kind.category());
         // `createState`: the charge of the mob's type in the biome it stands in.
         let at = KBlockPos::new(e.pos[0].floor() as i32, e.pos[1].floor() as i32, e.pos[2].floor() as i32);
         if !table.costs.is_empty()
-            && let Some((charge, _)) = table.cost(biome_at(level, at), e.kind.name)
+            && let Some((charge, _)) = table.cost(spawn_biome(level, at), e.kind.name)
         {
             s.charges.push(([at.x, at.y, at.z], charge));
         }
     }
-    // `getFilteredSpawningCategories`; the global cap is checked per cluster below, with
-    // the counts as they were at the start of the tick.
+    // `getFilteredSpawningCategories`.
     let categories: Vec<Category> = CATEGORIES
         .into_iter()
-        .filter(|c| rules.spawn_mobs && (spawn_enemies || c.friendly()) && (spawn_persistent || !c.persistent()))
+        .filter(|c| {
+            let pass = rules.spawn_mobs && (spawn_enemies || c.friendly()) && (spawn_persistent || !c.persistent());
+            if pass {
+                stats::global(*c, totals.chunks, totals.counts[cat_index(*c)], global_ok[cat_index(*c)]);
+            }
+            pass && global_ok[cat_index(*c)]
+        })
         .collect();
-    let start_counts = s.counts.clone();
+    if rules.spawn_mobs {
+        stats::categories(&categories);
+    }
     // `ServerChunkCache.tickSpawningChunk`: every ticking chunk with a player near gets one more
     // tick of `InhabitedTime`, whether or not anything may spawn.
     level.cells.for_each_cell_mut(&mut |pos, cell| {
@@ -578,22 +756,23 @@ pub(crate) fn tick(
     // chunk sees (its caps), and spawns are rare: in turn, a chunk that spawned nothing and
     // whose caps still say the same is done; the others run again, so the outcome is the
     // serial one whatever the workers.
-    let speculated: Vec<Option<smallvec::SmallVec<[bool; N]>>> = {
-        let (lvl, sp, cats, counts) = (&*level, &s, &categories, &start_counts);
-        ctx.map_indexed_with(SPAWN_WINDOW, &chunks, |_, &(_, c)| speculate(lvl, sp, c, cats, counts, ticking))
+    let speculated: Vec<Option<smallvec::SmallVec<[bool; N]>>> = if stats::enabled() {
+        vec![None; chunks.len()]
+    } else {
+        let (lvl, sp, cats) = (&*level, &s, &categories);
+        ctx.map_indexed_with(SPAWN_WINDOW, &chunks, |_, &(_, c)| speculate(lvl, sp, c, cats, ticking))
     };
     let dt = crate::diag::lap("s.spec", dt);
     let mut spawned_any = false;
     for (&(_, c), guess) in chunks.iter().zip(speculated) {
-        let global = |s: &Spawner, cat: Category| s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);
         if let Some(said) = guess
-            && (!spawned_any || categories.iter().zip(&said).all(|(&cat, &ok)| (global(&s, cat) && s.local_ok(c, cat)) == ok))
+            && (!spawned_any || categories.iter().zip(&said).all(|(&cat, &ok)| s.local_ok(c, cat) == ok))
         {
             continue;
         }
         let mut r = chunk_random(env.seed, env.game_time, c);
         for &cat in &categories {
-            if global(&s, cat) && s.local_ok(c, cat) {
+            if s.local_ok(c, cat) {
                 let mut made = Vec::new();
                 spawn_category_for_chunk(level, &s, &mut r, cat, c, ticking, &mut made);
                 for (spawn, pc, charge) in made {
@@ -618,14 +797,12 @@ fn speculate(
     s: &Spawner,
     c: ChunkPos,
     categories: &[Category],
-    start_counts: &[[i32; N]],
     ticking: &Ticking,
 ) -> Option<smallvec::SmallVec<[bool; N]>> {
     let mut r = chunk_random(level.env.seed, level.env.game_time, c);
     let mut said = smallvec::SmallVec::new();
     for &cat in categories {
-        let global = s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);
-        let ok = global && s.local_ok_now(c, cat)?;
+        let ok = s.local_ok_now(c, cat)?;
         said.push(ok);
         if ok {
             let mut made = Vec::new();
@@ -690,6 +867,13 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
 /// `spawnCategoryForChunk` + `spawnCategoryForPosition`: what spawns, with the chunk each
 /// counts in.
 #[inline(never)]
+/// `getRandomPosWithin`'s upper bound: `chunk.getHeight(WORLD_SURFACE, x, z) + 1`. `ChunkAccess.getHeight` is the *top block* (the heightmap's first available
+/// y, minus one), so the bound is the first free y above the column: on the nether roof (bedrock to y 127) it is 128, and a start can be no higher.
+/// (Kiln added one more: starts on the roof at y 129, which land next to a farm platform at 128 and drift onto it, twice as many as vanilla's.)
+fn start_top(chunk: &kiln_world::chunk::Chunk, x: i32, z: i32) -> i32 {
+    chunk.column_height((x & 15) as usize, (z & 15) as usize, |b| !kiln_data::blocks_types::is_air(b))
+}
+
 fn spawn_category_for_chunk(
     level: &RegionLevel,
     s: &Spawner,
@@ -701,16 +885,18 @@ fn spawn_category_for_chunk(
 ) {
     let env = level.env;
     let min_y = env.min_y;
+    stats::chunk_attempt(cat, [c.x, c.z]);
     // `getRandomPosWithin`.
     let x = c.x * 16 + r.next_int_bounded(16);
     let z = c.z * 16 + r.next_int_bounded(16);
     let Some(chunk) = level.cells.chunk(c) else { return };
-    let top = chunk.column_height((x & 15) as usize, (z & 15) as usize, |b| !kiln_data::blocks_types::is_air(b)) + 1;
+    let top = start_top(chunk, x, z);
     let y = r.next_int_bounded(top - min_y + 1) + min_y;
     if y < min_y + 1 {
         return;
     }
     let start = KBlockPos::new(x, y, z);
+    stats::start(cat, [x, y, z]);
     if kiln_data::block_logic::is_redstone_conductor(level.block(start)) {
         return;
     }
@@ -743,18 +929,23 @@ fn spawn_category_for_chunk(
                 continue;
             }
             let pos = KBlockPos::new(px, y, pz);
-            let biome = biome_at(level, pos);
+            let biome = spawn_biome(level, pos);
             // What spawns at this very place (looked up once: the pick and `canSpawnMobAt` below
             // ask the same).
             let here = s.table.mobs_at(level, biome, cat, pos);
             if data.is_none() {
                 // `getRandomSpawnMobAt`: rivers have most of their ambient water spawns taken away.
                 if cat == Category::WaterAmbient && kiln_entity::mob::kinds::slime::biome_in_tag(biome as i32, "minecraft:reduce_water_ambient_spawns") && r.next_float() < 0.98 {
+                    stats::pick(None, cat, [pos.x, pos.y, pos.z]);
                     break;
                 }
                 match pick(here, r) {
-                    None => break,
+                    None => {
+                        stats::pick(None, cat, [pos.x, pos.y, pos.z]);
+                        break;
+                    }
                     Some(d) => {
+                        stats::pick(Some(d.type_name), cat, [pos.x, pos.y, pos.z]);
                         let d = d.clone();
                         pack = if d.constant { d.min } else { r.next_int_bounded(d.max - d.min + 1) + d.min };
                         data = Some(d);
@@ -764,21 +955,25 @@ fn spawn_category_for_chunk(
             let d_ = data.clone().unwrap();
             let Some(kind) = d_.kind else { continue };
             // `isValidSpawnPostitionForType`.
-            // The nearest player within the despawn distance.
-            if !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
-                continue;
-            }
-            // `canSpawnMobAt`: what was picked is among what spawns at this very place.
-            if !here.iter().any(|e| *e == d_) {
-                continue;
-            }
-            if !placement_ok(level, pos, kind) || !check_spawn_rules(level, pos, kind, r) {
-                continue;
-            }
             let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
-            // `EntityType.getSpawnAABB`: slimes and magma cubes look for room for a size-4 one (four times their box).
-            let scale = kiln_entity::spawner::spawn_dimensions_scale(t.name);
-            if !no_collision(level, [fx, y as f64, fz], t.width * scale, t.height * scale) {
+            let valid = 'valid: {
+                // The nearest player within the despawn distance.
+                if !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
+                    break 'valid false;
+                }
+                // `canSpawnMobAt`: what was picked is among what spawns at this very place.
+                if !here.iter().any(|e| *e == d_) {
+                    break 'valid false;
+                }
+                if !placement_ok(level, pos, kind) || !check_spawn_rules(level, pos, kind, r) {
+                    break 'valid false;
+                }
+                // `EntityType.getSpawnAABB`: slimes and magma cubes look for room for a size-4 one (four times their box).
+                let scale = kiln_entity::spawner::spawn_dimensions_scale(t.name);
+                no_collision(level, [fx, y as f64, fz], t.width * scale, t.height * scale)
+            };
+            stats::valid_position(d_.type_name, [pos.x, pos.y, pos.z], valid, env.game_time);
+            if !valid {
                 continue;
             }
             // `SpawnState.canSpawn` (the spawn predicate): the biome's cost for the type, and the energy the charges near the spot give it.
@@ -807,7 +1002,9 @@ fn spawn_category_for_chunk(
             };
             let ignores_light = kind.ext().is_some_and(|k| k.spawn_ignores_light());
             let liquid_ok = kind.ext().is_some_and(|k| k.spawn_in_liquids());
-            if (walk < 0.0 && !ignores_light) || (!liquid_ok && contains_liquid(level, [fx, y as f64, fz], t.width, t.height)) {
+            let mob_ok = !((walk < 0.0 && !ignores_light) || (!liquid_ok && contains_liquid(level, [fx, y as f64, fz], t.width, t.height)));
+            stats::valid_mob(d_.type_name, [pos.x, pos.y, pos.z], mob_ok);
+            if !mob_ok {
                 continue;
             }
             // `finalizeSpawn` draws from the chunk's random.
@@ -841,6 +1038,12 @@ fn spawn_category_for_chunk(
 /// loaded), for the regional difficulty there (`ServerLevel.getCurrentDifficultyAt`).
 pub(crate) fn inhabited_at(cells: &impl kiln_world::Blocks, x: i32, z: i32) -> i64 {
     cells.chunk(ChunkPos::of_block(x, z)).map_or(0, |c| c.inhabited_time())
+}
+
+/// The biome natural spawning sees at `pos`: `natural_mob_spawns` is a full-resolution biome attribute, so `BiomeManager.getBiome` (the voronoi-zoomed
+/// lookup that moves the borders around by up to a cell), not the stored cell.
+pub(crate) fn spawn_biome(level: &RegionLevel, pos: KBlockPos) -> u16 {
+    crate::weather::biome_at(level.cells, level.env, pos)
 }
 
 /// The biome of the stored 4×4×4 cell holding `pos`.
@@ -901,7 +1104,7 @@ impl kiln_entity::mob::ext::SpawnView for View<'_, '_> {
         kiln_world::light::light_at(&*self.0.cells, kiln_world::chunk::LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
     }
     fn biome(&self, pos: kiln_entity::math::BlockPos) -> i32 {
-        biome_at(self.0, KBlockPos::new(pos.x, pos.y, pos.z)) as i32
+        spawn_biome(self.0, KBlockPos::new(pos.x, pos.y, pos.z)) as i32
     }
     fn difficulty(&self) -> u8 {
         self.0.env.mobs.difficulty
@@ -1276,5 +1479,26 @@ mod potential_tests {
         assert!(!can_spawn(&one, [0, 64, 0], 1.0, 0.12), "the very block: infinite");
         // two endermen add up: 1/12 + 1/12 = 0.1667 > 0.12 although each alone is far enough
         assert!(!can_spawn(&[([0, 64, 0], 1.0), ([24, 64, 0], 1.0)], [12, 64, 0], 1.0, 0.12));
+    }
+}
+
+#[cfg(test)]
+mod start_tests {
+    use super::*;
+    use kiln_world::chunk::Chunk;
+    use kiln_world::section::Section;
+
+    /// wp77: a pack start's highest y is the first free block above the column (`chunk.getHeight(WORLD_SURFACE) + 1`, where `getHeight` is the top block):
+    /// on the nether roof, bedrock up to y 127, 128 and not 129; above a platform at 128, 129. Found with the lock-step of the gold farm (starts at
+    /// y 129 in every column of the roof were twice as many as vanilla's: they drift onto a platform and spawn).
+    #[test]
+    fn a_start_reaches_no_higher_than_the_first_free_block_above_the_column() {
+        let (air, bedrock, gold) = (kiln_data::blocks::default_state::AIR, kiln_data::blocks::default_state::BEDROCK, kiln_data::blocks::default_state::STONE);
+        let mut chunk = Chunk::new((0..9).map(|_| Section::filled(air, 0)).collect(), 0);
+        chunk.set(3, 127, 5, bedrock);
+        assert_eq!(start_top(&chunk, 3, 5), 128, "bedrock to 127: the bound is 128");
+        chunk.set(4, 128, 5, gold);
+        assert_eq!(start_top(&chunk, 4, 5), 129, "a platform at 128: 129");
+        assert_eq!(start_top(&chunk, 9, 9), 0, "an empty column: the world's bottom");
     }
 }

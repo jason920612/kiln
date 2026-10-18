@@ -98,6 +98,10 @@ mod hazards;
 mod health;
 mod mobs;
 mod spawner;
+/// The natural spawner's decision counters so far (`KILN_SPAWN_COUNTERS`; empty while they are off).
+pub fn spawn_counters() -> std::collections::BTreeMap<String, u64> {
+    spawner::stats::snapshot()
+}
 mod movement;
 mod persist;
 mod players;
@@ -2071,7 +2075,10 @@ impl Sim {
             .flat_map(|r| r.part().0.list.iter())
             .map(|e| {
                 let mob = e.phys.as_deref().and_then(|p| kiln_entity::mob::data(p).map(|m| (m.health.to_bits(), m.target, m.y_head_rot.to_bits())));
-                (e.id, e.kind.id, e.pos.map(f64::to_bits), e.vel.map(f64::to_bits), mob)
+                // The velocity of the vanilla state: the copy in the record is refreshed when the entity ticks or a level is built around it, which
+                // depends on how the regions split the world.
+                let vel = e.phys.as_deref().map_or(e.vel, |p| [p.delta.x, p.delta.y, p.delta.z]);
+                (e.id, e.kind.id, e.pos.map(f64::to_bits), vel.map(f64::to_bits), mob)
             })
             .collect();
         ents.sort_unstable_by_key(|e| e.0);
@@ -2716,7 +2723,9 @@ impl Sim {
                 cramming: self.rule_int("minecraft:max_entity_cramming"),
                 difficulty: self.commands.difficulty as u8,
                 spawn_point: self.spawn,
+                spectators_generate_chunks: self.rule_bool("minecraft:spectators_generate_chunks"),
             },
+            spawn_totals: None,
             spawn_table: self.spawn_table.clone(),
             menus: self.rules.clone(),
             trial_configs: self.trial_configs.clone(),
@@ -2899,6 +2908,25 @@ impl Sim {
             }
         }
         let dt = diag::lap("rr.work", dt);
+        // `NaturalSpawner.createState` counts the mobs of the whole level against the spawn range of all its players: with several regions
+        // in a level they are added up here, before any of them runs.
+        let mut envs = envs;
+        for (dim, env) in envs.iter_mut().enumerate() {
+            let Some(env) = env else { continue };
+            // (A level with one region too: the same count, at the same moment, as with several.)
+            let mine: Vec<&RegionWork> = work.iter().filter(|w| w.dim == dim).collect();
+            if mine.is_empty() {
+                continue;
+            }
+            let mut totals = spawner::SpawnTotals::default();
+            for w in &mine {
+                for (t, c) in totals.counts.iter_mut().zip(spawner::count_mobs(&w.entities.list)) {
+                    *t += c;
+                }
+            }
+            totals.chunks = spawner::spawn_chunk_count(mine.iter().flat_map(|w| spawner::players_for_chunks(&w.players, env.spectators_generate_chunks)));
+            env.blocks.spawn_totals = Some(std::sync::Arc::new(totals));
+        }
         let report = self.pool.run_units(&mut work, cost, |w, ctx| {
             w.light_new_chunks();
             f(w, envs[w.dim].as_ref().expect("the environment of a level with regions"), ctx)
@@ -3826,6 +3854,7 @@ impl Sim {
         // creative player as it was saved.
         let flying = joining.game_mode == 3
             || (joining.game_mode == 1 && joining.saved.raw().get("abilities").and_then(|a| a.get("flying")).and_then(Tag::as_i64) == Some(1));
+        let saved_attributes = Player::saved_attributes(joining.saved.raw().get("attributes"));
         let mut player = Player {
             dim,
             conn: j.conn,
@@ -3930,7 +3959,7 @@ impl Sim {
             effects: joining.effects,
             attributes_dirty: true,
             attrs_sent: Vec::new(),
-            attrs_touched: Vec::new(),
+            attrs_touched: saved_attributes.1,
             data_packed: false,
             frost_marked: false,
             pending_sounds: Vec::new(),
@@ -4030,7 +4059,7 @@ impl Sim {
             stats: self.load_stats(j.uuid),
             recipe_book,
             advancements: self.load_player_advancements(j.uuid),
-            command_attributes: combat::CommandAttributes::default(),
+            command_attributes: saved_attributes.0,
             limited_crafting: self.rule_bool("minecraft:limited_crafting"),
         };
 

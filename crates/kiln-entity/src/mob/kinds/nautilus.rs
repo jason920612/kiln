@@ -642,6 +642,12 @@ impl Kind for Nautilus {
         !tame::owned_by(m, level, t.id)
     }
 
+    /// `requiresCustomPersistence` (on top of a passenger or a led mob): a tame nautilus.
+    fn requires_custom_persistence(&self, m: &MobData) -> bool {
+        is_tame(m)
+    }
+
+
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
         Some(!is_tame(m))
     }

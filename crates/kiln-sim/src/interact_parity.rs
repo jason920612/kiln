@@ -438,6 +438,10 @@ fn no_spawner_delay(t: Tag) -> Tag {
                     }
                 }
             }
+            // (A stand's `movement_speed` instance is made by its first tick, which the recorded level does not run.)
+            if fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:armor_stand")) {
+                fields.retain(|(k, _)| k != "attributes");
+            }
             // (An item entity's age and health: Kiln's level ticks between the steps.)
             if fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:item")) {
                 fields.retain(|(k, _)| !matches!(k.as_str(), "Age" | "Health" | "PickupDelay"));
@@ -553,6 +557,11 @@ fn stand_diff(got: &[StandRow], want: &[StandRow]) -> String {
         keys.dedup();
         for k in keys {
             let (a, b) = (g.1.iter().find(|(x, _)| x == k), w.1.iter().find(|(x, _)| x == k));
+            // A stand's `movement_speed` instance is made by its first tick (the vanilla vectors read the stand before it has ticked; Kiln's step ticks the
+            // new stand once, in the step that placed it): an empty list on one side and just that instance on the other is the same stand.
+            if k == "attributes" && b.is_some_and(|f| f.1 == "List([])") && a.is_some_and(|f| f.1.matches("minecraft:").count() == 1 && f.1.contains("minecraft:movement_speed")) {
+                continue;
+            }
             if a.map(|f| &f.1) != b.map(|f| &f.1) {
                 out.push(format!("{k}: kiln {}, vanilla {}", a.map_or("-", |f| f.1.as_str()), b.map_or("-", |f| f.1.as_str())));
             }

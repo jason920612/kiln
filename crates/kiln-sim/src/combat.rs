@@ -418,6 +418,76 @@ impl Player {
             .collect()
     }
 
+    /// `AttributeMap.pack` of a player, as `attributes` in its saved data: the instances the map has (the four a player is made with, and
+    /// the ones something has changed or asked to change since), each with its base and its permanent modifiers (an effect's and the ones
+    /// `/attribute` added; the equipment's, the creative reach, sprinting and the like are transient and not saved).
+    pub(crate) fn attributes_nbt(&self) -> kiln_proto::nbt::Tag {
+        use kiln_proto::nbt::Tag;
+        const MADE: [&str; 4] = ["minecraft:block_interaction_range", "minecraft:movement_speed", "minecraft:entity_interaction_range", "minecraft:waypoint_transmit_range"];
+        let equipment = self.equipment_modifiers();
+        let name = |o: AttributeOperation| Tag::String(o.name().to_owned());
+        let list = crate::command_data::PLAYER_ATTRIBUTES
+            .iter()
+            .filter_map(|a| {
+                let base = self.with_base(*a).base;
+                let mods = self.attribute_modifiers_with(*a, &equipment);
+                if !(MADE.contains(&a.name) || self.attrs_touched.contains(&a.name) || !mods.is_empty() || base != a.base) {
+                    return None;
+                }
+                let mut fields = vec![("id".to_owned(), Tag::String(a.name.to_owned())), ("base".to_owned(), Tag::Double(base))];
+                let mut permanent: Vec<Tag> = Vec::new();
+                for (id, amount, op) in self.effect_modifiers(a.name) {
+                    permanent.push(Tag::Compound(vec![("id".into(), Tag::String(id.into())), ("amount".into(), Tag::Double(amount)), ("operation".into(), name(op))]));
+                }
+                for (attr, id, amount, op) in &self.command_attributes.modifiers {
+                    if *attr == a.name {
+                        permanent.retain(|t| t.get("id").and_then(Tag::as_str) != Some(id.as_str()));
+                        permanent.push(Tag::Compound(vec![("id".into(), Tag::String(id.clone())), ("amount".into(), Tag::Double(*amount)), ("operation".into(), name(*op))]));
+                    }
+                }
+                if !permanent.is_empty() {
+                    fields.push(("modifiers".to_owned(), Tag::List(permanent)));
+                }
+                Some(Tag::Compound(fields))
+            })
+            .collect();
+        Tag::List(list)
+    }
+
+    /// What a player's saved `attributes` leave on a new [`Player`]: the bases and the modifiers `/attribute` had set (an effect's come
+    /// back with the effects), and every attribute listed is an instance.
+    pub(crate) fn saved_attributes(saved: Option<&kiln_proto::nbt::Tag>) -> (CommandAttributes, Vec<&'static str>) {
+        use kiln_proto::nbt::Tag;
+        let mut command = CommandAttributes::default();
+        let mut touched = Vec::new();
+        let Some(Tag::List(list)) = saved else { return (command, touched) };
+        for entry in list {
+            let entry = entry.unwrap_list_element();
+            let Some(attr) = entry.get("id").and_then(Tag::as_str).and_then(|id| crate::command_data::PLAYER_ATTRIBUTES.iter().find(|a| a.name == id)) else { continue };
+            touched.push(attr.name);
+            if let Some(base) = entry.get("base").and_then(Tag::as_f64)
+                && base != attr.base
+            {
+                command.bases.push((attr.name, base));
+            }
+            if let Some(Tag::List(mods)) = entry.get("modifiers") {
+                for m in mods {
+                    let m = m.unwrap_list_element();
+                    let (Some(id), Some(amount), Some(op)) =
+                        (m.get("id").and_then(Tag::as_str), m.get("amount").and_then(Tag::as_f64), m.get("operation").and_then(Tag::as_str).and_then(AttributeOperation::from_name))
+                    else {
+                        continue;
+                    };
+                    // (An effect's modifier is put back by the effect.)
+                    if !id.starts_with("minecraft:effect.") {
+                        command.modifiers.push((attr.name, id.to_owned(), amount, op));
+                    }
+                }
+            }
+        }
+        (command, touched)
+    }
+
     /// Remembers the attributes that have been changed: their instance stays.
     fn touch_attributes(&mut self) {
         let equipment = self.equipment_modifiers();

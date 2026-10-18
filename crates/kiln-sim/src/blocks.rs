@@ -360,6 +360,8 @@ pub(crate) struct BlockEnv {
     pub loot: Option<std::sync::Arc<kiln_loot::LootData>>,
     /// Game rules and difficulty for damage to players.
     pub damage: crate::health::DamageRules,
+    /// The mobs and spawn chunks of the whole level, added up before the regions run (`None`: a region is the level).
+    pub spawn_totals: Option<std::sync::Arc<crate::spawner::SpawnTotals>>,
     /// Time of day and game rules for mobs.
     pub mobs: crate::mobs::MobRules,
     /// Biome spawn lists for natural spawning (`None`: no datapack, no natural spawning).
@@ -902,6 +904,27 @@ impl Level for RegionLevel<'_> {
 
     fn difficulty(&self) -> i32 {
         i32::from(self.env.mobs.difficulty)
+    }
+
+    fn portal_piglins_possible(&self, _pos: BlockPos) -> bool {
+        // `isSpawningMonsters`, not peaceful, and the overworld's `nether_portal_spawns_piglin` attribute.
+        self.env.dim == crate::OVERWORLD_ID && self.env.mobs.spawn_monsters && self.env.mobs.difficulty != 0
+    }
+
+    fn portal_piglin_spot(&self, pos: BlockPos) -> Option<BlockPos> {
+        // `anyPlayerCloseEnoughForSpawning(pos)`: a non-spectator player within 128 blocks (x and z) of the middle of the chunk.
+        let (mx, mz) = (((pos.x >> 4) * 16 + 8) as f64, ((pos.z >> 4) * 16 + 8) as f64);
+        if !self.env.fire_watchers.iter().any(|p| (p[0] - mx).powi(2) + (p[2] - mz).powi(2) < 16384.0) {
+            return None;
+        }
+        let mut at = pos;
+        while kiln_data::blocks_types::block_of(self.block(at)).name == "minecraft:nether_portal" {
+            at = at.below();
+        }
+        // `isValidSpawn` of the block for a zombified piglin: a monster's, and fire-immune mobs stand on magma too.
+        let state = self.block(at);
+        let ok = kiln_entity::mob::path::valid_spawn(state, false) || kiln_data::blocks_types::block_of(state).name == "minecraft:magma_block";
+        ok.then(|| at.above())
     }
 
     fn increased_fire_burnout(&self, pos: BlockPos) -> bool {
@@ -1507,6 +1530,31 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                     spawns.push(Spawn { kind: &kiln_data::entities::types::TURTLE, pos: at, vel: [0.0; 3], body: entities::Body::Ready(Box::new(e)) });
                 }
             }
+            // `NetherPortalBlock.randomTick`: a zombified piglin (reason STRUCTURE) at the spot, with its portal cooldown set.
+            Effect::PortalPiglin { pos } => {
+                let h = effect_hash(env, pos, 0x7a70);
+                let mut e = kiln_entity::mob::new(kiln_entity::mob::MobKind::ZombifiedPiglin, 0, 0, h as i64);
+                let at = [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5];
+                e.set_pos(kiln_entity::math::Vec3::new(at[0], at[1], at[2]));
+                let yaw = (h >> 40) as f32 / (1u64 << 24) as f32 * 360.0;
+                e.y_rot = yaw;
+                e.x_rot = 0.0;
+                e.set_old_pos_and_rot();
+                if let Some(m) = kiln_entity::mob::data_mut(&mut e) {
+                    m.y_head_rot = yaw;
+                    m.y_body_rot = yaw;
+                    m.y_head_rot_o = yaw;
+                    m.y_body_rot_o = yaw;
+                }
+                let mut ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, crate::spawner::moon_brightness(env.mobs.day_time));
+                ctx.biome = Some(crate::weather::biome_at(&*cells, env, pos) as i32);
+                let mut group = kiln_entity::mob::GroupData { structure: true, ..Default::default() };
+                let mut r = kiln_javamath::random::LegacyRandom::new(h as i64 ^ 0x5a5a);
+                kiln_entity::mob::finalize_spawn(&mut e, &mut r, &ctx, &mut group, false);
+                // `Entity.setPortalCooldown`: the dimension changing delay (300 ticks).
+                e.portal_cooldown = 300;
+                spawns.push(Spawn { kind: &kiln_data::entities::types::ZOMBIFIED_PIGLIN, pos: at, vel: [0.0; 3], body: entities::Body::Ready(Box::new(e)) });
+            }
             // `DriedGhastBlock.spawnGhastling`: a baby happy ghast at the block's bottom center, facing the block's way,
             // and its spawn sound (a sound that follows the new entity).
             Effect::HatchGhastling { pos, yaw } => {
@@ -1934,6 +1982,7 @@ mod tests {
             loot: None,
             damage: crate::health::DamageRules::default(),
             mobs: Default::default(),
+            spawn_totals: None,
             spawn_table: None,
             menus: Default::default(),
             trial_configs: Default::default(),

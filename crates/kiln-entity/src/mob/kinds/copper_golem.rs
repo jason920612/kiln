@@ -219,6 +219,11 @@ impl Kind for CopperGolem {
         Some(b)
     }
 
+    /// The constructor set the first transport cooldown on the first brain; a saved brain starts without it.
+    fn brain_replaced(&self, b: &mut Brain) {
+        b.st.mem.erase(Mem::TransportItemsCooldownTicks);
+    }
+
     /// The brain, then `CopperGolemAi.updateActivity`.
     fn custom_server_ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         brain::tick_brain(e, m, level);

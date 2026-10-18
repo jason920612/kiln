@@ -149,12 +149,18 @@ pub fn can_break_doors(m: &MobData) -> bool {
     zombie_of(m).is_some_and(|z| z.can_break_doors)
 }
 
-/// `setCanBreakDoors`: ground navigation opens doors (the break-door goal is not simulated:
-/// Kiln has no door breaking yet).
+/// `setCanBreakDoors`: ground navigation opens doors and the break-door goal joins the goals (priority 1).
 pub fn set_can_break_doors(m: &mut MobData, on: bool) {
     // Every zombie type's navigation `canNavigateGround` (amphibious navigation too).
+    if can_break_doors(m) == on {
+        return;
+    }
     with_zombie(m, |d, _| *d = on);
     m.nav.can_open_doors = on;
+    m.goals.remove_where(|g| matches!(g, Goal::Custom(c) if c.name() == "BreakDoorGoal"));
+    if on {
+        m.goals.add(1, Goal::Custom(Box::new(super::break_door::BreakDoorGoal::new(super::break_door::Who::Zombie))));
+    }
 }
 
 /// `setBaby`: the flag and the speed bonus (dimensions follow).
@@ -162,7 +168,7 @@ pub fn set_baby(e: &mut Entity, m: &mut MobData, baby: bool) {
     m.zombie_baby = baby;
     m.attrs.remove_modifier(Attr::MovementSpeed, "minecraft:baby");
     if baby {
-        m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
+        m.attrs.set_transient_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
     }
     mob::refresh_dimensions(e, m);
 }
@@ -208,10 +214,9 @@ pub fn register_base_goals(m: &mut MobData) {
 pub fn register_goals(m: &mut MobData) {
     register_base_goals(m);
     let g = &mut m.goals;
-    // `MoveThroughVillageGoal` (no villages) never starts.
     g.add(2, Goal::Custom(Box::new(super::spear_use::SpearUseGoal::new(1.0, 1.0, 10.0, 2.0))));
     g.add(3, melee(1.0));
-    g.add(6, Goal::Never);
+    g.add(6, Goal::Custom(Box::new(super::move_through_village::MoveThroughVillageGoal::new(1.0, true, 4, can_break_doors))));
     g.add(7, stroll(1.0, true));
     let t = &mut m.targets;
     t.add(1, hurt_by(true));
@@ -536,7 +541,7 @@ pub fn reinforcements(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLev
         m.attrs.get_mut(Attr::SpawnReinforcements).map(|i| {
             let old = i.modifiers.iter().find(|md| md.id == "minecraft:reinforcement_caller_charge").map_or(0.0, |md| md.amount);
             i.modifiers.retain(|md| md.id != "minecraft:reinforcement_caller_charge");
-            i.modifiers.push(crate::mob::attributes::Modifier { id: "minecraft:reinforcement_caller_charge".into(), amount: old - 0.05, op: Op::AddValue });
+            i.modifiers.push(crate::mob::attributes::Modifier { id: "minecraft:reinforcement_caller_charge".into(), amount: old - 0.05, op: Op::AddValue, transient: false });
         });
         return;
     }

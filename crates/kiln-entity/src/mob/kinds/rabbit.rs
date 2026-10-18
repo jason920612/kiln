@@ -89,7 +89,7 @@ fn set_variant(e: &mut Entity, m: &mut MobData, v: i32) {
             m.targets.add(2, common_a::nearest(Wanted::Player, 10, true));
             m.targets.add(2, common_a::nearest(Wanted::Types(&["minecraft:wolf"]), 10, true));
         }
-        m.attrs.set_modifier(AttackDamage, EVIL_MODIFIER, 5.0, crate::mob::attributes::Op::AddValue);
+        m.attrs.set_transient_modifier(AttackDamage, EVIL_MODIFIER, 5.0, crate::mob::attributes::Op::AddValue);
         if !e.extra.iter().any(|(k, _)| k == "CustomName") {
             e.extra.push(("CustomName".into(), Tag::Compound(vec![("translate".into(), Tag::String("entity.minecraft.killer_bunny".into()))])));
         }

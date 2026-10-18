@@ -122,7 +122,7 @@ pub fn owner_still_fishing(e: &Entity, level: &dyn EntityLevel, owner: i32) -> b
 
 impl FishingHook {
     /// `catchingFish`: the fish's approach, the bite, and the wait for the next one.
-    fn catching_fish(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, pos: BlockPos) {
+    fn catching_fish(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, pos: BlockPos, synced: &mut LegacyRandom) {
         let mut speed = 1;
         let above = pos.above();
         if e.random.next_float() < 0.25 && level.is_raining_at(above) {
@@ -155,6 +155,10 @@ impl FishingHook {
                 let pitch = 1.0 + (e.random.next_float() - e.random.next_float()) * 0.4;
                 level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.fishing_bobber.splash", source: "neutral", volume: 0.25, pitch });
                 self.nibble = next_int(&mut e.random, 20, 40);
+                // `entityData.set(DATA_BITING, true)` runs `onSyncedDataUpdated` on the server too: the bobber dips by a draw of the synchronized random.
+                if !self.biting {
+                    e.delta = Vec3::new(e.delta.x, (-0.4f32 * next_float(synced, 0.6, 1.0)) as f64, e.delta.z);
+                }
                 self.biting = true;
             }
         } else if self.time_until_lured > 0 {
@@ -324,7 +328,8 @@ impl EntityExt for FishingHook {
         }
         let pos = e.block_position();
         let f = crate::fluid::fluid_at(level, pos);
-        let height = if f.kind == crate::physics::FluidKind::Water { crate::fluid::height(level, pos, &f) } else { 0.0 };
+        // (`fluidState.is(FluidTags.WATER)`: flowing water counts too.)
+        let height = if f.kind.is_water() { crate::fluid::height(level, pos, &f) } else { 0.0 };
         let in_water = height > 0.0;
         match self.state {
             State::Flying => {
@@ -373,13 +378,13 @@ impl EntityExt for FishingHook {
                         let b = synced.next_float() as f64;
                         e.delta = e.delta + Vec3::new(0.0, -0.1 * a * b, 0.0);
                     }
-                    self.catching_fish(e, level, pos);
+                    self.catching_fish(e, level, pos, &mut synced);
                 } else {
                     self.out_of_water_time = (self.out_of_water_time + 1).min(10);
                 }
             }
         }
-        if f.kind != crate::physics::FluidKind::Water && !e.on_ground && self.hooked.is_none() {
+        if !f.kind.is_water() && !e.on_ground && self.hooked.is_none() {
             e.delta = e.delta + Vec3::new(0.0, -0.029999999329447746, 0.0);
         }
         let delta = e.delta;

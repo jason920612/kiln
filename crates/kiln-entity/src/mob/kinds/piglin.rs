@@ -103,7 +103,7 @@ pub fn set_baby(e: &mut Entity, m: &mut MobData, baby: bool) {
     m.zombie_baby = baby;
     m.attrs.remove_modifier(MovementSpeed, "minecraft:baby");
     if baby {
-        m.attrs.set_modifier(MovementSpeed, "minecraft:baby", 0.20000000298023224, Op::AddMultipliedBase);
+        m.attrs.set_transient_modifier(MovementSpeed, "minecraft:baby", 0.20000000298023224, Op::AddMultipliedBase);
     }
     mob::refresh_dimensions(e, m);
 }
