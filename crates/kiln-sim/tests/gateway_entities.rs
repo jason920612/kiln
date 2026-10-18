@@ -14,8 +14,7 @@ fn pos_of(sim: &Sim, id: &str) -> Option<[f64; 3]> {
     }
 }
 
-#[test]
-fn a_pig_and_an_item_in_an_end_gateway_go_to_its_exit() {
+fn run(summon: &str, id: &str) -> [f64; 3] {
     let mut sim = Sim::new(SimConfig::new(4, 4, None));
     let (msg, stats) = join(1, "Watcher", 2);
     assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into()), ToSim::Console("gamemode creative Watcher".into())]));
@@ -32,14 +31,26 @@ fn a_pig_and_an_item_in_an_end_gateway_go_to_its_exit() {
     for c in [
         format!("fill {} {} {} {} {} {} minecraft:air", gx - 4, gy - 3, gz - 4, gx + 25, gy + 6, gz + 4),
         format!("setblock {gx} {gy} {gz} minecraft:end_gateway{{exit_portal:[I;{},{},{}],ExactTeleport:1b}}", gx + 20, gy + 2, gz),
-        format!("summon minecraft:pig {gx}.5 {gy} {gz}.5 {{NoAI:1b,PersistenceRequired:1b}}"),
-        format!("summon minecraft:item {gx}.5 {gy} {gz}.5 {{Item:{{id:\"minecraft:stone\",count:1}},PickupDelay:32767s}}"),
+        summon.replace("GX", &gx.to_string()).replace("GY", &gy.to_string()).replace("GZ", &gz.to_string()),
     ] {
         assert!(sim.step([ToSim::Console(c)]));
     }
     tick(&mut sim, 40);
-    for id in ["minecraft:pig", "minecraft:item"] {
-        let p = pos_of(&sim, id).unwrap_or_else(|| panic!("{id} exists"));
-        assert!((p[0] - (gx + 20) as f64 - 0.5).abs() < 1.5 && (p[1] - (gy + 2) as f64).abs() < 1.5, "{id} went to the exit: {p:?}");
-    }
+    pos_of(&sim, id).unwrap_or_else(|| panic!("{id} exists"))
+}
+
+fn at_exit(p: [f64; 3]) -> bool {
+    (p[0] - 50.5).abs() < 1.5 && (p[1] - 102.0).abs() < 1.5 && (p[2] - 30.5).abs() < 1.5
+}
+
+#[test]
+fn a_pig_in_an_end_gateway_goes_to_its_exit() {
+    let p = run("summon minecraft:pig GX.5 GY GZ.5 {NoAI:1b,PersistenceRequired:1b}", "minecraft:pig");
+    assert!(at_exit(p), "the pig went to the exit: {p:?}");
+}
+
+#[test]
+fn an_item_in_an_end_gateway_goes_to_its_exit() {
+    let p = run("summon minecraft:item GX.5 GY GZ.5 {Item:{id:\"minecraft:stone\",count:1},PickupDelay:32767s}", "minecraft:item");
+    assert!(at_exit(p), "the item went to the exit: {p:?}");
 }
