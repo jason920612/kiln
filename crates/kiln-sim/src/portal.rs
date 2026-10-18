@@ -445,6 +445,7 @@ impl Sim {
         const ENTITY_PORTAL_COOLDOWN: i64 = 300;
         let now = self.game_time;
         let mut trips = Vec::new();
+        let mut standing: Vec<(DimId, u128)> = Vec::new();
         for (dim, d) in self.dims.iter_mut().enumerate() {
             d.portal_cooldowns.retain(|_, until| *until > now);
             for r in d.regions.iter() {
@@ -454,7 +455,6 @@ impl Sim {
                     only.is_none_or(|(ids, first_new)| e.id >= first_new || ids.binary_search(&(dim, e.id)).is_ok())
                         && !e.removed
                         && e.kind.name != "minecraft:ender_dragon"
-                        && !d.portal_cooldowns.contains_key(&e.uuid.as_u128())
                         // `canUsePortal(false)`: a passenger does not (its vehicle does, with it).
                         && e.phys.as_deref().is_none_or(|p| p.vehicle.is_none())
                         && !e.phys.as_deref().is_some_and(kiln_entity::mob::kinds::creaking::is_heart_bound)
@@ -474,13 +474,22 @@ impl Sim {
                                 } else {
                                     continue;
                                 };
-                                trips.push((dim, e.id, kind, BlockPos::new(x, y, z)));
+                                // `Entity.setAsInsidePortal`: an entity standing in a portal while its cooldown runs starts the cooldown over (it arrived
+                                // in the portal of the other level and does not go back until it has been out of the portal for the whole cooldown).
+                                if d.portal_cooldowns.contains_key(&e.uuid.as_u128()) {
+                                    standing.push((dim, e.uuid.as_u128()));
+                                } else {
+                                    trips.push((dim, e.id, kind, BlockPos::new(x, y, z)));
+                                }
                                 break 'find;
                             }
                         }
                     }
                 }
             }
+        }
+        for (dim, uuid) in standing {
+            self.dims[dim].portal_cooldowns.insert(uuid, now + ENTITY_PORTAL_COOLDOWN);
         }
         // The destination may be a region ticking away (independent mode).
         if !trips.is_empty() {

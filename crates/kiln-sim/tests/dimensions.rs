@@ -226,3 +226,33 @@ fn tp_and_execute_in_cross_levels() {
     assert_eq!(loaded.len(), 3);
     assert!(loaded.iter().all(|&n| n > 0), "{loaded:?}");
 }
+
+/// wp81 (lock step against vanilla, `tools/wp81/ring81.py portal2`): a mob that arrived in a portal and stands still in it does not go back. Every tick inside
+/// a portal starts the cooldown over (`Entity.setAsInsidePortal`), so it can only leave after 300 ticks out of the portal. Kiln let the cooldown run out and
+/// sent the cow back and forth every 300 ticks.
+#[test]
+fn a_mob_standing_in_the_portal_it_arrived_in_does_not_go_back() {
+    let mut w = World::new("creative");
+    frame(&mut w, 11, -61, 12);
+    w.run("setblock 11 -60 12 minecraft:fire");
+    assert!(state::is(w.sim.block_at(12, -59, 12).unwrap(), d::NETHER_PORTAL));
+    w.run("summon minecraft:cow 11.5 -60 12.5 {NoAI:1b,PersistenceRequired:1b}");
+    let cows = |w: &World, level: &str| w.sim.entities_in(level).iter().filter(|(k, _)| *k == "minecraft:cow").count();
+    let mut arrived = None;
+    for _ in 0..20 {
+        w.ticks(1);
+        if let Some(&(_, pos)) = w.sim.entities_in(NETHER).iter().find(|(k, _)| *k == "minecraft:cow") {
+            arrived = Some(pos);
+            break;
+        }
+    }
+    let at = arrived.expect("the cow went through the portal");
+    // A player beside it keeps its chunks ticking.
+    w.run(&format!("execute in {NETHER} run tp Traveller {} {} {}", at[0] + 3.0, at[1] + 1.0, at[2] + 3.0));
+    for i in 0..700 {
+        w.ticks(1);
+        if i % 10 == 0 {
+            assert_eq!((cows(&w, NETHER), cows(&w, OVERWORLD)), (1, 0), "the cow is still in the portal it arrived in, tick {i}");
+        }
+    }
+}
