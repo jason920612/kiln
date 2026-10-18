@@ -1880,6 +1880,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
                 };
                 let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
                 p.hurt(amount, &source, &mut ctx);
+                self.events.push(Event::PlayerHurt { target: id });
             }
             kiln_entity::effect::Kind::Saturation => p.eat(effect.amplifier + 1, (effect.amplifier + 1) as f32 * 2.0),
             _ => {}
@@ -3634,7 +3635,6 @@ fn carry_out(
                     }
                 }
             }
-            flush_player_damage(players, target);
         }
         Event::Killed { entity, entity_type, credit, kind, attacker, direct, equipment } => {
             if let Some(p) = credit.and_then(|k| players.iter_mut().find(|p| p.entity_id == k)) {
