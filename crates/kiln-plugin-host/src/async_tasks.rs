@@ -456,7 +456,7 @@ async fn instance_loop(
                         }
                         None => open = false,
                     },
-                    Some((plugin, ticket, _id, outcome)) = inflight.next(), if !inflight.is_empty() => {
+                    Some((_plugin, ticket, _id, outcome)) = inflight.next(), if !inflight.is_empty() => {
                         let result = match outcome {
                             Ok(hooks::JobResult::Ok(bytes)) => Ok(bytes),
                             Ok(hooks::JobResult::Failed(why)) => Err(why),

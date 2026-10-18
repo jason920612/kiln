@@ -85,7 +85,7 @@ fn loaded_brain_memories_match_vanilla() {
     let only = std::env::var("KILN_BRAIN_ONLY").ok();
     let text = std::fs::read_to_string(path).unwrap();
     let (mut sim, mut client) = world();
-    let mut step = |sim: &mut Sim, client: &mut Client, cmds: Vec<String>| {
+    let step = |sim: &mut Sim, client: &mut Client, cmds: Vec<String>| {
         let mut inbox: Vec<ToSim> = cmds.into_iter().map(ToSim::Console).collect();
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));

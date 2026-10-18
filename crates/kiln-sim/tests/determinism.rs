@@ -67,7 +67,6 @@ fn run_phased(
     let mut traffic = Vec::new();
     let mut max_regions = 0;
     let mut hits = 0;
-    let mut hoppers_moved = false;
     let (mut effects, mut burning) = (0, 0);
     let mut mob_ticks = 0;
     let mut hoppers_moved = false;

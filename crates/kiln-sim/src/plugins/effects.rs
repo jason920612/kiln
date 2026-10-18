@@ -505,10 +505,3 @@ impl Sim {
         all
     }
 }
-
-impl Player {
-    /// Whether the player has a plugin menu open.
-    pub(crate) fn has_plugin_menu(&self) -> bool {
-        matches!(self.containers.open, Some(OpenBlock::Plugin(_)))
-    }
-}

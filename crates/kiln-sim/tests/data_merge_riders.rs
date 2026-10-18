@@ -12,7 +12,7 @@ fn merging_data_into_a_vehicle_does_not_dismount_its_riders() {
     let (msg, stats) = join(1, "User", 2);
     assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
     let mut client = Client::new(1, stats);
-    let mut ticks = |sim: &mut Sim, client: &mut Client, n: usize| {
+    let ticks = |sim: &mut Sim, client: &mut Client, n: usize| {
         for _ in 0..n {
             let mut inbox = Vec::new();
             client.tick(None, &mut inbox);

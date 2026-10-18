@@ -25,7 +25,6 @@ pub struct WalkState {
     detour: f64,
     detour_ticks: u32,
     started: bool,
-    waited: u32,
 }
 
 #[derive(Debug, Clone, Default)]

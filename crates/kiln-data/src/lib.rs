@@ -103,6 +103,7 @@ pub fn dimension_type(name: &str) -> Option<&'static DimensionType> {
 }
 
 #[path = "gen/map_colors.rs"]
+#[allow(dead_code, reason = "generated: the count of colours is part of the table")]
 mod map_colors;
 
 /// `BlockState.getMapColor`: the `MapColor` id (0 is none) of block state `state`.

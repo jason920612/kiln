@@ -43,7 +43,7 @@ fn killed_sheep_drop_wool_and_killed_small_slimes_drop_slime_balls() {
     let (msg, stats) = join(1, "User", 2);
     assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
     let mut client = Client::new(1, stats);
-    let mut ticks = |sim: &mut Sim, client: &mut Client, n: usize| {
+    let ticks = |sim: &mut Sim, client: &mut Client, n: usize| {
         for _ in 0..n {
             let mut inbox = Vec::new();
             client.tick(None, &mut inbox);
@@ -76,7 +76,7 @@ fn a_creeper_killed_by_a_skeleton_drops_a_music_disc() {
     let (msg, stats) = join(1, "User", 2);
     assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
     let mut client = Client::new(1, stats);
-    let mut ticks = |sim: &mut Sim, client: &mut Client, n: usize| {
+    let ticks = |sim: &mut Sim, client: &mut Client, n: usize| {
         for _ in 0..n {
             let mut inbox = Vec::new();
             client.tick(None, &mut inbox);
@@ -123,7 +123,7 @@ fn burning_cows_drop_cooked_beef() {
     let (msg, stats) = join(1, "User", 2);
     assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
     let mut client = Client::new(1, stats);
-    let mut ticks = |sim: &mut Sim, client: &mut Client, n: usize| {
+    let ticks = |sim: &mut Sim, client: &mut Client, n: usize| {
         for _ in 0..n {
             let mut inbox = Vec::new();
             client.tick(None, &mut inbox);

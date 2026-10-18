@@ -34,16 +34,6 @@ impl Default for Siege {
     }
 }
 
-impl Siege {
-    /// For tests: the state as (tonight, zombies left, spawn point).
-    pub(crate) fn describe(&self) -> (bool, i32, [i32; 3]) {
-        (self.state == SiegeState::Tonight, self.zombies_to_spawn, self.spawn)
-    }
-}
-
-/// The stand-in id of a spawner's new mob until the simulation hands out real ones.
-const SPAWNER_ID: i32 = -3_100_001;
-
 impl Sim {
     /// `ServerLevel.isCloseToVillage(pos, sections)`.
     fn close_to_village(&self, pos: [i32; 3], sections: i32) -> bool {

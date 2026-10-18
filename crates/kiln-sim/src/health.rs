@@ -289,18 +289,6 @@ impl DamageEffects {
             DamageEffects::Freezing => "minecraft:entity.player.hurt_freeze",
         }
     }
-
-    /// By the name the datapack gives (`effects`; absent: `hurt`).
-    fn by_name(name: Option<&str>) -> DamageEffects {
-        match name {
-            Some("thorns") => DamageEffects::Thorns,
-            Some("drowning") => DamageEffects::Drowning,
-            Some("burning") => DamageEffects::Burning,
-            Some("poking") => DamageEffects::Poking,
-            Some("freezing") => DamageEffects::Freezing,
-            _ => DamageEffects::Hurt,
-        }
-    }
 }
 
 /// A damage type's definition (`DamageType`, from the vanilla datapack).

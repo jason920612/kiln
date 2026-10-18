@@ -29,52 +29,6 @@ fn cell(i: usize) -> u16 {
 
 const KINDS: usize = 12;
 
-fn run(layout: &[usize], ticks: i32) -> Option<(i32, i32)> {
-    let mut level = TestLevel::void();
-    level.load_chunks((-1, -1), (4, 1));
-    let y = 100;
-    let mut pieces = 0;
-    for (i, &c) in layout.iter().enumerate() {
-        let s = cell(c);
-        if !is_air(s) {
-            pieces += 1;
-            level.set_raw(BlockPos::new(16 + i as i32, y, 8), s, flags::SKIP_ALL_SIDEEFFECTS);
-        }
-    }
-    // Whatever stands there gets a neighbour update: observers see it, pistons check their power.
-    for (i, &c) in layout.iter().enumerate() {
-        let p = BlockPos::new(16 + i as i32, y, 8);
-        let s = level.block(p);
-        if !is_air(s) {
-            crate::update::set_block_and_update(&mut level, p, s);
-            let _ = c;
-        }
-    }
-    let mut first = None;
-    for t in 1..=ticks {
-        level.tick(0, &[(0, 0), (1, 0)]);
-        if t == 40 || t == ticks {
-            let (mut min, mut count) = (i32::MAX, 0);
-            for x in 0..64 {
-                let s = level.block(BlockPos::new(x, y, 8));
-                if !is_air(s) && !state::is(s, d::PISTON_HEAD) && !state::is(s, d::MOVING_PISTON) {
-                    min = min.min(x);
-                    count += 1;
-                }
-            }
-            if count != pieces {
-                return None;
-            }
-            if t == 40 {
-                first = Some(min);
-            } else {
-                return first.map(|f| (f, min));
-            }
-        }
-    }
-    None
-}
-
 #[test]
 #[ignore]
 fn flyer_search() {

@@ -93,9 +93,6 @@ impl Spawners {
         self.map.is_empty()
     }
 
-    pub fn len(&self) -> usize {
-        self.map.len()
-    }
 
     /// A chunk entered the region: its spawners are decoded.
     pub fn chunk_loaded(&mut self, pos: ChunkPos, chunk: &Chunk) {
@@ -372,10 +369,6 @@ impl TrialConfigs {
 
     pub fn get(&self, key: &str) -> Option<std::sync::Arc<kiln_entity::trial_spawner::Config>> {
         self.map.get(key).cloned()
-    }
-
-    pub fn len(&self) -> usize {
-        self.map.len()
     }
 }
 

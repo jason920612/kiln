@@ -430,6 +430,7 @@ impl Sim {
     }
 
     /// The saved templates, for tests: the NBT of the template `id` if the manager has it.
+    #[cfg(test)]
     pub(crate) fn template_nbt(&self, id: &str) -> Option<Tag> {
         let stored = self.world.templates.cached(id)??;
         Some(stored.template.save(kiln_storage::anvil::DATA_VERSION as i32))

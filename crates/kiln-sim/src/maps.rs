@@ -281,10 +281,6 @@ impl MapData {
         self.tracked > limit
     }
 
-    pub(crate) fn decorations(&self) -> impl Iterator<Item = &Deco> {
-        self.decorations.iter().map(|(_, d)| d)
-    }
-
     pub(crate) fn has_decoration(&self, key: &str) -> bool {
         self.decorations.iter().any(|(k, _)| k == key)
     }
@@ -837,6 +833,7 @@ impl MapStore {
     }
 
     /// The id of the last map made (-1 before the first).
+    #[cfg(test)]
     pub(crate) fn last_id(&self) -> i32 {
         self.last_id
     }
@@ -872,11 +869,6 @@ impl MapStore {
     /// The frames the maps in memory mark: (map id, level, block position, frame entity id).
     pub(crate) fn frame_markers(&self) -> Vec<(i32, String, [i32; 3], i32)> {
         self.maps.iter().flat_map(|(id, m)| m.frames.values().map(move |f| (*id, m.dimension.clone(), f.pos, f.entity_id))).collect()
-    }
-
-    /// Whether the map exists (in memory or saved).
-    pub(crate) fn has(&mut self, id: i32) -> bool {
-        self.get(id).is_some()
     }
 
     /// Writes the maps that changed.

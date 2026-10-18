@@ -92,29 +92,6 @@ impl Sim {
         true
     }
 
-    /// `NbtPredicate.getEntityTagToCompare`: `saveWithoutId`, and a player's selected item.
-    pub(crate) fn entity_saved_data(&mut self, target: &PlayerRef) -> Option<Tag> {
-        if target.entity.is_none() {
-            let p = self.players.get(&target.conn)?;
-            let mut nbt = self.player_nbt(p);
-            let selected = p.inv.selected_item().clone();
-            if let Tag::Compound(fields) = &mut nbt {
-                // Saved-file bookkeeping that `saveWithoutId` does not write.
-                fields.retain(|(k, _)| k != "DataVersion");
-                if !selected.is_empty() {
-                    fields.push(("SelectedItem".into(), selected.to_nbt()));
-                }
-            }
-            return Some(nbt);
-        }
-        let dim = crate::dim_id(target.dim)?;
-        let mut nbt = self.entity_with_passengers(dim, target.entity?)?;
-        if let Tag::Compound(fields) = &mut nbt {
-            fields.retain(|(k, _)| k != "id");
-        }
-        Some(nbt)
-    }
-
     /// `EntityDataAccessor.setData` for a non-player: the entity reloaded from `data` with its
     /// UUID, network id and type kept.
     pub(crate) fn load_entity_data(&mut self, target: &PlayerRef, data: &Tag) -> Result<(), CommandError> {

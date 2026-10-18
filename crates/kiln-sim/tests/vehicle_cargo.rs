@@ -28,6 +28,7 @@ fn have_datapack() -> bool {
     })
 }
 
+#[allow(dead_code, reason = "helpers shared by the tests of this file: not every test uses all of them")]
 struct World {
     sim: Sim,
     client: Client,
@@ -36,6 +37,7 @@ struct World {
     mode: &'static str,
 }
 
+#[allow(dead_code, reason = "helpers shared by the tests of this file: not every test uses all of them")]
 impl World {
     fn new(mode: &'static str) -> Self {
         have_datapack();

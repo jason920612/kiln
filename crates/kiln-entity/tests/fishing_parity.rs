@@ -4,7 +4,7 @@
 //! Skipped without the vectors.
 
 use kiln_entity::ext_entity::fishing_hook;
-use kiln_entity::level::{EntityLevel, PlayerView};
+use kiln_entity::level::PlayerView;
 use kiln_entity::math::{BlockPos, Vec3};
 use kiln_entity::memory::MemoryLevel;
 use serde_json::Value;
