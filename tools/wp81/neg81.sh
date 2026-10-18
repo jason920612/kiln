@@ -15,7 +15,7 @@ add frozen     crates/kiln-sim/src/lib.rs        's~ && self\.world\.tick_rate\.
 add ifloaded   crates/kiln-sim/src/commands.rs   's~near\(p\.center, view\)~near(p.center, view + 2)~' "-p kiln-sim --test tickets execute_if_loaded"
 add wither     crates/kiln-entity/src/mob/kinds/wither.rs 's~let arrow = matches!~let arrow = direct.is_none() || matches!~' "-p kiln-sim --test wither a_powered_wither"
 add portalcd   crates/kiln-sim/src/portal.rs     's~standing\.push\(\(dim, e\.uuid\.as_u128\(\)\)\);~();~' "-p kiln-sim --test dimensions a_mob_standing"
-add portalticket crates/kiln-sim/src/portal.rs   's~self\.world\.timed\[dim\]\.add\(crate::tickets::Kind::Portal,~self.world.timed[dim].add_nothing(crate::tickets::Kind::Portal,~' "-p kiln-sim --lib tickets"
+add portalticket crates/kiln-sim/src/portal.rs   's~(fn place_portal_ticket\(&mut self, dim: DimId, at: \[f64; 3\]\) \{)~$1 if true { return; }~' "-p kiln-sim --test dimensions a_mob_that_went"
 run() {
   local name=$1 file=${FILE[$1]} edit=${EDIT[$1]} test=${TEST[$1]}
   git checkout -q -- "$file"
