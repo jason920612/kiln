@@ -202,7 +202,7 @@ def main():
             results[t] = f"ERROR {e!r}"
             raise
 
-    threads = [threading.Thread(target=work, args=(t,)) for t in "KV"]
+    threads = [threading.Thread(target=work, args=(t,)) for t in os.environ.get("ONLY", "KV")]
     for th in threads:
         th.start()
     for th in threads:
