@@ -195,6 +195,11 @@ public class FishingVectors {
         rf.set(hook, new net.minecraft.world.level.levelgen.LegacyRandomSource(seed));
         hook.setPos(X + 0.5, H + 0.9, Z + 0.5);
         hook.setDeltaMovement(Vec3.ZERO);
+        if (System.getenv("FISHING_AIR") != null && System.getenv("FISHING_DEBUG") != null && Integer.parseInt(System.getenv("FISHING_DEBUG")) == index)
+            for (String c : System.getenv("FISHING_AIR").split(";")) {
+                String[] p = c.split(",");
+                level.setBlock(new BlockPos(Integer.parseInt(p[0]), Integer.parseInt(p[1]), Integer.parseInt(p[2])), Blocks.AIR.defaultBlockState(), 2);
+            }
         long gameTime = level.getGameTime();
         StringBuilder ticks = new StringBuilder();
         for (int t = 1; t <= TICKS; t++) {
