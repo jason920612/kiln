@@ -2075,7 +2075,10 @@ impl Sim {
             .flat_map(|r| r.part().0.list.iter())
             .map(|e| {
                 let mob = e.phys.as_deref().and_then(|p| kiln_entity::mob::data(p).map(|m| (m.health.to_bits(), m.target, m.y_head_rot.to_bits())));
-                (e.id, e.kind.id, e.pos.map(f64::to_bits), e.vel.map(f64::to_bits), mob)
+                // The velocity of the vanilla state: the copy in the record is refreshed when the entity ticks or a level is built around it, which
+                // depends on how the regions split the world.
+                let vel = e.phys.as_deref().map_or(e.vel, |p| [p.delta.x, p.delta.y, p.delta.z]);
+                (e.id, e.kind.id, e.pos.map(f64::to_bits), vel.map(f64::to_bits), mob)
             })
             .collect();
         ents.sort_unstable_by_key(|e| e.0);
