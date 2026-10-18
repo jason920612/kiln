@@ -5,6 +5,8 @@ from lk import *
 
 noai = (sys.argv[1] if len(sys.argv) > 1 else "1") == "1"
 ticks = int(sys.argv[2]) if len(sys.argv) > 2 else 40
+holder = sys.argv[3] if len(sys.argv) > 3 else "knot"   # knot | player
+stride = int(sys.argv[4]) if len(sys.argv) > 4 else 1
 ME = "W0"
 
 
@@ -20,7 +22,15 @@ def setup(t):
     time.sleep(1.0)
     w(t, "summon minecraft:leash_knot 13 200 5")
     time.sleep(0.3)
-    nbt = '{Tags:["c9"],leash:[I;13,200,5]' + (",NoAI:1b" if noai else "") + "}"
+    if holder == "player":
+        out = ask(t, f"data get entity {ME} UUID", wait=0.4)
+        u = re.findall(r"\[I?;?\s*(-?\d+),\s*(-?\d+),\s*(-?\d+),\s*(-?\d+)\]", out)[-1]
+        lead = "leash:{UUID:[I;%s,%s,%s,%s]}" % u
+        w(t, f"tp {ME} 12 201 5")
+        time.sleep(0.5)
+    else:
+        lead = "leash:[I;13,200,5]"
+    nbt = '{Tags:["c9"],' + lead + (",NoAI:1b" if noai else "") + "}"
     w(t, f"summon minecraft:cow 5.5 200 5.5 {nbt}")
     time.sleep(0.5)
 
@@ -39,8 +49,8 @@ both("tick freeze")
 time.sleep(0.5)
 rows = []
 for i in range(ticks):
-    both("tick step 1")
-    time.sleep(0.2)
+    both(f"tick step {stride}")
+    time.sleep(0.2 + 0.055 * stride)
     rows.append((i, motion("K"), motion("V")))
 same = 0
 for i, k, v in rows:
