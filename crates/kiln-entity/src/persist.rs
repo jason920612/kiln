@@ -402,7 +402,7 @@ fn read_kind(type_name: &'static str, r: &mut Input) -> Result<EntityKind, LoadE
             } else {
                 None
             };
-            EntityKind::Throwable(ThrowableData { kind, owner: None, left_owner, left_owner_checked: false, has_been_shot, item, ticket_timer: 0 })
+            EntityKind::Throwable(ThrowableData { kind, owner: None, left_owner, left_owner_checked: false, has_been_shot, item, ticket_timer: 0, owner_is_player: false })
         }
     })
 }

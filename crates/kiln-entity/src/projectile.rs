@@ -53,6 +53,9 @@ pub struct ThrowableData {
     pub item: Option<kiln_item::ItemStack>,
     /// `ThrownEnderpearl.ticketTimer`: ticks until the pearl renews its chunk ticket (not saved).
     pub ticket_timer: i64,
+    /// The owner is a player (`owner instanceof ServerPlayer`, whatever level or region it is in): seen once while the owner is near, or set when the
+    /// pearl comes back with its player.
+    pub owner_is_player: bool,
 }
 
 /// What a projectile hit.
@@ -64,7 +67,7 @@ pub enum Hit {
 
 /// A new throwable at `pos` moving with `delta`.
 pub fn new(id: i32, uuid: u128, kind: Throwable, pos: Vec3, delta: Vec3, owner: Option<i32>, seed: i64) -> Entity {
-    let data = ThrowableData { kind, owner, left_owner: false, left_owner_checked: false, has_been_shot: false, item: None, ticket_timer: 0 };
+    let data = ThrowableData { kind, owner, left_owner: false, left_owner_checked: false, has_been_shot: false, item: None, ticket_timer: 0, owner_is_player: false };
     let mut e = Entity::new(kind.type_name(), id, uuid, EntityKind::Throwable(data), seed);
     e.set_pos(pos);
     e.delta = delta;
@@ -135,7 +138,10 @@ fn pearl_ticket(e: &mut Entity, level: &mut dyn EntityLevel, chunk_before: (i32,
     let now = chunk_of(e.position());
     let d = data(e);
     d.ticket_timer -= 1;
-    if (d.ticket_timer <= 0 || now != chunk_before) && d.owner.is_some_and(|o| level.player(o).is_some()) {
+    if !d.owner_is_player {
+        d.owner_is_player = d.owner.is_some_and(|o| level.player(o).is_some());
+    }
+    if (d.ticket_timer <= 0 || now != chunk_before) && d.owner_is_player {
         level.emit(Event::EnderPearlTicket { chunk: [now.0, now.1] });
         d.ticket_timer = PEARL_TICKET_TIMEOUT - 1;
     }

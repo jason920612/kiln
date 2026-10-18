@@ -723,6 +723,7 @@ impl Sim {
                 continue;
             };
             let Some(pos) = vec3_of(tag.get("Pos")) else { continue };
+            eprintln!("DEBUG queue pearl {dim} {pos:?}");
             let chunk = entities::chunk_of(pos);
             self.world.timed[dim].add(crate::tickets::Kind::EnderPearl, chunk);
             self.pearls_returning.push(ReturningPearl { dim, chunk, tag: tag.clone(), owner });
@@ -744,12 +745,14 @@ impl Sim {
                 continue;
             }
             let uuid = pearl.tag.get("UUID").and_then(persist::uuid_from_tag).unwrap_or(0);
+            eprintln!("DEBUG release pearl");
             match entities::Spawn::from_saved(&pearl.tag, entities::seed_for_uuid(uuid), true) {
                 Ok(mut spawn) => {
                     if let entities::Body::Loaded(e) = &mut spawn.body
                         && let kiln_entity::EntityKind::Throwable(t) = &mut e.kind
                     {
                         t.owner = Some(pearl.owner);
+                        t.owner_is_player = true;
                     }
                     self.dims[pearl.dim].spawns.push(spawn);
                 }
