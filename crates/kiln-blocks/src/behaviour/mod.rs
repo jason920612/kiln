@@ -5,6 +5,7 @@
 //! their water on shape updates, as almost every `SimpleWaterloggedBlock` does.
 
 pub mod bell;
+pub mod bonemeal;
 pub mod bubble;
 pub mod connect;
 pub mod container;

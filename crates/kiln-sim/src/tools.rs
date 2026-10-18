@@ -274,7 +274,7 @@ fn bone_meal(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, _face: Dire
 pub(crate) fn bone_meal_block(level: &mut RegionLevel, pos: BlockPos, spawns: &mut Vec<Spawn>) -> bool {
     let s = level.block(pos);
     // Saplings, propagules, azaleas, huge mushrooms, grass: kiln-blocks (with the level's worldgen).
-    match kiln_blocks::behaviour::trees::grow_crop(level, pos) {
+    match kiln_blocks::behaviour::trees::grow_crop(level, pos).or_else(|| kiln_blocks::behaviour::bonemeal::grow(level, pos)) {
         Some(true) => true,
         Some(false) => false,
         None => {
