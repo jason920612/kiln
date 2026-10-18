@@ -24,6 +24,8 @@ fn door_after(difficulty: &str, ticks_to_run: usize) -> (bool, Vec<u16>) {
         }
     };
     tick(&mut sim, &mut client, 5);
+    // Night, so that the zombie does not burn.
+    assert!(sim.step([ToSim::Console("time set 18000".into())]));
     let p = client.pos;
     let [x, y, z] = [p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32];
     let run = |sim: &mut Sim, c: String| assert!(sim.step([ToSim::Console(c)]));
