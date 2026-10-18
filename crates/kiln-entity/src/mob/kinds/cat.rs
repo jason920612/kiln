@@ -399,6 +399,7 @@ impl CustomGoal for CatRelaxOnOwnerGoal {
         0
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        eprintln!("DBG relax tame={} sit={} owner={:?}", tame::is_tame(m), tame::ordered_to_sit(m), tame::owner(m, level).map(|o| o.sleeping));
         if !tame::is_tame(m) || tame::ordered_to_sit(m) {
             return false;
         }
