@@ -7,6 +7,8 @@ revive()
 for t in "KV":
     w(t, "gamemode survival KilnTest")
 X, Y, Z = 8, 150, 30
+OB("fill 0 199 0 45 199 45 minecraft:air")
+time.sleep(2)
 
 
 def build(levels, base="minecraft:iron_block", hole=None, glass=False, mixed=False):
