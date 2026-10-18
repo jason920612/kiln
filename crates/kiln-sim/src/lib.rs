@@ -3297,6 +3297,8 @@ impl Sim {
         let world_seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
         // What `finalizeSpawn` does to a new mob's equipment reads the datapack's providers.
         let _enchanting = enchant::install_enchanter(self.loot.as_ref());
+        // A thrown pearl that comes out of a saved compound (or a `/summon`) belongs to the online player its `Owner` UUID names (`EntityReference`).
+        let by_uuid: HashMap<u128, i32> = self.players.values().map(|p| (p.uuid.as_u128(), p.entity_id)).collect();
         for d in &mut self.dims {
             let mut later = Vec::new();
             // Entities built during a tick carry placeholder (negative) ids that other new
@@ -3304,7 +3306,15 @@ impl Sim {
             let mut placeholders: Vec<(i32, i32, ChunkPos)> = Vec::new();
             let mut batch = entities::canonical(std::mem::take(&mut d.spawns));
             batch.append(&mut d.serial_spawns);
-            for spawn in batch {
+            for mut spawn in batch {
+                if let entities::Body::Loaded(e) = &mut spawn.body
+                    && let kiln_entity::EntityKind::Throwable(t) = &mut e.kind
+                    && t.owner.is_none()
+                    && let Some(id) = e.extra.iter().find(|(k, _)| k == "Owner").and_then(|(_, v)| persist_uuid(v)).and_then(|u| by_uuid.get(&u))
+                {
+                    t.owner = Some(*id);
+                    t.owner_is_player = true;
+                }
                 let chunk = entities::chunk_of(spawn.pos);
                 // Into a region ticking away: once it is back.
                 if d.lent_at(chunk) {
@@ -4360,6 +4370,10 @@ fn load_loot(path: Option<&std::path::Path>, explorer: Option<kiln_loot::Explore
             None
         }
     }
+}
+
+fn persist_uuid(tag: &Tag) -> Option<u128> {
+    kiln_entity::persist::uuid_from_tag(tag)
 }
 
 fn player_chunk(pos: [f64; 3]) -> ChunkPos {

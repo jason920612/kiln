@@ -3,7 +3,7 @@
 20 ticks, the second half of it counts), so whether `damage W0 2` costs 2 or 1 depends on how many ticks ago the player was last hurt: the section after
 `ride ... dismount` / `gamemode survival` of command_diff.py ran just after the player landed. Here a first hit of 1 is followed by `damage W0 2` D ms later,
 on Kiln (K) and vanilla (V) at their own pace; the Health read per delay D has to agree (the boundary is at 500 ms, 10 ticks).
-usage: flake79.py [REPEATS]   needs both servers up (sv.sh), the player W0 in (bot.sh)"""
+usage: flake81.py [REPEATS]   needs both servers up (sv.sh), the player W0 in (bot.sh)"""
 import collections, re, sys, time
 from lk import *
 

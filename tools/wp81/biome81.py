@@ -1,6 +1,6 @@
 """wp81 item 3: do Kiln (K) and vanilla (V) agree on `level.getBiome(pos)` (the noise-shifted lookup the spawner uses) in the nether around the roof farm?
 Both servers (seed 77, fresh or kept) are asked `execute in minecraft:the_nether if biome X Y Z <biome>` on a grid; every answer is compared.
-usage: biome79.py [STEP] [HALF]    grid step (default 8) and half width (default 96) around the farm (-64, 64); BIOME_VECTORS=<file> writes vanilla's answers (the Rust test reads them)"""
+usage: biome81.py [STEP] [HALF]    grid step (default 8) and half width (default 96) around the farm (-64, 64); BIOME_VECTORS=<file> writes vanilla's answers (the Rust test reads them)"""
 import os, re, sys, time
 from lk import *
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

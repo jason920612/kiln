@@ -1,6 +1,6 @@
 """wp81: the mobs every dimension holds after the player stood in the nether farm spot for a while (no kills before), by type, Kiln (K) against vanilla (V):
 the creature mob cap of the nether (strider, 10 per 289 chunks) is full in vanilla (count 15-16 at every check) and empty in Kiln.
-usage: census79.py [WAIT_S]   needs both servers up (sv.sh, seed 77) and the bot W0 in"""
+usage: census81.py [WAIT_S]   needs both servers up (sv.sh, seed 77) and the bot W0 in"""
 import re, sys, time
 from lk import *
 

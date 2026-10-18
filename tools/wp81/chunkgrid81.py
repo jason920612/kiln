@@ -1,5 +1,5 @@
 """wp81: the monster spawn attempts per chunk (the `chunkAttempt MONSTER cx,cz` counters of both servers, a box covering the whole area) as two grids:
-which chunks Kiln (K) and vanilla (V) attempt, and how often. usage: chunkgrid79.py [K_FILE V_FILE]"""
+which chunks Kiln (K) and vanilla (V) attempt, and how often. usage: chunkgrid81.py [K_FILE V_FILE]"""
 import os, re, sys
 HOME = os.path.expanduser("~")
 kf = sys.argv[1] if len(sys.argv) > 1 else HOME + "/wp81/K/counters.out"
