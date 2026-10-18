@@ -100,7 +100,7 @@ fn water_flows_from_the_block_ticking_ring_into_the_loaded_one() {
 /// is sent, and the one after is not loaded.
 #[test]
 fn the_server_loads_two_chunks_past_its_view_distance() {
-    let mut sim = Sim::new(SimConfig::new(3, 3, None));
+    let mut sim = Sim::new(SimConfig::new(4, 3, None));
     let (msg, stats) = join(1, "Watcher", 3);
     assert!(sim.step([msg]));
     let mut client = Client::new(1, stats);
@@ -124,7 +124,10 @@ fn the_server_loads_two_chunks_past_its_view_distance() {
 /// forced chunk but not the rings around it.
 #[test]
 fn execute_if_loaded_follows_the_loading_level_not_just_loaded() {
-    let mut sim = Sim::new(SimConfig::new(3, 2, None));
+    // (`SimConfig::new(max players, view distance, …)`; the simulation distance is set to 2 by the console.)
+    let mut config = SimConfig::new(4, 3, None);
+    config.simulation_distance = 2;
+    let mut sim = Sim::new(config);
     let (msg, stats) = join(1, "Watcher", 3);
     assert!(sim.step([msg]));
     let mut client = Client::new(1, stats);
