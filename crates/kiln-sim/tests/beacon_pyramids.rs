@@ -40,7 +40,7 @@ fn levels_of_pyramid(levels: i32, up: i32, near_chunk_border: bool, blocker: Opt
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
     }
-    sim.container_at([bx, by, bz]).map_or(-1, |(_, data)| data[0])
+    sim.block_entity_data("minecraft:overworld", bx, by, bz).and_then(|be| be.get("Levels").and_then(kiln_proto::nbt::Tag::as_i64)).map_or(-1, |v| v as i32)
 }
 
 #[test]
