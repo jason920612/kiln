@@ -409,11 +409,13 @@ def run(args):
                         if step == "all":
                             s.run("kill @e[type=!player]")
                             time.sleep(6)
+                        time.sleep(5.5)  # the previous command leaves the 100-tick window
                         s.query()
                         t = time.time()
                         s.run(f"function wp76:haz_{haz}_{step}")
                         wall = time.time() - t
-                        time.sleep(6)
+                        # (The command's tick must still be among the last 100 when asked.)
+                        time.sleep(1.0)
                         avg, p50, p95, p99 = s.query()
                         print(f"[{which}] hazard {haz:12s} {step:7s} worst tick {p99:8.1f} ms  (avg of 100 ticks {avg:6.2f}, p50 {p50:5.1f}, wall {wall:5.2f} s)", flush=True)
                         results.append({"scene": f"hazard {haz} {step}", "p99max": p99, "mean": avg, "p50": p50, "wall": round(wall, 2)})
