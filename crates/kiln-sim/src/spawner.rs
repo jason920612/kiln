@@ -958,8 +958,10 @@ fn spawn_category_for_chunk(
             // `isValidSpawnPostitionForType`.
             let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
             let valid = 'valid: {
-                // The nearest player within the despawn distance.
-                if !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
+                // The nearest player within the despawn distance, unless the type may spawn far from players (`EntityType.canSpawnFarFromPlayer`: the
+                // creature and misc categories, and pillagers and shulkers).
+                let far_ok = matches!(kind.category(), Category::Creature | Category::Misc) || matches!(kind, MobKind::Pillager | MobKind::Shulker);
+                if !far_ok && !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
                     break 'valid false;
                 }
                 // `canSpawnMobAt`: what was picked is among what spawns at this very place.
