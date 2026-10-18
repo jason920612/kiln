@@ -246,3 +246,22 @@ fn a_wither_that_never_ticks_shows_a_full_bar() {
     }
     assert_eq!(progress, Some(1.0), "the bar a never-ticking wither shows");
 }
+
+/// wp78: a player the wither kills leaves a wither rose too (`LivingEntity.createWitherRose(getKillCredit())` is for every living entity).
+#[test]
+fn a_player_killed_by_a_wither_leaves_a_wither_rose() {
+    let mut w = World::new();
+    w.run("gamerule minecraft:mob_griefing true");
+    w.run("gamemode survival Builder");
+    let p = w.client.pos;
+    let spot = [p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32];
+    w.set([spot[0], spot[1] - 1, spot[2]], "minecraft:dirt");
+    w.ticks(2);
+    w.run(&format!("summon minecraft:wither {} {} {} {{NoAI:1b,Invul:0}}", p[0] + 20.0, p[1] + 5.0, p[2]));
+    w.ticks(2);
+    w.run("damage Builder 1000 minecraft:mob_attack by @e[type=wither,limit=1]");
+    w.ticks(4);
+    let items = w.sim.entities().into_iter().filter(|(k, _)| *k == "minecraft:item").count();
+    let grew = (-1..=1).any(|dx| (-1..=1).any(|dz| (-1..=2).any(|dy| w.name([spot[0] + dx, spot[1] + dy, spot[2] + dz]) == "minecraft:wither_rose")));
+    assert!(grew || items > 0, "a rose block or a dropped flower where the player died");
+}

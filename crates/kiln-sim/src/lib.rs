@@ -3338,11 +3338,34 @@ impl Sim {
         }
     }
 
+    /// `LivingEntity.createWitherRose` for a player a wither killed: the flower grows where the player died when `mob_griefing` is on and the spot is air over
+    /// something it can stand on, else it drops as an item.
+    fn create_wither_rose(&mut self, dim: DimId, at: [f64; 3]) {
+        let p = [at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32];
+        let here_pos = kiln_blocks::BlockPos::new(p[0], p[1], p[2]);
+        let mut placed = false;
+        if self.rule_bool("minecraft:mob_griefing") {
+            let here = self.block_in_level(dim, here_pos);
+            let below = self.block_in_level(dim, kiln_blocks::BlockPos::new(p[0], p[1] - 1, p[2]));
+            if kiln_data::blocks_types::is_air(here) && kiln_entity::mob::kinds::wolf::block_in_tag(below, "minecraft:supports_wither_rose") {
+                self.with_level_in(dim, p, |level| kiln_blocks::set_block(level, here_pos, kiln_data::blocks::default_state::WITHER_ROSE, 3));
+                placed = true;
+            }
+        }
+        if !placed {
+            let item = kiln_proto::nbt::Tag::Compound(vec![("id".into(), kiln_proto::nbt::Tag::String("minecraft:wither_rose".into())), ("count".into(), kiln_proto::nbt::Tag::Int(1))]);
+            self.spawn_item_nbt(DIMENSIONS[dim].0, at, &item);
+        }
+    }
+
     /// Death messages to everyone (`show_death_messages`), in the order the deaths happened.
     fn announce_deaths(&mut self, deaths: Vec<health::Death>) {
         self.plugin_deaths(&deaths);
         for d in &deaths {
             self.award_kill_score(d);
+            if let Some((dim, at)) = d.rose_at {
+                self.create_wither_rose(dim, at);
+            }
         }
         if deaths.is_empty() || !self.rule_bool("minecraft:show_death_messages") {
             return;
