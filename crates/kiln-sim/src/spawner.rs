@@ -804,9 +804,10 @@ pub(crate) fn tick(
             if ok {
                 let mut made = Vec::new();
                 spawn_category_for_chunk(level, &s, &mut r, cat, c, ticking, &mut made);
-                for (spawn, pc, charge) in made {
+                for (spawn, _pc, charge) in made {
                     spawns.push(spawn);
-                    s.add(pc, cat);
+                    // (`afterSpawn.run(mob, chunk)`: the chunk the pack started in counts it for the players near, not the one the member stands in.)
+                    s.add(c, cat);
                     s.charges.extend(charge);
                     spawned_any = true;
                 }
