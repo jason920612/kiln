@@ -34,7 +34,7 @@ fn door_after(difficulty: &str, ticks_to_run: usize) -> (bool, Vec<u16>) {
     run(&mut sim, format!("summon minecraft:zombie {} {y} {} {{CanBreakDoors:1b,PersistenceRequired:1b}}", x + 6, z as f64 + 0.5));
     tick(&mut sim, &mut client, ticks_to_run);
     let door = sim.block_at(x + 3, y, z).expect("loaded");
-    let air = kiln_data::blocks_types::block_by_name("minecraft:air").map(|b| b.first).expect("air");
+    let air = kiln_data::blocks_types::block_by_name("minecraft:air").map(|b| b.default).expect("air");
     let states = (y..y + 2).map(|yy| sim.block_at(x + 3, yy, z).unwrap()).collect();
     (door == air, states)
 }
