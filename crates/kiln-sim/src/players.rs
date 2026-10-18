@@ -347,7 +347,7 @@ impl Sim {
                 let rid = r.id();
                 for e in r.part_mut().0.list.iter_mut().filter(|e| !e.seen_by.is_empty()) {
                     let id = e.id;
-                    let bar = e.boss_sent.is_some().then(|| crate::entities::boss_bar_id(e));
+                    let bar = e.boss_sent.is_some().then(|| crate::entities::boss_bar_id(e.uuid));
                     e.seen_by.retain(|v| match home.get(v) {
                         Some(&(d2, r2)) if d2 == dim && r2 == rid => true,
                         Some(_) => {

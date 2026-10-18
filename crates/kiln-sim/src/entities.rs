@@ -95,7 +95,7 @@ pub(crate) struct Entity {
     /// The entity its lead is tied to, as viewers last got it (Set Entity Link).
     leash_sent: Option<i32>,
     /// A boss's bar fill as its viewers last got it (`ServerBossEvent`, the wither).
-    boss_sent: Option<f32>,
+    pub(crate) boss_sent: Option<f32>,
     /// What `finalizeSpawn` made along with it, until the level adds and seats it.
     pub(crate) jockeys: Option<Box<Jockeys>>,
     /// How long its last speculative turn took (nanoseconds; the long ones start first).
@@ -4295,7 +4295,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
     }
     // `ServerBossEvent`: a boss's bar for the players that see it.
     let boss = e.phys.as_deref().and_then(kiln_entity::mob::data).and_then(kiln_entity::mob::kinds::wither::boss_bar);
-    let bar_id = boss_bar_id(e);
+    let bar_id = boss_bar_id(e.uuid);
     if let Some(progress) = boss {
         let name = kiln_proto::nbt::Tag::Compound(vec![("translate".into(), kiln_proto::nbt::Tag::String("entity.minecraft.wither".into()))]);
         let op = hud::BossEvent::Add {
@@ -4631,6 +4631,6 @@ mod level_random_tests {
 }
 
 /// The id of the boss bar an entity shows (`ServerBossEvent`'s uuid).
-pub(crate) fn boss_bar_id(e: &kiln_entity::Entity) -> Uuid {
-    Uuid::from_u128(e.uuid.as_u128() ^ 0x626f_7373_6261_72)
+pub(crate) fn boss_bar_id(uuid: Uuid) -> Uuid {
+    Uuid::from_u128(uuid.as_u128() ^ 0x626f_7373_6261_72)
 }
