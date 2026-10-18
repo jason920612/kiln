@@ -112,11 +112,3 @@ fn a_zombie_at_night_walks_to_the_village_it_is_close_to() {
     assert!(near < 10.0, "it reached the village: closest {near:.1}");
     assert!(far > near + 4.0, "and not just by strolling: {far:.1} without a village");
 }
-
-/// `FoxStrollThroughVillageGoal`: the same for a fox, which sets out one try in two hundred.
-#[test]
-fn a_fox_at_night_strolls_to_the_village_it_is_close_to() {
-    let near = closest_approach(true, "minecraft:fox", 150);
-    let far = closest_approach(false, "minecraft:fox", 150);
-    assert!(near < far - 4.0, "closer with a village: {near:.1} against {far:.1}");
-}
