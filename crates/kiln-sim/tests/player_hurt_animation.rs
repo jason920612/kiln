@@ -14,23 +14,23 @@ fn hurt_animations_after(console: &[&str], ticks: usize) -> usize {
     let log = stats.clone();
     assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into()), ToSim::Console("gamerule minecraft:natural_health_regeneration false".into())]));
     let mut client = Client::new(1, stats);
-    let mut tick = |sim: &mut Sim, n: usize| {
+    fn tick(sim: &mut Sim, client: &mut Client, n: usize) {
         for _ in 0..n {
             let mut inbox = Vec::new();
             client.tick(None, &mut inbox);
             assert!(sim.step(inbox));
         }
-    };
-    tick(&mut sim, 5);
+    }
+    tick(&mut sim, &mut client, 5);
     assert!(sim.step([ToSim::Console("gamemode survival Tilt".into()), ToSim::Console("difficulty normal".into())]));
-    tick(&mut sim, 40);
+    tick(&mut sim, &mut client, 40);
     let p = client.pos;
     log.log.lock().unwrap().as_mut().unwrap().clear();
     for c in console {
         let c = c.replace("{x}", &format!("{}", p[0] + 4.0)).replace("{y}", &format!("{}", p[1] + 1.0)).replace("{z}", &format!("{}", p[2]));
         assert!(sim.step([ToSim::Console(c)]));
     }
-    tick(&mut sim, ticks);
+    tick(&mut sim, &mut client, ticks);
     let log = log.log.lock().unwrap().clone().unwrap();
     log.iter()
         .filter(|pk| {
