@@ -86,7 +86,8 @@ pub(crate) fn release(p: &mut Player, level: &mut RegionLevel, off_hand: bool, s
         }
         let loyalty = crate::ranged::weapon_value(p, &thrown, &thrown, ValueComponent::TridentReturnAcceleration, 0.0).clamp(0.0, 127.0) as u8;
         let channeling = has_enchantment(&thrown, "minecraft:channeling");
-        let bonus = crate::ranged::weapon_value(p, &thrown, &thrown, ValueComponent::Damage, 8.0) - 8.0;
+        // (Impaling and the like read the target: applied when the trident hits.)
+        let bonus = 0.0;
         let pos = Vec3::new(p.pos[0], p.eye_position()[1] - 0.10000000149011612, p.pos[2]);
         let seed = crate::container::pos_random(level, kiln_blocks::BlockPos::new(p.entity_id, p.tick_count, 7), 0x7472_6964).next_long();
         let mut e = kiln_entity::ext_entity::trident::thrown_by_player(pos, p.entity_id, thrown, loyalty, channeling, bonus, p.infinite_materials(), seed);

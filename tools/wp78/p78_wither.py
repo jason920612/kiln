@@ -20,7 +20,8 @@ def nbt(sel, path):
 
 def arena():
     p61.platform(CX - 24, CZ - 24, CX + 24, CZ + 24, y=199, clear=24)
-    fill(CX - 20, 199, CZ - 20, CX + 20, 224, CZ + 20, "minecraft:bedrock", "hollow")
+    for (x0, y0, z0, x1, y1, z1) in ((-20, 199, -20, 20, 199, 20), (-20, 224, -20, 20, 224, 20), (-20, 199, -20, -20, 224, 20), (20, 199, -20, 20, 224, 20), (-20, 199, -20, 20, 224, -20), (-20, 199, 20, 20, 224, 20)):
+        fill(CX + x0, y0, CZ + z0, CX + x1, y1, CZ + z1, "minecraft:bedrock")
     kill_all()
     # wall of test blocks, 17 columns wide, 4 tall, at 6 blocks north (z - 6) and 6 blocks east
     for i, nm in enumerate(WALL):
@@ -185,6 +186,7 @@ def main():
     stars = sv("execute as @e[type=item] run data get entity @s Item.id", show=False, wait=0.8)
     say("items on the ground:", collections.Counter(re.findall(r'"(minecraft:[a-z_]+)"', stars)))
     say("wither roses:", len(a.findbox("wither_rose", CX - 30, CY - 2, CZ - 30, CX + 30, CY + 12, CZ + 30, 20)), "cows left", count_ents("@e[type=cow]"))
+    say("chat:", [l[:90] for l in p61.chat() if "Teleported" not in l and "Set own" not in l and "Gave" not in l][-12:])
     say("mspt", mspt()[:120])
     shot("wither_end_" + T)
 

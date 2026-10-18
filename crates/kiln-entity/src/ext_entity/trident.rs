@@ -369,7 +369,15 @@ impl Trident {
             attacker_is_player: self.owner.is_some_and(|o| level.player(o).is_some()),
         };
         self.dealt_damage = true;
-        let damage = 8.0 + self.bonus_damage;
+        // `ThrownTrident.onHitEntity`: the weapon's enchantments change the 8 (impaling reads the target).
+        let damage = match &self.item {
+            Some(w) if !w.is_empty() => {
+                let (att, direct, victim) = crate::arrow::projectile_views(level, e, self.owner, id);
+                let hit = crate::enchanting::ProjectileHit { weapon: w, attacker: att.as_ref(), direct: &direct, victim: &victim, damage_type: crate::mob::weapon::damage_type_id(DamageKind::Trident) };
+                crate::enchanting::modify_projectile_damage(&hit, 8.0, level.random())
+            }
+            _ => 8.0 + self.bonus_damage,
+        };
         let hurt = if is_player {
             level.hurt_player(id, source, damage)
         } else if target.1 {

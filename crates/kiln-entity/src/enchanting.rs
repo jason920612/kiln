@@ -22,6 +22,17 @@ pub struct Hit<'a> {
     pub damage_type: i32,
 }
 
+/// A hit by a projectile fired from `weapon` (a bow's arrow, a trident), as the weapon's
+/// enchantments are evaluated for it: the projectile is the `direct_attacker`, its owner the
+/// `attacker`.
+pub struct ProjectileHit<'a> {
+    pub weapon: &'a ItemStack,
+    pub attacker: Option<&'a EntityView>,
+    pub direct: &'a EntityView,
+    pub victim: &'a EntityView,
+    pub damage_type: i32,
+}
+
 /// Enchants a stack from an `enchantment_provider` entry, and says what a weapon's enchantments
 /// do to a blow.
 pub trait Enchanter {
@@ -37,6 +48,18 @@ pub trait Enchanter {
 
     /// `EnchantmentHelper.modifyKnockback`.
     fn modify_knockback(&self, hit: &Hit, value: f32, random: &mut dyn RandomSource) -> f32 {
+        let _ = (hit, random);
+        value
+    }
+
+    /// `EnchantmentHelper.modifyDamage` for a projectile fired from the weapon (power, impaling).
+    fn modify_projectile_damage(&self, hit: &ProjectileHit, damage: f32, random: &mut dyn RandomSource) -> f32 {
+        let _ = (hit, random);
+        damage
+    }
+
+    /// `EnchantmentHelper.modifyKnockback` for a projectile fired from the weapon (punch).
+    fn modify_projectile_knockback(&self, hit: &ProjectileHit, value: f32, random: &mut dyn RandomSource) -> f32 {
         let _ = (hit, random);
         value
     }
@@ -101,6 +124,24 @@ pub fn modify_knockback(hit: &Hit, value: f32, random: &mut dyn RandomSource) ->
     let enchanter = ENCHANTER.with(|e| e.borrow().clone());
     match enchanter {
         Some(e) if !hit.weapon.is_empty() => e.modify_knockback(hit, value, random),
+        _ => value,
+    }
+}
+
+/// `EnchantmentHelper.modifyDamage` of a projectile's weapon, through the installed [`Enchanter`].
+pub fn modify_projectile_damage(hit: &ProjectileHit, damage: f32, random: &mut dyn RandomSource) -> f32 {
+    let enchanter = ENCHANTER.with(|e| e.borrow().clone());
+    match enchanter {
+        Some(e) if !hit.weapon.is_empty() => e.modify_projectile_damage(hit, damage, random),
+        _ => damage,
+    }
+}
+
+/// `EnchantmentHelper.modifyKnockback` of a projectile's weapon.
+pub fn modify_projectile_knockback(hit: &ProjectileHit, value: f32, random: &mut dyn RandomSource) -> f32 {
+    let enchanter = ENCHANTER.with(|e| e.borrow().clone());
+    match enchanter {
+        Some(e) if !hit.weapon.is_empty() => e.modify_projectile_knockback(hit, value, random),
         _ => value,
     }
 }

@@ -318,8 +318,9 @@ pub(crate) fn create_arrow(p: &Player, weapon: &ItemStack, ammo: &ItemStack, cri
     let intangible = pickup_item.has(kiln_item::component::ids::INTANGIBLE_PROJECTILE);
     pickup_item.remove(kiln_item::component::ids::INTANGIBLE_PROJECTILE);
     let pierce = weapon_value(p, weapon, ammo, ValueComponent::ProjectilePiercing, 0.0).max(0.0) as i32;
-    let damage = weapon_value(p, weapon, weapon, ValueComponent::Damage, 2.0) as f64;
-    let knockback = weapon_value(p, weapon, weapon, ValueComponent::Knockback, 0.0) as f64;
+    // (Power is applied when the arrow hits: its requirement names the arrow as the direct attacker.)
+    let damage = 2.0;
+    let knockback = 0.0;
     let effects = match pickup_item.get(kiln_item::keys::POTION_CONTENTS) {
         Some(c) if !spectral => crate::effects::potion_effects(c, 1.0)
             .into_iter()
