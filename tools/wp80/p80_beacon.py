@@ -28,8 +28,8 @@ def build(levels, base="minecraft:iron_block", hole=None, glass=False, mixed=Fal
 
 def probe(tag, effects="speed", sec=None, wait=100, dist=6):
     both_("effect clear KilnTest")
-    sec_txt = f",Secondary:\"minecraft:{sec}\"" if sec else ""
-    OB(f"data merge block {X} {Y} {Z} {{Primary:\"minecraft:{effects}\"{sec_txt}}}")
+    sec_txt = f",secondary_effect:\"minecraft:{sec}\"" if sec else ""
+    OB(f"data merge block {X} {Y} {Z} {{primary_effect:\"minecraft:{effects}\"{sec_txt}}}")
     OB(f"tp KilnTest {X + dist}.5 {Y + 1} {Z}.5")
     both_("tick unfreeze")
     time.sleep(wait / 20.0 + 3.0)
