@@ -616,7 +616,9 @@ fn run_case(line: &Value) -> Vec<String> {
     }
     let (msg, stats) = join(1, "Interact", view);
     // (The vectors' server spawns no monsters from its first tick: `spawn-monsters=false`.)
-    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_monsters false".into())]));
+    // (Nor animals: its level is the_void, which has no spawn entries; Kiln's replay level is not, and the chunks the server now loads whole, whatever the
+    // client asks for, would get their chunk generation animals.)
+    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_monsters false".into()), ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
     let mut client = Client::new(1, stats.clone());
     for _ in 0..5 {
         let mut inbox = Vec::new();
@@ -652,7 +654,7 @@ fn run_case(line: &Value) -> Vec<String> {
     // vectors' frozen level).
     // (The vectors' server spawns no monsters: `spawn-monsters=false`.)
     {
-        let mut rule = vec![ToSim::Console("gamerule minecraft:spawn_monsters false".into())];
+        let mut rule = vec![ToSim::Console("gamerule minecraft:spawn_monsters false".into()), ToSim::Console("gamerule minecraft:spawn_mobs false".into())];
         client.tick(None, &mut rule);
         assert!(sim.step(rule));
     }
