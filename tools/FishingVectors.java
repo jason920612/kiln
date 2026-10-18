@@ -203,8 +203,7 @@ public class FishingVectors {
             boolean seesSky = level.canSeeSky(above);
             String dbg0 = System.getenv("FISHING_DEBUG") != null && Integer.parseInt(System.getenv("FISHING_DEBUG")) == index && t >= Integer.getInteger("fishing.from", 40) && t <= Integer.getInteger("fishing.to", 48) ? debug(hook) : null;
             hook.tick();
-            if (dbg0 != null) System.out.println("t=" + t + " before " + dbg0 + "
-      after " + debug(hook));
+            if (dbg0 != null) System.out.println("t=" + t + " before " + dbg0 + "\n      after " + debug(hook));
             if (hook.isRemoved()) {
                 ticks.append(ticks.length() > 0 ? "," : "").append("null");
                 break;
