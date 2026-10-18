@@ -3155,11 +3155,14 @@ impl Sim {
             }
             let dt = diag::lap_slow("ch.own", dt);
             // ... the rings around the other tickets' chunks, nearest to a ticket first, after everything the players wait for.
+            // (A few times a second is soon enough, and a big forceload has hundreds of rings.)
             let mut ring_wanted: Vec<ChunkPos> = Vec::new();
-            for &(c, r) in &tickets {
-                let mut missing: Vec<ChunkPos> = tickets::ring_chunks(c, r).filter(|&p| !d.is_loaded(p)).collect();
-                missing.sort_by_key(|p| (p.x - c.x).pow(2) + (p.z - c.z).pow(2));
-                ring_wanted.extend(missing);
+            if self.game_time % 4 == 0 {
+                for &(c, r) in &tickets {
+                    let mut missing: Vec<ChunkPos> = tickets::ring_chunks(c, r).filter(|&p| !d.is_loaded(p)).collect();
+                    missing.sort_by_key(|p| (p.x - c.x).pow(2) + (p.z - c.z).pow(2));
+                    ring_wanted.extend(missing);
+                }
             }
             // Then the requests, players interleaved (everyone's nearest chunk first), in an
             // order that does not depend on how regions split them.
