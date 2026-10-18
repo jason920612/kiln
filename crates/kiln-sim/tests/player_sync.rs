@@ -594,16 +594,16 @@ fn the_damage_event_comes_before_a_level_event_sent_at_once() {
     let (hurt, event) = (seen.iter().position(|i| *i == id::DAMAGE_EVENT), seen.iter().position(|i| *i == id::LEVEL_EVENT));
     assert!(hurt.is_some() && event.is_some(), "both reach the watcher: {seen:?}");
     assert!(hurt < event, "the damage event first: {seen:?}");
-    // Splashed at the player's feet: the damage event (if the potion reaches him) before the level event for the watcher too.
+    // Splashed at the player's feet: the damage event before the level event for the watcher too.
     w.run("kill @e[type=minecraft:pig]");
     w.ticks(3);
     w.watcher_log();
     w.run(&potion);
     w.ticks(10);
     let seen = order(&w.watcher_log());
-    if let (Some(hurt), Some(event)) = (seen.iter().position(|i| *i == id::DAMAGE_EVENT), seen.iter().position(|i| *i == id::LEVEL_EVENT)) {
-        assert!(hurt < event, "the player hurt, then the level event: {seen:?}");
-    }
+    let (hurt, event) = (seen.iter().position(|i| *i == id::DAMAGE_EVENT), seen.iter().position(|i| *i == id::LEVEL_EVENT));
+    assert!(hurt.is_some() && event.is_some(), "both reach the watcher: {seen:?}");
+    assert!(hurt < event, "the player hurt, then the level event: {seen:?}");
 }
 
 /// wp75: a projectile made and gone within one tick (a snowball summoned against the ground) is still seen by the players around: the tracker pairs
