@@ -867,6 +867,13 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
 /// `spawnCategoryForChunk` + `spawnCategoryForPosition`: what spawns, with the chunk each
 /// counts in.
 #[inline(never)]
+/// `getRandomPosWithin`'s upper bound: `chunk.getHeight(WORLD_SURFACE, x, z) + 1`. `ChunkAccess.getHeight` is the *top block* (the heightmap's first available
+/// y, minus one), so the bound is the first free y above the column: on the nether roof (bedrock to y 127) it is 128, and a start can be no higher.
+/// (Kiln added one more: starts on the roof at y 129, which land next to a farm platform at 128 and drift onto it, twice as many as vanilla's.)
+fn start_top(chunk: &kiln_world::Chunk, x: i32, z: i32) -> i32 {
+    chunk.column_height((x & 15) as usize, (z & 15) as usize, |b| !kiln_data::blocks_types::is_air(b))
+}
+
 fn spawn_category_for_chunk(
     level: &RegionLevel,
     s: &Spawner,
@@ -883,7 +890,7 @@ fn spawn_category_for_chunk(
     let x = c.x * 16 + r.next_int_bounded(16);
     let z = c.z * 16 + r.next_int_bounded(16);
     let Some(chunk) = level.cells.chunk(c) else { return };
-    let top = chunk.column_height((x & 15) as usize, (z & 15) as usize, |b| !kiln_data::blocks_types::is_air(b)) + 1;
+    let top = start_top(chunk, x, z);
     let y = r.next_int_bounded(top - min_y + 1) + min_y;
     if y < min_y + 1 {
         return;
@@ -1472,5 +1479,25 @@ mod potential_tests {
         assert!(!can_spawn(&one, [0, 64, 0], 1.0, 0.12), "the very block: infinite");
         // two endermen add up: 1/12 + 1/12 = 0.1667 > 0.12 although each alone is far enough
         assert!(!can_spawn(&[([0, 64, 0], 1.0), ([24, 64, 0], 1.0)], [12, 64, 0], 1.0, 0.12));
+    }
+}
+
+#[cfg(test)]
+mod start_tests {
+    use super::*;
+    use kiln_world::chunk::{Chunk, Section};
+
+    /// wp77: a pack start's highest y is the first free block above the column (`chunk.getHeight(WORLD_SURFACE) + 1`, where `getHeight` is the top block):
+    /// on the nether roof, bedrock up to y 127, 128 and not 129; above a platform at 128, 129. Found with the lock-step of the gold farm (starts at
+    /// y 129 in every column of the roof were twice as many as vanilla's: they drift onto a platform and spawn).
+    #[test]
+    fn a_start_reaches_no_higher_than_the_first_free_block_above_the_column() {
+        let (air, bedrock, gold) = (kiln_data::blocks::default_state::AIR, kiln_data::blocks::default_state::BEDROCK, kiln_data::blocks::default_state::STONE);
+        let mut chunk = Chunk::new((0..8).map(|_| Section::filled(air, 0)).collect(), 0);
+        chunk.set(3, 127, 5, bedrock);
+        assert_eq!(start_top(&chunk, 3, 5), 128, "bedrock to 127: the bound is 128");
+        chunk.set(4, 128, 5, gold);
+        assert_eq!(start_top(&chunk, 4, 5), 129, "a platform at 128: 129");
+        assert_eq!(start_top(&chunk, 9, 9), 0, "an empty column: the world's bottom");
     }
 }
