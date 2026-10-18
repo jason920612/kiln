@@ -608,4 +608,30 @@ mod tests {
         let p = at(&l, 8, -51, 8);
         assert!(is_named(p, "minecraft:mangrove_propagule") && state::get(p, "hanging") == Some("true"));
     }
+
+    #[test]
+    fn bone_meal_on_water_scatters_seagrass_over_the_floor_around_it_but_not_on_dry_land() {
+        let mut l = level();
+        for x in -6..=6 {
+            for z in -6..=6 {
+                for y in -62..=-52 {
+                    put(&mut l, x, y, z, d::WATER);
+                }
+            }
+        }
+        assert!(grow_water_plant(&mut l, BlockPos::new(0, -62, 0), Some(Direction::Up)));
+        let mut seagrass = 0;
+        for x in -6..=6 {
+            for z in -6..=6 {
+                for y in -62..=-52 {
+                    if BlockId::of(at(&l, x, y, z)).name().ends_with("seagrass") {
+                        seagrass += 1;
+                    }
+                }
+            }
+        }
+        assert!(seagrass >= 5, "a cloud of seagrass: {seagrass}");
+        let mut dry = level();
+        assert!(!grow_water_plant(&mut dry, BlockPos::new(0, -62, 0), None), "air is not water");
+    }
 }
