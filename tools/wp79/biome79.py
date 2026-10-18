@@ -29,12 +29,20 @@ for y in YS:
         for z in range(CZ - HALF, CZ + HALF + 1, STEP):
             res = {}
             for t in "KV":
-                found = None
+                n = logpos(t)
                 for b in BIOMES:
-                    out = ask(t, f"execute in minecraft:the_nether if biome {x} {y} {z} minecraft:{b}", wait=0.02)
-                    if "Test passed" in out or "conditional.pass" in out:
-                        found = b
-                        break
+                    w(t, f"execute in minecraft:the_nether if biome {x} {y} {z} minecraft:{b}")
+                time.sleep(0.2)
+                out = since(t, n)
+                answers = [("pass" in l.lower()) for l in out.splitlines() if "conditional" in l or "Test " in l]
+                found = None
+                if len(answers) == len(BIOMES):
+                    for b, a in zip(BIOMES, answers):
+                        if a:
+                            found = b
+                            break
+                else:
+                    found = "?%d" % len(answers)
                 res[t] = found
             total += 1
             st = stored_biome(os.path.expanduser("~/wp79/K/world"), "dimensions/minecraft/the_nether", x, y, z)
