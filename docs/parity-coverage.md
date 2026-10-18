@@ -866,6 +866,22 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | `determinism.rs` | `state_hash` 改讀 vanilla 狀態的速度(記錄裡的副本只在實體 tick 或建關卡時更新);單一區域也在 tick 開頭數怪 |
 
 
+### 6.22 wp79(`wp79-gaps`):wp76、wp77 留下的六個差異
+
+細節見 `docs/wp79.md`。新工具(`tools/wp79/`):`simradius79.py`(實體/方塊 tick 半徑探針)、`biome79.py`、`flake79.py`、`chunkgrid79.py`、`bench79.sh`(`survival_bench --bot-view-distance`)、`neg79.sh`;向量 `work/wp79/fishing.jsonl`、`biome.jsonl`。
+
+| 區域 | 結果 |
+|---|---|
+| 區塊載入語意(wp76) | **修**:依伺服器視野載入(`PLAYER_LOADING` 票),客戶端視野只決定送哪些;模擬距離 ≥ 視野時多載一圈;`load_by_server_view.rs`。成本(50 機器人,視野 2):載入區塊 930 → 7,875、mspt 14.4 → 25.3~26.7(視野 10 的玩家同樣是 25~29) |
+| 海上生怪(`mobfarm8`) | 這個 main 上兩邊相同(殭屍 404/373、骷髏 402/412、苦力怕 467/497、蜘蛛 211/205),wp77 的修正已消除 |
+| 下界屋頂豬布林 | 找到並修 **3 個**系統性差異:`execute if biome` 缺位移查詢;**方塊 tick 範圍比實體多一格**(排程 tick、流體、方塊事件、方塊實體、生怪候選區塊:`Ticking` 三層);`EntityType.canSpawnFarFromPlayer`(動物、strider 可遠離玩家生,下界 creature 上限原本永遠沒滿)。豬布林 K 48/V 15 → 19/18 與 20/19;殭屍豬人 K 約 +30% 沒找到來源 |
+| 釣魚 5 個案例 | **不是 Kiln**:向量 harness 沒呼叫 `commonTick()`(舊位置過期,方塊效果掃過整條斜線掃到蜘蛛網)並記了「打算放的方塊」而非世界裡的;重錄後 150 案例 795,496 個值 0 個不同,「已知差異」清單移除 |
+| `command_diff` 的 Health 19/18 | 傷害冷卻窗口(10 tick)邊界的時機依賴;兩邊邊界相同在 500 ms(`flake79.py`、`hurt_window.rs`);wp77 已讓該段不碰窗口 |
+| 編譯警告 | 72 → 0(未改行為) |
+| 附帶 | `crowd_golden` 四個封包摘要重錄(狀態雜湊不變,少 2~3 個區塊批次);`raids`、`slime_rooms`、`interact_parity` 的重播對齊新的載入/生怪規則 |
+
+
+
 ## 7. 重跑
 
 ```sh
