@@ -237,8 +237,7 @@ public class FishingVectors {
             }
         }
         try {
-            sb.append("
-      movements=").append(get(hook, Entity.class, "finalMovementsThisTick"));
+            sb.append(" movements=").append(get(hook, Entity.class, "finalMovementsThisTick"));
         } catch (Exception e) {
             sb.append(" movements=?");
         }
