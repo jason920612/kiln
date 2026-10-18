@@ -14,13 +14,13 @@ def setup(t):
         w(t, c)
     time.sleep(2.0)
     for c in ("fill -2 199 -2 44 199 20 stone", "fill -2 200 -2 44 215 20 air", f"tp {ME} 20 201 12",
-              "setblock 30 200 5 oak_fence", "kill @e[type=!player]"):
+              "setblock 13 200 5 oak_fence", "kill @e[type=!player]"):
         w(t, c)
         time.sleep(0.3)
     time.sleep(1.0)
-    w(t, "summon minecraft:leash_knot 30 200 5")
+    w(t, "summon minecraft:leash_knot 13 200 5")
     time.sleep(0.3)
-    nbt = '{Tags:["c9"],leash:[I;30,200,5]' + (",NoAI:1b" if noai else "") + "}"
+    nbt = '{Tags:["c9"],leash:[I;13,200,5]' + (",NoAI:1b" if noai else "") + "}"
     w(t, f"summon minecraft:cow 5.5 200 5.5 {nbt}")
     time.sleep(0.5)
 
@@ -28,8 +28,8 @@ def setup(t):
 def motion(t):
     out = ask(t, "data get entity @e[tag=c9,limit=1] Motion", wait=0.25)
     pos = ask(t, "data get entity @e[tag=c9,limit=1] Pos", wait=0.25)
-    m = re.findall(r"\[([^\]]*)\]", out)
-    p = re.findall(r"\[([^\]]*)\]", pos)
+    m = re.findall(r"\[([-0-9.,dDeE+ ]+)\]", out)
+    p = re.findall(r"\[([-0-9.,dDeE+ ]+)\]", pos)
     return (m[-1] if m else out.strip()[-80:]), (p[-1] if p else pos.strip()[-80:])
 
 
