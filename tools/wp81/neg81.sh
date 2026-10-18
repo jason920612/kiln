@@ -16,6 +16,11 @@ add ifloaded   crates/kiln-sim/src/commands.rs   's~near\(p\.center, view\)~near
 add wither     crates/kiln-entity/src/mob/kinds/wither.rs 's~let arrow = matches!~let arrow = direct.is_none() || matches!~' "-p kiln-sim --test wither a_powered_wither"
 add portalcd   crates/kiln-sim/src/portal.rs     's~standing\.push\(\(dim, e\.uuid\.as_u128\(\)\)\);~();~' "-p kiln-sim --test dimensions a_mob_standing"
 add portalticket crates/kiln-sim/src/portal.rs   's~(fn place_portal_ticket\(&mut self, dim: DimId, at: \[f64; 3\]\) \{)~$1 if true { return; }~' "-p kiln-sim --test dimensions a_mob_that_went"
+add mapreload  crates/kiln-sim/src/datapacks.rs  's~let explorer = self\.map_explorer\.clone\(\);~let explorer: Option<kiln_loot::ExplorerHandle> = None;~' "-p kiln-sim --test map_reload"
+add gateway    crates/kiln-sim/src/portal.rs     's~\} else if first == block::END_GATEWAY \{~} else if false \&\& first == block::END_GATEWAY {~' "-p kiln-sim --test dimensions a_mob_in_an_end_gateway"
+add spawnring  crates/kiln-sim/src/spawner.rs    's~if ticking\.contains_visible\(c\) && s\.any_close\(c\) \{~if ticking.contains_block(c) \&\& ticking.contains_visible(c) \&\& s.any_close(c) {~' "-p kiln-sim --test spawn_ring"
+add statuslayer crates/kiln-sim/src/blocks.rs    's~loading_block: layer_around\(&centers, view \+ 1\),~loading_block: layer_around(\&centers, view),~' "-p kiln-sim --lib blocks::tests::blocks_tick_one"
+add randomlayer crates/kiln-sim/src/blocks.rs    's~random: layer_around\(&centers, simulation\.min\(view \+ 1\)\),~random: layer_around(\&centers, simulation.min(view)),~' "-p kiln-sim --lib blocks::tests::blocks_tick_one"
 run() {
   local name=$1 file=${FILE[$1]} edit=${EDIT[$1]} test=${TEST[$1]}
   git checkout -q -- "$file"
