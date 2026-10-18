@@ -438,6 +438,10 @@ fn no_spawner_delay(t: Tag) -> Tag {
                     }
                 }
             }
+            // (A stand's `movement_speed` instance is made by its first tick, which the recorded level does not run.)
+            if fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:armor_stand")) {
+                fields.retain(|(k, _)| k != "attributes");
+            }
             // (An item entity's age and health: Kiln's level ticks between the steps.)
             if fields.iter().any(|(k, v)| k == "id" && v.as_str() == Some("minecraft:item")) {
                 fields.retain(|(k, _)| !matches!(k.as_str(), "Age" | "Health" | "PickupDelay"));
