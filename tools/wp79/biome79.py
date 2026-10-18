@@ -1,8 +1,10 @@
 """wp79 item 3: do Kiln (K) and vanilla (V) agree on `level.getBiome(pos)` (the noise-shifted lookup the spawner uses) in the nether around the roof farm?
 Both servers (seed 77, fresh or kept) are asked `execute in minecraft:the_nether if biome X Y Z <biome>` on a grid; every answer is compared.
 usage: biome79.py [STEP] [HALF]    grid step (default 8) and half width (default 96) around the farm (-64, 64)"""
-import re, sys, time
+import os, re, sys, time
 from lk import *
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from biomes_saved import stored_biome
 
 STEP = int(sys.argv[1]) if len(sys.argv) > 1 else 8
 HALF = int(sys.argv[2]) if len(sys.argv) > 2 else 96
@@ -20,6 +22,7 @@ for t in "KV":
 time.sleep(60)
 bad = 0
 total = 0
+agree = {"K": 0, "V": 0}
 by_biome = {t: {} for t in "KV"}
 for y in YS:
     for x in range(CX - HALF, CX + HALF + 1, STEP):
@@ -34,11 +37,16 @@ for y in YS:
                         break
                 res[t] = found
             total += 1
+            st = stored_biome(os.path.expanduser("~/wp79/K/world"), "dimensions/minecraft/the_nether", x, y, z)
+            st = st.replace("minecraft:", "") if st else None
+            res["S"] = st
+            for t in "KV":
+                agree[t] += res[t] == st
             for t in "KV":
                 by_biome[t][res[t]] = by_biome[t].get(res[t], 0) + 1
             if res["K"] != res["V"]:
                 bad += 1
                 print("DIFF", x, y, z, res, flush=True)
-print("points", total, "different", bad)
+print("points", total, "different", bad, "agree with the stored quart: K", agree["K"], "V", agree["V"])
 print("K", by_biome["K"])
 print("V", by_biome["V"])
