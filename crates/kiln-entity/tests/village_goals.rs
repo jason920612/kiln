@@ -11,6 +11,7 @@ fn world(village: bool) -> MemoryLevel {
     let mut level = MemoryLevel::new(-64, 42);
     level.difficulty = 2;
     level.sky_darken = 11;
+    level.day_time = 18000;
     level.immediate_adds = true;
     for x in -80..=80 {
         for z in -80..=80 {
