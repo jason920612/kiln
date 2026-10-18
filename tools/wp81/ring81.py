@@ -105,6 +105,8 @@ if MODE in ("forced", "pearl"):
         time.sleep(0.5)
         both(f"forceload remove {block_x(0)} {CZ * 16 + 8}")
         step(2)
+        for t in "KV":
+            print(t, "forceload list:", ask(t, "forceload query", wait=0.3).strip()[-100:])
         report("2 ticks after the pearl was summoned and the forceload removed")
         step(58)
         report("60 ticks: the pearl's ticket holds the chunks")
