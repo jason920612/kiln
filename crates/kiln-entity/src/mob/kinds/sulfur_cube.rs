@@ -380,11 +380,6 @@ struct SulfurCubeTempt {
     calm_down: i32,
 }
 
-/// The items `addBehaviourGoals` tempts with: a baby's feed, else what can be swallowed.
-fn tempts(m: &MobData, item: i32) -> bool {
-    item != 0 && if m.baby() { mob::item_tag(item, "minecraft:sulfur_cube_food") } else { swallowable(item) }
-}
-
 impl CustomGoal for SulfurCubeTempt {
     custom_goal_boilerplate!();
     fn name(&self) -> &'static str {

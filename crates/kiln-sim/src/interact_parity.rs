@@ -605,6 +605,9 @@ fn run_case(line: &Value) -> Vec<String> {
     // (The vectors' recorder adds the entities of its setup without ticking them.)
     config.summons_join_late = true;
     let mut sim = Sim::new(config);
+    // (The vectors' level is the_void: no spawn entries, so nothing spawns naturally. Kiln's replay level is not, and animals may spawn farther than 128 blocks from the
+    // player, which the scenarios' player 160 blocks above the floor now has them do, as `EntityType.canSpawnFarFromPlayer` says.)
+    sim.spawn_table = None;
     // (Vaults roll loot tables: the level has the vanilla ones whatever the working directory.)
     if line["ticking"].as_bool() == Some(true) && sim.loot.is_none() {
         sim.loot = crate::combat_parity::vanilla_loot();

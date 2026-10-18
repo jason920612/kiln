@@ -16,7 +16,7 @@ use kiln_data::entities::{EntityType, data};
 use kiln_entity::level::{DamageKind, PlayerView};
 use kiln_entity::math::{Aabb, BlockPos, Vec3};
 use kiln_entity::{EntityFilter, EntityKind, EntityLevel, Event};
-use kiln_javamath::random::{LegacyRandom, RandomSource};
+use kiln_javamath::random::LegacyRandom;
 use kiln_link::ConnId;
 use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, MovementTracker};
 use kiln_proto::packets::{hud, world_fx};

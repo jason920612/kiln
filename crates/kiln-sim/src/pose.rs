@@ -27,6 +27,7 @@ impl Player {
 
     /// The shift key goes down or up together with the pose (what the vectors' harness does
     /// with `setShiftKeyDown` and `setPose`; the server's tick would settle it a tick later).
+    #[cfg(test)]
     pub(crate) fn set_shift_key(&mut self, on: bool) {
         self.sneaking = on;
         self.pose = if on { pose::CROUCHING } else { pose::STANDING };

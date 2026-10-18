@@ -4,7 +4,7 @@
 //! Skipped without the vectors.
 
 use kiln_entity::ext_entity::fishing_hook;
-use kiln_entity::level::{EntityLevel, PlayerView};
+use kiln_entity::level::PlayerView;
 use kiln_entity::math::{BlockPos, Vec3};
 use kiln_entity::memory::MemoryLevel;
 use serde_json::Value;
@@ -84,6 +84,9 @@ fn bobbers_match_vanilla_tick_by_tick() {
                 e.position().x, e.position().y, e.position().z, e.delta.x, e.delta.y, e.delta.z,
             ];
             let w: Vec<f64> = want.as_array().unwrap()[..13].iter().map(|x| x.as_bool().map_or_else(|| num(x), |b| b as u8 as f64)).collect();
+            if std::env::var("KILN_FISHING_RANDOM").is_ok_and(|n| name == n) {
+                eprintln!("RANDOM {name} t={} {}", t + 1, e.random.state());
+            }
             kiln_rows.push(got);
             values += got.len();
             // (The fish angle is a float: the vector has its shortest decimal form.)
@@ -108,11 +111,6 @@ fn bobbers_match_vanilla_tick_by_tick() {
     for f in failures.iter().take(std::env::var("KILN_FISHING_SHOW").ok().and_then(|n| n.parse().ok()).unwrap_or(12)) {
         eprintln!("FAIL {f}");
     }
-    // Cases whose bobber ends up resting against the corner of a neighbouring block, or in a bubble column or a mix of flowing water around
-    // trapdoors and ice: the bobber's own logic (timers, draws, bobbing) is the same, the box-against-shape physics in these patches is not yet
-    // (not investigated: wp77 found the flowing-water bug and fixed it; see docs/wp77.md).
-    const KNOWN: [&str; 5] = ["fishing_20", "fishing_32", "fishing_50", "fishing_68", "fishing_116"];
-    let new: Vec<&String> = failures.iter().filter(|f| !KNOWN.iter().any(|k| f.starts_with(&format!("{k} ")))).collect();
-    eprintln!("fishing: {cases} cases, {values} values, {} differ ({} of them the known ones)", failures.len(), failures.len() - new.len());
-    assert!(new.is_empty(), "{} fishing cases differ: {new:?}", new.len());
+    eprintln!("fishing: {cases} cases, {values} values, {} differ", failures.len());
+    assert!(failures.is_empty(), "{} fishing cases differ: {:?}", failures.len(), failures.iter().map(|f| f.split_whitespace().next().unwrap_or("")).collect::<Vec<_>>());
 }

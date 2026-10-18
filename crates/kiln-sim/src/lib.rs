@@ -563,6 +563,10 @@ struct Player {
     ack_block_changes: i32,
     /// View distance the sent chunks were last trimmed to.
     applied_view: i32,
+    /// The chunk and server view distance for which every chunk within the server's view (the
+    /// ones the client's own smaller view does not show, but vanilla's player tickets load) was
+    /// last seen loaded (see `region::load_ahead`).
+    load_checked: Option<(ChunkPos, i32)>,
     /// The player's random source (item throws), seeded from its UUID.
     rng: rng::Rng,
     /// `Entity.random` for enchantment effects (thorns damage), Java-exact.
@@ -3503,6 +3507,7 @@ impl Sim {
         p.vel = [0.0; 3];
         p.sync_velocity = false;
         p.sent_chunks.clear();
+        p.load_checked = None;
         p.unacked_batches = 0;
         if lost {
             // `NO_RESPAWN_BLOCK_AVAILABLE`: "You have no home bed or charged respawn anchor...".
@@ -3971,6 +3976,7 @@ impl Sim {
             position_this_tick: false,
             ack_block_changes: -1,
             applied_view: view_distance,
+            load_checked: None,
             rng: rng::Rng::new(j.uuid.as_u64_pair().0 ^ j.uuid.as_u64_pair().1),
             entity_rng: kiln_javamath::random::LegacyRandom::new(j.uuid.as_u64_pair().0 as i64),
             level_rng: kiln_javamath::random::LegacyRandom::new(j.uuid.as_u64_pair().1 as i64),

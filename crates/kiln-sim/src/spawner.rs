@@ -720,7 +720,7 @@ pub(crate) fn tick(
     // tick of `InhabitedTime`, whether or not anything may spawn.
     level.cells.for_each_cell_mut(&mut |pos, cell| {
         for (c, chunk) in cell.chunks_mut(pos) {
-            if ticking.contains(c) && s.any_close(c) {
+            if ticking.contains_block(c) && s.any_close(c) {
                 chunk.increment_inhabited_time();
             }
         }
@@ -729,11 +729,12 @@ pub(crate) fn tick(
         return;
     }
     let dt = crate::diag::lap("s.c_state", dt);
-    // `collectSpawningChunks`: loaded, ticking chunks with a player within 128 blocks.
+    // `collectSpawningChunks`: loaded chunks at block-ticking level (one chunk further than entities tick) with a player within 128 blocks, which
+    // `tickSpawningChunk` then spawns in only if entities tick there (`ServerLevel.canSpawnEntitiesInChunk`: within the view distance).
     let mut chunks: Vec<(u64, ChunkPos)> = Vec::new();
     level.cells.for_each_cell(&mut |pos, cell| {
         for (c, _) in cell.chunks(pos) {
-            if ticking.contains(c) && s.any_close(c) {
+            if ticking.contains_block(c) && ticking.contains_visible(c) && s.any_close(c) {
                 let mut h = (env.seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ env.game_time as u64;
                 h ^= (c.x as u32 as u64) << 32 | c.z as u32 as u64;
                 h = (h ^ (h >> 31)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -925,7 +926,7 @@ fn spawn_category_for_chunk(
                 continue;
             }
             let pc = ChunkPos::of_block(px, pz);
-            if pc != c && !ticking.contains(pc) {
+            if pc != c && !ticking.contains_visible(pc) {
                 continue;
             }
             let pos = KBlockPos::new(px, y, pz);
@@ -957,8 +958,10 @@ fn spawn_category_for_chunk(
             // `isValidSpawnPostitionForType`.
             let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
             let valid = 'valid: {
-                // The nearest player within the despawn distance.
-                if !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
+                // The nearest player within the despawn distance, unless the type may spawn far from players (`EntityType.canSpawnFarFromPlayer`: the
+                // creature and misc categories, and pillagers and shulkers).
+                let far_ok = matches!(kind.category(), Category::Creature | Category::Misc) || matches!(kind, MobKind::Pillager | MobKind::Shulker);
+                if !far_ok && !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
                     break 'valid false;
                 }
                 // `canSpawnMobAt`: what was picked is among what spawns at this very place.

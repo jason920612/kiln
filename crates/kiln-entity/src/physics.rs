@@ -69,6 +69,7 @@ struct StateEntry {
 
 const FALLING: u16 = 1 << 0;
 const SOURCE: u16 = 1 << 1;
+#[cfg(test)]
 const AIR: u16 = 1 << 2;
 const LIQUID: u16 = 1 << 3;
 const SOLID: u16 = 1 << 4;

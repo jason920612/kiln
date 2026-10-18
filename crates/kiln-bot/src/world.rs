@@ -198,20 +198,8 @@ impl World {
         self.cols.remove(&(x, z));
     }
 
-    pub fn clear(&mut self) {
-        self.cols.clear();
-    }
-
     pub fn has_chunk(&self, cx: i32, cz: i32) -> bool {
         self.cols.contains_key(&(cx, cz))
-    }
-
-    pub fn len(&self) -> usize {
-        self.cols.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.cols.is_empty()
     }
 
     /// The block state at a position; `None` for chunks not received. Above and below the

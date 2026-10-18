@@ -976,55 +976,99 @@ impl Level for RegionLevel<'_> {
     }
 }
 
-/// Chunks within simulation distance of a player: a bit per chunk of each cell.
-pub(crate) struct Ticking(crate::FastMap<CellPos, u64>);
+/// A bit per chunk of each cell.
+type Layer = crate::FastMap<CellPos, u64>;
+
+/// What ticks where, by chunk (vanilla's two simulation levels and the entities' visibility):
+///
+/// * entity ticking (`inEntityTickingRange`: the simulation ticket's level 31, a chunk within the simulation distance `S` of a player): entities, random
+///   ticks, thunder;
+/// * block ticking (`inBlockTickingRange`, level 32: within `S + 1`): scheduled block and fluid ticks, block events, block entities, the chunks natural
+///   spawning picks from (`ChunkHolder.getTickingChunk`), sculk and vibrations;
+/// * visible ticking (`PersistentEntitySectionManager.canPositionTick`: the loading tickets' level 31, within the server's view distance `V`): a pack
+///   spawned by `NaturalSpawner` may walk into those chunks (`ServerLevel.canSpawnEntitiesInChunk`).
+///
+/// The first two are capped by the loading tickets as well (the chunk must be at its status): `S` by `V`, `S + 1` by `V + 1`.
+#[derive(Clone)]
+pub(crate) struct Ticking {
+    entity: Layer,
+    block: Layer,
+    visible: Layer,
+}
+
+fn layer_around(centers: &[ChunkPos], r: i32) -> Layer {
+    let mut cells: Layer = Default::default();
+    for c in centers {
+        let (x0, x1, z0, z1) = (c.x - r, c.x + r, c.z - r, c.z + r);
+        for cx in x0.div_euclid(CELL_CHUNKS)..=x1.div_euclid(CELL_CHUNKS) {
+            for cz in z0.div_euclid(CELL_CHUNKS)..=z1.div_euclid(CELL_CHUNKS) {
+                let (bx, bz) = (cx * CELL_CHUNKS, cz * CELL_CHUNKS);
+                let (lx0, lx1) = (x0.max(bx) - bx, x1.min(bx + CELL_CHUNKS - 1) - bx);
+                let (lz0, lz1) = (z0.max(bz) - bz, z1.min(bz + CELL_CHUNKS - 1) - bz);
+                let row = ((1u64 << (lx1 - lx0 + 1)) - 1) << lx0;
+                let mask = (lz0..=lz1).fold(0u64, |m, lz| m | row << (lz * CELL_CHUNKS));
+                *cells.entry(ChunkPos::new(bx, bz).cell()).or_default() |= mask;
+            }
+        }
+    }
+    cells
+}
+
+fn layer_has(layer: &Layer, c: ChunkPos) -> bool {
+    let bit = c.z.rem_euclid(CELL_CHUNKS) * CELL_CHUNKS + c.x.rem_euclid(CELL_CHUNKS);
+    layer.get(&c.cell()).is_some_and(|m| m & (1 << bit) != 0)
+}
 
 impl Ticking {
-    pub fn around(centers: impl Iterator<Item = ChunkPos>, r: i32) -> Self {
+    /// The chunks around `centers` for simulation distance `simulation` and server view distance `view`.
+    pub fn around(centers: impl Iterator<Item = ChunkPos>, simulation: i32, view: i32) -> Self {
         let mut centers: Vec<ChunkPos> = centers.collect();
         centers.sort_unstable();
         centers.dedup();
-        let mut cells: crate::FastMap<CellPos, u64> = Default::default();
-        for c in centers {
-            let (x0, x1, z0, z1) = (c.x - r, c.x + r, c.z - r, c.z + r);
-            for cx in x0.div_euclid(CELL_CHUNKS)..=x1.div_euclid(CELL_CHUNKS) {
-                for cz in z0.div_euclid(CELL_CHUNKS)..=z1.div_euclid(CELL_CHUNKS) {
-                    let (bx, bz) = (cx * CELL_CHUNKS, cz * CELL_CHUNKS);
-                    let (lx0, lx1) = (x0.max(bx) - bx, x1.min(bx + CELL_CHUNKS - 1) - bx);
-                    let (lz0, lz1) = (z0.max(bz) - bz, z1.min(bz + CELL_CHUNKS - 1) - bz);
-                    let row = ((1u64 << (lx1 - lx0 + 1)) - 1) << lx0;
-                    let mask = (lz0..=lz1).fold(0u64, |m, lz| m | row << (lz * CELL_CHUNKS));
-                    *cells.entry(ChunkPos::new(bx, bz).cell()).or_default() |= mask;
-                }
-            }
+        Self {
+            entity: layer_around(&centers, simulation.min(view)),
+            block: layer_around(&centers, (simulation + 1).min(view + 1)),
+            visible: layer_around(&centers, view),
         }
-        Self(cells)
     }
 
-    /// Adds one chunk (a force-loaded one).
+    /// Adds one chunk (a force-loaded one: its tickets are at level 31 for everything).
     pub fn add_chunk(&mut self, c: ChunkPos) {
         let bit = c.z.rem_euclid(CELL_CHUNKS) * CELL_CHUNKS + c.x.rem_euclid(CELL_CHUNKS);
-        *self.0.entry(c.cell()).or_default() |= 1 << bit;
+        for layer in [&mut self.entity, &mut self.block, &mut self.visible] {
+            *layer.entry(c.cell()).or_default() |= 1 << bit;
+        }
     }
 
-    /// Chunks within `r` of `center` tick too (the dragon fight's arena).
+    /// Chunks within `r` of `center` tick too (the dragon fight's arena, `TicketType.DRAGON`).
     pub fn add(&mut self, center: ChunkPos, r: i32) {
-        let other = Ticking::around(std::iter::once(center), r);
-        for (cell, mask) in other.0 {
-            *self.0.entry(cell).or_default() |= mask;
+        for (layer, r) in [(&mut self.entity, r), (&mut self.block, r + 1), (&mut self.visible, r)] {
+            for (cell, mask) in layer_around(&[center], r) {
+                *layer.entry(cell).or_default() |= mask;
+            }
         }
     }
 
     /// These chunks and those within `r` of `center` (the dragon fight's arena).
     pub fn with_arena(&self, center: ChunkPos, r: i32) -> Ticking {
-        let mut t = Ticking(self.0.clone());
+        let mut t = self.clone();
         t.add(center, r);
         t
     }
 
+    /// Whether entities and random ticks run in `c`.
     pub fn contains(&self, c: ChunkPos) -> bool {
-        let bit = c.z.rem_euclid(CELL_CHUNKS) * CELL_CHUNKS + c.x.rem_euclid(CELL_CHUNKS);
-        self.0.get(&c.cell()).is_some_and(|m| m & (1 << bit) != 0)
+        layer_has(&self.entity, c)
+    }
+
+    /// Whether scheduled ticks, block events and block entities run in `c`.
+    pub fn contains_block(&self, c: ChunkPos) -> bool {
+        layer_has(&self.block, c)
+    }
+
+    /// Whether `c` is entity-visible ticking (a spawned pack may stand in it).
+    pub fn contains_visible(&self, c: ChunkPos) -> bool {
+        layer_has(&self.visible, c)
     }
 }
 
@@ -1044,7 +1088,8 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
     let dt = std::time::Instant::now();
     apply_generated(level);
     let dt = crate::diag::lap("tb.generated", dt);
-    let can_tick = |k: ChunkKey| ticking.contains(ChunkPos::new(k.0, k.1));
+    // Scheduled ticks run where blocks tick (`ServerLevel.shouldTickBlocksAt`: one chunk further than entities and random ticks).
+    let can_tick = |k: ChunkKey| ticking.contains_block(ChunkPos::new(k.0, k.1));
     kiln_blocks::tick::run_block_ticks(level, can_tick);
     let dt = crate::diag::lap("tb.block_ticks", dt);
     // The fluids' light waits for the end of their ticks and is then spread once (`relight`: the same light as block
@@ -1101,7 +1146,7 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
     }
     let dt = crate::diag::lap("tb.random", dt);
     level.out.events_from.get_or_insert(level.out.changed.len());
-    kiln_blocks::block_events::run_block_events(level, |p| ticking.contains(chunk_of(p)));
+    kiln_blocks::block_events::run_block_events(level, |p| ticking.contains_block(chunk_of(p)));
     // `SignBlockEntity.tick`: editing locks of players who left.
     crate::signs::tick(level);
     crate::diag::lap("tb.events", dt);
@@ -1302,7 +1347,7 @@ pub(crate) fn tick_pistons(level: &mut RegionLevel, ticking: &Ticking) {
     if level.blocks.data.pistons.is_empty() {
         return;
     }
-    kiln_blocks::tick_moving_pistons(level, |p| ticking.contains(chunk_of(p)));
+    kiln_blocks::tick_moving_pistons(level, |p| ticking.contains_block(chunk_of(p)));
 }
 
 /// `Level.tickBlockEntities` for the shulker boxes whose lid is on the move.
@@ -1310,7 +1355,7 @@ pub(crate) fn tick_lids(level: &mut RegionLevel, ticking: &Ticking) {
     if level.blocks.data.pistons.lids.is_empty() {
         return;
     }
-    kiln_blocks::tick_lids(level, |p| ticking.contains(chunk_of(p)));
+    kiln_blocks::tick_lids(level, |p| ticking.contains_block(chunk_of(p)));
 }
 
 /// `Entity.checkInsideBlocks` for pressure plates and tripwires: every body standing in a plate
@@ -2133,9 +2178,26 @@ mod tests {
 
     #[test]
     fn ticking_chunks_are_within_the_distance_of_a_player() {
-        let t = Ticking::around([ChunkPos::new(0, 0), ChunkPos::new(0, 0), ChunkPos::new(-20, 5)].into_iter(), 2);
+        let t = Ticking::around([ChunkPos::new(0, 0), ChunkPos::new(0, 0), ChunkPos::new(-20, 5)].into_iter(), 2, 8);
         for (x, z, want) in [(0, 0, true), (2, -2, true), (3, 0, false), (-2, 2, true), (-22, 7, true), (-23, 5, false), (-18, 3, true), (-18, 2, false)] {
             assert_eq!(t.contains(ChunkPos::new(x, z)), want, "{x},{z}");
+        }
+    }
+
+    /// Entities and random ticks reach the simulation distance, scheduled ticks and block entities one chunk further (`inBlockTickingRange`; the water probe of
+    /// `tools/wp79/simradius79.py` spreads at distance 7 with a simulation distance of 6, a baby cow's Age only rises to 6), both capped by what the view distance
+    /// loads; a spawned pack may stand anywhere within the view distance.
+    #[test]
+    fn blocks_tick_one_chunk_further_than_entities() {
+        let t = Ticking::around([ChunkPos::new(0, 0)].into_iter(), 6, 8);
+        for (x, want_entity, want_block, want_visible) in [(6, true, true, true), (7, false, true, true), (8, false, false, true), (9, false, false, false)] {
+            let c = ChunkPos::new(x, 0);
+            assert_eq!((t.contains(c), t.contains_block(c), t.contains_visible(c)), (want_entity, want_block, want_visible), "distance {x}");
+        }
+        let capped = Ticking::around([ChunkPos::new(0, 0)].into_iter(), 12, 8);
+        for (x, want_entity, want_block) in [(8, true, true), (9, false, true), (10, false, false)] {
+            let c = ChunkPos::new(x, 0);
+            assert_eq!((capped.contains(c), capped.contains_block(c)), (want_entity, want_block), "capped, distance {x}");
         }
     }
 }

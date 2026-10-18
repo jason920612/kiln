@@ -165,6 +165,13 @@ public class FishingVectors {
                     if (centre && dy > 0) s = Blocks.AIR.defaultBlockState();
                     if (centre && dy < 0) s = Blocks.WATER.defaultBlockState();
                     level.setBlock(new BlockPos(X + dx, H + dy, Z + dz), s, 2);
+                }
+        // What the level holds now, not what was meant: placing a block changes its neighbours (a seagrass beside a lily pad turned into water here), and the
+        // bobber falls into what is really there.
+        for (int dx = -2; dx <= 2; dx++)
+            for (int dz = -2; dz <= 2; dz++)
+                for (int i = 0; i < 6; i++) {
+                    BlockState s = level.getBlockState(new BlockPos(X + dx, H + i - 2, Z + dz));
                     blocks.append(blocks.length() > 0 ? "," : "").append(Block.getId(s));
                     names.append(names.length() > 0 ? "," : "").append('"').append(s.toString().replace("Block{", "").replace("}", "").replace("\"", "'")).append('"');
                 }
@@ -195,13 +202,35 @@ public class FishingVectors {
         rf.set(hook, new net.minecraft.world.level.levelgen.LegacyRandomSource(seed));
         hook.setPos(X + 0.5, H + 0.9, Z + 0.5);
         hook.setDeltaMovement(Vec3.ZERO);
+        if (System.getenv("FISHING_AIR") != null && System.getenv("FISHING_DEBUG") != null && Integer.parseInt(System.getenv("FISHING_DEBUG")) == index)
+            for (String c : System.getenv("FISHING_AIR").split(";")) {
+                String[] p = c.split(",");
+                level.setBlock(new BlockPos(Integer.parseInt(p[0]), Integer.parseInt(p[1]), Integer.parseInt(p[2])), Blocks.AIR.defaultBlockState(), 2);
+            }
         long gameTime = level.getGameTime();
         StringBuilder ticks = new StringBuilder();
         for (int t = 1; t <= TICKS; t++) {
             // (What catchingFish asks of the light: the cell above the bobber's block, before the tick moves it.)
             BlockPos above = hook.blockPosition().above();
             boolean seesSky = level.canSeeSky(above);
+            String dbg0 = System.getenv("FISHING_DEBUG") != null && Integer.parseInt(System.getenv("FISHING_DEBUG")) == index && t >= Integer.getInteger("fishing.from", 40) && t <= Integer.getInteger("fishing.to", 48) ? debug(hook) : null;
+            hook.commonTick(); // (ServerLevel.tickNonPassenger: invulnerableTime, setOldPosAndRot, tickCount; without it the old position is stale and Entity.applyEffectsFromBlocks sweeps from the cast point)
             hook.tick();
+            if (dbg0 != null && System.getenv("FISHING_STEPS") != null) {
+                for (String s : System.getenv("FISHING_STEPS").split(";")) {
+                    String[] q = s.split(",");
+                    Vec3 a = new Vec3(Double.parseDouble(q[0]), Double.parseDouble(q[1]), Double.parseDouble(q[2])), b = new Vec3(Double.parseDouble(q[3]), Double.parseDouble(q[4]), Double.parseDouble(q[5]));
+                    System.out.println("step " + s + " ->" + stepVisits(level, hook, a, b));
+                }
+            }
+            if (dbg0 != null && System.getenv("FISHING_BLOCKS") != null) {
+                for (String s : System.getenv("FISHING_BLOCKS").split(";")) {
+                    String[] q = s.split(",");
+                    BlockPos bp = new BlockPos(Integer.parseInt(q[0]), Integer.parseInt(q[1]), Integer.parseInt(q[2]));
+                    System.out.println("block " + s + " = " + level.getBlockState(bp));
+                }
+            }
+            if (dbg0 != null) System.out.println("t=" + t + " before " + dbg0 + "\n      after " + debug(hook) + "\n      visits" + visits(level, hook, hook.position(), hook.position()));
             if (hook.isRemoved()) {
                 ticks.append(ticks.length() > 0 ? "," : "").append("null");
                 break;
@@ -216,6 +245,54 @@ public class FishingVectors {
         hook.discard();
         return String.format(Locale.ROOT, "{\"name\":\"fishing_%d\",\"luck_level\":%d,\"lure_level\":%d,\"luck\":%d,\"lure_speed\":%d,\"seed\":\"%d\",\"uuid_lsb\":\"%d\",\"game_time\":%d,\"blocks\":[%s],\"names\":[%s],\"ticks\":[%s]}",
                 index, luck, lure, hookLuck, hookLure, seed, uuidLsb, gameTime, blocks, names, ticks);
+    }
+
+    /** wp79: the state a collision depends on (FISHING_DEBUG=<case index>): position, motion, the multiplier a cobweb left, the collision flags. */
+    static String debug(FishingHook hook) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("pos=").append(hook.position()).append(" delta=").append(hook.getDeltaMovement()).append(" box=").append(hook.getBoundingBox());
+        for (String f : new String[] {"stuckSpeedMultiplier", "verticalCollision", "horizontalCollision", "onGround", "verticalCollisionBelow", "minorHorizontalCollision"}) {
+            try {
+                sb.append(" ").append(f).append("=").append(get(hook, Entity.class, f));
+            } catch (Exception e) {
+                sb.append(" ").append(f).append("=?");
+            }
+        }
+        try {
+            Object rnd = get(hook, Entity.class, "random");
+            Object seedField = get(rnd, rnd.getClass(), "seed");
+            sb.append(" random=").append(((java.util.concurrent.atomic.AtomicLong) seedField).get());
+        } catch (Exception e) {
+            sb.append(" random=?");
+        }
+        try {
+            sb.append(" movements=").append(get(hook, Entity.class, "finalMovementsThisTick"));
+        } catch (Exception e) {
+            sb.append(" movements=?");
+        }
+        return sb.toString();
+    }
+
+    /** wp79: the cells visited for one step, as Entity.checkInsideBlocks(from, to, ...) asks (the box at `to`, deflated). */
+    static String stepVisits(ServerLevel level, FishingHook hook, Vec3 from, Vec3 to) {
+        StringBuilder sb = new StringBuilder();
+        net.minecraft.world.phys.AABB box = hook.getDimensions(hook.getPose()).makeBoundingBox(to).deflate(9.999999747378752E-6);
+        net.minecraft.world.level.BlockGetter.forEachBlockIntersectedBetween(from, to, box, (pos, i) -> {
+            sb.append(" ").append(pos.toShortString()).append(":").append(level.getBlockState(pos).getBlock().getDescriptionId().replace("block.minecraft.", "")).append("@").append(i);
+            return true;
+        });
+        return sb.toString();
+    }
+
+    /** wp79: the blocks the swept box of a tick visits (BlockGetter.forEachBlockIntersectedBetween, as Entity.checkInsideBlocks asks for them). */
+    static String visits(ServerLevel level, FishingHook hook, Vec3 from, Vec3 to) {
+        StringBuilder sb = new StringBuilder();
+        net.minecraft.world.phys.AABB box = hook.getBoundingBox().deflate(9.999999747378752E-6);
+        net.minecraft.world.level.BlockGetter.forEachBlockIntersectedBetween(from, to, box, (pos, i) -> {
+            sb.append(" ").append(pos.toShortString()).append(":").append(level.getBlockState(pos).getBlock().getDescriptionId().replace("block.minecraft.", ""));
+            return true;
+        });
+        return sb.toString();
     }
 
     static void writeServerFiles() throws Exception {

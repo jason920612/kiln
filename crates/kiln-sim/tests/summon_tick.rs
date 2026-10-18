@@ -34,7 +34,7 @@ fn a_summoned_zombie_next_to_a_player_stays() {
     let (msg, stats) = join(1, "Watcher", 2);
     assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into()), ToSim::Console("difficulty normal".into()), ToSim::Console("gamemode creative Watcher".into())]));
     let mut client = Client::new(1, stats);
-    let mut tick = |sim: &mut Sim, client: &mut Client, extra: Vec<ToSim>| {
+    let tick = |sim: &mut Sim, client: &mut Client, extra: Vec<ToSim>| {
         let mut inbox = extra;
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));

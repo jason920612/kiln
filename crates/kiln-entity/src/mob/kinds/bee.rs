@@ -235,14 +235,13 @@ impl Kind for Bee {
     }
 
     fn register_goals(&self, m: &mut MobData) {
-        let (vh, vf) = (st(m).validate_hive, st(m).validate_flower);
         let g = &mut m.goals;
         g.add(0, Goal::Melee { kind: MeleeKind::Bee, speed: 1.399999976158142, follow_unseen: true, path: None, recalc: 0, next_attack: 0, last_can_use: 0, pathed: Vec3::ZERO, raise_arm: 0 });
         g.add(1, Goal::Custom(Box::new(EnterHiveGoal)));
         g.add(2, Goal::Breed { speed: 1.0, partner: None, love_time: 0 });
         g.add(3, Goal::Tempt { speed: 1.25, calm_down: 0, player: None });
-        g.add(3, Goal::Custom(Box::new(ValidateHiveGoal { cooldown: vh, last_validate: -1 })));
-        g.add(3, Goal::Custom(Box::new(ValidateFlowerGoal { cooldown: vf, last_validate: -1 })));
+        g.add(3, Goal::Custom(Box::new(ValidateHiveGoal { last_validate: -1 })));
+        g.add(3, Goal::Custom(Box::new(ValidateFlowerGoal { last_validate: -1 })));
         g.add(4, Goal::Custom(Box::new(PollinateGoal::default())));
         g.add(5, Goal::FollowParent { speed: 1.25, parent: None, recalc: 0 });
         g.add(5, Goal::Custom(Box::new(LocateHiveGoal)));
@@ -545,7 +544,6 @@ impl CustomGoal for EnterHiveGoal {
 /// `Bee$ValidateHiveGoal`: now and then the known hive is looked at again.
 #[derive(Clone, Debug)]
 struct ValidateHiveGoal {
-    cooldown: i32,
     last_validate: i64,
 }
 
@@ -580,7 +578,6 @@ impl CustomGoal for ValidateHiveGoal {
 /// `Bee$ValidateFlowerGoal`.
 #[derive(Clone, Debug)]
 struct ValidateFlowerGoal {
-    cooldown: i32,
     last_validate: i64,
 }
 

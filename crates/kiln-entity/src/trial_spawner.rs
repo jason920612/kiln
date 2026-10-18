@@ -481,10 +481,6 @@ impl TrialBe {
         self.resolved[usize::from(ominous)].clone().unwrap_or_default()
     }
 
-    fn config_of(&self, ominous: bool) -> Arc<Config> {
-        self.active(ominous)
-    }
-
     fn mark_updated(&mut self) {
         self.updated = true;
         self.changed = true;

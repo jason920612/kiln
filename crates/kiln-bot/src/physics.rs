@@ -18,7 +18,6 @@ pub struct Input {
     pub forward: bool,
     pub jump: bool,
     pub sprint: bool,
-    pub sneak: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

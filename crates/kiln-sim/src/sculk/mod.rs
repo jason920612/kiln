@@ -607,7 +607,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, ticking: &crate::bloc
         .sculk
         .map
         .iter()
-        .filter(|(p, _)| ticking.contains(chunk_of(**p)))
+        .filter(|(p, _)| ticking.contains_block(chunk_of(**p)))
         .map(|(p, b)| (*p, b.kind))
         .collect();
     for (p, kind) in due {
@@ -644,7 +644,7 @@ fn tick_listener(level: &mut RegionLevel, p: BlockPos, kind: Kind, ticking: &cra
     let adjacent = (-1..=1).all(|dx| {
         (-1..=1).all(|dz| {
             let n = ChunkPos::new(c.x + dx, c.z + dz);
-            ticking.contains(n) && level.cells.chunk(n).is_some()
+            ticking.contains_block(n) && level.cells.chunk(n).is_some()
         })
     });
     if !adjacent {

@@ -1499,19 +1499,27 @@ impl Host for Sim {
             .map_or(min_y, |y| y + 1)
     }
 
-    /// The stored biome of the 4x4x4 cell holding `pos` (vanilla adds a seeded jitter between
-    /// neighbouring cells, which only matters at biome borders).
+    /// `Level.getBiome(pos)`: the stored biome of the quart `BiomeManager` picks for `pos` (the voronoi zoom moves the borders by up to a cell), as
+    /// `execute if biome` asks for it.
     fn biome(&mut self, dimension: &str, pos: [i32; 3]) -> Option<String> {
         let [x, y, z] = pos;
-        let chunk = self.dims[crate::dim_id(dimension)?].regions.chunk(ChunkPos::of_block(x, z))?;
-        let rel = y - chunk.min_y();
-        let section = chunk.sections.get(usize::try_from(rel >> 4).ok()?)?;
-        let id = match &section.biomes {
-            kiln_world::section::Biomes::Single(b) => b.to_owned(),
-            kiln_world::section::Biomes::Cells(cells) => {
-                cells[((((rel & 15) >> 2) << 4) | (((z & 15) >> 2) << 2) | ((x & 15) >> 2)) as usize]
-            }
+        let dim = crate::dim_id(dimension)?;
+        let regions = &self.dims[dim].regions;
+        regions.chunk(ChunkPos::of_block(x, z))?;
+        let min_y = self.dims[dim].provider.dimension.min_y;
+        let height = self.dims[dim].provider.dimension.height;
+        // `getNoiseBiome(x, y, z)`: the stored quart, y clamped to the level (a quart of an unloaded chunk reads as the one the position is in).
+        let stored = |qx: i32, qy: i32, qz: i32| -> Option<u16> {
+            let chunk = regions.chunk(ChunkPos::new(qx >> 2, qz >> 2))?;
+            let rel = (qy - (min_y >> 2)).clamp(0, (height >> 2) - 1);
+            let section = chunk.sections.get((rel >> 2) as usize)?;
+            Some(match &section.biomes {
+                kiln_world::section::Biomes::Single(b) => *b,
+                kiln_world::section::Biomes::Cells(cells) => cells[(((rel & 3) as usize) << 4) | (((qz & 3) as usize) << 2) | (qx & 3) as usize],
+            })
         };
+        let fallback = stored(x >> 2, y >> 2, z >> 2)?;
+        let id = kiln_worldgen::generator::zoomed_biome(self.zoom_seed, x, y, z, &mut |qx, qy, qz| stored(qx, qy, qz).unwrap_or(fallback));
         let biomes = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?.1;
         biomes.get(id as usize).map(|b| (*b).to_owned())
     }

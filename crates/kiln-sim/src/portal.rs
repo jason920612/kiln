@@ -1135,6 +1135,7 @@ impl Sim {
         p.fall_distance = 0.0;
         p.vel = [0.0; 3];
         p.sent_chunks.clear();
+        p.load_checked = None;
         p.unacked_batches = 0;
         p.teleport(pos, rot, now);
         // `ServerPlayer.teleport` sends the abilities after the position.

@@ -290,7 +290,8 @@ impl DamageEffects {
         }
     }
 
-    /// By the name the datapack gives (`effects`; absent: `hurt`).
+    /// By the name the datapack gives (`effects`; absent: `hurt`), for the tests that check the datapack's damage types.
+    #[cfg(test)]
     fn by_name(name: Option<&str>) -> DamageEffects {
         match name {
             Some("thorns") => DamageEffects::Thorns,

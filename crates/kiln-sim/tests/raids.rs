@@ -122,8 +122,12 @@ fn bad_omen_in_a_village_starts_a_raid_with_waves_until_victory() {
     assert_eq!(raids[0].2, 1, "first wave spawned: {raids:?}");
     let pillagers = w.mobs("minecraft:pillager");
     assert!(pillagers.len() >= 4, "{pillagers:?}");
-    let leaders: Vec<_> = pillagers.iter().filter_map(|&id| w.sim.raider(id)).filter(|r| r.2 && r.4).collect();
-    assert_eq!(leaders.len(), 1, "one leader with the banner");
+    // (A vindicator is part of the wave when the raid's random says so - 0 or 1 on normal, `getPotentialBonusSpawns` - and then it is the one that
+    // leads: the first raider of the first type that can lead. Which raid random the wave sees depends on how many places the spawn search tried,
+    // which depends on the chunks loaded around the village.)
+    let raiders: Vec<i32> = pillagers.iter().copied().chain(w.mobs("minecraft:vindicator")).collect();
+    let leaders: Vec<_> = raiders.iter().filter_map(|&id| w.sim.raider(id)).filter(|r| r.2 && r.4).collect();
+    assert_eq!(leaders.len(), 1, "one leader with the banner: {:?}", raiders.iter().map(|&id| (id, w.sim.raider(id))).collect::<Vec<_>>());
     assert!(pillagers.iter().all(|&id| w.sim.raider(id).is_some_and(|r| r.0 == Some(raids[0].0) && r.1 == 1)));
     assert!(raids[0].5 >= 4 && raids[0].6 > 0.0, "raiders alive and the bar full: {raids:?}");
     // Each wave gone brings the next after its countdown, until the last (five waves on normal,

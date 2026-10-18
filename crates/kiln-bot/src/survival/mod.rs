@@ -45,7 +45,6 @@ macro_rules! trace {
         }
     };
 }
-pub(crate) use trace;
 
 /// What a bot does with its time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
@@ -317,10 +316,6 @@ impl Agent {
         self.sent.rot = (yaw, pitch);
     }
 
-    pub fn role(&self) -> Role {
-        self.cfg.role
-    }
-
     // ---- events from the connection -----------------------------------------------------
 
     /// A Level Chunk With Light packet body (after the packet id).
@@ -338,6 +333,7 @@ impl Agent {
     }
 
     /// A chunk that arrived but was not parsed (only its coordinates are known).
+    #[cfg(test)]
     pub fn on_chunk_coords(&mut self, x: i32, z: i32) {
         self.chunk_arrived(x, z);
     }

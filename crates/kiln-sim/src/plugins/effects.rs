@@ -8,7 +8,7 @@
 
 use super::{Hud, entity_data, plain, text_tag};
 use crate::container::open::OpenBlock;
-use crate::{Player, Sim};
+use crate::Sim;
 use kiln_command::{BlockInput, GameMode, Host, Identifier, StringReader, Teleport, Text, UpdateFlags};
 use kiln_world::Blocks;
 use kiln_link::ConnId;
@@ -503,12 +503,5 @@ impl Sim {
             }
         }
         all
-    }
-}
-
-impl Player {
-    /// Whether the player has a plugin menu open.
-    pub(crate) fn has_plugin_menu(&self) -> bool {
-        matches!(self.containers.open, Some(OpenBlock::Plugin(_)))
     }
 }

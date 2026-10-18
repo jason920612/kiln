@@ -15,7 +15,6 @@ use crate::mob::{GroupData, MobData, MobKind, SpawnContext};
 use crate::persist::{Input, Output};
 use kiln_data::entities::data;
 use kiln_javamath::random::{LegacyRandom, RandomSource};
-use kiln_proto::nbt::Tag;
 use kiln_proto::packets::entity::{DataValue, EntityData};
 
 pub struct PolarBear;

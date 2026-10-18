@@ -181,7 +181,6 @@ pub(crate) fn approximate_attribute(m: &MobData, stack: &ItemStack, attr: Attr, 
             G::Armor => (mob::FEET..=mob::HEAD).contains(&slot) || slot == 6,
             G::Body => slot == 6,
             G::Saddle => slot == 7,
-            _ => false,
         };
         if !fits {
             continue;

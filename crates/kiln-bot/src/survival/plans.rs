@@ -2,7 +2,7 @@
 //! around, food, what was built so far) into the next few steps.
 
 use super::steps::{PlaceSpec, Step};
-use super::{Agent, Dir, Role, add};
+use super::{Agent, Dir, Role};
 use crate::world;
 use std::collections::VecDeque;
 use std::f64::consts::TAU;
@@ -58,7 +58,6 @@ pub(super) enum Op {
     Place(PlaceSpec),
     Dig([i32; 3]),
     Walk([f64; 2]),
-    Wait(u32),
 }
 
 impl Agent {
@@ -209,7 +208,6 @@ impl Agent {
             let Some(op) = self.plan.build.pop_front() else { break };
             match op {
                 Op::Walk(to) => v.push(Step::walk(to, 0.25, false)),
-                Op::Wait(n) => v.push(Step::Wait(n)),
                 Op::Dig(pos) => v.push(Step::dig(pos)),
                 Op::Place(spec) => {
                     let item = spec.expect.trim_start_matches("minecraft:");
@@ -331,9 +329,4 @@ pub(super) fn house(site: [i32; 3]) -> Vec<Op> {
     }
     ops.push(Op::Place(PlaceSpec { pos: [cx + 1, y0, cz + 1], slot: 1, expect: "minecraft:torch", look: None, from: Some(Dir::Down), facing: None }));
     ops
-}
-
-/// Offsets of the 6 neighbours, for scans.
-pub(super) fn neighbours(p: [i32; 3]) -> [[i32; 3]; 6] {
-    [Dir::Down, Dir::Up, Dir::North, Dir::South, Dir::West, Dir::East].map(|d| add(p, d.vec()))
 }

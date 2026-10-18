@@ -16,7 +16,7 @@ fn door_after(difficulty: &str, ticks_to_run: usize) -> (bool, Vec<u16>) {
         ToSim::Console(format!("difficulty {difficulty}")),
     ]));
     let mut client = Client::new(1, stats);
-    let mut tick = |sim: &mut Sim, client: &mut Client, n: usize| {
+    let tick = |sim: &mut Sim, client: &mut Client, n: usize| {
         for _ in 0..n {
             let mut inbox = Vec::new();
             client.tick(None, &mut inbox);

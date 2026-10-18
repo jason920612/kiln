@@ -114,7 +114,7 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &mut Entities, ticking: &c
         .blocks
         .containers
         .of_kind(|k| k == BeKind::Bell)
-        .filter(|(p, _)| ticking.contains(ChunkPos::of_block(p.x, p.z)))
+        .filter(|(p, _)| ticking.contains_block(ChunkPos::of_block(p.x, p.z)))
         .map(|(p, _)| p)
         .collect();
     for pos in bells {

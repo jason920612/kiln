@@ -1254,7 +1254,7 @@ pub(crate) fn java_hash_order(keys: &[BlockPos]) -> Vec<usize> {
 /// `Level.tickBlockEntities` for hoppers and furnaces in ticking chunks, in the order the block
 /// entities were added.
 pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hopper::ItemEntities, ticking: &crate::blocks::Ticking) {
-    let due: Vec<(BlockPos, BeKind)> = level.blocks.containers.in_tick_order().filter(|(p, _)| ticking.contains(chunk_of(*p))).collect();
+    let due: Vec<(BlockPos, BeKind)> = level.blocks.containers.in_tick_order().filter(|(p, _)| ticking.contains_block(chunk_of(*p))).collect();
     for (pos, kind) in due {
         // Removed by an earlier tick this phase.
         if level.blocks.containers.get(pos).is_none_or(|c| c.kind != kind) {
