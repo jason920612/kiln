@@ -328,7 +328,8 @@ impl EntityExt for FishingHook {
         }
         let pos = e.block_position();
         let f = crate::fluid::fluid_at(level, pos);
-        let height = if f.kind == crate::physics::FluidKind::Water { crate::fluid::height(level, pos, &f) } else { 0.0 };
+        // (`fluidState.is(FluidTags.WATER)`: flowing water counts too.)
+        let height = if f.kind.is_water() { crate::fluid::height(level, pos, &f) } else { 0.0 };
         let in_water = height > 0.0;
         match self.state {
             State::Flying => {
@@ -364,9 +365,6 @@ impl EntityExt for FishingHook {
                 if d.abs() < 0.01 {
                     d += d.signum() * 0.1;
                 }
-                if std::env::var_os("KILN_FISH_DBG").is_some() {
-                    eprintln!("FISHDBG gt={} pos={:?} blockpos={:?} height={} in_water={} d={} vy={}", level.game_time(), e.position(), pos, height, in_water, d, v.y);
-                }
                 e.delta = Vec3::new(v.x * 0.9, v.y - d * e.random.next_float() as f64 * 0.2, v.z * 0.9);
                 if self.nibble <= 0 && self.time_until_hooked <= 0 {
                     self.open_water = true;
@@ -386,7 +384,7 @@ impl EntityExt for FishingHook {
                 }
             }
         }
-        if f.kind != crate::physics::FluidKind::Water && !e.on_ground && self.hooked.is_none() {
+        if !f.kind.is_water() && !e.on_ground && self.hooked.is_none() {
             e.delta = e.delta + Vec3::new(0.0, -0.029999999329447746, 0.0);
         }
         let delta = e.delta;
