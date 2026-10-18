@@ -1810,8 +1810,9 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             let e = self.list.binary_search_by_key(&a, |e| e.id).ok().and_then(|i| self.list[i].phys.as_deref())?;
             Some(health::Attacker::mob(a, e.type_name, arr(e.position())))
         });
-        // A projectile's hit judges blocking from where it comes (`getSourcePosition`).
-        let position = source.direct.filter(|_| source.kind.is_tag("minecraft:is_projectile")).and(source.pos).map(arr);
+        // `getSourcePosition`: blocking and the default knockback judge from where the blow comes (a projectile's
+        // position is a point behind it along its flight).
+        let position = source.pos.map(arr);
         let source = health::Source { cause: health::Cause::Entity(source.kind), attacker, direct: source.direct.filter(|d| Some(*d) != source.attacker), weapon: None, position };
         let env = self.level.env();
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };

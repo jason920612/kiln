@@ -670,12 +670,12 @@ impl Player {
             if !source.is("minecraft:no_impact") && (!blocked || amount > 0.0) {
                 self.sync_velocity = true;
             }
-            // `dealDefaultKnockback` from the source's position (melee: the attacker's).
-            if !source.is("minecraft:no_knockback")
-                && matches!(source.cause, Cause::PlayerAttack | Cause::Other(_) | Cause::Entity(DamageKind::MobAttack | DamageKind::Thorns))
-                && let Some(a) = &source.attacker
-            {
-                let (dx, dz) = (a.pos[0] - self.pos[0], a.pos[2] - self.pos[2]);
+            // `dealDefaultKnockback` (every damage type but `#no_knockback`, unless the shield took it all)
+            // from `getSourcePosition`: the direct entity's position (a projectile's: along its flight), else
+            // the attacker's; with no position at all the push is a random wisp and the hop alone remains.
+            if !source.is("minecraft:no_knockback") && !(blocked && amount <= 0.0) {
+                let from = source.position.or(source.attacker.as_ref().map(|a| a.pos));
+                let (dx, dz) = from.map_or((0.0, 0.0), |p| (p[0] - self.pos[0], p[2] - self.pos[2]));
                 self.knockback(0.4000000059604645, dx, dz);
                 // `ServerPlayer.indicateDamage` (unless the hit was blocked): the player's own client
                 // tilts the camera away from where the hit came from.
