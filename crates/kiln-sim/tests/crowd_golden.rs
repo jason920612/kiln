@@ -86,6 +86,20 @@ fn run(s: &Scenario) -> (u64, u64, usize) {
             _ => {}
         }
     }
+    // (`KILN_CROWD_IDS=1 KILN_SINK_IDS=1`: the packets by id over all the players, to see what a change in the stream is made of.)
+    if std::env::var_os("KILN_CROWD_IDS").is_some() {
+        let mut all: std::collections::BTreeMap<i32, (u64, u64)> = Default::default();
+        for w in &walkers {
+            for (id, (n, b)) in w.client.stats.by_id.lock().unwrap().iter() {
+                let e = all.entry(*id).or_default();
+                e.0 += n;
+                e.1 += b;
+            }
+        }
+        for (id, (n, b)) in all {
+            eprintln!("IDS {id} {n} {b}");
+        }
+    }
     (sim.state_hash(), churn.stream_digest(&walkers), sim.region_count())
 }
 
