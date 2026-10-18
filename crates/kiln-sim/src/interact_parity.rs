@@ -616,9 +616,7 @@ fn run_case(line: &Value) -> Vec<String> {
     }
     let (msg, stats) = join(1, "Interact", view);
     // (The vectors' server spawns no monsters from its first tick: `spawn-monsters=false`.)
-    // (Nor animals: its level is the_void, which has no spawn entries; Kiln's replay level is not, and the chunks the server now loads whole, whatever the
-    // client asks for, would get their chunk generation animals.)
-    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_monsters false".into()), ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
+    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_monsters false".into())]));
     let mut client = Client::new(1, stats.clone());
     for _ in 0..5 {
         let mut inbox = Vec::new();
@@ -654,7 +652,7 @@ fn run_case(line: &Value) -> Vec<String> {
     // vectors' frozen level).
     // (The vectors' server spawns no monsters: `spawn-monsters=false`.)
     {
-        let mut rule = vec![ToSim::Console("gamerule minecraft:spawn_monsters false".into()), ToSim::Console("gamerule minecraft:spawn_mobs false".into())];
+        let mut rule = vec![ToSim::Console("gamerule minecraft:spawn_monsters false".into())];
         client.tick(None, &mut rule);
         assert!(sim.step(rule));
     }
@@ -664,21 +662,9 @@ fn run_case(line: &Value) -> Vec<String> {
         assert!(sim.step(idle));
     }
     // (The vectors were recorded without announcements of advancements; with a datapack Kiln has them.)
-    // (The chunks the server loads whole are all in by now; trial spawners need the rule back.)
-    for _ in 0..2000 {
-        if sim.chunk_backlog() == 0 {
-            break;
-        }
-        let mut idle = Vec::new();
-        client.tick(None, &mut idle);
-        assert!(sim.step(idle));
-    }
-    for _ in 0..2 {
-        let mut idle = Vec::new();
-        client.tick(None, &mut idle);
-        assert!(sim.step(idle));
-    }
-    let mut console: Vec<ToSim> = vec![ToSim::Console("gamerule minecraft:show_advancement_messages false".into()), ToSim::Console("gamerule minecraft:spawn_mobs true".into())];
+    // (The vectors' level is the_void and has no animals; the chunks Kiln loads whole around the player, whatever the client asks for, get the animals chunk
+    // generation makes and a spawn pass at the first tick. The recorded setup comes after this.)
+    let mut console: Vec<ToSim> = vec![ToSim::Console("gamerule minecraft:show_advancement_messages false".into()), ToSim::Console("kill @e[type=!minecraft:player]".into())];
     if line["op"].as_bool() == Some(true) {
         console.push(ToSim::Console("op Interact".into()));
     }
