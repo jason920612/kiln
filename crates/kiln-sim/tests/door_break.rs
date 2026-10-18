@@ -32,7 +32,13 @@ fn door_after(difficulty: &str, ticks_to_run: usize) -> (bool, Vec<u16>) {
     run(&mut sim, format!("setblock {} {y} {z} minecraft:oak_door[facing=east,half=lower,open=false]", x + 3));
     run(&mut sim, format!("setblock {} {} {z} minecraft:oak_door[facing=east,half=upper,open=false]", x + 3, y + 1));
     run(&mut sim, format!("summon minecraft:zombie {} {y} {} {{CanBreakDoors:1b,PersistenceRequired:1b}}", x + 6, z as f64 + 0.5));
-    tick(&mut sim, &mut client, ticks_to_run);
+    for k in 0..ticks_to_run / 50 {
+        tick(&mut sim, &mut client, 50);
+        if std::env::var_os("KILN_DOOR_TRACE").is_some() {
+            let z = sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some("minecraft:zombie"));
+            eprintln!("{} {:?} player {:?}", k * 50, z.as_ref().and_then(|t| t.get("Pos")).map(|p| format!("{p:?}")), client.pos);
+        }
+    }
     let door = sim.block_at(x + 3, y, z).expect("loaded");
     let air = kiln_data::blocks_types::block_by_name("minecraft:air").map(|b| b.default).expect("air");
     let states = (y..y + 2).map(|yy| sim.block_at(x + 3, yy, z).unwrap()).collect();
