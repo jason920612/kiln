@@ -498,6 +498,7 @@ pub mod stats {
             && (0..3).all(|a| pos[a] >= b[a] && pos[a] <= b[a + 3])
         {
             add(format!("pickAt IN-BOX {} {name}", category_name(category)));
+            add(format!("pickAt IN-BOX Y={} {} {name}", pos[1], category_name(category)));
         }
     }
 

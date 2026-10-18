@@ -161,6 +161,7 @@ public final class W72Hook {
             if (p.getX() >= n[0] && p.getX() <= n[3] && p.getY() >= n[1] && p.getY() <= n[4] && p.getZ() >= n[2] && p.getZ() <= n[5]) {
                 var o = (java.util.Optional<?>) optional;
                 add("pickAt IN-BOX " + category + " " + (o.isPresent() ? typeName(o.get()) : "(none)"));
+                add("pickAt IN-BOX Y=" + p.getY() + " " + category + " " + (o.isPresent() ? typeName(o.get()) : "(none)"));
             }
         } catch (Throwable t) {
             add("pickAt error " + t);
