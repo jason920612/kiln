@@ -256,3 +256,33 @@ fn a_mob_standing_in_the_portal_it_arrived_in_does_not_go_back() {
         }
     }
 }
+
+/// wp81 (lock step against vanilla, `tools/wp81/ring81.py portal`): the arrival of an entity places a portal ticket (`Entity.placePortalTicket`: radius 3, 300 ticks, so
+/// the chunks around it load and tick) and nothing else holds the nether chunks when the player is in the overworld: a baby cow that went through ages for 300 ticks there
+/// and then stops with its chunk (vanilla: 300 ticks of Age, then not found).
+#[test]
+fn a_mob_that_went_through_a_portal_ticks_for_300_ticks_with_nobody_near() {
+    let mut w = World::new("creative");
+    frame(&mut w, 11, -61, 12);
+    w.run("setblock 11 -60 12 minecraft:fire");
+    assert!(state::is(w.sim.block_at(12, -59, 12).unwrap(), d::NETHER_PORTAL));
+    w.run("summon minecraft:cow 11.5 -60 12.5 {Age:-24000,NoAI:1b,PersistenceRequired:1b}");
+    let age = |w: &World| {
+        w.sim
+            .entity_nbt()
+            .into_iter()
+            .find(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some("minecraft:cow"))
+            .and_then(|t| t.get("Age").and_then(kiln_proto::nbt::Tag::as_i64))
+    };
+    let mut seen = Vec::new();
+    for i in 0..400 {
+        w.ticks(1);
+        if i % 50 == 49 {
+            seen.push(age(&w));
+        }
+    }
+    let in_nether = w.sim.entities_in(NETHER).iter().any(|(k, _)| *k == "minecraft:cow");
+    let risen: Vec<Option<i64>> = seen.iter().map(|a| a.map(|a| a + 24000)).collect();
+    assert!(risen[2].is_some_and(|r| r >= 140), "after 150 ticks it has aged: {risen:?}");
+    assert!(risen.last().unwrap().is_none_or(|r| r <= 310), "and stops with the ticket after 300 (nothing keeps the chunk): {risen:?} (in the nether now: {in_nether})");
+}
