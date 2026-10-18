@@ -1400,17 +1400,18 @@ impl Host for Sim {
         crate::dim_id(dimension).is_some_and(|d| self.dims[d].regions.chunk(ChunkPos::new(cx, cz)).is_some())
     }
 
-    /// `ExecuteCommand.isChunkLoaded`: a chunk at the entity-ticking level (level 31 or less: within the simulation distance of a player, or the
-    /// ring of a ticket that reaches that far) with its entities loaded.
+    /// `ExecuteCommand.isChunkLoaded`: a chunk whose *loading* ticket level is the entity-ticking one (31 or less) with its entities loaded: within the
+    /// server's view distance of a player (not the simulation distance: the simulation tickets set what ticks, not the chunk's status), or the ring of a
+    /// ticket that reaches that far (a forced chunk's own chunk).
     fn is_chunk_ticking(&self, dimension: &str, cx: i32, cz: i32) -> bool {
         let Some(d) = crate::dim_id(dimension) else { return false };
         if self.dims[d].regions.chunk(ChunkPos::new(cx, cz)).is_none() {
             return false;
         }
-        let reach = (self.config.simulation_distance as i32).min(self.config.view_distance as i32);
+        let view = self.config.view_distance as i32;
         let spectators = self.rule_bool("minecraft:spectators_generate_chunks");
         let near = |c: ChunkPos, r: i32| (c.x - cx).abs() <= r && (c.z - cz).abs() <= r;
-        self.players.values().any(|p| p.dim == d && (p.game_mode != 3 || spectators) && near(p.center, reach))
+        self.players.values().any(|p| p.dim == d && (p.game_mode != 3 || spectators) && near(p.center, view))
             || self.level_tickets(d).into_iter().any(|(c, radius)| near(c, radius - 2))
     }
 
