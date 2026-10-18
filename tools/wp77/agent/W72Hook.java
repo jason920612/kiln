@@ -150,6 +150,23 @@ public final class W72Hook {
         add("categories " + String.valueOf(list));
     }
 
+    /** The pick at a position of the box's columns, at the platform's heights. */
+    public static void pickAt(Object optional, Object category, Object pos) {
+        try {
+            String bx = System.getProperty("w72.box");
+            if (bx == null || !(pos instanceof BlockPos p)) return;
+            String[] v = bx.split(",");
+            int[] n = new int[6];
+            for (int i = 0; i < 6; i++) n[i] = Integer.parseInt(v[i].trim());
+            if (p.getX() >= n[0] && p.getX() <= n[3] && p.getY() >= n[1] && p.getY() <= n[4] && p.getZ() >= n[2] && p.getZ() <= n[5]) {
+                var o = (java.util.Optional<?>) optional;
+                add("pickAt IN-BOX " + category + " " + (o.isPresent() ? typeName(o.get()) : "(none)"));
+            }
+        } catch (Throwable t) {
+            add("pickAt error " + t);
+        }
+    }
+
     public static void pick(Object optional) {
         try {
             var o = (java.util.Optional<?>) optional;

@@ -490,9 +490,14 @@ pub mod stats {
         }
     }
 
-    pub(crate) fn pick(type_name: Option<&str>) {
-        if enabled() {
-            add(format!("pick {}", type_name.map_or("(none)", |n| n.strip_prefix("minecraft:").unwrap_or(n))));
+    pub(crate) fn pick(type_name: Option<&str>, category: kiln_entity::mob::Category, pos: [i32; 3]) {
+        let Some(c) = config() else { return };
+        let name = type_name.map_or("(none)", |n| n.strip_prefix("minecraft:").unwrap_or(n));
+        add(format!("pick {name}"));
+        if let Some(b) = c.bounds
+            && (0..3).all(|a| pos[a] >= b[a] && pos[a] <= b[a + 3])
+        {
+            add(format!("pickAt IN-BOX {} {name}", category_name(category)));
         }
     }
 
@@ -923,16 +928,16 @@ fn spawn_category_for_chunk(
             if data.is_none() {
                 // `getRandomSpawnMobAt`: rivers have most of their ambient water spawns taken away.
                 if cat == Category::WaterAmbient && kiln_entity::mob::kinds::slime::biome_in_tag(biome as i32, "minecraft:reduce_water_ambient_spawns") && r.next_float() < 0.98 {
-                    stats::pick(None);
+                    stats::pick(None, cat, [pos.x, pos.y, pos.z]);
                     break;
                 }
                 match pick(here, r) {
                     None => {
-                        stats::pick(None);
+                        stats::pick(None, cat, [pos.x, pos.y, pos.z]);
                         break;
                     }
                     Some(d) => {
-                        stats::pick(Some(d.type_name));
+                        stats::pick(Some(d.type_name), cat, [pos.x, pos.y, pos.z]);
                         let d = d.clone();
                         pack = if d.constant { d.min } else { r.next_int_bounded(d.max - d.min + 1) + d.min };
                         data = Some(d);

@@ -101,6 +101,10 @@ public final class W72Agent {
                     return cf.transformClass(cf.parse(b2), ClassTransform.transformingMethodBodies(m -> m.methodName().equalsString("getRandomSpawnMobAt"), onReturn(b -> {
                         b.dup();
                         b.invokestatic(HOOK, "pick", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_Object));
+                        b.dup();
+                        b.aload(3);
+                        b.aload(5);
+                        b.invokestatic(HOOK, "pickAt", MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_Object, ConstantDescs.CD_Object, ConstantDescs.CD_Object));
                     })));
                 }
                 return null;
