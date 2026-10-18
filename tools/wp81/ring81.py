@@ -20,9 +20,10 @@ def block_x(ring):
 
 def ageof(t, tag, dim=None):
     pre = f"execute in minecraft:{dim} run " if dim else ""
-    out = ask(t, f"{pre}data get entity @e[tag={tag},limit=1] Age", wait=0.2)
-    m = re.findall(r"(-?\d+)(?!.*\d)", out)
-    return int(m[-1]) if m else None
+    out = ask(t, f"{pre}data get entity @e[tag={tag}_{CX},limit=1] Age", wait=0.2)
+    # (vanilla: "<entity> has the following entity data: -23995"; Kiln: commands.data.entity.query[entity.minecraft.cow, -23995]; nothing found: an error)
+    m = re.search(r"entity data: (-?\d+)\s*$|query\[[^,\]]+, (-?\d+)\]\s*$", out.strip())
+    return int(m.group(1) or m.group(2)) if m else None
 
 
 def isloaded(t, x, y, z, dim=None):
@@ -35,7 +36,7 @@ def place_probes(rings):
     for t in "KV":
         for d in rings:
             x = block_x(d)
-            w(t, f"summon cow {x + 0.5} {Y} {CZ * 16 + 8.5} {{Age:-24000,NoGravity:1b,PersistenceRequired:1b,Tags:[\"rt{d}\"]}}")
+            w(t, f"summon cow {x + 0.5} {Y} {CZ * 16 + 8.5} {{Age:-24000,NoGravity:1b,PersistenceRequired:1b,Tags:[\"rt{d}_{CX}\"]}}")
             w(t, f"fill {x - 2} {Y - 12} {CZ * 16 + 6} {x + 3} {Y - 12} {CZ * 16 + 10} minecraft:stone")
             w(t, f"fill {x - 2} {Y - 11} {CZ * 16 + 6} {x + 3} {Y - 8} {CZ * 16 + 10} minecraft:glass")
             w(t, f"fill {x - 1} {Y - 11} {CZ * 16 + 7} {x + 2} {Y - 11} {CZ * 16 + 9} minecraft:air")
@@ -172,7 +173,7 @@ elif MODE == "portal":
     both("tick freeze")
     time.sleep(0.5)
     for t in "KV":
-        w(t, f"summon cow {px + 1.5} {py + 1} {pz + 0.5} {{Age:-24000,PersistenceRequired:1b,Tags:[\"trav\"]}}")
+        w(t, f"summon cow {px + 1.5} {py + 1} {pz + 0.5} {{Age:-24000,PersistenceRequired:1b,Tags:[\"trav_{CX}\"]}}")
     # Run until the cow has gone: it leaves the overworld at once (entities have no portal wait), then arrives in the nether where nobody is.
     arrived = {"K": None, "V": None}
     ages = {"K": [], "V": []}
