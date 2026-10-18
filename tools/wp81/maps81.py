@@ -19,9 +19,8 @@ def make_pack():
         for p in TRADES:
             j = json.load(open(p))
             name = os.path.basename(p)[:-5]
-            # (The trade's `gives` item is a typed map; the function makes the map from a plain `minecraft:map`, so that is what it is applied to here.)
-            funcs = [f for f in j["given_item_modifier"] if f["type"] == "minecraft:exploration_map"]
-            table = {"pools": [{"rolls": 1, "entries": [{"type": "minecraft:item", "name": "minecraft:map", "functions": funcs}]}]}
+            # (As the 26.x loot tables write them: `modifier`, not `functions`; the trade's own item modifiers on the item it gives.)
+            table = {"type": "minecraft:chest", "pools": [{"rolls": 1, "entries": [{"type": "minecraft:item", "name": j["gives"]["id"], "modifier": j["given_item_modifier"]}]}]}
             json.dump(table, open(f"{base}/data/p81/loot_table/{name}.json", "w"))
 
 
