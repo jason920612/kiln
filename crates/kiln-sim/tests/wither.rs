@@ -149,3 +149,44 @@ fn guardians_swim_in_water() {
     }
     assert!(moved > 0.5, "it swam about ({moved})");
 }
+
+/// wp78 (a real client side by side): cows the wither's skulls killed left wither roses in vanilla (`LivingEntity.createWitherRose` after the
+/// death loot, for a victim whose kill credit is a wither); Kiln's mobs died without one.
+fn kill_cow_by(w: &mut World, killer: &str, griefing: bool) -> ([i32; 3], Vec<(&'static str, [f64; 3])>) {
+    w.run(&format!("gamerule minecraft:mob_griefing {griefing}"));
+    let spot = w.at(6, 1, 3);
+    w.set(w.at(6, 0, 3), "minecraft:dirt");
+    w.set(spot, "minecraft:air");
+    w.run("summon minecraft:wither 20.5 200 20.5 {NoAI:1b,Invul:0}");
+    w.run(&format!("summon minecraft:cow {}.5 {} {}.5 {{NoAI:1b,PersistenceRequired:1b}}", spot[0], spot[1], spot[2]));
+    w.ticks(2);
+    if killer == "wither" {
+        w.run("damage @e[type=cow,limit=1] 100 minecraft:mob_attack by @e[type=wither,limit=1]");
+    } else {
+        w.run("kill @e[type=cow,limit=1]");
+    }
+    w.ticks(3);
+    (spot, w.sim.entities().into_iter().map(|(k, p)| (k, [p[0], p[1], p[2]])).collect())
+}
+
+#[test]
+fn a_cow_killed_by_a_wither_leaves_a_wither_rose() {
+    let mut w = World::new();
+    let (spot, _) = kill_cow_by(&mut w, "wither", true);
+    assert_eq!(w.name(spot), "minecraft:wither_rose", "the rose grows where the cow died");
+}
+
+#[test]
+fn without_mob_griefing_the_wither_rose_drops_as_an_item() {
+    let mut w = World::new();
+    let (spot, ents) = kill_cow_by(&mut w, "wither", false);
+    assert_eq!(w.name(spot), "minecraft:air");
+    assert!(ents.iter().any(|(k, _)| *k == "minecraft:item"), "a dropped flower: {ents:?}");
+}
+
+#[test]
+fn a_cow_killed_by_anything_else_leaves_no_wither_rose() {
+    let mut w = World::new();
+    let (spot, _) = kill_cow_by(&mut w, "kill", true);
+    assert_eq!(w.name(spot), "minecraft:air");
+}
