@@ -234,7 +234,8 @@ elif MODE == "portal2":
         print(i + 46, "K", where("K"), " V", where("V"))
         sys.stdout.flush()
 elif MODE == "trip":
-    # The portal timer of a survival player-like bot (W0): ticks from standing in the portal to the dimension change, plain / hurt at tick 40 / a zombie beating on it.
+    # The portal timer of a survival player-like bot (W0), in real time (a frozen game still ticks its players): seconds from standing in the portal to the dimension
+    # change with the survival delay at 200 ticks, plain / hurt at 4 s / a zombie beating on it. K and V are driven at the same moments.
     setup()
     px, pz, py = 1010, 1010, 190
     for t in "KV":
@@ -245,38 +246,39 @@ elif MODE == "trip":
         w(t, "gamemode survival W0")
         w(t, "effect give W0 minecraft:resistance 99999 4 true")
         w(t, "gamerule spawn_mobs false")
+        w(t, "gamerule players_nether_portal_default_delay 200")
+        w(t, "tick unfreeze")
     time.sleep(2)
-    both("tick freeze")
-    time.sleep(0.5)
 
     def in_nether(t):
-        return "pass" in ask(t, "execute in minecraft:the_nether if entity @a[name=W0,x=-100000,y=-64,z=-100000,dx=200000,dy=500,dz=200000]", wait=0.12).lower()
+        return "pass" in ask(t, "execute in minecraft:the_nether if entity @a[name=W0,x=-100000,y=-64,z=-100000,dx=200000,dy=500,dz=200000]", wait=0.1).lower()
 
     def scenario(name, hurt_at=None, zombie=False):
         for t in "KV":
             w(t, "execute in minecraft:overworld run tp W0 1005.5 190 1005.5")
             w(t, "kill @e[type=zombie]")
-        step(30)   # out of the portal for long enough that nothing of the last trip is left
+        time.sleep(4)
         for t in "KV":
             if zombie:
                 w(t, f"summon zombie {px + 1.5} {py} {pz + 2.5} {{PersistenceRequired:1b,Tags:[\"zz\"]}}")
+        t0 = time.time()
+        for t in "KV":
             w(t, f"tp W0 {px + 1.5} {py} {pz + 0.5}")
         arrived = {"K": None, "V": None}
-        for i in range(1, 140):
-            if hurt_at == i:
+        hurt = False
+        while time.time() - t0 < 14 and not all(arrived.values()):
+            if hurt_at is not None and not hurt and time.time() - t0 >= hurt_at:
                 both("damage W0 1 minecraft:generic")
-            step(1)
+                hurt = True
             for t in "KV":
                 if arrived[t] is None and in_nether(t):
-                    arrived[t] = i
-            if all(arrived.values()):
-                break
-        print(name, "ticks to the nether: K", arrived["K"], " V", arrived["V"])
+                    arrived[t] = round(time.time() - t0, 2)
+        print(name, "seconds to the nether: K", arrived["K"], " V", arrived["V"], "  (200 ticks = 10 s)")
         sys.stdout.flush()
 
     scenario("plain")
-    scenario("hurt at 40", hurt_at=40)
-    scenario("zombie", zombie=True)
+    scenario("hurt at 4 s", hurt_at=4.0)
+    scenario("zombie beating on it", zombie=True)
     scenario("plain again")
 else:
     sys.exit("unknown mode")
