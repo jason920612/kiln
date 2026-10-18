@@ -541,6 +541,8 @@ pub(crate) struct Death {
     pub killer: Option<String>,
     /// Network id of the damage type that killed.
     pub cause: i32,
+    /// Where a wither rose grows (or drops) for the dead player: the kill credit was a wither (`LivingEntity.createWitherRose`).
+    pub rose_at: Option<(crate::DimId, [f64; 3])>,
 }
 
 impl Player {
@@ -917,7 +919,8 @@ impl Player {
         self.died = true;
         // `broadcastEntityEvent(DEATH)` reaches the player too.
         self.send(entity::entity_event(self.entity_id, 3));
-        Death { conn: self.conn, message, killer: credit, cause: 0 }
+        let by_wither = credit.is_none() && self.last_mob_attacker.is_some_and(|(k, t)| k == "minecraft:wither" && ctx.game_time - t <= 100);
+        Death { conn: self.conn, message, killer: credit, cause: 0, rose_at: by_wither.then_some((self.dim, self.pos)) }
     }
 
     /// Per-tick damage bookkeeping (`ServerPlayer.tick`'s cooldown, `LivingEntity.baseTick`'s

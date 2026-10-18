@@ -202,8 +202,8 @@
 | 溺水、火、岩漿、岩漿塊、營火、飢餓與餓死 | A | 11＋17＋3 | `effect_parity.rs` | – |
 | 仙人掌、甜莓叢、凋零玫瑰、粉雪凍傷、方塊內窒息（含冷卻、難度、盔甲、保護、抗性） | A | `haz_*` 110 個 scenario（全部相符，wp45 的 5 個差異 wp49、wp50 補完） | `EffectVectors.java` | – |
 | 效果 tick、屬性、堆疊、食物與飲料效果、生物身上的效果 | A | 131＋40＋30 | `effect_parity.rs`、`mob_parity.rs` | 玩家端 weaving／oozing／wind_charged／infested 為 D |
-| 附魔 43 種 | A 31／C 12／D 0 | – | `enchant_parity.rs`、`melee_parity.rs`（density、wind_burst、breach 隨重錘）；wp49：霜行者與靈魂疾行者 `effect_parity` 的 `ench_` 17 個 scenario（`enchant_loc.rs`） | 靈魂疾行者的靴子磨損抽的是 level 亂數，與音效、腳步共用一條序列，向量不比對；C：channeling、flame、infinity、loyalty、lure、mending、multishot、piercing、power、punch、quick_charge、vanishing_curse |
-| 吃喝、弓、弩 | A／A\* | 40／400／300 | `consume`、`item_parity.rs` | 拉弓力道、傷害為 C |
+| 附魔 43 種 | A 31／C 12／D 0 | – | `enchant_parity.rs`、`melee_parity.rs`（density、wind_burst、breach 隨重錘）；wp49：霜行者與靈魂疾行者 `effect_parity` 的 `ench_` 17 個 scenario（`enchant_loc.rs`） | 靈魂疾行者的靴子磨損抽的是 level 亂數，與音效、腳步共用一條序列，向量不比對；C：channeling、flame、infinity、loyalty、lure、mending、multishot、piercing、quick_charge、vanishing_curse；**wp78**：power、punch（箭）與 impaling（三叉戟）原本在 Kiln 完全沒作用（附魔條件要「直接攻擊者是箭」，射出時的物品情境判斷不了），改成命中時才算；並排 vanilla 的鎖步比對（`p78_arrowcmp.py` 10 個案例、`p78_tridentcmp.py` 12 個案例）傷害與擊退逐位元相同，無錄製向量（A*） |
+| 吃喝、弓、弩 | A／A\* | 40／400／300 | `consume`、`item_parity.rs` | 拉弓力道、傷害為 C；wp78：弓的力量、衝擊在命中時才算（`arrow_enchants.rs`），並排 vanilla 逐位元相同 |
 | 工具挖掘速度 | A | 280 helper＋131 | `enchant_parity.rs`、`effect_parity.rs` | 挖掘計時 C |
 | 挖礦經驗（煤、青金石、鑽石、紅石、綠寶石、石英、刷怪磚、sculk 方塊） | A | `kiln-loot` 的 `block_experience` 向量：每個方塊與每種工具的量、經驗球個數與亂數抽取 | `vanilla_parity.rs`（`KILN_PARITY=1`） | 經驗球本身用 26.3 的建構子抽取 |
 | 桶、鍋釜、骨粉、打火石、火焰彈 | A\*／C | 桶 2,000 射線；骨粉：作物（`farm`）、苗木與草（`trees` 129）逐位元 | `item_parity.rs`、`tree_parity.rs`、`tools.rs` | 火焰彈只能點燃營火蠟燭；超平坦世界沒有特徵宿主，樹苗與草的骨粉不長 |
@@ -234,7 +234,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 敵對（主世界） | `zombie` `husk` `drowned` `zombie_villager` `skeleton` `stray` `bogged` `parched` `creeper` `spider` `cave_spider` `silverfish` `slime` `enderman` `endermite` `witch` `phantom` `creaking` `warden` `breeze` `guardian` `elder_guardian` `vex` | A | 2–63（不少僅 2–4 個） | 殭屍破門（hard）與 `MoveThroughVillageGoal`（夜晚往村莊走）在 wp77 補上（`door_break.rs`、`village_goals.rs`） |
 | 襲擊者 | `pillager` `vindicator` `evoker` `illusioner` `ravager` | A | 4–9＋27 個波次 | 襲擊裝備附魔、玩家敲鐘本來就有（wp77 重查：`raiders_get_their_enchanted_weapons`）；破門與開門（`BreakDoorGoal`、`RaiderOpenDoorGoal`）在 wp77 補上 |
 | 下界 | `zombified_piglin` `piglin` `piglin_brute` `hoglin` `zoglin` `blaze` `ghast` `magma_cube` `wither_skeleton` `strider` | A | 3–27 | 要塞生怪覆寫本來就有（`structure_spawns.rs`，wp77 重查），烈焰人與凋零骷髏只在要塞裡生；wp77：屋頂金農場起點高度多一格（Kiln 多 1.3~2 倍）已修，傳送門方塊的殭屍豬人補上；strider 無自然生成規則（**wp65 已補，見 6.13**）；strider 的鞍與胡蘿蔔釣竿在 wp50 補上（`eq50_strider*`） |
-| 終界與頭目 | `ender_dragon` `shulker` `wither` | A | 12／7／6 | 無世界邊界 |
+| 終界與頭目 | `ender_dragon` `shulker` `wither` | A | 12／7／6 | 無世界邊界；wp78：真實客戶端並排 — 凋零（真放靈魂沙與頭顱、充能時序、生成爆炸對生物的傷害逐位元相同、半血免疫箭、地獄星）、終界龍（兩位玩家：水晶、籠中水晶、龍息瓶、死亡序列、出口傳送門、重生）；修了凋零玫瑰（凋零殺死的生物與玩家）、凋零血條離開視野時沒移除、沒 tick 的凋零血條初值 |
 | 水生 | `squid` `glow_squid` `cod` `salmon` `tropical_fish` `pufferfish` | A | 3–6 | 神殿生怪覆寫本來就有（`structure_spawns.rs`，wp77 重查） |
 | 村民與 NPC | `villager` `wandering_trader` `iron_golem` `snow_golem` `allay` | A | 3–61 | 交易表擲法：設計取捨（vanilla 用世界共用亂數序列，Kiln 以世界種子、tick 與村民 id 為種子；分布相同，逐位元不同）；鐵傀儡回村與保衛、農夫堆肥本來就有（wp77 重查）；補貨、折扣、八卦 wp77 的 400 個向量案例位元相同 |
 | wp49 補上的 6 種 | `bee`（30）`dolphin`（27）`happy_ghast`（20）`copper_golem`（34；含箱子搬運、風化與雕像、蜜蠟與斧、雷擊、鐵傀儡送花）`giant`（4）`sulfur_cube`（29；12 種原型、吞物、剪、餵食、分裂、TNT 球） | A | 144 個 scenario 併入 `m6-mobs2` | 硫磺方塊的玩家推擠、衝刺擊退、接觸傷害對生物沒有向量可比（harness 不 tick 玩家）；快樂恐懼魔騎乘與鞍具只有 C |
@@ -981,6 +981,12 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 #   python tools/parity_suites.py --only saved77,brain77,fishing77,villagers77
 #   VM：bash tools/wp77/agent/build.sh；ORDER ~/wp77/run77.sh nether|end|portal ROUNDS TICKS BOX SIMDIST（KILN 25599、vanilla 25596）；python3 tools/wp77/starts.py K/trace.out V/trace.out BOX；python3 tools/wp77/leash9.py 1 40 [knot|player] [stride]
 #   負向檢查：python3 tools/wp77_neg.py [case…]
+# wp78：第九次遊玩（晚期內容；VM；Kiln 25589、vanilla 25595；見 docs/playthrough-wp78.md）
+#   bash tools/wp78/push_tools.sh；bash wp78_start.sh / wp78_vanilla.sh（KILN_SEED=78 / VSEED=78）、switch.sh K|V split|both、actor.sh K|V，然後
+#   並排：bash par.sh p78_fort.py | p78_bastion.py | p78_wither.py | p78_bow.py [type] | p78_city_scout.py | p78_warden2.py 813 -49 -571 | p78_desert.py -1672 -2292 | p78_trap.py 5 | p78_ship.py | p78_buried.py | p78_portal.py N
+#   雙客戶端同伺服器：switch.sh K|V both，TARGET=K|V python3 p78_dragon.py（STEPS=crystals,fight,death,respawn；FASTFWD、FULLHP）、p78_dying.py；兩位玩家的突襲：bash raid2.sh K|V
+#   鎖步（只要 console）：p78_wexp.py N（凋零生成爆炸）、p78_wdmg.py、p78_arrowcmp.py、p78_tridentcmp.py、p78_itemblast*.py、p78_wire.py；複製機搜尋：p78_dupe.py SEED N dupe2、p78_minitems.py
+#   負向檢查：CARGO_BUILD_JOBS=4 ~/kt wp78-playthrough9 bash tools/wp78/neg78.sh；最後驗證：~/kt wp78-playthrough9 bash tools/wp78/verify78.sh
 # 登入等封包的 golden 由原版驗證後寫入
 python tools/packet_vectors.py --bless
 ```

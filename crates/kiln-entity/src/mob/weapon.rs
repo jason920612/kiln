@@ -58,7 +58,7 @@ pub fn victim_view(level: &dyn EntityLevel, t: &Living) -> EntityView {
     }
 }
 
-fn damage_type_id(kind: DamageKind) -> i32 {
+pub(crate) fn damage_type_id(kind: DamageKind) -> i32 {
     kiln_data::synced_id("minecraft:damage_type", kind.type_name()).unwrap_or(0)
 }
 

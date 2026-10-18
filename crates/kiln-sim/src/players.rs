@@ -341,15 +341,20 @@ impl Sim {
     pub(crate) fn drop_cross_region_viewers(&mut self) {
         let home: HashMap<ConnId, (crate::DimId, kiln_region::RegionId)> = self.players.iter().map(|(&c, p)| (c, (p.dim, p.region))).collect();
         let mut forget: Vec<(ConnId, i32)> = Vec::new();
+        let mut bars: Vec<(ConnId, uuid::Uuid)> = Vec::new();
         for (dim, d) in self.dims.iter_mut().enumerate() {
             for r in d.regions.iter_mut() {
                 let rid = r.id();
                 for e in r.part_mut().0.list.iter_mut().filter(|e| !e.seen_by.is_empty()) {
                     let id = e.id;
+                    let bar = e.boss_sent.is_some().then(|| crate::entities::boss_bar_id(e.uuid));
                     e.seen_by.retain(|v| match home.get(v) {
                         Some(&(d2, r2)) if d2 == dim && r2 == rid => true,
                         Some(_) => {
                             forget.push((*v, id));
+                            if let Some(b) = bar {
+                                bars.push((*v, b));
+                            }
                             false
                         }
                         None => false,
@@ -361,6 +366,12 @@ impl Sim {
         for (viewer, id) in forget {
             if let Some(v) = self.players.get_mut(&viewer) {
                 v.send(entity::remove_entities(&[id]));
+            }
+        }
+        // (`ServerBossEvent.removePlayer` when the entity stops being seen: the bar goes with it.)
+        for (viewer, bar) in bars {
+            if let Some(v) = self.players.get_mut(&viewer) {
+                v.send(kiln_proto::packets::hud::boss_event(bar, &kiln_proto::packets::hud::BossEvent::Remove));
             }
         }
     }

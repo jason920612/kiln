@@ -2916,6 +2916,9 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
             on_fire: e.is_on_fire(),
         });
     }
+    // `createWitherRose(getKillCredit())` follows `dropAllDeathLoot` (the equipment drops below belong to it).
+    let credit_is_wither = !(m.last_hurt_by_player.is_some() && m.last_hurt_by_player_memory > 0)
+        && m.last_hurt_by_mob.and_then(|id| level.entity(id)).is_some_and(|k| k.type_name == "minecraft:wither");
     // `Mob.dropCustomDeathLoot`: equipment with its drop chance.
     for i in 0..6 {
         let chance = m.drop_chances[i];
@@ -2963,9 +2966,27 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
         let xp = experience_reward(e, m);
         award_experience(level, e.position(), xp);
     }
+    if credit_is_wither {
+        create_wither_rose(e.position(), level);
+    }
     level.emit(Event::EntityEvent { entity: e.id, event: 3 });
     if let Some(k) = m.kind.ext() {
         k.die(e, m, level, &source);
+    }
+}
+
+/// `LivingEntity.createWitherRose` for a victim whose kill credit is a wither: a wither rose
+/// grows where it died (when `mob_griefing` is on, the spot is air and the soil supports it),
+/// else the flower drops as an item.
+pub fn create_wither_rose(at: Vec3, level: &mut dyn EntityLevel) {
+    let pos = BlockPos::containing(at.x, at.y, at.z);
+    let mut placed = false;
+    if level.mob_griefing() && kiln_data::blocks_types::is_air(level.block(pos)) && kinds::wolf::block_in_tag(level.block(pos.below()), "minecraft:supports_wither_rose") {
+        level.set_block(pos, kiln_data::blocks::default_state::WITHER_ROSE, 3);
+        placed = true;
+    }
+    if !placed {
+        spawn_at(at, level, ItemStack::of("minecraft:wither_rose", 1).unwrap_or_else(ItemStack::empty), 0.0);
     }
 }
 

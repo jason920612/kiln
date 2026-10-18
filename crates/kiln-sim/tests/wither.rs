@@ -149,3 +149,119 @@ fn guardians_swim_in_water() {
     }
     assert!(moved > 0.5, "it swam about ({moved})");
 }
+
+/// wp78 (a real client side by side): cows the wither's skulls killed left wither roses in vanilla (`LivingEntity.createWitherRose` after the
+/// death loot, for a victim whose kill credit is a wither); Kiln's mobs died without one.
+fn kill_cow_by(w: &mut World, killer: &str, griefing: bool) -> ([i32; 3], Vec<(&'static str, [f64; 3])>) {
+    w.run(&format!("gamerule minecraft:mob_griefing {griefing}"));
+    let spot = w.at(6, 1, 3);
+    w.set(w.at(6, 0, 3), "minecraft:dirt");
+    w.set(spot, "minecraft:air");
+    w.run("summon minecraft:wither 20.5 200 20.5 {NoAI:1b,Invul:0}");
+    w.run(&format!("summon minecraft:cow {}.5 {} {}.5 {{NoAI:1b,PersistenceRequired:1b}}", spot[0], spot[1], spot[2]));
+    w.ticks(2);
+    if killer == "wither" {
+        w.run("damage @e[type=cow,limit=1] 100 minecraft:mob_attack by @e[type=wither,limit=1]");
+    } else {
+        w.run("kill @e[type=cow,limit=1]");
+    }
+    w.ticks(3);
+    (spot, w.sim.entities().into_iter().map(|(k, p)| (k, [p[0], p[1], p[2]])).collect())
+}
+
+#[test]
+fn a_cow_killed_by_a_wither_leaves_a_wither_rose() {
+    let mut w = World::new();
+    let (spot, _) = kill_cow_by(&mut w, "wither", true);
+    assert_eq!(w.name(spot), "minecraft:wither_rose", "the rose grows where the cow died");
+}
+
+#[test]
+fn without_mob_griefing_the_wither_rose_drops_as_an_item() {
+    let mut w = World::new();
+    let (spot, ents) = kill_cow_by(&mut w, "wither", false);
+    assert_eq!(w.name(spot), "minecraft:air");
+    assert!(ents.iter().any(|(k, _)| *k == "minecraft:item"), "a dropped flower: {ents:?}");
+}
+
+#[test]
+fn a_cow_killed_by_anything_else_leaves_no_wither_rose() {
+    let mut w = World::new();
+    let (spot, _) = kill_cow_by(&mut w, "kill", true);
+    assert_eq!(w.name(spot), "minecraft:air");
+}
+
+/// Boss event actions the client was sent about the wither's bar since the log started: 0 add, 1 remove.
+fn boss_actions(w: &World) -> Vec<i32> {
+    let log = w.client.stats.log.lock().unwrap().replace(Vec::new()).unwrap_or_default();
+    let mut out = Vec::new();
+    for p in log {
+        let mut r = kiln_proto::codec::Reader::new(&p);
+        if r.varint().ok() == Some(kiln_data::packets::play::clientbound::BOSS_EVENT) {
+            let _ = r.uuid();
+            if let Ok(a) = r.varint() {
+                out.push(a);
+            }
+        }
+    }
+    out
+}
+
+/// wp78 (real client side by side): a wither's bar stayed on the screen of a player who left its level or went out of its range (vanilla's
+/// `ServerBossEvent.removePlayer` follows the entity ceasing to be seen). Kiln only removed it when the wither itself went.
+#[test]
+fn the_withers_bar_goes_when_the_player_leaves_its_range() {
+    let mut w = World::new();
+    *w.client.stats.log.lock().unwrap() = Some(Vec::new());
+    let p = w.client.pos;
+    w.run(&format!("summon minecraft:wither {} {} {} {{NoAI:1b,Invul:0}}", p[0] + 5.0, p[1] + 3.0, p[2]));
+    w.ticks(5);
+    assert!(boss_actions(&w).contains(&0), "the bar appeared");
+    // To another dimension: the wither is not seen any more.
+    w.run("execute in minecraft:the_nether run tp Builder 0 100 0");
+    w.ticks(10);
+    assert!(boss_actions(&w).contains(&1), "the bar was taken away with the level");
+}
+
+/// wp78 (real client side by side): a summoned `NoAI` wither never ticks, and vanilla's bar for it is full; Kiln sent an empty one.
+#[test]
+fn a_wither_that_never_ticks_shows_a_full_bar() {
+    let mut w = World::new();
+    *w.client.stats.log.lock().unwrap() = Some(Vec::new());
+    let p = w.client.pos;
+    w.run(&format!("summon minecraft:wither {} {} {} {{NoAI:1b,Invul:0}}", p[0] + 5.0, p[1] + 3.0, p[2]));
+    w.ticks(3);
+    let log = w.client.stats.log.lock().unwrap().replace(Vec::new()).unwrap_or_default();
+    let mut progress = None;
+    for pkt in log {
+        let mut r = kiln_proto::codec::Reader::new(&pkt);
+        if r.varint().ok() == Some(kiln_data::packets::play::clientbound::BOSS_EVENT) {
+            let _ = r.uuid();
+            if r.varint().ok() == Some(0) {
+                // Add: name (a text component, nbt) then the progress: read it as the last f32 of the fixed tail (progress, color, overlay, flags)
+                let tail = &pkt[pkt.len() - 7..];
+                progress = Some(f32::from_be_bytes([tail[0], tail[1], tail[2], tail[3]]));
+            }
+        }
+    }
+    assert_eq!(progress, Some(1.0), "the bar a never-ticking wither shows");
+}
+
+/// wp78: a player the wither kills leaves a wither rose too (`LivingEntity.createWitherRose(getKillCredit())` is for every living entity).
+#[test]
+fn a_player_killed_by_a_wither_leaves_a_wither_rose() {
+    let mut w = World::new();
+    w.run("gamerule minecraft:mob_griefing true");
+    w.run("gamemode survival Builder");
+    let p = w.client.pos;
+    let spot = [p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32];
+    w.set([spot[0], spot[1] - 1, spot[2]], "minecraft:dirt");
+    w.ticks(2);
+    w.run(&format!("summon minecraft:wither {} {} {} {{NoAI:1b,Invul:0}}", p[0] + 20.0, p[1] + 5.0, p[2]));
+    w.ticks(2);
+    w.run("damage Builder 1000 minecraft:mob_attack by @e[type=wither,limit=1]");
+    w.ticks(4);
+    let items = w.sim.entities().into_iter().filter(|(k, _)| *k == "minecraft:item").count();
+    let grew = (-1..=1).any(|dx| (-1..=1).any(|dz| (-1..=2).any(|dy| w.name([spot[0] + dx, spot[1] + dy, spot[2] + dz]) == "minecraft:wither_rose")));
+    assert!(grew || items > 0, "a rose block or a dropped flower where the player died");
+}

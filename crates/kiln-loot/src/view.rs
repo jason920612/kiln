@@ -170,6 +170,67 @@ impl LootContext for MobDamageContext<'_> {
     }
 }
 
+/// `Enchantment.damageContext(level, victim, source)` of a hit by a projectile the weapon fired
+/// (`AbstractArrow.onHitEntity`: `getWeaponItem` is the bow): the `direct_attacker` is the
+/// projectile, the `attacker` its owner (when there is one).
+pub struct ProjectileDamageContext<'a> {
+    pub level: i32,
+    pub this: &'a EntityView,
+    pub attacker: Option<&'a EntityView>,
+    pub direct: &'a EntityView,
+    /// `minecraft:damage_type` network id of the source.
+    pub damage_type: i32,
+}
+
+impl LootContext for ProjectileDamageContext<'_> {
+    fn has_entity(&self, target: EntityTarget) -> bool {
+        match target {
+            EntityTarget::This | EntityTarget::DirectAttacker => true,
+            EntityTarget::Attacker => self.attacker.is_some(),
+            _ => false,
+        }
+    }
+
+    fn origin(&self) -> Option<[f64; 3]> {
+        Some(self.this.pos)
+    }
+
+    fn has_damage_source(&self) -> bool {
+        true
+    }
+
+    fn enchantment_level(&self) -> Option<i32> {
+        Some(self.level)
+    }
+
+    fn entity_matches(&self, target: EntityTarget, predicate: &EntityPredicate) -> bool {
+        match target {
+            EntityTarget::This => self.this.matches(predicate),
+            EntityTarget::Attacker => self.attacker.is_some_and(|a| a.matches(predicate)),
+            EntityTarget::DirectAttacker => self.direct.matches(predicate),
+            _ => false,
+        }
+    }
+
+    fn damage_source_matches(&self, p: &DamageSourcePredicate) -> bool {
+        if !p.tags.iter().all(|t| damage_type_in_tag(self.damage_type, t.tag.as_str()) == t.expected) {
+            return false;
+        }
+        if let Some(d) = &p.direct_entity
+            && !self.direct.matches(d)
+        {
+            return false;
+        }
+        if let Some(s) = &p.source_entity
+            && !self.attacker.is_some_and(|a| a.matches(s))
+        {
+            return false;
+        }
+        // `isDirect`: never, the projectile is not the attacker.
+        p.is_direct.is_none_or(|want| !want)
+    }
+}
+
 /// What a weapon's `post_attack` enchantments do to the victim of a mob's blow.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MobPostAttack {
@@ -193,6 +254,35 @@ impl LootData {
         rng: &mut dyn RandomSource,
     ) -> f32 {
         self.modify_damage(weapon, rng, damage, |level| MobDamageContext { level, this: victim, attacker, damage_type })
+    }
+
+    /// `EnchantmentHelper.modifyDamage(level, weapon, victim, source, damage)` for a hit by a
+    /// projectile `weapon` fired (power on an arrow, impaling on a trident).
+    pub fn projectile_modify_damage(
+        &self,
+        weapon: &ItemStack,
+        attacker: Option<&EntityView>,
+        direct: &EntityView,
+        victim: &EntityView,
+        damage_type: i32,
+        damage: f32,
+        rng: &mut dyn RandomSource,
+    ) -> f32 {
+        self.modify_damage(weapon, rng, damage, |level| ProjectileDamageContext { level, this: victim, attacker, direct, damage_type })
+    }
+
+    /// `EnchantmentHelper.modifyKnockback` for a hit by a projectile `weapon` fired (punch).
+    pub fn projectile_modify_knockback(
+        &self,
+        weapon: &ItemStack,
+        attacker: Option<&EntityView>,
+        direct: &EntityView,
+        victim: &EntityView,
+        damage_type: i32,
+        value: f32,
+        rng: &mut dyn RandomSource,
+    ) -> f32 {
+        self.modify_knockback(weapon, rng, value, |level| ProjectileDamageContext { level, this: victim, attacker, direct, damage_type })
     }
 
     /// `EnchantmentHelper.modifyArmorEffectiveness` of `weapon` against a victim (a mob wearing

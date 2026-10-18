@@ -276,6 +276,22 @@ fn is_vehicle(t: &Entity) -> bool {
     t.is_alive() && matches!(&t.kind, EntityKind::Ext(x) if x.attackable())
 }
 
+/// The three entities of `Enchantment.damageContext` for an arrow's hit as enchantment
+/// requirements see them: its owner (the `attacker`), the arrow (the `direct_attacker`) and the
+/// target (`this_entity`).
+pub(crate) fn projectile_views(level: &dyn EntityLevel, arrow: &Entity, owner: Option<i32>, target: i32) -> (Option<crate::enchanting::EntityView>, crate::enchanting::EntityView, crate::enchanting::EntityView) {
+    use crate::mob::weapon::{attacker_view, victim_view};
+    let attacker = owner.and_then(|o| match level.player(o) {
+        Some(p) => Some(victim_view(level, &crate::mob::goals::living_player(&p))),
+        None => level.entity(o).map(attacker_view),
+    });
+    let victim = match crate::mob::goals::living(level, target) {
+        Some(l) => victim_view(level, &l),
+        None => level.entity(target).map(attacker_view).unwrap_or_default(),
+    };
+    (attacker, attacker_view(arrow), victim)
+}
+
 /// `AbstractArrow.onHitEntity` for a mob or a player: damage from the speed and base damage
 /// (a critical arrow adds a random bonus), then the arrow breaks, or bounces back when the hit
 /// did not land. Returns false for other entities (the simulation handles them).
@@ -293,7 +309,14 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
     };
     let v = e.delta;
     let speed = v.length() as f32;
-    let (base, crit) = { let d = data(e); (d.base_damage, d.crit) };
+    let (mut base, crit) = { let d = data(e); (d.base_damage, d.crit) };
+    // `AbstractArrow.onHitEntity`: the weapon the arrow was fired from (power) changes the base damage, and later its knockback (punch).
+    let weapon = data(e).weapon.clone().filter(|w| !w.is_empty());
+    let views = weapon.as_ref().map(|_| projectile_views(level, e, owner, id));
+    if let (Some(w), Some((att, direct, victim))) = (&weapon, &views) {
+        let hit = crate::enchanting::ProjectileHit { weapon: w, attacker: att.as_ref(), direct, victim, damage_type: crate::mob::weapon::damage_type_id(crate::level::DamageKind::Arrow) };
+        base = crate::enchanting::modify_projectile_damage(&hit, base as f32, level.random()) as f64;
+    }
     let mut damage = crate::mob::mth::ceil((speed as f64 * base).clamp(0.0, 2.147483647e9));
     // Piercing: the arrow goes on through up to `pierce_level` entities.
     let pierce = data(e).pierce_level;
@@ -363,7 +386,13 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
             level.stick_in_body(id, false);
         }
         // `doKnockback`: the weapon's knockback along the arrow's horizontal motion.
-        let knockback = data(e).knockback;
+        let knockback = match (&weapon, &views) {
+            (Some(w), Some((att, direct, victim))) => {
+                let hit = crate::enchanting::ProjectileHit { weapon: w, attacker: att.as_ref(), direct, victim, damage_type: crate::mob::weapon::damage_type_id(crate::level::DamageKind::Arrow) };
+                crate::enchanting::modify_projectile_knockback(&hit, 0.0, level.random()) as f64
+            }
+            _ => data(e).knockback,
+        };
         if knockback > 0.0 {
             let resistance = level.entity(id).and_then(crate::mob::data).map_or(0.0, |m| m.attrs.value(crate::mob::attributes::Attr::KnockbackResistance));
             let push = Vec3::new(v.x, 0.0, v.z).normalize().scale(knockback * 0.6 * (1.0 - resistance).max(0.0));

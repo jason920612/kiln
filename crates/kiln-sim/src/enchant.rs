@@ -44,6 +44,14 @@ impl kiln_entity::enchanting::Enchanter for LootEnchanter {
         self.0.mob_modify_knockback(hit.weapon, hit.attacker, hit.victim, hit.damage_type, value, random)
     }
 
+    fn modify_projectile_damage(&self, hit: &kiln_entity::enchanting::ProjectileHit, damage: f32, random: &mut dyn kiln_javamath::random::RandomSource) -> f32 {
+        self.0.projectile_modify_damage(hit.weapon, hit.attacker, hit.direct, hit.victim, hit.damage_type, damage, random)
+    }
+
+    fn modify_projectile_knockback(&self, hit: &kiln_entity::enchanting::ProjectileHit, value: f32, random: &mut dyn kiln_javamath::random::RandomSource) -> f32 {
+        self.0.projectile_modify_knockback(hit.weapon, hit.attacker, hit.direct, hit.victim, hit.damage_type, value, random)
+    }
+
     fn armor_effectiveness(&self, weapon: &ItemStack, attacker: &EntityView, victim: &EntityView, damage_type: i32, value: f32, random: &mut dyn kiln_javamath::random::RandomSource) -> f32 {
         self.0.mob_armor_effectiveness(weapon, attacker, victim, damage_type, value, random)
     }
