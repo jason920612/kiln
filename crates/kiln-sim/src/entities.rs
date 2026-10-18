@@ -3755,6 +3755,7 @@ fn carry_out(
         Event::GameEvent { .. } | Event::EntityInsideBlock { .. } | Event::ProjectileHit { .. } => {}
         Event::Raid(ev) => level.blocks.raid_events.push(ev),
         Event::ResolveText { uuid, text, .. } => level.blocks.text_requests.push((uuid, text)),
+        Event::EnderPearlTicket { chunk } => level.blocks.pearl_tickets.push(kiln_world::ChunkPos::new(chunk[0], chunk[1])),
         // `ServerLevel.globalLevelEvent`: with `global_sound_events` every player (here: of the
         // region) hears it, from where it is heard best within 32 blocks of them; without, only
         // the players within 64 blocks of it, as an ordinary level event.

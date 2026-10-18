@@ -28,9 +28,6 @@ use tracing::{debug, info};
 const FIGHT_DATA: &str = "ender_dragon_fight";
 /// `DRAGON_SPAWN_Y`.
 const DRAGON_SPAWN_Y: i32 = 128;
-/// The arena kept loaded while the boss bar has players (`ARENA_SIZE_CHUNKS`).
-const ARENA_CHUNKS: i32 = 8;
-
 /// `DragonRespawnStage`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RespawnStage {
@@ -86,10 +83,6 @@ impl FightMsg {
 pub(crate) struct FightEnv {
     pub view: DragonFightView,
     pub inbox: Arc<Mutex<Vec<FightMsg>>>,
-    /// The boss bar has players: the arena (`arena_radius` chunks around `arena_center`) ticks.
-    pub active: bool,
-    pub arena_center: ChunkPos,
-    pub arena_radius: i32,
 }
 
 impl FightEnv {
@@ -218,10 +211,9 @@ impl DragonFight {
         !self.boss.players.is_empty()
     }
 
-    /// The arena's chunks (`ARENA_SIZE_CHUNKS` around the origin's chunk).
-    pub(crate) fn arena(&self) -> impl Iterator<Item = ChunkPos> {
-        let c = ChunkPos::of_block(self.origin.x, self.origin.z);
-        (-ARENA_CHUNKS..=ARENA_CHUNKS).flat_map(move |x| (-ARENA_CHUNKS..=ARENA_CHUNKS).map(move |z| ChunkPos::new(c.x + x, c.z + z)))
+    /// The chunk the arena's ticket (`TicketType.DRAGON`, radius 9) is at: the origin's.
+    pub(crate) fn arena_center(&self) -> ChunkPos {
+        ChunkPos::of_block(self.origin.x, self.origin.z)
     }
 }
 
@@ -279,9 +271,6 @@ impl Sim {
         (dim == END_ID).then(|| FightEnv {
             view: f.view(),
             inbox: f.inbox.clone(),
-            active: f.active(),
-            arena_center: ChunkPos::of_block(f.origin.x, f.origin.z),
-            arena_radius: ARENA_CHUNKS,
         })
     }
 

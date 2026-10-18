@@ -334,6 +334,8 @@ pub enum Event {
     /// `CopperGolem.turnToStatue`: the block at `pos` becomes an oxidized statue in `pose` (0 to 3) facing `facing`, its
     /// block entity holding the golem's custom name.
     CopperGolemStatue { pos: BlockPos, pose: u8, facing: crate::math::Direction, name: Option<kiln_proto::nbt::Tag> },
+    /// `ServerPlayer.registerAndUpdateEnderPearlTicket`: a pearl of a player placed its ticket (`TicketType.ENDER_PEARL`, radius 2) at chunk `chunk`.
+    EnderPearlTicket { chunk: [i32; 2] },
     /// A projectile hit a block (`Block.onProjectileHit`) or an entity: damage, egg hatching,
     /// pearl teleports and potion splashes are the simulation's.
     ProjectileHit { projectile: i32, projectile_type: &'static str, owner: Option<i32>, hit: crate::projectile::Hit },

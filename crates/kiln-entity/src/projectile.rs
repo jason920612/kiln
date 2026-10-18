@@ -51,6 +51,8 @@ pub struct ThrowableData {
     pub(crate) has_been_shot: bool,
     /// The thrown item (`DATA_ITEM_STACK`) when known: a splash potion with it splashes here.
     pub item: Option<kiln_item::ItemStack>,
+    /// `ThrownEnderpearl.ticketTimer`: ticks until the pearl renews its chunk ticket (not saved).
+    pub ticket_timer: i64,
 }
 
 /// What a projectile hit.
@@ -62,7 +64,7 @@ pub enum Hit {
 
 /// A new throwable at `pos` moving with `delta`.
 pub fn new(id: i32, uuid: u128, kind: Throwable, pos: Vec3, delta: Vec3, owner: Option<i32>, seed: i64) -> Entity {
-    let data = ThrowableData { kind, owner, left_owner: false, left_owner_checked: false, has_been_shot: false, item: None };
+    let data = ThrowableData { kind, owner, left_owner: false, left_owner_checked: false, has_been_shot: false, item: None, ticket_timer: 0 };
     let mut e = Entity::new(kind.type_name(), id, uuid, EntityKind::Throwable(data), seed);
     e.set_pos(pos);
     e.delta = delta;
@@ -83,6 +85,7 @@ fn data(e: &mut Entity) -> &mut ThrowableData {
 
 /// `ThrowableProjectile.tick`.
 pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
+    let chunk_before = chunk_of(e.position());
     // `ThrownEnderpearl.tick`: a pearl whose owner (a player) is dead vanishes, with the
     // `ender_pearls_vanish_on_death` game rule.
     if let EntityKind::Throwable(d) = &e.kind
@@ -118,6 +121,29 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
     if let (Some(hit), true) = (hit, e.is_alive()) {
         on_hit(e, level, hit);
     }
+    if e.is_alive() && data(e).kind == Throwable::EnderPearl {
+        pearl_ticket(e, level, chunk_before);
+    }
+}
+
+/// `TicketType.ENDER_PEARL`'s timeout, in ticks.
+const PEARL_TICKET_TIMEOUT: i64 = 40;
+
+/// `ThrownEnderpearl.tick`'s end: a player's pearl places a ticket on the chunk it is in (radius 2, so the chunk and the ones around it tick and load) when
+/// its timer has run out or it flew into another chunk, and the timer starts again (`registerAndUpdateEnderPearlTicket` returns the timeout less one).
+fn pearl_ticket(e: &mut Entity, level: &mut dyn EntityLevel, chunk_before: (i32, i32)) {
+    let now = chunk_of(e.position());
+    let d = data(e);
+    d.ticket_timer -= 1;
+    if (d.ticket_timer <= 0 || now != chunk_before) && d.owner.is_some_and(|o| level.player(o).is_some()) {
+        level.emit(Event::EnderPearlTicket { chunk: [now.0, now.1] });
+        d.ticket_timer = PEARL_TICKET_TIMEOUT - 1;
+    }
+}
+
+/// `SectionPos.blockToSectionCoord` of a position.
+fn chunk_of(p: Vec3) -> (i32, i32) {
+    ((p.x.floor() as i32) >> 4, (p.z.floor() as i32) >> 4)
 }
 
 /// `handleFirstTickBubbleColumn`: bubble columns overlapping the spawn box act at once.

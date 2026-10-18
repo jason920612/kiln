@@ -90,6 +90,15 @@ pub(crate) struct ReturningVehicle {
     tries: u32,
 }
 
+/// A pearl a joining player had in flight (`ender_pearls`), waiting for the chunk it is in.
+pub(crate) struct ReturningPearl {
+    dim: crate::DimId,
+    chunk: ChunkPos,
+    tag: Tag,
+    /// The network id of its owner.
+    owner: i32,
+}
+
 /// Ticks a returning vehicle is waited for before it is given up on.
 const RETURNING_TRIES: u32 = 100;
 
@@ -247,12 +256,14 @@ impl Sim {
         let mut players: Vec<&Player> = self.players.values().collect();
         players.sort_by_key(|p| p.uuid);
         type Job = (uuid::Uuid, String, Tag, Option<(std::path::PathBuf, String)>, Option<(std::path::PathBuf, String)>);
+        // (One look at the entities for every player's pearls.)
+        let mut pearls = self.all_player_pearls();
         let jobs: Vec<Job> = players
             .iter()
             .map(|p| {
                 let stats = self.stats_path(p.uuid).map(|path| (path, p.stats.to_json()));
                 let advancements = self.advancements_path(p.uuid).map(|path| (path, p.advancements.to_json()));
-                (p.uuid, p.name.clone(), self.player_nbt(p), stats, advancements)
+                (p.uuid, p.name.clone(), self.player_nbt_with(p, pearls.remove(&p.entity_id).unwrap_or_default()), stats, advancements)
             })
             .collect();
         let write = |job: &Job| {
@@ -291,6 +302,12 @@ impl Sim {
 
     /// A player's saved data (`ServerPlayer.saveWithoutId`), as `playerdata` stores it.
     pub(crate) fn player_nbt(&self, p: &Player) -> Tag {
+        let pearls = self.all_player_pearls().remove(&p.entity_id).unwrap_or_default();
+        self.player_nbt_with(p, pearls)
+    }
+
+    /// [`Sim::player_nbt`] with the player's pearls in flight (`pearls`: [`Sim::all_player_pearls`]).
+    fn player_nbt_with(&self, p: &Player, pearls: Vec<Tag>) -> Tag {
         let mut data = p.saved.clone();
         data.pos = Some(p.pos);
         data.rot = Some(p.rot);
@@ -388,6 +405,11 @@ impl Sim {
                 if let Some(tag) = tag {
                     fields.push((key.to_owned(), tag.clone()));
                 }
+            }
+            // `ServerPlayer.saveEnderPearls`.
+            fields.retain(|(k, _)| k != "ender_pearls");
+            if !pearls.is_empty() {
+                fields.push(("ender_pearls".to_owned(), Tag::List(pearls)));
             }
             // `Abilities.addSaveData`, from the game mode (`GameType.updatePlayerAbilities`).
             let (creative, spectator) = (p.game_mode == 1, p.game_mode == 3);
@@ -662,6 +684,93 @@ impl Sim {
             return Some((tag, tree));
         }
         None
+    }
+
+    /// `ServerPlayer.saveEnderPearls` for every player: the ender pearls in flight by their owner's network id, each saved with `ender_pearl_dimension`.
+    pub(crate) fn all_player_pearls(&self) -> HashMap<i32, Vec<Tag>> {
+        let owners = self.owner_uuids();
+        let owner = |id: i32| owners.get(&id).copied();
+        let mut out: HashMap<i32, Vec<(i32, Tag)>> = HashMap::new();
+        for (dim, d) in self.dims.iter().enumerate() {
+            for r in d.regions.iter() {
+                let list = &r.part().0.list;
+                for (i, e) in list.iter().enumerate().filter(|(_, e)| !e.removed && e.kind.name == "minecraft:ender_pearl") {
+                    let Some(kiln_entity::EntityKind::Throwable(t)) = e.phys.as_deref().map(|p| &p.kind) else { continue };
+                    let Some(who) = t.owner.filter(|o| owners.contains_key(o)) else { continue };
+                    let mut tag = entities::save_in(list, i, &owner);
+                    if let Tag::Compound(fields) = &mut tag {
+                        fields.push(("ender_pearl_dimension".to_owned(), Tag::String(crate::DIMENSIONS[dim].0.to_owned())));
+                    }
+                    out.entry(who).or_default().push((e.id, tag));
+                }
+            }
+        }
+        // (In the order the player threw them: the older entity first.)
+        out.into_iter()
+            .map(|(who, mut v)| {
+                v.sort_by_key(|(id, _)| *id);
+                (who, v.into_iter().map(|(_, t)| t).collect())
+            })
+            .collect()
+    }
+
+    /// `ServerPlayer.loadAndSpawnEnderPearls`: a joining player's pearls come back in the level they were in, each with its ticket (`placeEnderPearlTicket`
+    /// on its chunk, which loads it), and sit in the world once that chunk is loaded.
+    pub(crate) fn queue_player_pearls(&mut self, owner: i32, saved: &[Tag]) {
+        for tag in saved {
+            let Some(dim) = tag.get("ender_pearl_dimension").and_then(Tag::as_str).and_then(crate::dim_id) else {
+                warn!("Trying to load ender pearl without level being loaded, skipping");
+                continue;
+            };
+            let Some(pos) = vec3_of(tag.get("Pos")) else { continue };
+            let chunk = entities::chunk_of(pos);
+            self.world.timed[dim].add(crate::tickets::Kind::EnderPearl, chunk);
+            self.pearls_returning.push(ReturningPearl { dim, chunk, tag: tag.clone(), owner });
+        }
+    }
+
+    /// The returning pearls whose chunk is loaded join the level, owned by their player again (a player who left meanwhile takes nothing back).
+    pub(crate) fn release_returning_pearls(&mut self) {
+        if self.pearls_returning.is_empty() {
+            return;
+        }
+        let waiting = std::mem::take(&mut self.pearls_returning);
+        for pearl in waiting {
+            if !self.players.values().any(|p| p.entity_id == pearl.owner && !p.disconnected) {
+                continue;
+            }
+            if self.dims[pearl.dim].regions.chunk(pearl.chunk).is_none() {
+                self.pearls_returning.push(pearl);
+                continue;
+            }
+            let uuid = pearl.tag.get("UUID").and_then(persist::uuid_from_tag).unwrap_or(0);
+            match entities::Spawn::from_saved(&pearl.tag, entities::seed_for_uuid(uuid), true) {
+                Ok(mut spawn) => {
+                    if let entities::Body::Loaded(e) = &mut spawn.body
+                        && let kiln_entity::EntityKind::Throwable(t) = &mut e.kind
+                    {
+                        t.owner = Some(pearl.owner);
+                    }
+                    self.dims[pearl.dim].spawns.push(spawn);
+                }
+                Err(e) => warn!("Failed to spawn player ender pearl in level ({}): {e:?}", crate::DIMENSIONS[pearl.dim].0),
+            }
+        }
+    }
+
+    /// `PlayerList.remove`: the player's pearls in flight go with it (they were saved in its data; `UNLOADED_WITH_PLAYER`, so no chunk keeps them).
+    pub(crate) fn remove_player_pearls(&mut self, p: &Player) {
+        for d in &mut self.dims {
+            for r in d.regions.iter_mut() {
+                for e in r.part_mut().0.list.iter_mut().filter(|e| !e.removed && e.kind.name == "minecraft:ender_pearl") {
+                    if let Some(kiln_entity::EntityKind::Throwable(t)) = e.phys.as_deref().map(|p| &p.kind)
+                        && t.owner == Some(p.entity_id)
+                    {
+                        e.removed = true;
+                    }
+                }
+            }
+        }
     }
 
     /// `PlayerList.remove` for a rider: the player stops riding, and a stack that carried only

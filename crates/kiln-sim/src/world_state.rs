@@ -575,6 +575,10 @@ pub(crate) struct WorldState {
     pub tick_rate: TickRate,
     /// Each level's force-loaded chunks.
     pub forced: [BTreeSet<[i32; 2]>; 3],
+    /// Each level's other tickets, which time out: portals and ender pearls (`crate::tickets`).
+    pub timed: [crate::tickets::Timed; 3],
+    /// Whether a level's `chunk_tickets.dat` holds portal tickets (so it is written again when they are gone).
+    pub timed_saved: [bool; 3],
     pub sequences: RandomSequences,
     /// The level random `/random` draws from without a sequence.
     pub level_random: XoroshiroRandom,
@@ -605,6 +609,8 @@ impl Default for WorldState {
             borders: Default::default(),
             tick_rate: TickRate::default(),
             forced: Default::default(),
+            timed: Default::default(),
+            timed_saved: [false; 3],
             sequences: RandomSequences::default(),
             level_random: XoroshiroRandom::new(now.as_nanos() as i64),
             tick_times: vec![0; 100],
@@ -642,6 +648,8 @@ impl Sim {
                         if let [x, z] = p[..] {
                             self.world.forced[dim].insert([x, z]);
                         }
+                    } else if self.world.timed[dim].load(t) {
+                        self.world.timed_saved[dim] = true;
                     }
                 }
             }
@@ -660,8 +668,11 @@ impl Sim {
                 }
                 self.world.borders[dim].dirty = false;
             }
-            if self.world.forced_dirty {
-                let tickets = self.world.forced[dim]
+            // (The portal tickets count down, so they are written every time; once they are all gone, one last time.)
+            let portals = self.world.timed[dim].to_nbt();
+            if self.world.forced_dirty || !portals.is_empty() || self.world.timed_saved[dim] {
+                self.world.timed_saved[dim] = !portals.is_empty();
+                let mut tickets: Vec<Tag> = self.world.forced[dim]
                     .iter()
                     .map(|&[x, z]| {
                         Tag::Compound(vec![
@@ -671,6 +682,7 @@ impl Sim {
                         ])
                     })
                     .collect();
+                tickets.extend(portals);
                 let data = Tag::Compound(vec![("tickets".into(), Tag::List(tickets))]);
                 if let Err(e) = kiln_storage::saved_data::write(&dir, CHUNK_TICKETS, data) {
                     tracing::warn!("failed to save the chunk tickets: {e}");

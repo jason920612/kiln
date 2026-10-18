@@ -341,6 +341,12 @@ impl Sim {
         chunk.get((p.x & 15) as usize, p.y, (p.z & 15) as usize)
     }
 
+    /// `Entity.placePortalTicket` (`TeleportTransition.PLACE_PORTAL_TICKET`, which the nether and end portals and the end gateways use): a portal ticket at the
+    /// chunk the entity arrived in keeps it and the chunks around it loaded and ticking for 300 ticks (see [`crate::tickets`]), whoever is near.
+    pub(crate) fn place_portal_ticket(&mut self, dim: DimId, at: [f64; 3]) {
+        self.world.timed[dim].add(crate::tickets::Kind::Portal, ChunkPos::of_block(at[0].floor() as i32, at[2].floor() as i32));
+    }
+
     /// Loads the chunks around a block (`r` blocks each way) and puts them in regions, so
     /// block work there can run.
     pub(crate) fn load_area(&mut self, dim: DimId, center: BlockPos, r: i32) {
@@ -386,6 +392,7 @@ impl Sim {
                 }
                 if let Some((pos, rot)) = self.nether_destination(t.conn, from, to, BlockPos::new(t.entry[0], t.entry[1], t.entry[2])) {
                     self.change_dimension(t.conn, to, pos, rot);
+                    self.place_portal_ticket(to, pos);
                     self.portal_sound(t.conn);
                 }
             }
@@ -396,6 +403,7 @@ impl Sim {
                     let (dim, pos) = self.respawn_position(t.conn);
                     let rot = self.spawn_rot;
                     self.change_dimension(t.conn, dim, pos, rot);
+                    self.place_portal_ticket(dim, pos);
                 } else {
                     let [x, y, z] = END_SPAWN_POINT;
                     self.end_platform(BlockPos::new(x, y - 1, z));
@@ -403,6 +411,7 @@ impl Sim {
                     // A player lands one block lower than other entities.
                     let pos = [x as f64 + 0.5, y as f64 - 1.0, z as f64 + 0.5];
                     self.change_dimension(t.conn, END_ID, pos, [90.0, pitch]);
+                    self.place_portal_ticket(END_ID, pos);
                 }
                 self.portal_sound(t.conn);
             }
@@ -411,6 +420,7 @@ impl Sim {
                 if let Some(pos) = self.gateway_destination(from, entry) {
                     let rot = self.players[&t.conn].rot;
                     self.change_dimension(t.conn, from, pos, rot);
+                    self.place_portal_ticket(from, pos);
                 } else if let Some(p) = self.players.get_mut(&t.conn) {
                     // `TheEndGatewayBlock.entityInside` does not start a trip while the gateway cools down: the
                     // player stays inside without a portal process and goes as soon as it has cooled (not after
@@ -533,6 +543,7 @@ impl Sim {
             (phys.y_rot, phys.x_rot) = (rot[0], rot[1]);
             // `placePortalTicket`: the arrival chunks load.
             self.load_area(to, floor_pos(pos), 1);
+            self.place_portal_ticket(to, pos);
             self.dims[to].portal_cooldowns.insert(e.uuid.as_u128(), now + ENTITY_PORTAL_COOLDOWN);
             self.dims[to].spawns.push(crate::entities::Spawn { kind: e.kind, pos, vel: [0.0; 3], body: crate::entities::Body::Loaded(phys) });
             info!("{} went from {} to {} at {pos:?}", e.kind.name, DIMENSIONS[from].0, DIMENSIONS[to].0);
