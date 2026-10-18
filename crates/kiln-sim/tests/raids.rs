@@ -123,7 +123,7 @@ fn bad_omen_in_a_village_starts_a_raid_with_waves_until_victory() {
     let pillagers = w.mobs("minecraft:pillager");
     assert!(pillagers.len() >= 4, "{pillagers:?}");
     let leaders: Vec<_> = pillagers.iter().filter_map(|&id| w.sim.raider(id)).filter(|r| r.2 && r.4).collect();
-    assert_eq!(leaders.len(), 1, "one leader with the banner");
+    assert_eq!(leaders.len(), 1, "one leader with the banner: {:?}", pillagers.iter().map(|&id| (id, w.sim.raider(id))).collect::<Vec<_>>());
     assert!(pillagers.iter().all(|&id| w.sim.raider(id).is_some_and(|r| r.0 == Some(raids[0].0) && r.1 == 1)));
     assert!(raids[0].5 >= 4 && raids[0].6 > 0.0, "raiders alive and the bar full: {raids:?}");
     // Each wave gone brings the next after its countdown, until the last (five waves on normal,
