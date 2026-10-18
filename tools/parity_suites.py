@@ -141,7 +141,9 @@ SUITES = {
     # tick by tick (FishingVectors), villager gossip, offers, special prices and restocking (VillagerVectors); the rest of wp77 runs in the workspace tests.
     "saved77": (["-p", "kiln-sim", "--test", "saved_parity"], {"KILN_SAVED_VECTORS": vec("wp77/saved.jsonl")}),
     "brain77": (["-p", "kiln-sim", "--test", "brain_parity"], {"KILN_BRAIN_VECTORS": vec("wp77/brt.jsonl")}),
-    "fishing77": (["-p", "kiln-entity", "--test", "fishing_parity"], {"KILN_FISHING_VECTORS": vec("wp77/fishing.jsonl")}),
+    # wp79: the bobber vectors again, with the harness ticking the bobber like ServerLevel (commonTick first) and recording the patch the level holds (wp77 had five
+    # cases that differed: both were mistakes of the vectors, not of Kiln; docs/wp79.md)
+    "fishing79": (["-p", "kiln-entity", "--test", "fishing_parity"], {"KILN_FISHING_VECTORS": vec("wp79/fishing.jsonl")}),
     "villagers77": (["-p", "kiln-entity", "--test", "villager_parity"], {"KILN_VILLAGER_VECTORS": vec("wp77/villagers.jsonl")}),
     "plugin_compat": (["-p", "kiln-plugin-host", "--test", "api_compat", "--test", "wit_freeze"], {}),
 }
