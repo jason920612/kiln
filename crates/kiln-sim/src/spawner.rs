@@ -1023,6 +1023,9 @@ fn spawn_category_for_chunk(
             // The caller counts it (nothing below reads the counts).
             let charge = cost.map(|(c, _)| ([pos.x, pos.y, pos.z], c));
             mine.extend(charge);
+            if std::env::var_os("KILN_DBG_SPAWN").is_some() {
+                eprintln!("DBGSPAWN t={} dim={} kind={} at=({:.2},{},{:.2}) chunk={:?} start=({},{},{})", env.game_time, env.dim, kind.type_name(), fx, y, fz, c, x, y, z);
+            }
             spawns.push((crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(fin)), pc, charge));
             spawned += 1;
             in_group += 1;
