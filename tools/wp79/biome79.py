@@ -29,7 +29,7 @@ for y in YS:
                 found = None
                 for b in BIOMES:
                     out = ask(t, f"execute in minecraft:the_nether if biome {x} {y} {z} minecraft:{b}", wait=0.02)
-                    if "Test passed" in out or "success" in out.lower() and "fail" not in out.lower():
+                    if "Test passed" in out or "conditional.pass" in out:
                         found = b
                         break
                 res[t] = found
