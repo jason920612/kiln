@@ -159,6 +159,35 @@ def scen_ocean(f):
         F(f.t, "round", r, census)
     return totals
 
+NETHER_CENSUS = ["zombified_piglin", "piglin", "piglin_brute", "ghast", "magma_cube", "enderman", "hoglin", "strider", "skeleton", "wither_skeleton", "blaze", "zoglin",
+                 "zombie", "creeper", "spider", "slime", "bat"]
+
+
+def scen_nbiome(f):
+    """wp81 item 5: natural spawning in a nether biome without any platform: a creative player at BIOME_AT (env X,Y,Z; default the soul sand valley the wp78 seed has at
+    -32,~,32) high above the ground, `tick sprint` rounds, the census of the whole nether after every round (what is counted is killed)."""
+    f.prep(18000)
+    x, y, z = (int(v) for v in os.environ.get("BIOME_AT", "-32,64,32").split(","))
+    f.tp("the_nether", x + 0.5, y, z + 0.5)
+    cmd(f.t, f"execute in minecraft:the_nether run forceload add {x - 16} {z - 16} {x + 16} {z + 16}")
+    time.sleep(25)
+    f.tp("the_nether", x + 0.5, y, z + 0.5)
+    cmd(f.t, "kill @e[type=!player]")
+    totals = {}
+    for r in range(f.rounds):
+        sprint(f.t, f.ticks)
+        census = {}
+        for ty in NETHER_CENSUS:
+            n = kill_count(f.t, "the_nether", f"@e[type=minecraft:{ty}]")
+            if n:
+                census[ty] = n
+        cmd(f.t, "execute in minecraft:the_nether run kill @e[type=!player]")
+        for ty, n in census.items():
+            totals[ty] = totals.get(ty, 0) + n
+        F(f.t, "round", r, census)
+    return totals
+
+
 def main():
     name = sys.argv[1]
     rounds = int(sys.argv[2]) if len(sys.argv) > 2 else 10
@@ -168,7 +197,7 @@ def main():
     def work(t):
         f = Farm(t, rounds, ticks)
         try:
-            results[t] = {"nether": scen_nether, "end": scen_end, "portal": scen_portal, "ocean": scen_ocean}[name](f)
+            results[t] = {"nether": scen_nether, "end": scen_end, "portal": scen_portal, "ocean": scen_ocean, "nbiome": scen_nbiome}[name](f)
         except Exception as e:
             results[t] = f"ERROR {e!r}"
             raise
