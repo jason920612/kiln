@@ -107,3 +107,33 @@ fn data_get_block_of_a_crafter_placed_by_a_command_shows_its_saved_fields() {
         assert!(be.get(key).is_some(), "{key} in {be:?}");
     }
 }
+
+#[test]
+fn a_data_merge_keeps_the_levels_and_the_beam_a_beacon_worked_out() {
+    use kiln_proto::nbt::Tag;
+    let mut sim = Sim::new(SimConfig::new(4, 4, None));
+    let (msg, stats) = join(1, "Keeper", 2);
+    assert!(sim.step([msg, ToSim::Console("gamemode creative Keeper".into())]));
+    let mut client = Client::new(1, stats);
+    let mut tick = |sim: &mut Sim, n: usize| {
+        for _ in 0..n {
+            let mut inbox = Vec::new();
+            client.tick(None, &mut inbox);
+            assert!(sim.step(inbox));
+        }
+    };
+    tick(&mut sim, 5);
+    let (bx, by, bz) = (7, 100, 7);
+    for c in [
+        format!("fill {} {} {} {} {} {} minecraft:air", bx - 8, by - 6, bz - 8, bx + 8, by + 6, bz + 8),
+        format!("fill {} {} {} {} {} {} minecraft:iron_block", bx - 1, by - 1, bz - 1, bx + 1, by - 1, bz + 1),
+        format!("setblock {bx} {by} {bz} minecraft:beacon"),
+    ] {
+        assert!(sim.step([ToSim::Console(c)]));
+    }
+    tick(&mut sim, 200);
+    assert!(sim.step([ToSim::Console(format!("data merge block {bx} {by} {bz} {{primary_effect:\"minecraft:speed\"}}"))]));
+    let be = sim.block_entity_data("minecraft:overworld", bx, by, bz).expect("a block entity");
+    assert_eq!(be.get("Levels").and_then(Tag::as_i64), Some(1), "the levels survive the merge: {be:?}");
+    assert!(be.get("primary_effect").is_some());
+}

@@ -32,7 +32,11 @@ def probe(tag, effects="speed", sec=None, wait=100, dist=6):
     OB(f"data merge block {X} {Y} {Z} {{primary_effect:\"minecraft:{effects}\"{sec_txt}}}")
     OB(f"tp KilnTest {X + dist}.5 {Y + 1} {Z}.5")
     both_("tick unfreeze")
-    time.sleep(wait / 20.0 + 3.0)
+    time.sleep(7.0)
+    both_("tick freeze")
+    time.sleep(0.5)
+    align(80, 70)
+    step(15)
     r = {}
     for t in "KV":
         e = ask(t, "data get entity KilnTest active_effects", wait=0.4)

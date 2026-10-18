@@ -1022,6 +1022,13 @@ impl Containers {
                 // The same block entity with new data keeps its place in the ticker list.
                 if let Some(old) = self.map.get(&pos).filter(|o| o.type_id == be.kind) {
                     loaded.order = old.order;
+                    // (`BeaconBlockEntity.loadAdditional` reads the powers and nothing else: the levels and the beam it worked out stay.)
+                    if let (Some(nb), Some(ob)) = (loaded.beacon.as_mut(), old.beacon.as_ref()) {
+                        nb.levels = ob.levels;
+                        nb.last_check_y = ob.last_check_y;
+                        nb.checking = ob.checking.clone();
+                        nb.beam = ob.beam.clone();
+                    }
                 }
                 // (A command block's plain last output is kept for tests while the output itself stays.)
                 if let (Some(new), Some(old)) = (loaded.command.as_deref_mut(), self.map.get(&pos).and_then(|c| c.command.as_deref()))
