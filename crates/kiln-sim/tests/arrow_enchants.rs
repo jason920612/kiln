@@ -3,7 +3,6 @@
 //! did nothing. They are worked out when the arrow hits now, the way `AbstractArrow.onHitEntity` / `doKnockback` do.
 
 use kiln_link::ToSim;
-use kiln_proto::nbt::Tag;
 use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
 
@@ -51,21 +50,22 @@ impl World {
 
     /// Health of the golem after an arrow (fired from `bow` NBT, or none) flew into it.
     fn golem_after_arrow(&mut self, weapon: &str) -> (f32, f64) {
+        self.target_after_arrow("minecraft:iron_golem", weapon)
+    }
+
+    /// Health and how far along +x the target (a NoAI mob of `kind`) stands from where it was put, after an arrow flew into it.
+    fn target_after_arrow(&mut self, kind: &str, weapon: &str) -> (f32, f64) {
         let p = self.client.pos;
         let (x, y, z) = (p[0] + 12.0, p[1], p[2]);
-        self.console(&format!("summon minecraft:iron_golem {x} {y} {z} {{NoAI:1b,PersistenceRequired:1b}}"));
+        self.console(&format!("summon {kind} {x} {y} {z} {{NoAI:1b,PersistenceRequired:1b}}"));
         self.ticks(2);
         self.console(&format!("summon minecraft:arrow {} {} {z} {{Motion:[3.0d,0.0d,0.0d],crit:0b,damage:2.0d{weapon}}}", x - 6.0, y + 1.0));
         self.ticks(8);
-        let hp = self.sim.mobs().into_iter().find(|m| m.1 == "minecraft:iron_golem").map(|m| m.3).expect("the golem");
-        let motion_x = self.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:iron_golem")).and_then(|t| match t.get("Motion") {
-            Some(Tag::List(l)) => l.first().and_then(|d| match d {
-                Tag::Double(v) => Some(*v),
-                _ => None,
-            }),
-            _ => None,
-        });
-        (hp, motion_x.unwrap_or(0.0))
+        let m = self.sim.mobs().into_iter().find(|m| m.1 == kind);
+        match m {
+            Some(m) => (m.3, m.2[0] - x),
+            None => (0.0, 0.0),
+        }
     }
 }
 
@@ -94,7 +94,7 @@ fn punch_pushes_the_target_along_the_arrow() {
         eprintln!("no datapack: skipped");
         return;
     }
-    let (_, none) = World::new().golem_after_arrow("");
-    let (_, punch) = World::new().golem_after_arrow(&bow("\"minecraft:punch\":2"));
-    assert!(punch > none + 0.05, "knocked along +x: plain {none}, Punch II {punch}");
+    let (_, none) = World::new().target_after_arrow("minecraft:sheep", "");
+    let (_, punch) = World::new().target_after_arrow("minecraft:sheep", &bow("\"minecraft:punch\":2"));
+    assert!(punch > none + 0.3, "knocked along +x: plain {none}, Punch II {punch}");
 }
