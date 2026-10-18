@@ -233,5 +233,50 @@ elif MODE == "portal2":
         step(10)
         print(i + 46, "K", where("K"), " V", where("V"))
         sys.stdout.flush()
+elif MODE == "trip":
+    # The portal timer of a survival player-like bot (W0): ticks from standing in the portal to the dimension change, plain / hurt at tick 40 / a zombie beating on it.
+    setup()
+    px, pz, py = 1010, 1010, 190
+    for t in "KV":
+        w(t, f"fill {px - 4} {py - 1} {pz - 4} {px + 5} {py - 1} {pz + 4} minecraft:stone")
+        w(t, f"fill {px - 2} {py} {pz - 2} {px + 3} {py + 6} {pz + 2} minecraft:air")
+        w(t, f"fill {px} {py} {pz} {px + 3} {py + 4} {pz} minecraft:obsidian")
+        w(t, f"fill {px + 1} {py + 1} {pz} {px + 2} {py + 3} {pz} minecraft:nether_portal[axis=x]")
+        w(t, "gamemode survival W0")
+        w(t, "effect give W0 minecraft:resistance 99999 4 true")
+        w(t, "gamerule spawn_mobs false")
+    time.sleep(2)
+    both("tick freeze")
+    time.sleep(0.5)
+
+    def in_nether(t):
+        return "pass" in ask(t, "execute in minecraft:the_nether if entity W0", wait=0.12).lower()
+
+    def scenario(name, hurt_at=None, zombie=False):
+        for t in "KV":
+            w(t, "execute in minecraft:overworld run tp W0 1005.5 190 1005.5")
+            w(t, "kill @e[type=zombie]")
+        step(30)   # out of the portal for long enough that nothing of the last trip is left
+        for t in "KV":
+            if zombie:
+                w(t, f"summon zombie {px + 1.5} {py} {pz + 2.5} {{PersistenceRequired:1b,Tags:[\"zz\"]}}")
+            w(t, f"tp W0 {px + 1.5} {py} {pz + 0.5}")
+        arrived = {"K": None, "V": None}
+        for i in range(1, 140):
+            if hurt_at == i:
+                both("damage W0 1 minecraft:generic")
+            step(1)
+            for t in "KV":
+                if arrived[t] is None and in_nether(t):
+                    arrived[t] = i
+            if all(arrived.values()):
+                break
+        print(name, "ticks to the nether: K", arrived["K"], " V", arrived["V"])
+        sys.stdout.flush()
+
+    scenario("plain")
+    scenario("hurt at 40", hurt_at=40)
+    scenario("zombie", zombie=True)
+    scenario("plain again")
 else:
     sys.exit("unknown mode")
