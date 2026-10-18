@@ -286,3 +286,26 @@ fn a_mob_that_went_through_a_portal_ticks_for_300_ticks_with_nobody_near() {
     assert!(risen[2].is_some_and(|r| r >= 140), "after 150 ticks it has aged: {risen:?}");
     assert!(risen.last().unwrap().is_none_or(|r| r <= 310), "and stops with the ticket after 300 (nothing keeps the chunk): {risen:?} (in the nether now: {in_nether})");
 }
+
+/// wp81 (lock step against vanilla, `tools/wp81/gateway81.py`): a mob standing in an end gateway goes to its exit, as a player does (vanilla: the cow of the lock step stood
+/// at (33.5, 74, 1071.5) a few seconds after, and the gateway block entity had its `exit_portal`). Kiln only took players through gateways.
+#[test]
+fn a_mob_in_an_end_gateway_goes_to_its_exit() {
+    let mut w = World::new("creative");
+    w.run(&format!("execute in {END} run tp Traveller 0 80 30"));
+    w.ticks(10);
+    w.run(&format!("execute in {END} run setblock 0 80 40 minecraft:end_gateway"));
+    w.run(&format!("execute in {END} run summon minecraft:cow 0.5 80 40.5 {{NoAI:1b,PersistenceRequired:1b}}"));
+    let mut at = None;
+    for _ in 0..60 {
+        w.ticks(1);
+        at = w.sim.entities_in(END).into_iter().find(|(k, _)| *k == "minecraft:cow").map(|(_, p)| p);
+        if at.is_some_and(|p| p[2] > 400.0) {
+            break;
+        }
+    }
+    let at = at.expect("the cow");
+    assert!(at[2] > 400.0, "it went through the gateway to the outer islands: {at:?}");
+    let be = w.sim.block_entity_data(END, 0, 80, 40).expect("the gateway's block entity");
+    assert!(be.get("exit_portal").is_some(), "which now knows its exit: {be:?}");
+}
