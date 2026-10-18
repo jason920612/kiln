@@ -25,8 +25,9 @@ E("fill 95 60 95 110 90 110 minecraft:air")
 E("fill 5 69 5 40 69 40 minecraft:end_stone")
 E("fill 95 69 95 110 69 110 minecraft:end_stone")
 cases = [
-    ("exact", "{ExitPortal:{X:100,Y:75,Z:100},ExactTeleport:1b}"),
-    ("not exact", "{ExitPortal:{X:100,Y:75,Z:100}}"),
+    ("exact", "{exit_portal:[I;100,75,100],ExactTeleport:1b}"),
+    ("not exact", "{exit_portal:[I;100,75,100]}"),
+    ("no exit", ""),
 ]
 x = 10
 for name, nbt_text in cases:
@@ -41,7 +42,7 @@ for name, nbt_text in cases:
         print("   ", t, "gateway:", o.strip()[-200:], flush=True)
     x += 6
 # an item and an arrow
-E("setblock 30 70 10 minecraft:end_gateway{ExitPortal:{X:100,Y:75,Z:100},ExactTeleport:1b}")
+E("setblock 30 70 10 minecraft:end_gateway{exit_portal:[I;100,75,100],ExactTeleport:1b}")
 E("summon minecraft:item 30.5 70 10.5 {Item:{id:\"minecraft:stone\",count:3},Tags:[\"it\"],PickupDelay:32767s}")
 E("summon minecraft:arrow 30.5 71.5 10.5 {Motion:[0.0d,-0.5d,0.0d],Tags:[\"ar\"]}")
 time.sleep(3)

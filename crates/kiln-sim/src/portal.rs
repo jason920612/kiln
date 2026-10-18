@@ -422,11 +422,10 @@ impl Sim {
         }
     }
 
-    /// Non-player entities in portals (basic): an entity touching a nether or end portal block
+    /// Non-player entities in portals (basic): an entity touching a nether or end portal block (or an end gateway)
     /// moves to the other level at once (their transition time is 0) and then waits out
     /// `Entity.getDimensionChangingDelay` (300 ticks) before another trip. It arrives as a
-    /// copy with a new network id, as vanilla's `teleportCrossDimension` makes one; end
-    /// gateways and riders are not handled.
+    /// copy with a new network id, as vanilla's `teleportCrossDimension` makes one; riders go with their vehicle.
     ///
     /// `only`: the entities the regions found may touch a portal block ([`portal_candidates`]),
     /// sorted, and the first id given out after the regions ran: only those and the newer ones
@@ -461,6 +460,9 @@ impl Sim {
                                     PortalKind::Nether
                                 } else if first == block::END_PORTAL {
                                     PortalKind::End
+                                } else if first == block::END_GATEWAY && !e.kind.name.contains("arrow") && !e.kind.name.contains("trident") {
+                                    // (`TheEndGatewayBlock.entityInside`: mobs, items and vehicles go to the exit; projectiles are not carried.)
+                                    PortalKind::Gateway
                                 } else {
                                     continue;
                                 };
@@ -504,7 +506,8 @@ impl Sim {
                     self.end_platform(BlockPos::new(x, y - 1, z));
                     Some((END_ID, [x as f64 + 0.5, y as f64, z as f64 + 0.5], [90.0, rot[1]]))
                 }
-                PortalKind::Gateway => None,
+                // The gateway's exit in the same level, unless it cools down (the entity stays inside and goes when it has cooled).
+                PortalKind::Gateway => self.gateway_destination(from, entry).map(|p| (from, p, rot)),
             };
             let Some((to, pos, rot)) = dest else { continue };
             // A vehicle takes its riders along (`Entity.teleport`: passengers are teleported
@@ -556,7 +559,7 @@ pub(crate) fn portal_candidates(entities: &crate::entities::Entities, cells: &ki
 fn portal_candidates_in(list: &[crate::entities::Entity], cells: &kiln_region::CellSet<kiln_world::Cell>, min_y: i32) -> Vec<i32> {
     let is_portal = |s: u16| {
         let first = kiln_data::blocks_types::block_of(s).first;
-        first == block::NETHER_PORTAL || first == block::END_PORTAL
+        first == block::NETHER_PORTAL || first == block::END_PORTAL || first == block::END_GATEWAY
     };
     let mut may_have: crate::FastMap<(i32, i32, i32), bool> = Default::default();
     let mut out = Vec::new();

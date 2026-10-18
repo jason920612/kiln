@@ -1,23 +1,29 @@
 from lab80 import *
 setup(frozen=False, rules=("command_block_output false", "spawn_mobs false"))
-revive()
+both_("kill @e[type=!player]")
 both_("tick unfreeze")
-for t in "KV": w(t, "gamemode survival KilnTest")
-X, Y, Z = 8, 150, 30
-OB(f"fill {X - 12} {Y - 8} {Z - 12} {X + 12} {Y + 12} {Z + 12} minecraft:air")
-time.sleep(1.5)
-for l in range(1, 5):
-    OB(f"fill {X - l} {Y - l} {Z - l} {X + l} {Y - l} {Z + l} minecraft:iron_block")
-OB(f"setblock {X} {Y} {Z} minecraft:beacon")
-time.sleep(5)
-for prim, sec, dist in (("speed", "speed", 41), ("speed", "regeneration", 52), ("strength", "regeneration", 49), ("haste", "regeneration", 51), ("jump_boost", "", 3)):
-    OB(f"data merge block {X} {Y} {Z} {{primary_effect:\"minecraft:{prim}\"" + (f",secondary_effect:\"minecraft:{sec}\"" if sec else "") + "}")
-    OB(f"tp KilnTest {X + dist}.5 {Y + 1} {Z}.5")
-    both_("effect clear KilnTest")
-    time.sleep(7)
-    out = {}
+Y = 100
+bx, bz = 40, 40
+OB(f"fill {bx-6} {Y - 2} {bz-6} {bx+8} {Y + 8} {bz+6} minecraft:air")
+OB(f"fill {bx-6} {Y - 1} {bz-6} {bx+8} {Y - 1} {bz+6} minecraft:stone")
+for x in (bx, bx + 3):
+    OB(f"fill {x} {Y} {bz} {x} {Y + 4} {bz} minecraft:obsidian")
+OB(f"fill {bx} {Y} {bz} {bx+3} {Y} {bz} minecraft:obsidian")
+OB(f"fill {bx} {Y + 4} {bz} {bx+3} {Y + 4} {bz} minecraft:obsidian")
+OB(f"fill {bx+1} {Y + 1} {bz} {bx+2} {Y + 3} {bz} minecraft:nether_portal[axis=x]")
+time.sleep(1)
+OB(f"summon minecraft:item {bx+1}.5 {Y + 1} {bz}.5 {{Item:{{id:\"minecraft:stone\",count:2}},Tags:[\"np_item\"],PickupDelay:20s}}")
+OB(f"summon minecraft:pig {bx+2}.5 {Y + 1} {bz}.5 {{NoAI:1b,Tags:[\"np_pig\"],PersistenceRequired:1b}}")
+def where(t, tag):
+    r = []
+    for dim in ("overworld", "the_nether"):
+        o = ask(t, f"execute in minecraft:{dim} positioned 0 0 0 run data get entity @e[tag={tag},distance=..10000000,limit=1] Pos", wait=0.3)
+        m = re.findall(r"(-?\d+(?:\.\d+)?)d", o)
+        if len(m) >= 3:
+            r.append((dim[:4], [round(float(v), 1) for v in m[:3]]))
+    return r
+for i in range(10):
+    time.sleep(1.0)
     for t in "KV":
-        e = ask(t, "data get entity KilnTest active_effects", wait=0.4)
-        out[t] = sorted(zip(re.findall(r'id: "minecraft:(\w+)"', e), re.findall(r"amplifier: (\d+)b", e) or ["0"] * 9))
-    cmpn(f"{prim}+{sec or '-'} at {dist}", out["K"], out["V"])
-OB(f"fill {X - 12} {Y - 8} {Z - 12} {X + 12} {Y + 12} {Z + 12} minecraft:air")
+        print(i, t, "item", where(t, "np_item"), "pig", where(t, "np_pig"), flush=True)
+both_("kill @e[type=!player]")
