@@ -59,6 +59,7 @@ fn bobbers_match_vanilla_tick_by_tick() {
         hook.delta = Vec3::ZERO;
         hook.random = kiln_javamath::random::LegacyRandom::new(seed);
         level.insert(hook);
+        let mut kiln_rows: Vec<[f64; 13]> = Vec::new();
         for (t, want) in v["ticks"].as_array().unwrap().iter().enumerate() {
             if want.is_null() {
                 break;
@@ -83,6 +84,7 @@ fn bobbers_match_vanilla_tick_by_tick() {
                 e.position().x, e.position().y, e.position().z, e.delta.x, e.delta.y, e.delta.z,
             ];
             let w: Vec<f64> = want.as_array().unwrap()[..13].iter().map(|x| x.as_bool().map_or_else(|| num(x), |b| b as u8 as f64)).collect();
+            kiln_rows.push(got);
             values += got.len();
             // (The fish angle is a float: the vector has its shortest decimal form.)
             let same = |i: usize, a: f64, b: f64| if i == 4 { a as f32 == b as f32 } else { a == b || (a.is_nan() && b.is_nan()) };
@@ -94,6 +96,8 @@ fn bobbers_match_vanilla_tick_by_tick() {
                         let before: Vec<f64> = v["ticks"][k].as_array().unwrap().iter().map(|x| x.as_bool().map_or_else(|| num(x), |b| b as u8 as f64)).collect();
                         text.push_str(&format!("
     vanilla t={} {before:?}", k + 1));
+                        text.push_str(&format!("
+    Kiln    t={} {:?}", k + 1, kiln_rows[k]));
                     }
                 }
                 failures.push(text);
