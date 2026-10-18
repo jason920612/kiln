@@ -23,15 +23,7 @@ CASES = {
     "wolf_pack": ([("crates/kiln-entity/src/mob/kinds/wolf.rs", "    fn max_spawn_cluster(&self) -> i32 {\n        8", "    fn max_spawn_cluster(&self) -> i32 {\n        4")], ENT + ["--test", "spawn_cluster"], {}),
     "fishing_bite_dip": ([("crates/kiln-entity/src/ext_entity/fishing_hook.rs", "                if !self.biting {", "                if false {")], ENT + ["--test", "fishing_parity", "--", "--nocapture"], {"KILN_FISHING_VECTORS": VEC + "/fishing.jsonl"}),
     "gossip_order": ([("crates/kiln-entity/src/mob/gossip.rs", "std::cmp::Ordering::Greater => high = mid - 1,", "std::cmp::Ordering::Greater => low = mid + 1,")], ENT + ["--test", "villager_parity", "--", "--nocapture"], {"KILN_VILLAGER_VECTORS": VEC + "/villagers.jsonl"}),
-    "cat_gift": ([("crates/kiln-entity/src/mob/kinds/cat.rs", "        if !tame::is_tame(m) || tame::ordered_to_sit(m) {
-            return false;
-        }
-        let Some(owner) = tame::owner(m, level) else { return false };
-        self.owner = Some(owner.id);", "        if true || !tame::is_tame(m) || tame::ordered_to_sit(m) {
-            return false;
-        }
-        let Some(owner) = tame::owner(m, level) else { return false };
-        self.owner = Some(owner.id);")], SIM + ["--test", "cat_gift"], {}),
+    "cat_gift": ([("crates/kiln-entity/src/mob/kinds/cat.rs", "        if !tame::is_tame(m) || tame::ordered_to_sit(m) {\n            return false;\n        }\n        let Some(owner) = tame::owner(m, level) else { return false };\n        self.owner = Some(owner.id);", "        if true || !tame::is_tame(m) || tame::ordered_to_sit(m) {\n            return false;\n        }\n        let Some(owner) = tame::owner(m, level) else { return false };\n        self.owner = Some(owner.id);")], SIM + ["--test", "cat_gift"], {}),
     "damage_event_order": ([("crates/kiln-sim/src/entities.rs", "                p.hurt(amount, &source, &mut ctx);\n                self.events.push(Event::PlayerHurt { target: id });", "                p.hurt(amount, &source, &mut ctx);")], SIM + ["--test", "player_sync", "the_damage_event_comes_before_a_level_event"], {}),
     "zombie_breaks_doors": ([("crates/kiln-entity/src/mob/kinds/zombie.rs", "        m.goals.add(1, Goal::Custom(Box::new(super::break_door::BreakDoorGoal::new(super::break_door::Who::Zombie))));", "")], SIM + ["--test", "door_break", "a_zombie_breaks_a_door"], {}),
     "zombie_village": ([("crates/kiln-entity/src/mob/kinds/zombie.rs", "    g.add(6, Goal::Custom(Box::new(super::move_through_village::MoveThroughVillageGoal::new(1.0, true, 4, can_break_doors))));", "    g.add(6, Goal::Never);")], ENT + ["--test", "village_goals", "a_zombie"], {}),
