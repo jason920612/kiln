@@ -221,6 +221,27 @@ fn a_pearl_keeps_its_chunk_ticking_and_lands_for_a_player_far_away() {
     w.ticks(10);
 }
 
+/// `ServerChunkCache.tick` purges the tickets only on ticks the level runs normally: the idle ticks of a frozen game (`/tick freeze`) leave them alone, so a pearl's
+/// chunk is still there when the game runs again (lock step, `ring81.py pearl`: vanilla kept the chunks over seconds of frozen idle ticks).
+#[test]
+fn a_frozen_game_does_not_run_tickets_down() {
+    let mut w = World::new(None);
+    let start = w.client.pos;
+    let (cx, cz) = ((start[0].floor() as i32) >> 4, (start[2].floor() as i32) >> 4);
+    w.throw_pearl_up();
+    w.ticks(3);
+    w.run("tp Thrower 4000 80 4000");
+    w.ticks(5);
+    w.run("tick freeze");
+    w.ticks(150);
+    assert!(loaded(&w.sim, cx, cz), "the pearl's chunk is still loaded after 150 frozen ticks");
+    assert_eq!(w.pearls(), 1);
+    w.run("tick unfreeze");
+    w.ticks(200);
+    assert_eq!(w.pearls(), 0, "the pearl came down");
+    assert!(w.client.pos[0].abs() < 40.0, "and took its player to where it landed: {:?}", w.client.pos);
+}
+
 /// `ServerPlayer.saveEnderPearls` and `loadAndSpawnEnderPearls`: a pearl in the air is saved with its owner when it logs out (and is gone from the
 /// level), and back in the air when it logs in again.
 #[test]
