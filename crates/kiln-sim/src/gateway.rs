@@ -140,7 +140,7 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos) {
 pub(crate) fn tick(level: &mut RegionLevel, ticking: &Ticking) {
     let g = &mut level.blocks.gateways;
     for (p, age) in g.map.iter_mut() {
-        if ticking.contains(chunk_of(*p)) {
+        if ticking.contains_block(chunk_of(*p)) {
             *age += 1;
             g.dirty = true;
         }

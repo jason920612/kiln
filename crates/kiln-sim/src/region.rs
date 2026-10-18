@@ -565,7 +565,7 @@ impl RegionWork<'_> {
         }
         // The same tick everywhere, so when chunks unload does not depend on the regions.
         if env.game_time % 20 == 0 {
-            self.find_unloads(env.max_view);
+            self.find_unloads(load_radius(env));
         }
         // Encoded chunk packets are shared by the players a chunk goes to around the same time;
         // a minute on they only take memory (a later viewer gets the chunk encoded again, the
@@ -1043,10 +1043,10 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     t
 }
 
-/// Chunks that tick: those within the simulation distance of the region's players and the
-/// level's force-loaded chunks.
+/// Chunks that tick: those within the simulation distance of the region's players (entities, random ticks) or one chunk further (scheduled ticks, block
+/// entities, the chunks natural spawning picks from), and the level's force-loaded chunks.
 fn ticking_chunks(players: &[&mut Player], env: &Env) -> Ticking {
-    let mut t = Ticking::around(players.iter().map(|p| p.center), env.blocks.simulation_distance);
+    let mut t = Ticking::around(players.iter().map(|p| p.center), env.blocks.simulation_distance, env.max_view);
     for &c in env.forced.iter() {
         t.add_chunk(c);
     }
@@ -2014,6 +2014,12 @@ fn send_chunks(p: &mut Player, missing: Vec<ChunkPos>, cells: &mut CellSet<Cell>
     p.unacked_batches += 1;
 }
 
+/// How far from a player chunks are kept loaded: the server's view distance (the `PLAYER_LOADING` tickets are at level 31 there), and one chunk further
+/// when the simulation distance reaches that far (the simulation tickets make that ring block-ticking: scheduled ticks and block entities run in it).
+fn load_radius(env: &Env) -> i32 {
+    env.max_view.max((env.blocks.simulation_distance + 1).min(env.max_view + 1))
+}
+
 /// Rank of the requests for chunks only loaded (not sent): after every player's own needs.
 const LOAD_AHEAD_RANK: u32 = 1 << 16;
 /// Most chunks asked for per player and tick for loading only.
@@ -2027,7 +2033,7 @@ const LOAD_AHEAD_PER_TICK: usize = 64;
 /// chunks between the client's view and the server's are asked for too (nearest first, after
 /// everything a player is waiting to be sent), and not unloaded.
 fn load_ahead(p: &mut Player, cells: &CellSet<Cell>, env: &Env, wanted: &mut Vec<(u32, ConnId, ChunkPos)>) {
-    let r = env.max_view;
+    let r = load_radius(env);
     // Spectators hold no tickets (`ChunkMap.skipPlayer`) unless `spectators_generate_chunks`.
     if r <= p.view_distance || (p.game_mode == 3 && !env.spectators_generate_chunks) {
         return;

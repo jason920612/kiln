@@ -23,8 +23,10 @@ fn settle(sim: &mut Sim, clients: &mut [Client], ticks: usize) {
     }
 }
 
-fn loaded_after_joining(client_view: u8) -> usize {
-    let mut sim = Sim::new(SimConfig::new(2, SERVER_VIEW, None));
+fn loaded_after_joining(client_view: u8, simulation: u8) -> usize {
+    let mut config = SimConfig::new(2, SERVER_VIEW, None);
+    config.simulation_distance = simulation;
+    let mut sim = Sim::new(config);
     let (msg, stats) = join(1, "Afk", client_view);
     assert!(sim.step([msg]));
     let mut clients = [Client::new(1, stats)];
@@ -36,8 +38,16 @@ fn loaded_after_joining(client_view: u8) -> usize {
 #[test]
 fn a_small_render_distance_still_loads_the_servers_view() {
     let side = 2 * SERVER_VIEW as usize + 1;
-    let small = loaded_after_joining(2);
-    let full = loaded_after_joining(SERVER_VIEW);
+    let small = loaded_after_joining(2, 3);
+    let full = loaded_after_joining(SERVER_VIEW, 3);
     assert!(full >= side * side, "the full view loads {full} chunks, expected at least {}", side * side);
     assert_eq!(small, full, "a render distance of 2 loads the same chunks as the server's view");
+}
+
+/// A simulation distance that reaches the view distance makes the ring beyond it block-ticking (level 32 in both trackers), so it is loaded too.
+#[test]
+fn the_ring_after_the_view_loads_when_the_simulation_reaches_it() {
+    let side = 2 * (SERVER_VIEW as usize + 1) + 1;
+    let small = loaded_after_joining(2, SERVER_VIEW);
+    assert!(small >= side * side, "{small} chunks loaded, expected at least {}", side * side);
 }

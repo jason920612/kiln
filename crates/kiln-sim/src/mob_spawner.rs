@@ -218,7 +218,7 @@ pub(crate) fn apply_item_data(level: &mut RegionLevel, pos: BlockPos, kind: i32,
 pub(crate) fn tick_all(sim: &mut SimLevel, ticking: &Ticking) {
     let Some(level) = sim.level.region() else { return };
     // Only the mob spawners a player is near do anything: found without taking them out.
-    let due: Vec<BlockPos> = level.blocks.spawners.map.iter().filter(|(p, _)| ticking.contains(chunk_of(**p))).map(|(p, _)| *p).collect();
+    let due: Vec<BlockPos> = level.blocks.spawners.map.iter().filter(|(p, _)| ticking.contains_block(chunk_of(**p))).map(|(p, _)| *p).collect();
     for p in due {
         let Some(entry) = sim.level.region().and_then(|l| l.blocks.spawners.map.get(&p)) else { continue };
         match &entry.be {

@@ -241,7 +241,7 @@ pub(crate) fn process_released(sim: &mut SimLevel) {
 /// `Level.tickBlockEntities` for the hearts in ticking chunks, in position order.
 pub(crate) fn tick_all(sim: &mut SimLevel, ticking: &Ticking) {
     let Some(level) = sim.level.region() else { return };
-    let due: Vec<BlockPos> = level.blocks.hearts.map.keys().filter(|p| ticking.contains(chunk_of(**p))).copied().collect();
+    let due: Vec<BlockPos> = level.blocks.hearts.map.keys().filter(|p| ticking.contains_block(chunk_of(**p))).copied().collect();
     for p in due {
         let Some(mut e) = sim.level.region().and_then(|l| l.blocks.hearts.map.remove(&p)) else { continue };
         let before = e.be.saved_uuid();
