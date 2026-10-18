@@ -222,3 +222,27 @@ fn the_withers_bar_goes_when_the_player_leaves_its_range() {
     w.ticks(10);
     assert!(boss_actions(&w).contains(&1), "the bar was taken away with the level");
 }
+
+/// wp78 (real client side by side): a summoned `NoAI` wither never ticks, and vanilla's bar for it is full; Kiln sent an empty one.
+#[test]
+fn a_wither_that_never_ticks_shows_a_full_bar() {
+    let mut w = World::new();
+    *w.client.stats.log.lock().unwrap() = Some(Vec::new());
+    let p = w.client.pos;
+    w.run(&format!("summon minecraft:wither {} {} {} {{NoAI:1b,Invul:0}}", p[0] + 5.0, p[1] + 3.0, p[2]));
+    w.ticks(3);
+    let log = w.client.stats.log.lock().unwrap().replace(Vec::new()).unwrap_or_default();
+    let mut progress = None;
+    for pkt in log {
+        let mut r = kiln_proto::codec::Reader::new(&pkt);
+        if r.varint().ok() == Some(kiln_data::packets::play::clientbound::BOSS_EVENT) {
+            let _ = r.uuid();
+            if r.varint().ok() == Some(0) {
+                // Add: name (a text component, nbt) then the progress: read it as the last f32 of the fixed tail (progress, color, overlay, flags)
+                let tail = &pkt[pkt.len() - 7..];
+                progress = Some(f32::from_be_bytes([tail[0], tail[1], tail[2], tail[3]]));
+            }
+        }
+    }
+    assert_eq!(progress, Some(1.0), "the bar a never-ticking wither shows");
+}

@@ -36,7 +36,7 @@ static INFO: Info = Info {
 /// `INVULNERABLE_TICKS`.
 pub const INVULNERABLE_TICKS: i32 = 220;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct WitherState {
     /// `DATA_ID_INV`.
     pub invul: i32,
@@ -53,6 +53,25 @@ pub struct WitherState {
     pub boss_progress: f32,
     /// Built from blocks: `SummonedEntityTrigger` fires for players nearby on the first tick.
     pub summoned: bool,
+}
+
+impl Default for WitherState {
+    /// (A wither that never ticked, a `NoAI` one, shows a full bar like vanilla's `ServerBossEvent` of a summoned wither: the real client showed 1.0 where Kiln showed 0.0.)
+    fn default() -> Self {
+        WitherState {
+            invul: 0,
+            targets: [0; 3],
+            x_rot_heads: [0.0; 2],
+            y_rot_heads: [0.0; 2],
+            x_rot_o_heads: [0.0; 2],
+            y_rot_o_heads: [0.0; 2],
+            next_head_update: [0; 2],
+            idle_head_updates: [0; 2],
+            destroy_blocks_tick: 0,
+            boss_progress: 1.0,
+            summoned: false,
+        }
+    }
 }
 
 fn st(m: &MobData) -> &WitherState {
