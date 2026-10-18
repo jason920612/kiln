@@ -119,6 +119,41 @@ fn the_server_loads_two_chunks_past_its_view_distance() {
     }
 }
 
+/// `execute if loaded` is true for a chunk at the entity-ticking *loading* level: within the server's view distance of a player (lock step: `simradius81.py`,
+/// with a view distance of 5 and a simulation distance of 4 vanilla says yes up to 5 chunks, and the chunks to 7 are loaded all the same), and for the chunk of a
+/// forced chunk but not the rings around it.
+#[test]
+fn execute_if_loaded_follows_the_loading_level_not_just_loaded() {
+    let mut sim = Sim::new(SimConfig::new(3, 2, None));
+    let (msg, stats) = join(1, "Watcher", 3);
+    assert!(sim.step([msg]));
+    let mut client = Client::new(1, stats);
+    for _ in 0..30 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    let (px, pz) = ((client.pos[0].floor() as i32) >> 4, (client.pos[2].floor() as i32) >> 4);
+    for d in 0..=5 {
+        let (x, z) = ((px + d) * 16 + 8, pz * 16 + 8);
+        sim.console_now(&format!("execute if loaded {x} 100 {z} run setblock {x} 100 {z} minecraft:diamond_block"));
+    }
+    let diamond = |d: i32| sim.block_at((px + d) * 16 + 8, 100, pz * 16 + 8) == Some(kiln_data::blocks::default_state::DIAMOND_BLOCK);
+    assert!((0..=3).all(diamond), "within the view distance (the simulation distance is 2: it does not matter)");
+    assert!(!diamond(4) && !diamond(5), "the rings that are only loaded do not count");
+    assert!(loaded(&sim, px + 5, pz), "although they are loaded");
+    sim.console_now("forceload add 4008 4008");
+    for _ in 0..3 {
+        assert!(sim.step([]));
+    }
+    for (dx, want) in [(0, true), (1, false), (2, false)] {
+        let x = (4008 >> 4) * 16 + 8 + 16 * dx;
+        sim.console_now(&format!("execute if loaded {x} 100 4008 run setblock {x} 100 4008 minecraft:gold_block"));
+        let gold = sim.block_at(x, 100, 4008) == Some(kiln_data::blocks::default_state::GOLD_BLOCK);
+        assert_eq!(gold, want, "forced chunk ring {dx}");
+    }
+}
+
 struct World {
     sim: Sim,
     client: Client,
