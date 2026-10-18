@@ -471,6 +471,9 @@ impl Sim {
                                     PortalKind::Nether
                                 } else if first == block::END_PORTAL {
                                     PortalKind::End
+                                } else if first == block::END_GATEWAY {
+                                    // (`EndGatewayBlock.entityInside`: an entity that can use portals, while the gateway is not cooling down.)
+                                    PortalKind::Gateway
                                 } else {
                                     continue;
                                 };
@@ -531,7 +534,23 @@ impl Sim {
                     self.end_platform(BlockPos::new(x, y - 1, z));
                     Some((END_ID, [x as f64 + 0.5, y as f64, z as f64 + 0.5], [90.0, rot[1]]))
                 }
-                PortalKind::Gateway => None,
+                // `EndGatewayBlock.getPortalDestination`: the gateway's exit, in the same level.
+                PortalKind::Gateway => {
+                    if let Some(at) = self.gateway_destination(from, entry) {
+                        let uuid = self.dims[from].regions.iter().flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id).map(|e| e.uuid.as_u128());
+                        self.teleport_entity(from, id, from, at, None);
+                        self.place_portal_ticket(from, at);
+                        if let Some(uuid) = uuid {
+                            self.dims[from].portal_cooldowns.insert(uuid, now + ENTITY_PORTAL_COOLDOWN);
+                            for r in self.dims[from].regions.iter_mut() {
+                                if let Some(phys) = r.part_mut().0.list.iter_mut().find(|e| e.uuid.as_u128() == uuid).and_then(|e| e.phys.as_deref_mut()) {
+                                    phys.portal_cooldown = ENTITY_PORTAL_COOLDOWN as i32;
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
             };
             let Some((to, pos, rot)) = dest else { continue };
             // A vehicle takes its riders along (`Entity.teleport`: passengers are teleported
@@ -586,7 +605,7 @@ pub(crate) fn portal_candidates(entities: &crate::entities::Entities, cells: &ki
 fn portal_candidates_in(list: &[crate::entities::Entity], cells: &kiln_region::CellSet<kiln_world::Cell>, min_y: i32) -> Vec<i32> {
     let is_portal = |s: u16| {
         let first = kiln_data::blocks_types::block_of(s).first;
-        first == block::NETHER_PORTAL || first == block::END_PORTAL
+        first == block::NETHER_PORTAL || first == block::END_PORTAL || first == block::END_GATEWAY
     };
     let mut may_have: crate::FastMap<(i32, i32, i32), bool> = Default::default();
     let mut out = Vec::new();
