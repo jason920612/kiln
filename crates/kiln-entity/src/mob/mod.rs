@@ -1512,13 +1512,23 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
         crate::prof!("mob", "pre_tick");
         species::pre_tick(e, &mut m, level);
     }
+    let dbg = std::env::var_os("KILN_DBG_GHAST").is_some() && e.id == 99 && (300..=312).contains(&level.game_time());
+    if dbg {
+        eprintln!("DBGG gt={} before living_tick delta={:?} nav_done={} noai={}", level.game_time(), e.delta, m.nav_ref().is_done(), m.no_ai);
+    }
     living_tick(e, &mut m, level);
+    if dbg {
+        eprintln!("DBGG gt={} after living_tick delta={:?}", level.game_time(), e.delta);
+    }
     if e.tick_count % 5 == 0 {
         update_control_flags(e, &mut m, &*level);
     }
     {
         crate::prof!("mob", "post_tick");
         species::post_tick(e, &mut m, level);
+    }
+    if dbg {
+        eprintln!("DBGG gt={} after post_tick delta={:?}", level.game_time(), e.delta);
     }
     // `LivingEntity.remove`: a mob that was removed (killed, converted, discarded) forgets what
     // its brain remembered.
