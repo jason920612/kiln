@@ -312,7 +312,7 @@ fn valid_target(_level: &RegionLevel, _pos: BlockPos, s: u16) -> bool {
         C::StemBlock => state::get_int(s, "age") != 7,
         C::SweetBerryBushBlock => state::get_int(s, "age") < 3,
         C::CocoaBlock => state::get_int(s, "age") < 2,
-        C::TallFlowerBlock => true,
+        C::TallFlowerBlock | C::FlowerBedBlock => true,
         _ => false,
     }
 }
@@ -342,7 +342,12 @@ fn perform(level: &mut RegionLevel, pos: BlockPos, s: u16, spawns: &mut Vec<Spaw
             let age = state::get_int(s, "age") + 1;
             kiln_blocks::set_block(level, pos, state::set_int(s, "age", age), flags::CLIENTS);
         }
-        C::TallFlowerBlock => {
+        // `FlowerBedBlock.performBonemeal`: one more flower, or the flower as an item at four.
+        C::FlowerBedBlock if state::get_int(s, "flower_amount") < 4 => {
+            let amount = state::get_int(s, "flower_amount") + 1;
+            kiln_blocks::set_block(level, pos, state::set_int(s, "flower_amount", amount), flags::CLIENTS);
+        }
+        C::TallFlowerBlock | C::FlowerBedBlock => {
             // `popResource(level, pos, new ItemStack(this))`.
             if let Some(item) = ItemStack::of(BlockId::of(s).name(), 1) {
                 let r = level.random();

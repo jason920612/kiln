@@ -201,6 +201,40 @@ pub fn grow<L: Level>(level: &mut L, pos: BlockPos) -> Option<bool> {
             }
             Some(valid)
         }
+        C::KelpBlock | C::WeepingVinesBlock | C::TwistingVinesBlock | C::CaveVinesBlock | C::KelpPlantBlock | C::WeepingVinesPlantBlock | C::TwistingVinesPlantBlock | C::CaveVinesPlantBlock => {
+            growing_plant(level, pos, s)
+        }
+        C::SmallDripleafBlock => {
+            small_dripleaf(level, pos, s);
+            Some(true)
+        }
+        C::BigDripleafBlock => {
+            let valid = dripleaf_can_grow_into(level, pos.above());
+            if valid {
+                big_dripleaf_grow(level, pos, s);
+            }
+            Some(valid)
+        }
+        C::BigDripleafStemBlock => {
+            let top = connected_top(level, pos, s, 1, "minecraft:big_dripleaf");
+            let valid = top.is_some_and(|t| dripleaf_can_grow_into(level, t.above()));
+            if let (true, Some(t)) = (valid, top) {
+                let above = t.above();
+                let facing = state::get(s, "facing").unwrap_or("north").to_owned();
+                dripleaf_place(level, t, "minecraft:big_dripleaf_stem", &facing);
+                dripleaf_place(level, above, "minecraft:big_dripleaf", &facing);
+            }
+            Some(valid)
+        }
+        // A hanging mangrove propagule under the leaves.
+        C::MangroveLeavesBlock => {
+            let valid = is_air(level.block(pos.below()));
+            if valid {
+                let propagule = state::set_int(state::set(named("minecraft:mangrove_propagule"), "hanging", "true"), "age", 0);
+                crate::update::set_block(level, pos.below(), propagule, flags::CLIENTS);
+            }
+            Some(valid)
+        }
         C::PitcherCropBlock => {
             let Some((lower_pos, lower)) = pitcher_lower(level, pos, s) else { return Some(false) };
             let valid = pitcher_can_grow(level, lower_pos, lower, state::get_int(lower, "age") + 1);
@@ -252,5 +286,134 @@ fn pitcher_grow<L: Level>(level: &mut L, pos: BlockPos, s: u16, by: i32) {
     crate::update::set_block(level, pos, grown, flags::CLIENTS);
     if age >= 3 {
         crate::update::set_block_and_update(level, pos.above(), state::set(grown, "half", "upper"));
+    }
+}
+
+/// `BlockUtil.getTopConnectedBlock`: from `pos` along `dir` (+1 up, -1 down) past the blocks of `s`'s kind to the first other one, if that is the `head` block.
+fn connected_top<L: Level>(level: &L, pos: BlockPos, s: u16, dir: i32, head: &str) -> Option<BlockPos> {
+    let body = BlockId::of(s);
+    let mut p = pos;
+    loop {
+        p = p.offset(0, dir, 0);
+        if BlockId::of(level.block(p)) != body {
+            break;
+        }
+    }
+    is_named(level.block(p), head).then_some(p)
+}
+
+/// `GrowingPlantHeadBlock` / `GrowingPlantBodyBlock` bone meal: kelp and the vines grow their head along the growth direction (`getBlocksToGrowWhenBonemealed`
+/// blocks, the age going up to 25 as it goes); cave vines only ripen their berries.
+fn growing_plant<L: Level>(level: &mut L, pos: BlockPos, s: u16) -> Option<bool> {
+    let class = logic::block_class(s);
+    let (head_name, dir, is_body) = match class {
+        C::KelpBlock => ("minecraft:kelp", 1, false),
+        C::KelpPlantBlock => ("minecraft:kelp", 1, true),
+        C::TwistingVinesBlock => ("minecraft:twisting_vines", 1, false),
+        C::TwistingVinesPlantBlock => ("minecraft:twisting_vines", 1, true),
+        C::WeepingVinesBlock => ("minecraft:weeping_vines", -1, false),
+        C::WeepingVinesPlantBlock => ("minecraft:weeping_vines", -1, true),
+        C::CaveVinesBlock => ("minecraft:cave_vines", -1, false),
+        _ => ("minecraft:cave_vines", -1, true),
+    };
+    if head_name == "minecraft:cave_vines" {
+        // `CaveVinesBlock` / `CaveVinesPlantBlock`: a bare vine ripens.
+        let valid = state::get(s, "berries") != Some("true");
+        if valid {
+            crate::update::set_block(level, pos, state::set(s, "berries", "true"), flags::CLIENTS);
+        }
+        return Some(valid);
+    }
+    let (head_pos, head_state) = if is_body {
+        let Some(h) = connected_top(level, pos, s, dir, head_name) else { return Some(false) };
+        (h, level.block(h))
+    } else {
+        (pos, s)
+    };
+    let can_grow_into = |level: &L, p: BlockPos| {
+        let b = level.block(p);
+        if head_name == "minecraft:kelp" { is_named(b, "minecraft:water") } else { is_air(b) }
+    };
+    let next = head_pos.offset(0, dir, 0);
+    let valid = can_grow_into(level, next) && inside_build_height(level, next);
+    if !valid {
+        return Some(false);
+    }
+    let mut age = (state::get_int(head_state, "age") + 1).min(25);
+    let blocks = if head_name == "minecraft:kelp" {
+        1
+    } else {
+        // `NetherVines.getBlocksToGrowWhenBonemealed`.
+        let (mut d, mut n) = (1.0f64, 0);
+        while level.random().next_double() < d {
+            d *= 0.826;
+            n += 1;
+        }
+        n
+    };
+    let mut at = next;
+    for _ in 0..blocks {
+        if !can_grow_into(level, at) || !inside_build_height(level, at) {
+            break;
+        }
+        crate::update::set_block_and_update(level, at, state::set_int(head_state, "age", age));
+        at = at.offset(0, dir, 0);
+        age = (age + 1).min(25);
+    }
+    Some(true)
+}
+
+/// `BigDripleafBlock.canGrowInto`: empty, water or a small dripleaf, inside the build height.
+fn dripleaf_can_grow_into<L: Level>(level: &L, pos: BlockPos) -> bool {
+    let b = level.block(pos);
+    inside_build_height(level, pos) && (is_air(b) || is_named(b, "minecraft:water") || is_named(b, "minecraft:small_dripleaf"))
+}
+
+/// `BigDripleafBlock.place` / `BigDripleafStemBlock.place`: the block waterlogged when a water source was there.
+fn dripleaf_place<L: Level>(level: &mut L, pos: BlockPos, block: &str, facing: &str) {
+    let f = logic::fluid(level.block(pos));
+    let waterlogged = f.kind == logic::FluidKind::Water && f.source;
+    let mut s = named(block);
+    s = state::set(s, "waterlogged", if waterlogged { "true" } else { "false" });
+    s = state::set(s, "facing", facing);
+    crate::update::set_block_and_update(level, pos, s);
+}
+
+/// `BigDripleafBlock.performBonemeal`: the leaf moves up one and a stem takes its place.
+fn big_dripleaf_grow<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
+    let above = pos.above();
+    if dripleaf_can_grow_into(level, above) {
+        let facing = state::get(s, "facing").unwrap_or("north");
+        dripleaf_place(level, pos, "minecraft:big_dripleaf_stem", facing);
+        dripleaf_place(level, above, "minecraft:big_dripleaf", facing);
+    }
+}
+
+/// `SmallDripleafBlock.performBonemeal`: the lower half is replaced by a big dripleaf two to five high.
+fn small_dripleaf<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
+    if state::get(s, "half") == Some("lower") {
+        let above = pos.above();
+        let legacy = crate::fluid::legacy_block(logic::fluid(level.block(above)));
+        crate::update::set_block(level, above, legacy, 18);
+        let facing = state::get(s, "facing").unwrap_or("north").to_owned();
+        // `BigDripleafBlock.placeWithRandomHeight`.
+        let height = 2 + level.random().next_int_bounded(4);
+        let mut j = 0;
+        let mut p = pos;
+        while j < height && dripleaf_can_grow_into(level, p) {
+            j += 1;
+            p = p.above();
+        }
+        let top = pos.y + j - 1;
+        let mut p = pos;
+        while p.y < top {
+            dripleaf_place(level, p, "minecraft:big_dripleaf_stem", &facing);
+            p = p.above();
+        }
+        dripleaf_place(level, p, "minecraft:big_dripleaf", &facing);
+    } else {
+        let below = pos.below();
+        let b = level.block(below);
+        small_dripleaf(level, below, b);
     }
 }
