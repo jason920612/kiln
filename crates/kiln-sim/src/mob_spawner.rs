@@ -373,6 +373,11 @@ impl TrialConfigs {
     pub fn get(&self, key: &str) -> Option<std::sync::Arc<kiln_entity::trial_spawner::Config>> {
         self.map.get(key).cloned()
     }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
 }
 
 #[cfg(test)]

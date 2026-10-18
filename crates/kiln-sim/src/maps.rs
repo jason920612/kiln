@@ -281,6 +281,11 @@ impl MapData {
         self.tracked > limit
     }
 
+    #[cfg(test)]
+    pub(crate) fn decorations(&self) -> impl Iterator<Item = &Deco> {
+        self.decorations.iter().map(|(_, d)| d)
+    }
+
     pub(crate) fn has_decoration(&self, key: &str) -> bool {
         self.decorations.iter().any(|(k, _)| k == key)
     }
