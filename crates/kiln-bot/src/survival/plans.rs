@@ -2,7 +2,7 @@
 //! around, food, what was built so far) into the next few steps.
 
 use super::steps::{PlaceSpec, Step};
-use super::{Agent, Dir, Role, add};
+use super::{Agent, Dir, Role};
 use crate::world;
 use std::collections::VecDeque;
 use std::f64::consts::TAU;

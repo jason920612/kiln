@@ -8,7 +8,7 @@
 
 use super::{Hud, entity_data, plain, text_tag};
 use crate::container::open::OpenBlock;
-use crate::{Player, Sim};
+use crate::Sim;
 use kiln_command::{BlockInput, GameMode, Host, Identifier, StringReader, Teleport, Text, UpdateFlags};
 use kiln_world::Blocks;
 use kiln_link::ConnId;
