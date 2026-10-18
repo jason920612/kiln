@@ -84,6 +84,9 @@ fn bobbers_match_vanilla_tick_by_tick() {
                 e.position().x, e.position().y, e.position().z, e.delta.x, e.delta.y, e.delta.z,
             ];
             let w: Vec<f64> = want.as_array().unwrap()[..13].iter().map(|x| x.as_bool().map_or_else(|| num(x), |b| b as u8 as f64)).collect();
+            if std::env::var("KILN_FISHING_RANDOM").is_ok_and(|n| name == n) {
+                eprintln!("RANDOM {name} t={} {}", t + 1, e.random.state());
+            }
             kiln_rows.push(got);
             values += got.len();
             // (The fish angle is a float: the vector has its shortest decimal form.)

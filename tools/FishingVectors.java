@@ -245,6 +245,13 @@ public class FishingVectors {
             }
         }
         try {
+            Object rnd = get(hook, Entity.class, "random");
+            Object seedField = get(rnd, rnd.getClass(), "seed");
+            sb.append(" random=").append(((java.util.concurrent.atomic.AtomicLong) seedField).get());
+        } catch (Exception e) {
+            sb.append(" random=?");
+        }
+        try {
             sb.append(" movements=").append(get(hook, Entity.class, "finalMovementsThisTick"));
         } catch (Exception e) {
             sb.append(" movements=?");
