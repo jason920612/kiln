@@ -1562,6 +1562,8 @@ pub struct Sim {
     save_run: Option<Vec<(DimId, ChunkPos)>>,
     /// The maps (`data/minecraft/maps`), shared with the players that use empty maps.
     maps: maps::SharedMaps,
+    /// The overworld's structure search for `exploration_map` loot functions (explorer and treasure maps), kept over data pack reloads.
+    map_explorer: Option<kiln_loot::ExplorerHandle>,
     /// Ender pearls of players who joined, waiting for their chunk to load to take their place in it (`ServerPlayer.loadAndSpawnEnderPearls`).
     pearls_returning: Vec<persist::ReturningPearl>,
 }
@@ -1763,6 +1765,7 @@ impl Sim {
             .first()
             .and_then(Option::clone)
             .map(|p| kiln_loot::ExplorerHandle(std::sync::Arc::new(maps::Explorer::new(maps.clone(), p))));
+        let map_explorer = explorer.clone();
         let loot = load_loot(datapack, explorer);
         let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
         let mut sim = Sim {
@@ -1808,6 +1811,7 @@ impl Sim {
             save_run: None,
             maps,
             pearls_returning: Vec::new(),
+            map_explorer,
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
