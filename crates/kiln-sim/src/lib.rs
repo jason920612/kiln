@@ -3484,6 +3484,7 @@ impl Sim {
         p.vel = [0.0; 3];
         p.sync_velocity = false;
         p.sent_chunks.clear();
+        p.load_checked = None;
         p.unacked_batches = 0;
         if lost {
             // `NO_RESPAWN_BLOCK_AVAILABLE`: "You have no home bed or charged respawn anchor...".
