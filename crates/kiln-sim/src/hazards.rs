@@ -265,9 +265,14 @@ impl Player {
     /// A sound everyone hears, the player too (`level.playSound(null, ...)`, as the finish of a meal
     /// and the burp do): [`Player::queue_sound_in`] for the viewers, and straight to the player.
     pub(crate) fn queue_sound_for_all(&mut self, sound: &str, source: world_fx::SoundSource, volume: f32, pitch: f32) {
+        self.queue_sound_for_all_at(self.pos, sound, source, volume, pitch);
+    }
+
+    /// [`Player::queue_sound_for_all`] from `at` (`level.playSound(null, pos, ...)`).
+    pub(crate) fn queue_sound_for_all_at(&mut self, at: [f64; 3], sound: &str, source: world_fx::SoundSource, volume: f32, pitch: f32) {
         let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound) else { return };
         let seed = self.sound_seed.next_long();
-        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), source, self.pos, volume, pitch, seed);
+        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), source, at, volume, pitch, seed);
         self.pending_sounds.push(pkt.clone());
         self.send(pkt);
     }

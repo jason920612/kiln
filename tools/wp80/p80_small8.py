@@ -16,7 +16,7 @@ kill_all()
 def comps_of_hand():
     st = a.state(0)
     sel = st.get("selected", 0)
-    return a.cmd(f"item {sel}")[:300]
+    return nbt_of(ME, "SelectedItem", 0.5)[:300] + " | inv: " + nbt_of(ME, "Inventory[{id:\"minecraft:compass\"}]", 0.5)[:200]
 
 
 if "lodestone" in which:

@@ -103,6 +103,8 @@ pub(crate) fn item_use_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
         light(p, level, pos, s, "minecraft:item.flintandsteel.use")
     } else if name == crate::brush::ITEM {
         crate::brush::use_on(p, level, off_hand)
+    } else if name == "minecraft:compass" {
+        lodestone_compass(p, level, pos, s, off_hand, spawns)
     } else {
         return false;
     };
@@ -118,6 +120,42 @@ pub(crate) fn item_use_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
     p.award_stat(Stat::item(player_stats::USED, stack.item()), 1);
     let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     p.used_on_block("minecraft:item_used_on_block", [pos.x, pos.y, pos.z], level.block(pos), &stack, &probe);
+    true
+}
+
+/// `CompassItem.useOn`: on a lodestone one compass locks onto it (`lodestone_tracker` with the lodestone's level and position, tracked). A survival
+/// player holding one compass changes it; with more, or in creative, a new compass is made, which goes to the inventory (or to the ground).
+fn lodestone_compass(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: u16, off_hand: bool, spawns: &mut Vec<Spawn>) -> bool {
+    use kiln_item::component::{GlobalPos, LodestoneTracker};
+    if short(s) != "lodestone" {
+        return false;
+    }
+    p.queue_sound_for_all_at(
+        [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5],
+        "minecraft:item.lodestone_compass.lock",
+        kiln_proto::packets::world_fx::SoundSource::Players,
+        1.0,
+        1.0,
+    );
+    let Some(dimension) = kiln_item::Identifier::parse(crate::DIMENSIONS[level.env.dim].0) else { return true };
+    let tracker = LodestoneTracker { target: Some(GlobalPos { dimension, pos: [pos.x, pos.y, pos.z] }), tracked: true };
+    let i = p.hand_index(off_hand);
+    let infinite = p.infinite_materials();
+    let hand = kiln_inventory::Container::item_mut(&mut p.inv, i);
+    if !infinite && hand.count() == 1 {
+        hand.insert(kiln_item::keys::LODESTONE_TRACKER, tracker);
+    } else {
+        let mut one = hand.with_count(1);
+        if !infinite {
+            hand.shrink(1);
+        }
+        one.insert(kiln_item::keys::LODESTONE_TRACKER, tracker);
+        p.add_to_inventory(&mut one);
+        if !one.is_empty() {
+            spawns.push(p.throw(one));
+        }
+    }
+    p.inv.times_changed += 1;
     true
 }
 

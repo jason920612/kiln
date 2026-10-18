@@ -38,6 +38,7 @@ mod decorated_pot;
 mod lectern;
 mod maps;
 mod map_items;
+mod lodestone;
 mod bell;
 mod conduit;
 mod campfire;
@@ -1953,6 +1954,7 @@ impl Sim {
         self.settle_teleported();
         // Filled maps redraw and send what changed (the players' own part of `ServerPlayer.tick`).
         self.tick_maps();
+        self.tick_compasses();
         lap(&mut self.stats, "g.settle");
         self.deliver_plugin_messages();
         lap(&mut self.stats, "global");
