@@ -65,7 +65,9 @@ fn run(pack: PathBuf, height: i32, chunks: &[(i32, i32)], ticks: usize) -> usize
             .iter()
             .filter(|(t, p)| *t == "minecraft:slime" && p[1] < 8.0 && chunks.iter().any(|&(cx, cz)| (p[0].floor() as i32).div_euclid(16) == cx && (p[2].floor() as i32).div_euclid(16) == cz))
             .count();
-        assert!(sim.step([ToSim::Console("kill @e[type=minecraft:slime]".into())]));
+        // (Everything else goes too: the server loads its whole view whatever the client asks for, and the monsters of the caves in it fill the monster cap
+        // that the slimes in the rooms need room under, as in vanilla.)
+        assert!(sim.step([ToSim::Console("kill @e[type=!minecraft:player]".into())]));
     }
     seen
 }
