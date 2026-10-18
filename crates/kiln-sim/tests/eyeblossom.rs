@@ -2,7 +2,6 @@
 //! changed): `EyeblossomBlock` follows the overworld's `gameplay/eyeblossom_open` attribute (open from tick 12600 to 23401) on random ticks, and the ones that
 //! change wake their neighbours of the same kind with scheduled ticks, nearest first.
 
-use kiln_blocks::BlockPos;
 use kiln_data::blocks::default_state as d;
 use kiln_link::ToSim;
 use kiln_sim::testing::{Client, join};
@@ -11,16 +10,16 @@ use kiln_sim::{Sim, SimConfig};
 fn count_after(time: &str, start: u16, ticks: usize) -> (usize, usize) {
     let mut sim = Sim::new(SimConfig::new(4, 4, None));
     let (msg, stats) = join(1, "Gardener", 2);
-    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into()), ToSim::Console("gamerule minecraft:advance_time false".into())]));
+    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
     let mut client = Client::new(1, stats);
-    let mut tick = |sim: &mut Sim, n: usize| {
+    fn tick(sim: &mut Sim, client: &mut Client, n: usize) {
         for _ in 0..n {
             let mut inbox = Vec::new();
             client.tick(None, &mut inbox);
             assert!(sim.step(inbox));
         }
-    };
-    tick(&mut sim, 5);
+    }
+    tick(&mut sim, &mut client, 5);
     let (x, y, z) = (client.pos[0].floor() as i32 + 2, client.pos[1].floor() as i32, client.pos[2].floor() as i32);
     let name = if start == d::OPEN_EYEBLOSSOM { "open_eyeblossom" } else { "closed_eyeblossom" };
     assert!(sim.step([
@@ -29,7 +28,7 @@ fn count_after(time: &str, start: u16, ticks: usize) -> (usize, usize) {
         ToSim::Console(format!("time set {time}")),
         ToSim::Console("gamerule minecraft:random_tick_speed 4096".into()),
     ]));
-    tick(&mut sim, ticks);
+    tick(&mut sim, &mut client, ticks);
     let (mut open, mut closed) = (0, 0);
     for dx in 0..=5 {
         for dz in 0..=5 {
@@ -40,7 +39,6 @@ fn count_after(time: &str, start: u16, ticks: usize) -> (usize, usize) {
             }
         }
     }
-    let _ = BlockPos::new(0, 0, 0);
     (open, closed)
 }
 
