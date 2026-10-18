@@ -1010,6 +1010,9 @@ pub(crate) struct Ticking {
     block: Layer,
     visible: Layer,
     loading_block: Layer,
+    /// Random ticks and thunder (`ChunkMap.forEachBlockTickingChunk`: the simulation tracker's entity-ticking chunks that have the block-ticking status, one more
+    /// than entities tick when the simulation distance is beyond the view distance).
+    random: Layer,
 }
 
 fn layer_around(centers: &[ChunkPos], r: i32) -> Layer {
@@ -1046,13 +1049,14 @@ impl Ticking {
             block: layer_around(&centers, (simulation + 1).min(view + 1)),
             visible: layer_around(&centers, view),
             loading_block: layer_around(&centers, view + 1),
+            random: layer_around(&centers, simulation.min(view + 1)),
         }
     }
 
     /// A ticket of radius `radius` at `center` (`addTicketWithRadius`: level `33 - radius` at the chunk, one more per chunk further): level 31 or less
     /// ticks entities (and is entity-visible), level 32 ticks blocks, 33 only loads (see [`crate::tickets`]).
     pub fn add_ticket(&mut self, center: ChunkPos, radius: i32) {
-        for (layer, r) in [(&mut self.entity, radius - 2), (&mut self.block, radius - 1), (&mut self.visible, radius - 2), (&mut self.loading_block, radius - 1)] {
+        for (layer, r) in [(&mut self.entity, radius - 2), (&mut self.block, radius - 1), (&mut self.visible, radius - 2), (&mut self.loading_block, radius - 1), (&mut self.random, radius - 2)] {
             if r < 0 {
                 continue;
             }
@@ -1075,6 +1079,11 @@ impl Ticking {
     /// Whether `c` is entity-visible ticking (a spawned pack may stand in it).
     pub fn contains_visible(&self, c: ChunkPos) -> bool {
         layer_has(&self.visible, c)
+    }
+
+    /// Whether random ticks (and thunder) run in `c`.
+    pub fn contains_random(&self, c: ChunkPos) -> bool {
+        layer_has(&self.random, c)
     }
 
     /// Whether `c`'s status is block ticking or better (`ChunkHolder.getTickingChunk`): within `V + 1` of a player.
@@ -1127,7 +1136,7 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
         level.cells.for_each_cell(&mut |pos, cell| {
             chunks.extend(
                 cell.chunks(pos)
-                    .filter(|(c, chunk)| ticking.contains(*c) && (precipitation || chunk.sections.iter().any(|s| s.is_randomly_ticking())))
+                    .filter(|(c, chunk)| ticking.contains_random(*c) && (precipitation || chunk.sections.iter().any(|s| s.is_randomly_ticking())))
                     .map(|(c, _)| c),
             );
         });
