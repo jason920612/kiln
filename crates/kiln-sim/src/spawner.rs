@@ -746,7 +746,7 @@ pub(crate) fn tick(
     // tick of `InhabitedTime`, whether or not anything may spawn.
     level.cells.for_each_cell_mut(&mut |pos, cell| {
         for (c, chunk) in cell.chunks_mut(pos) {
-            if ticking.contains_block(c) && s.any_close(c) {
+            if ticking.contains_loading_block(c) && s.any_close(c) {
                 chunk.increment_inhabited_time();
             }
         }
@@ -755,12 +755,12 @@ pub(crate) fn tick(
         return;
     }
     let dt = crate::diag::lap("s.c_state", dt);
-    // `collectSpawningChunks`: loaded chunks at block-ticking level (one chunk further than entities tick) with a player within 128 blocks, which
-    // `tickSpawningChunk` then spawns in only if entities tick there (`ServerLevel.canSpawnEntitiesInChunk`: within the view distance).
+    // `collectSpawningChunks`: loaded chunks with the block-ticking status with a player within 128 blocks, which `tickSpawningChunk` then spawns in only if entities
+    // tick there (`ServerLevel.canSpawnEntitiesInChunk`: within the view distance). Both are the loading tickets' levels (the view distance, not the simulation distance).
     let mut chunks: Vec<(u64, ChunkPos)> = Vec::new();
     level.cells.for_each_cell(&mut |pos, cell| {
         for (c, _) in cell.chunks(pos) {
-            if ticking.contains_block(c) && ticking.contains_visible(c) && s.any_close(c) {
+            if ticking.contains_visible(c) && s.any_close(c) {
                 let mut h = (env.seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ env.game_time as u64;
                 h ^= (c.x as u32 as u64) << 32 | c.z as u32 as u64;
                 h = (h ^ (h >> 31)).wrapping_mul(0xBF58_476D_1CE4_E5B9);

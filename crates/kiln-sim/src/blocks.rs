@@ -999,11 +999,17 @@ type Layer = crate::FastMap<CellPos, u64>;
 ///   spawned by `NaturalSpawner` may walk into those chunks (`ServerLevel.canSpawnEntitiesInChunk`).
 ///
 /// The first two are capped by the loading tickets as well (the chunk must be at its status): `S` by `V`, `S + 1` by `V + 1`.
+///
+/// A chunk's *status* (`ChunkHolder.getTickingChunk`, `execute if loaded`, which chunks natural spawning picks from and gives an `InhabitedTime`) follows the loading
+/// tickets alone, whatever the simulation distance is: entity ticking within `V` (the "visible" layer), block ticking within `V + 1` (`loading_block`). Lock step
+/// (`tools/wp81/farm81.py nether` with `S = 6`, `V = 8`): vanilla tries 207.6 chunks a tick for a category with no cap, all within 128 blocks of the player up to
+/// the ring at 8, Kiln 196 (the ring at 7, `S + 1`).
 #[derive(Clone)]
 pub(crate) struct Ticking {
     entity: Layer,
     block: Layer,
     visible: Layer,
+    loading_block: Layer,
 }
 
 fn layer_around(centers: &[ChunkPos], r: i32) -> Layer {
@@ -1039,13 +1045,14 @@ impl Ticking {
             entity: layer_around(&centers, simulation.min(view)),
             block: layer_around(&centers, (simulation + 1).min(view + 1)),
             visible: layer_around(&centers, view),
+            loading_block: layer_around(&centers, view + 1),
         }
     }
 
     /// A ticket of radius `radius` at `center` (`addTicketWithRadius`: level `33 - radius` at the chunk, one more per chunk further): level 31 or less
     /// ticks entities (and is entity-visible), level 32 ticks blocks, 33 only loads (see [`crate::tickets`]).
     pub fn add_ticket(&mut self, center: ChunkPos, radius: i32) {
-        for (layer, r) in [(&mut self.entity, radius - 2), (&mut self.block, radius - 1), (&mut self.visible, radius - 2)] {
+        for (layer, r) in [(&mut self.entity, radius - 2), (&mut self.block, radius - 1), (&mut self.visible, radius - 2), (&mut self.loading_block, radius - 1)] {
             if r < 0 {
                 continue;
             }
@@ -1068,6 +1075,11 @@ impl Ticking {
     /// Whether `c` is entity-visible ticking (a spawned pack may stand in it).
     pub fn contains_visible(&self, c: ChunkPos) -> bool {
         layer_has(&self.visible, c)
+    }
+
+    /// Whether `c`'s status is block ticking or better (`ChunkHolder.getTickingChunk`): within `V + 1` of a player.
+    pub fn contains_loading_block(&self, c: ChunkPos) -> bool {
+        layer_has(&self.loading_block, c)
     }
 }
 
@@ -2216,6 +2228,10 @@ mod tests {
         for (x, want_entity, want_block, want_visible) in [(6, true, true, true), (7, false, true, true), (8, false, false, true), (9, false, false, false)] {
             let c = ChunkPos::new(x, 0);
             assert_eq!((t.contains(c), t.contains_block(c), t.contains_visible(c)), (want_entity, want_block, want_visible), "distance {x}");
+        }
+        // The status (`getTickingChunk`, the chunks natural spawning tries) follows the view distance alone.
+        for (x, want) in [(8, true), (9, true), (10, false)] {
+            assert_eq!(t.contains_loading_block(ChunkPos::new(x, 0)), want, "status, distance {x}");
         }
         let capped = Ticking::around([ChunkPos::new(0, 0)].into_iter(), 12, 8);
         for (x, want_entity, want_block) in [(8, true, true), (9, false, true), (10, false, false)] {
