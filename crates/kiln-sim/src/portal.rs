@@ -1056,17 +1056,18 @@ impl Sim {
         let len = ((entry.x as f64).powi(2) + (entry.z as f64).powi(2)).sqrt();
         let dir = if len < 1.0e-4 { [0.0, 0.0] } else { [entry.x as f64 / len, entry.z as f64 / len] };
         let mut exit = [dir[0] * 1024.0, dir[1] * 1024.0];
+        // (`for (int i = 16; !isChunkEmpty(…) && i-- > 0; …)`: up to sixteen steps, the old count is tested.)
         let mut left = 16;
         while !self.chunk_empty(exit) && {
             left -= 1;
-            left > 0
+            left >= 0
         } {
             exit = [exit[0] - dir[0] * 16.0, exit[1] - dir[1] * 16.0];
         }
         let mut left = 16;
         while self.chunk_empty(exit) && {
             left -= 1;
-            left > 0
+            left >= 0
         } {
             exit = [exit[0] + dir[0] * 16.0, exit[1] + dir[1] * 16.0];
         }
