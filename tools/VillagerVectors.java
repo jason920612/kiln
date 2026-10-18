@@ -184,7 +184,7 @@ public class VillagerVectors {
 
     static String offer(Random r, int index) {
         MerchantOffer o = randomOffer(r);
-        String start = describe(o) + "," + o.getMaxUses() + "," + o.getPriceMultiplier();
+        String setup = offerSetup(o, "");
         StringBuilder ops = new StringBuilder();
         for (int k = 0; k < 8; k++) {
             int kind = r.nextInt(5);
@@ -210,7 +210,7 @@ public class VillagerVectors {
             ops.append(ops.length() > 0 ? "," : "").append("{\"op\":").append(op).append(",\"state\":").append(describe(o)).append("}");
         }
         // The setup, so the other side can make the same offer.
-        return String.format(Locale.ROOT, "{\"kind\":\"offer\",\"name\":\"offer_%d\",\"setup\":%s,\"steps\":[%s]}", index, offerSetup(o, start), ops);
+        return String.format(Locale.ROOT, "{\"kind\":\"offer\",\"name\":\"offer_%d\",\"setup\":%s,\"steps\":[%s]}", index, setup, ops);
     }
 
     static String offerSetup(MerchantOffer o, String start) {
