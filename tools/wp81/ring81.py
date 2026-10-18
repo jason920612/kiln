@@ -191,5 +191,42 @@ elif MODE == "portal":
         a = [x for x in ages[t] if x is not None]
         print(t, "arrived at step", arrived[t], "Age first", a[0] if a else None, "last", a[-1] if a else None, "samples", len(a),
               "ticks it aged:", (a[-1] - a[0]) if a else None)
+elif MODE == "portal2":
+    # A baby cow walks into an overworld portal; W0 follows into the nether and watches: where is the cow (dimension, position) every 10 ticks for LEN ticks?
+    # Vanilla keeps the cooldown of an entity standing in a portal at its full 300 ticks, so a cow that stands still in the arrival portal never goes back.
+    length = int(sys.argv[2]) if len(sys.argv) > 2 else 700
+    setup()
+    px, pz, py = 1010, 1010, 190
+    for t in "KV":
+        w(t, f"fill {px - 4} {py - 1} {pz - 4} {px + 5} {py - 1} {pz + 4} minecraft:stone")
+        w(t, f"fill {px - 2} {py} {pz - 2} {px + 3} {py + 6} {pz + 2} minecraft:air")
+        w(t, f"fill {px} {py} {pz} {px + 3} {py + 4} {pz} minecraft:obsidian")
+        w(t, f"fill {px + 1} {py + 1} {pz} {px + 2} {py + 3} {pz} minecraft:nether_portal[axis=x]")
+    time.sleep(2)
+    both("tick freeze")
+    time.sleep(0.5)
+    for t in "KV":
+        w(t, f"summon cow {px + 1.5} {py + 1} {pz + 0.5} {{Age:-24000,NoAI:1b,PersistenceRequired:1b,Tags:[\"trav_{CX}\"]}}")
+    step(6)
+    for t in "KV":
+        w(t, "execute in minecraft:the_nether run tp W0 110 100 110")
+    time.sleep(0.5)
+    step(40)
+
+    def where(t):
+        tag = f"trav_{CX}"
+        res = []
+        for dim in ("overworld", "the_nether"):
+            out = ask(t, f"execute in minecraft:{dim} if entity @e[tag={tag},x=-100000,y=-64,z=-100000,dx=200000,dy=500,dz=200000]", wait=0.12)
+            if "pass" in out.lower():
+                pos = ask(t, f"execute in minecraft:{dim} run data get entity @e[tag={tag},x=-100000,y=-64,z=-100000,dx=200000,dy=500,dz=200000,limit=1] Pos", wait=0.12)
+                m = re.search(r"\[(-?[\d.]+)d, (-?[\d.]+)d, (-?[\d.]+)d\]", pos)
+                res.append((dim[:3], tuple(round(float(x)) for x in m.groups()) if m else None))
+        return res or [None]
+
+    for i in range(0, length, 10):
+        step(10)
+        print(i + 46, "K", where("K"), " V", where("V"))
+        sys.stdout.flush()
 else:
     sys.exit("unknown mode")
