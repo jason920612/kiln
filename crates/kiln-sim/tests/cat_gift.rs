@@ -18,11 +18,8 @@ fn gifts(sim: &Sim) -> Vec<String> {
 
 #[test]
 fn a_cat_leaves_a_gift_when_its_owner_wakes() {
-    // The gift is a loot table of the vanilla datapack (`KILN_DATAPACK`, else `$KILN_WORK/generated`, else `work/generated`): skips without it.
-    let dir = match std::env::var_os("KILN_DATAPACK").filter(|d| !d.is_empty()) {
-        Some(d) => std::path::PathBuf::from(d),
-        None => std::env::var_os("KILN_WORK").filter(|d| !d.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../work")).join("generated"),
-    };
+    // The gift is a loot table of the vanilla datapack, which the simulation reads from `KILN_DATAPACK` (else `work/generated`): skips without it.
+    let dir = std::env::var_os("KILN_DATAPACK").map_or_else(|| std::path::PathBuf::from("work/generated"), std::path::PathBuf::from);
     if !dir.join("data").is_dir() {
         return;
     }
