@@ -6,10 +6,10 @@ usage: ring81.py MODE [args]
                    after KILL_AT ticks (default 10) and the cow of its chunk is read every tick: how long the ticket works after the pearl's last renewal
   portal           a baby cow walks into an overworld nether portal built beside W0; read in the nether (nobody there) how long its Age keeps rising (the portal ticket, 300 ticks)
 Both servers: seed 77 (sv.sh), the bot W0 in creative at (1000, 220, 1000) far from the probes at (CX*16+8, 3000)."""
-import re, sys, time
+import os, re, sys, time
 from lk import *
 
-CX, CZ = 187, 187          # chunk of block (3000, 3000)
+CX, CZ = int(os.environ.get("CX", "187")), int(os.environ.get("CZ", "187"))   # chunk of block (3000, 3000)
 Y = 190                    # probes' height
 MODE = sys.argv[1] if len(sys.argv) > 1 else "forced"
 
