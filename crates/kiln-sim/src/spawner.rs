@@ -870,7 +870,7 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
 /// `getRandomPosWithin`'s upper bound: `chunk.getHeight(WORLD_SURFACE, x, z) + 1`. `ChunkAccess.getHeight` is the *top block* (the heightmap's first available
 /// y, minus one), so the bound is the first free y above the column: on the nether roof (bedrock to y 127) it is 128, and a start can be no higher.
 /// (Kiln added one more: starts on the roof at y 129, which land next to a farm platform at 128 and drift onto it, twice as many as vanilla's.)
-fn start_top(chunk: &kiln_world::Chunk, x: i32, z: i32) -> i32 {
+fn start_top(chunk: &kiln_world::chunk::Chunk, x: i32, z: i32) -> i32 {
     chunk.column_height((x & 15) as usize, (z & 15) as usize, |b| !kiln_data::blocks_types::is_air(b))
 }
 
@@ -1485,7 +1485,8 @@ mod potential_tests {
 #[cfg(test)]
 mod start_tests {
     use super::*;
-    use kiln_world::chunk::{Chunk, Section};
+    use kiln_world::chunk::Chunk;
+    use kiln_world::section::Section;
 
     /// wp77: a pack start's highest y is the first free block above the column (`chunk.getHeight(WORLD_SURFACE) + 1`, where `getHeight` is the top block):
     /// on the nether roof, bedrock up to y 127, 128 and not 129; above a platform at 128, 129. Found with the lock-step of the gold farm (starts at
