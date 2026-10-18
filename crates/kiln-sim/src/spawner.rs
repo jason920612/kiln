@@ -490,6 +490,32 @@ pub mod stats {
         }
     }
 
+    /// `spawned` of the vanilla agent (`SpawnState.afterSpawn`): a natural spawn, per type and for the box.
+    pub(crate) fn spawned(type_name: &str, pos: [i32; 3]) {
+        let Some(c) = config() else { return };
+        let name = type_name.strip_prefix("minecraft:").unwrap_or(type_name);
+        add(format!("spawned {name}"));
+        if let Some(b) = c.bounds
+            && (0..3).all(|a| pos[a] >= b[a] && pos[a] <= b[a + 3])
+        {
+            add(format!("spawned IN-BOX {name}"));
+        }
+    }
+
+    /// `potential` of the vanilla agent (`SpawnState.canSpawn`).
+    pub(crate) fn potential(type_name: &str, ok: bool) {
+        if enabled() {
+            add(format!("potential {} -> {ok}", type_name.strip_prefix("minecraft:").unwrap_or(type_name)));
+        }
+    }
+
+    /// `localCap` of the vanilla agent (`canSpawnForCategoryLocal`).
+    pub(crate) fn local_cap(c: kiln_entity::mob::Category, ok: bool) {
+        if enabled() {
+            add(format!("localCap {} -> {ok}", category_name(c)));
+        }
+    }
+
     pub(crate) fn pick(type_name: Option<&str>, category: kiln_entity::mob::Category, pos: [i32; 3]) {
         let Some(c) = config() else { return };
         let name = type_name.map_or("(none)", |n| n.strip_prefix("minecraft:").unwrap_or(n));
@@ -773,7 +799,9 @@ pub(crate) fn tick(
         }
         let mut r = chunk_random(env.seed, env.game_time, c);
         for &cat in &categories {
-            if s.local_ok(c, cat) {
+            let ok = s.local_ok(c, cat);
+            stats::local_cap(cat, ok);
+            if ok {
                 let mut made = Vec::new();
                 spawn_category_for_chunk(level, &s, &mut r, cat, c, ticking, &mut made);
                 for (spawn, pc, charge) in made {
@@ -990,9 +1018,11 @@ fn spawn_category_for_chunk(
                     sum += if d2 == 0.0 { f64::INFINITY } else { c / d2.sqrt() };
                 }
                 if sum * charge > budget {
+                    stats::potential(d_.type_name, false);
                     continue;
                 }
             }
+            stats::potential(d_.type_name, true);
             let yaw = r.next_float() * 360.0;
             // `isValidPositionForMob`: the walk target value and the spawn obstruction.
             let magic = light_magic(level, pos);
@@ -1027,6 +1057,7 @@ fn spawn_category_for_chunk(
             let charge = cost.map(|(c, _)| ([pos.x, pos.y, pos.z], c));
             mine.extend(charge);
             spawns.push((crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(fin)), pc, charge));
+            stats::spawned(d_.type_name, [pos.x, pos.y, pos.z]);
             spawned += 1;
             in_group += 1;
             if spawned >= kind.ext().map_or(4, |k| k.max_spawn_cluster()) {
