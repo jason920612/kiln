@@ -250,7 +250,7 @@ elif MODE == "trip":
     time.sleep(0.5)
 
     def in_nether(t):
-        return "pass" in ask(t, "execute in minecraft:the_nether if entity W0", wait=0.12).lower()
+        return "pass" in ask(t, "execute in minecraft:the_nether if entity @a[name=W0,x=-100000,y=-64,z=-100000,dx=200000,dy=500,dz=200000]", wait=0.12).lower()
 
     def scenario(name, hurt_at=None, zombie=False):
         for t in "KV":
