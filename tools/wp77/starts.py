@@ -31,6 +31,9 @@ def blocks(path, s_first):
 
 for name, path, s_first in (("K", sys.argv[1], True), ("V", sys.argv[2], False)):
     bl = blocks(path, s_first)
+    if len(sys.argv) > 3:
+        bx = [int(v) for v in sys.argv[3].split(",")]
+        bl = [(s, r) for s, r in bl if bx[0] <= s[0] <= bx[3] and bx[2] <= s[2] <= bx[5] and s[1] >= 120]
     by_y = collections.defaultdict(list)
     for s, rows in bl:
         by_y[s[1]].append(rows)
