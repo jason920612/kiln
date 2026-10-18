@@ -625,6 +625,8 @@ pub struct MobData {
     /// `Animal.inLove` ticks and the player who fed it (`loveCause`).
     pub in_love: i32,
     pub love_cause: Option<i32>,
+    /// `Animal.loveCause`'s UUID: what is saved (`LoveCause`); the id above is looked up again from it when the player is around.
+    pub love_cause_uuid: Option<u128>,
     pub target: Option<i32>,
     pub look: control::LookControl,
     pub mov: control::MoveControl,
@@ -792,6 +794,7 @@ impl MobData {
             age_lock_timer: 0,
             in_love: 0,
             love_cause: None,
+            love_cause_uuid: None,
             target: None,
             look: control::LookControl::default(),
             mov: control::MoveControl::default(),
