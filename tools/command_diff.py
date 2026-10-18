@@ -1597,6 +1597,8 @@ attribute @e[tag=p1,limit=1] minecraft:attack_damage get
 attribute @a minecraft:max_health get
 attribute Nobody minecraft:max_health get
 ! gamerule natural_health_regeneration false
+! effect give Diff0 minecraft:instant_health 1 10 true
+~ 1
 damage Diff0 2
 damage Diff0 1 minecraft:nonexistent
 damage Nobody 1
