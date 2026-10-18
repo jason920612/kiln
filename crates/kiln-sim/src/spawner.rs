@@ -452,14 +452,14 @@ pub mod stats {
             && pos[2] <= b[5]
         {
             add(format!("start {} Y={}", category_name(category), if (127..=134).contains(&pos[1]) { pos[1].to_string() } else { "other".to_owned() }));
-            if category == kiln_entity::mob::Category::Monster
-                && (129..=132).contains(&pos[1])
-                && let Some(file) = std::env::var_os("KILN_SPAWN_TRACE")
-            {
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
-                    let _ = writeln!(f, "S {} {} {}", pos[0], pos[1], pos[2]);
-                }
+        }
+        // Every monster pack start, so that the rows of the trace are told apart by the start they belong to.
+        if category == kiln_entity::mob::Category::Monster
+            && let Some(file) = std::env::var_os("KILN_SPAWN_TRACE")
+        {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
+                let _ = writeln!(f, "S {} {} {}", pos[0], pos[1], pos[2]);
             }
         }
     }
