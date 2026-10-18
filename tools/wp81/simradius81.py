@@ -37,6 +37,15 @@ def source(t):
     return res
 
 
+def edge(t):
+    res = {}
+    for d in range(0, 14):
+        ex = X0 + 16 * d + 15
+        out = ask(t, f"execute if block {ex + 1} {Y - 35} {Z0 + 8} minecraft:water", wait=0.15)
+        res[d] = ("pass" in out.lower())
+    return res
+
+
 def water(t):
     res = {}
     for d in range(0, 10):
@@ -61,6 +70,10 @@ for t in "KV":
         w(t, f"fill {x - 2} {Y - 41} {Z0 + 6} {x + 3} {Y - 38} {Z0 + 10} minecraft:glass")
         w(t, f"fill {x - 1} {Y - 41} {Z0 + 7} {x + 2} {Y - 41} {Z0 + 9} minecraft:air")
         w(t, f"setblock {x} {Y - 41} {Z0 + 8} minecraft:water")
+        # at the east edge of the chunk: a water source on an open stone floor, which flows on into chunk d+1 (the edge probe)
+        ex = X0 + 16 * d + 15
+        w(t, f"fill {ex - 3} {Y - 36} {Z0 + 4} {ex + 4} {Y - 36} {Z0 + 12} minecraft:stone")
+        w(t, f"setblock {ex} {Y - 35} {Z0 + 8} minecraft:water")
 time.sleep(0.5)
 before = {t: ages(t) for t in "KV"}
 for t in "KV":
@@ -71,6 +84,7 @@ after = {t: ages(t) for t in "KV"}
 spread = {t: water(t) for t in "KV"}
 isloaded = {t: loaded(t) for t in "KV"}
 placed = {t: source(t) for t in "KV"}
+crossed = {t: edge(t) for t in "KV"}
 print("distance east (chunks): Age before -> after; the water source spread to its neighbour")
 for d in range(10):
     print(d, "K", before["K"][d], "->", after["K"][d], spread["K"][d], "  V", before["V"][d], "->", after["V"][d], spread["V"][d])
@@ -80,3 +94,6 @@ for t in "KV":
 print("water source placed (the chunk was loaded when the probes went in), distance 0..13:")
 for t in "KV":
     print(t, "".join("1" if placed[t][d] else "0" for d in range(14)))
+print("the edge probe: water flowed east out of chunk d into chunk d+1, distance 0..13:")
+for t in "KV":
+    print(t, "".join("1" if crossed[t][d] else "0" for d in range(14)))
