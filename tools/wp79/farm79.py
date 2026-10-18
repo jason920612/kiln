@@ -126,6 +126,39 @@ def scen_portal(f):
     return f.run("overworld", ["zombified_piglin"], (x0 - 4, 148, z0 - 4, x0 + 7, 160, z0 + 4))
 
 
+
+
+CENSUS = ["zombie", "husk", "drowned", "skeleton", "stray", "bogged", "creeper", "spider", "cave_spider", "enderman", "witch", "slime", "zombie_villager", "phantom",
+          "bat", "squid", "glow_squid", "cod", "salmon", "tropical_fish", "pufferfish", "dolphin", "axolotl", "cow", "sheep", "pig", "chicken", "rabbit", "horse", "donkey",
+          "llama", "wolf", "fox", "goat", "frog", "turtle", "parrot", "panda", "polar_bear", "armadillo", "camel", "mooshroom", "ocelot", "cat", "bee", "villager"]
+
+
+def scen_ocean(f):
+    """wp76's `mobfarm`: a creative player on the water surface at 2008,2008 (seed 76: ocean), night, `tick sprint` rounds, the census of the whole
+    overworld after every round (what is counted is killed). """
+    f.prep(18000)
+    w(f.t, "gamerule advance_time false")
+    x0, z0 = 2008, 2008
+    f.tp("overworld", x0 + 0.5, 140, z0 + 0.5)
+    cmd(f.t, f"execute in minecraft:overworld run forceload add {x0 - 16} {z0 - 16} {x0 + 16} {z0 + 16}")
+    time.sleep(20)
+    cmd(f.t, f"execute in minecraft:overworld positioned {x0} 0 {z0} positioned over motion_blocking run tp {ME} ~ ~ ~")
+    time.sleep(2)
+    cmd(f.t, "kill @e[type=!player]")
+    totals = {}
+    for r in range(f.rounds):
+        sprint(f.t, f.ticks)
+        census = {}
+        for ty in CENSUS:
+            n = kill_count(f.t, "overworld", f"@e[type=minecraft:{ty}]")
+            if n:
+                census[ty] = n
+        cmd(f.t, "execute in minecraft:overworld run kill @e[type=!player]")
+        for ty, n in census.items():
+            totals[ty] = totals.get(ty, 0) + n
+        F(f.t, "round", r, census)
+    return totals
+
 def main():
     name = sys.argv[1]
     rounds = int(sys.argv[2]) if len(sys.argv) > 2 else 10
@@ -135,7 +168,7 @@ def main():
     def work(t):
         f = Farm(t, rounds, ticks)
         try:
-            results[t] = {"nether": scen_nether, "end": scen_end, "portal": scen_portal}[name](f)
+            results[t] = {"nether": scen_nether, "end": scen_end, "portal": scen_portal, "ocean": scen_ocean}[name](f)
         except Exception as e:
             results[t] = f"ERROR {e!r}"
             raise
