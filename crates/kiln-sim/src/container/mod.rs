@@ -994,6 +994,8 @@ impl Containers {
     /// [`Containers::store`] for the container at `p` alone.
     pub fn store_at(&mut self, p: BlockPos, chunk: &mut Chunk) {
         if let Some(c) = self.map.get_mut(&p) {
+            // (A command that reads the block entity sees the live container whether or not it changed: a crafter placed by `/setblock` saves its defaults too.)
+            c.dirty = true;
             store_one(p, c, chunk);
         }
     }

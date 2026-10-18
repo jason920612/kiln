@@ -82,3 +82,28 @@ fn data_get_block_shows_the_levels_a_beacon_worked_out() {
     let be = sim.block_entity_data("minecraft:overworld", bx, by, bz).expect("a block entity");
     assert_eq!(be.get("Levels").and_then(Tag::as_i64), Some(2), "the two layers the beacon counted: {be:?}");
 }
+
+#[test]
+fn data_get_block_of_a_crafter_placed_by_a_command_shows_its_saved_fields() {
+    let mut sim = Sim::new(SimConfig::new(4, 4, None));
+    let (msg, stats) = join(1, "Keeper", 2);
+    assert!(sim.step([msg, ToSim::Console("gamemode creative Keeper".into())]));
+    let mut client = Client::new(1, stats);
+    for _ in 0..5 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    let p = client.pos;
+    let (x, y, z) = (p[0].floor() as i32 + 3, p[1].floor() as i32 + 3, p[2].floor() as i32 + 3);
+    assert!(sim.step([ToSim::Console(format!("setblock {x} {y} {z} minecraft:crafter"))]));
+    for _ in 0..30 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    let be = sim.block_entity_data("minecraft:overworld", x, y, z).expect("a block entity");
+    for key in ["crafting_ticks_remaining", "triggered", "disabled_slots", "Items"] {
+        assert!(be.get(key).is_some(), "{key} in {be:?}");
+    }
+}
