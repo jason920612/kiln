@@ -201,7 +201,10 @@ public class FishingVectors {
             // (What catchingFish asks of the light: the cell above the bobber's block, before the tick moves it.)
             BlockPos above = hook.blockPosition().above();
             boolean seesSky = level.canSeeSky(above);
+            String dbg0 = System.getenv("FISHING_DEBUG") != null && Integer.parseInt(System.getenv("FISHING_DEBUG")) == index && t >= Integer.getInteger("fishing.from", 40) && t <= Integer.getInteger("fishing.to", 48) ? debug(hook) : null;
             hook.tick();
+            if (dbg0 != null) System.out.println("t=" + t + " before " + dbg0 + "
+      after " + debug(hook));
             if (hook.isRemoved()) {
                 ticks.append(ticks.length() > 0 ? "," : "").append("null");
                 break;
@@ -216,6 +219,20 @@ public class FishingVectors {
         hook.discard();
         return String.format(Locale.ROOT, "{\"name\":\"fishing_%d\",\"luck_level\":%d,\"lure_level\":%d,\"luck\":%d,\"lure_speed\":%d,\"seed\":\"%d\",\"uuid_lsb\":\"%d\",\"game_time\":%d,\"blocks\":[%s],\"names\":[%s],\"ticks\":[%s]}",
                 index, luck, lure, hookLuck, hookLure, seed, uuidLsb, gameTime, blocks, names, ticks);
+    }
+
+    /** wp79: the state a collision depends on (FISHING_DEBUG=<case index>): position, motion, the multiplier a cobweb left, the collision flags. */
+    static String debug(FishingHook hook) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("pos=").append(hook.position()).append(" delta=").append(hook.getDeltaMovement()).append(" box=").append(hook.getBoundingBox());
+        for (String f : new String[] {"stuckSpeedMultiplier", "verticalCollision", "horizontalCollision", "onGround", "verticalCollisionBelow", "minorHorizontalCollision"}) {
+            try {
+                sb.append(" ").append(f).append("=").append(get(hook, Entity.class, f));
+            } catch (Exception e) {
+                sb.append(" ").append(f).append("=?");
+            }
+        }
+        return sb.toString();
     }
 
     static void writeServerFiles() throws Exception {
