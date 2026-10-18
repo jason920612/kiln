@@ -84,6 +84,7 @@ def quarts(c):
     return out
 
 
+if __name__ != "__main__": raise SystemExit
 a, bw, dim = sys.argv[1], sys.argv[2], sys.argv[3]
 cx0, cz0, cx1, cz1 = map(int, sys.argv[4:8])
 diff = tot = 0
@@ -101,3 +102,10 @@ for cx in range(cx0, cx1 + 1):
                 if len(ex) < 12: ex.append((cx, cz, k, qa[k], qb.get(k)))
 print("quarts", tot, "different", diff)
 for e in ex: print(e)
+
+
+def stored_biome(world, dim, x, y, z):
+    c = chunk(world, dim, x >> 4, z >> 4)
+    if c is None: return None
+    q = quarts(c)
+    return q.get((y >> 4, ((y & 15) >> 2) * 16 + ((z & 15) >> 2) * 4 + ((x & 15) >> 2)))
