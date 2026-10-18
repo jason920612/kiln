@@ -844,6 +844,28 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 未覆蓋/沒結論 | 補貨與折扣、兩位玩家的突襲、徒步下界(失敗)、傳送門被打斷、TNT/鐵軌/地毯複製機的原版教學照蓋 |
 
 
+### 6.21 wp77(`wp77-gaps`):wp74、wp75 留下的十個差異
+
+細節見 `docs/wp77.md`。新工具:`SavedStateVectors`、`BrainRoundTrip`、`FishingVectors`、`VillagerVectors`(向量在 `work/wp77/`)、vanilla agent 的起點／有效列追蹤與 Kiln 的同名計數器(`KILN_SPAWN_COUNTERS`)、`tools/wp77/` 的鎖步腳本。
+
+| 區域 | 結果 |
+|---|---|
+| 實體 NBT `attributes`(生物、玩家) | **修**:只存已建立的實例、暫時修飾不存、玩家比照;`saved_parity` 7,604 筆與 vanilla 相同 |
+| `Brain.memories`(存檔、`/data get`、載入) | **修**:所有活實體讀 `Brain`、`Unit` 記憶必須是複合、銅傀儡建構時的冷卻被取代;`brain_parity` 5,028 筆相同 |
+| 自然生怪的上限計數 | **修**:數整個維度所有載入的實體、8 區塊內玩家的區塊數、全域上限每 tick 一次、群系用位移查詢、狼群 8;`spawn_cap.rs`、`spawn_cluster.rs` |
+| 下界屋頂金農場(K 比 V 多 1.3~2 倍) | **修**:自然生怪起點的最高 y 多了一格(`getRandomPosWithin` 的上限是欄位上方第一個空位);兩邊的決定計數器逐層相同;`a_start_reaches_no_higher_than…` |
+| 終界外島末影人農場 | 相同(K 56 / V 56) |
+| 主世界傳送門方塊的殭屍豬人 | **補**:`NetherPortalBlock.randomTick`(原本沒有);K 40 / V 48(期望 48);`portal_piglins.rs` |
+| 釣魚(150 個浮標案例,778,453 個值) | **修** 2 處:咬鉤時浮標下沉、**流動的水也算水**(8 個不同案例 → 5 個,明列於測試);Lure/Luck/開放水域/戰利品在向量裡相同 |
+| 村民補貨與折扣(400 個案例 5,580 步) | 位元相同;`transferFrom` 的挑選順序是 vanilla 的 `HashMap`/`identityHashCode` 走訪,向量記下 `unpack()` 順序 |
+| 貓晨間禮物、`FoxStrollThroughVillageGoal`、殭屍 `MoveThroughVillageGoal`、殭屍與 Vindicator 破門、襲擊者開門 | **補**(原本不執行);`cat_gift.rs`、`village_goals.rs`、`door_break.rs` |
+| 總覽表的「缺」 | 狼鎧甲、襲擊裝備附魔、玩家敲鐘、要塞與神殿生怪覆寫、鐵傀儡回村、堆肥:**本來就有**(表過期);交易表擲法:設計取捨 |
+| 傷害事件對直接送出的 level event 的先後 | **修**:`Event::PlayerHurt` 把玩家的傷害事件放在事件順序裡;`the_damage_event_comes_before_a_level_event_sent_at_once` |
+| `NoAI` 牛被栓繩拉的 `Motion` | 逐位元相同(200 tick、結與玩家兩種握法),wp75 的差異不能重現;`a_noai_cow_pulled_by_a_lead_keeps_the_motion_vanilla_does` |
+| `command_diff` 偶發差異 | `fetchprofile` 的 5 秒窗口(兩邊約 5 秒才失敗)改 8 秒;Health 行不依賴時機;沒有重現 19/18 |
+| `determinism.rs` | `state_hash` 改讀 vanilla 狀態的速度(記錄裡的副本只在實體 tick 或建關卡時更新);單一區域也在 tick 開頭數怪 |
+
+
 ## 7. 重跑
 
 ```sh
@@ -954,6 +976,11 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 #   bash tools/wp74/push_tools.sh；bash wp74_start.sh / wp74_vanilla.sh、switch.sh K split（SIMDIST=6：setsim.sh 6），然後 ./run.sh p74_drown.py | p74_hazard.py [危害,…] [刻] | p74_barter.py N R | p74_village.py | p74_hall.py | p74_misc.py endermite|turtles
 #   真客戶端：bash par.sh p74_fish.py N RATE open|closed none|both、p74_piglin.py、p74_gold.py；雙客戶端：switch.sh K|V both，TARGET=K|V ./run.sh p74_ghast4.py；農場：KILLBLOCK=1 BOX=x0,y0,z0,x1,y1,z1 bash run_farm.sh OUT p74_farm.py witch N T
 #   負向檢查：tools/wp74/neg.sh（刪掉含樣式的行）、neg2.sh REV 檔案… -- cargo test …（檔案退回 REV）
+# wp77：十個差異(見 docs/wp77.md;向量在 work/wp77/)
+#   java ... tools/SavedStateVectors.java work/wp77/saved.jsonl ; tools/BrainRoundTrip.java work/wp77/brt.jsonl ; tools/FishingVectors.java work/wp77/fishing.jsonl ; tools/VillagerVectors.java work/wp77/villagers.jsonl
+#   python tools/parity_suites.py --only saved77,brain77,fishing77,villagers77
+#   VM：bash tools/wp77/agent/build.sh；ORDER ~/wp77/run77.sh nether|end|portal ROUNDS TICKS BOX SIMDIST（KILN 25599、vanilla 25596）；python3 tools/wp77/starts.py K/trace.out V/trace.out BOX；python3 tools/wp77/leash9.py 1 40 [knot|player] [stride]
+#   負向檢查：python3 tools/wp77_neg.py [case…]
 # 登入等封包的 golden 由原版驗證後寫入
 python tools/packet_vectors.py --bless
 ```
