@@ -107,6 +107,25 @@ def scen_end(f):
     return f.run("the_end", ["enderman", "endermite", "shulker"], (x0 - 7, 41, z0 - 7, x0 + 7, 46, z0 + 7))
 
 
+def scen_portal(f):
+    """Zombified piglins from the portal blocks of a frame in the overworld (`NetherPortalBlock.randomTick`: one random tick in 2000 times the difficulty id),
+    with every random tick of a section (`random_tick_speed 4096`) and the player beside it."""
+    f.prep(6000)
+    w(f.t, "gamerule random_tick_speed 4096")
+    x0, z0 = 0, 300
+    f.tp("overworld", x0 + 0.5, 220, z0 + 0.5)
+    cmd(f.t, f"execute in minecraft:overworld run forceload add {x0 - 16} {z0 - 16} {x0 + 32} {z0 + 32}")
+    time.sleep(25)
+    cmd(f.t, f"execute in minecraft:overworld run fill {x0 - 4} 147 {z0 - 4} {x0 + 7} 147 {z0 + 4} minecraft:stone")
+    cmd(f.t, f"execute in minecraft:overworld run fill {x0 - 4} 148 {z0 - 4} {x0 + 7} 160 {z0 + 4} minecraft:air")
+    cmd(f.t, f"execute in minecraft:overworld run fill {x0} 148 {z0} {x0 + 3} 152 {z0} minecraft:obsidian")
+    cmd(f.t, f"execute in minecraft:overworld run fill {x0 + 1} 149 {z0} {x0 + 2} 151 {z0} minecraft:nether_portal[axis=x]")
+    cmd(f.t, f"execute in minecraft:overworld run tp {ME} {x0 + 1.5} 153 {z0 + 3.5}")
+    time.sleep(2)
+    cmd(f.t, "kill @e[type=!player]")
+    return f.run("overworld", ["zombified_piglin"], (x0 - 4, 148, z0 - 4, x0 + 7, 160, z0 + 4))
+
+
 def main():
     name = sys.argv[1]
     rounds = int(sys.argv[2]) if len(sys.argv) > 2 else 10
@@ -116,7 +135,7 @@ def main():
     def work(t):
         f = Farm(t, rounds, ticks)
         try:
-            results[t] = {"nether": scen_nether, "end": scen_end}[name](f)
+            results[t] = {"nether": scen_nether, "end": scen_end, "portal": scen_portal}[name](f)
         except Exception as e:
             results[t] = f"ERROR {e!r}"
             raise
