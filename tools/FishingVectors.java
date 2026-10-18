@@ -207,6 +207,7 @@ public class FishingVectors {
             BlockPos above = hook.blockPosition().above();
             boolean seesSky = level.canSeeSky(above);
             String dbg0 = System.getenv("FISHING_DEBUG") != null && Integer.parseInt(System.getenv("FISHING_DEBUG")) == index && t >= Integer.getInteger("fishing.from", 40) && t <= Integer.getInteger("fishing.to", 48) ? debug(hook) : null;
+            hook.commonTick(); // (ServerLevel.tickNonPassenger: invulnerableTime, setOldPosAndRot, tickCount; without it the old position is stale and Entity.applyEffectsFromBlocks sweeps from the cast point)
             hook.tick();
             if (dbg0 != null && System.getenv("FISHING_STEPS") != null) {
                 for (String s : System.getenv("FISHING_STEPS").split(";")) {
