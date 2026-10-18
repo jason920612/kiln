@@ -21,7 +21,11 @@ fn a_cow_fed_wheat_remembers_the_player_who_fed_it() {
         }
     };
     tick(&mut sim, 5);
-    assert!(sim.step([ToSim::Console("give Farmer minecraft:wheat 2".into()), ToSim::Console("summon minecraft:cow ~2 ~ ~ {NoAI:1b,PersistenceRequired:1b}".into())]));
+    let p = client.pos;
+    assert!(sim.step([
+        ToSim::Console("give Farmer minecraft:wheat 2".into()),
+        ToSim::Console(format!("summon minecraft:cow {} {} {} {{NoAI:1b,PersistenceRequired:1b}}", p[0] + 1.5, p[1], p[2])),
+    ]));
     tick(&mut sim, 2);
     let id = sim.entity_ids_of("minecraft:cow")[0];
     assert!(sim.step([ToSim::Packet(1, PlayIn::Interact { entity_id: id, hand: Hand::Main, location: [0.0, 0.5, 0.0], sneaking: false })]));
