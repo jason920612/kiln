@@ -165,6 +165,13 @@ public class FishingVectors {
                     if (centre && dy > 0) s = Blocks.AIR.defaultBlockState();
                     if (centre && dy < 0) s = Blocks.WATER.defaultBlockState();
                     level.setBlock(new BlockPos(X + dx, H + dy, Z + dz), s, 2);
+                }
+        // What the level holds now, not what was meant: placing a block changes its neighbours (a seagrass beside a lily pad turned into water here), and the
+        // bobber falls into what is really there.
+        for (int dx = -2; dx <= 2; dx++)
+            for (int dz = -2; dz <= 2; dz++)
+                for (int i = 0; i < 6; i++) {
+                    BlockState s = level.getBlockState(new BlockPos(X + dx, H + i - 2, Z + dz));
                     blocks.append(blocks.length() > 0 ? "," : "").append(Block.getId(s));
                     names.append(names.length() > 0 ? "," : "").append('"').append(s.toString().replace("Block{", "").replace("}", "").replace("\"", "'")).append('"');
                 }
