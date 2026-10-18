@@ -2080,7 +2080,7 @@ impl Sim {
             .collect();
         ents.sort_unstable_by_key(|e| e.0);
         if std::env::var_os("KILN_DBG_HASH").is_some() {
-            for e in ents.iter().filter(|e| e.1 == 59) {
+            for e in ents.iter().filter(|e| e.1 == 59 || (309..=312).contains(&self.game_time)) {
                 eprintln!("DBGENT gt={} {:?}", self.game_time, e);
             }
         }
