@@ -2986,7 +2986,7 @@ pub fn create_wither_rose(at: Vec3, level: &mut dyn EntityLevel) {
         placed = true;
     }
     if !placed {
-        spawn_at(at, level, ItemStack::of("minecraft:wither_rose", 1), 0.0);
+        spawn_at(at, level, ItemStack::of("minecraft:wither_rose", 1).unwrap_or_else(ItemStack::empty), 0.0);
     }
 }
 
