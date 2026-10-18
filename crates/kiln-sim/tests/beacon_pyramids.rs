@@ -51,3 +51,34 @@ fn a_beacon_reads_its_pyramid_whatever_its_height_and_wherever_it_stands() {
     assert_eq!(levels_of_pyramid(4, 6, false, Some((2, -3, 0))), 2, "a stone in the third layer");
     assert_eq!(levels_of_pyramid(3, 6, false, Some((0, 3, 0))), 0, "a stone in the beam");
 }
+
+#[test]
+fn data_get_block_shows_the_levels_a_beacon_worked_out() {
+    use kiln_proto::nbt::Tag;
+    let mut sim = Sim::new(SimConfig::new(4, 4, None));
+    let (msg, stats) = join(1, "Keeper", 2);
+    assert!(sim.step([msg, ToSim::Console("gamemode creative Keeper".into())]));
+    let mut client = Client::new(1, stats);
+    for _ in 0..5 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    let p = client.pos;
+    let (bx, by, bz) = (p[0].floor() as i32 + 3, p[1].floor() as i32 + 6, p[2].floor() as i32 + 3);
+    for c in [
+        format!("fill {} {} {} {} {} {} minecraft:air", bx - 8, by - 6, bz - 8, bx + 8, by + 6, bz + 8),
+        format!("fill {} {} {} {} {} {} minecraft:iron_block", bx - 1, by - 1, bz - 1, bx + 1, by - 1, bz + 1),
+        format!("fill {} {} {} {} {} {} minecraft:iron_block", bx - 2, by - 2, bz - 2, bx + 2, by - 2, bz + 2),
+        format!("setblock {bx} {by} {bz} minecraft:beacon"),
+    ] {
+        assert!(sim.step([ToSim::Console(c)]));
+    }
+    for _ in 0..200 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    let be = sim.block_entity_data("minecraft:overworld", bx, by, bz).expect("a block entity");
+    assert_eq!(be.get("Levels").and_then(Tag::as_i64), Some(2), "the two layers the beacon counted: {be:?}");
+}

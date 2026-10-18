@@ -1,19 +1,24 @@
 from lab80 import *
 setup(frozen=False, rules=("command_block_output false", "spawn_mobs false"))
-X, Z = 8, 30
-def lv(t, Y):
-    b = ask(t, f"execute in minecraft:overworld run data get block {X} {Y} {Z}", wait=0.4)
-    m = re.search(r"Levels: (\d+)", b)
-    return m.group(1) if m else b[-60:]
-for Y in (150, 100, 66):
-    OB(f"fill {X - 12} {Y - 8} {Z - 12} {X + 12} {Y + 12} {Z + 12} minecraft:air")
-    time.sleep(1.5)
-    for l in range(1, 5):
-        OB(f"fill {X - l} {Y - l} {Z - l} {X + l} {Y - l} {Z + l} minecraft:iron_block")
-    OB(f"setblock {X} {Y} {Z} minecraft:beacon")
-    for i in range(3):
-        time.sleep(5)
-        print(Y, "K", lv("K", Y), "V", lv("V", Y), flush=True)
-    for t in "K":
-        print(count_blocks(t, X, Y + 1, Z, X, 319, Z, "minecraft:air"), "air above of", 319 - Y)
-OB(f"fill {X - 12} 55 {Z - 12} {X + 12} 170 {Z + 12} minecraft:air")
+revive()
+for t in "KV": w(t, "gamemode survival KilnTest")
+X, Y, Z = 8, 150, 30
+OB(f"fill {X - 12} {Y - 8} {Z - 12} {X + 12} {Y + 12} {Z + 12} minecraft:air")
+time.sleep(1.5)
+for l in range(1, 5):
+    OB(f"fill {X - l} {Y - l} {Z - l} {X + l} {Y - l} {Z + l} minecraft:iron_block")
+OB(f"setblock {X} {Y} {Z} minecraft:beacon")
+OB(f"tp KilnTest {X + 3}.5 {Y + 1} {Z}.5")
+both_("effect clear KilnTest")
+def show(tag):
+    for t in "KV":
+        b = ask(t, f"execute in minecraft:overworld run data get block {X} {Y} {Z}", wait=0.4)
+        e = ask(t, "data get entity KilnTest active_effects", wait=0.4)
+        print(tag, t, re.sub(r".*(query\[|following block data: )", "", b).strip()[:150], "|", re.findall(r'id: "minecraft:(\w+)"', e), re.findall(r"duration: (\d+)", e), flush=True)
+time.sleep(10); show("after 10s")
+OB(f"data merge block {X} {Y} {Z} {{primary_effect:\"minecraft:speed\"}}")
+show("merged")
+time.sleep(5); show("+5s")
+time.sleep(5); show("+10s")
+time.sleep(5); show("+15s")
+OB(f"fill {X - 12} {Y - 8} {Z - 12} {X + 12} {Y + 12} {Z + 12} minecraft:air")

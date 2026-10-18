@@ -1485,8 +1485,8 @@ mod tests {
 
 /// Writes the container at `p` into its chunk's NBT if it changed.
 fn store_one(p: BlockPos, c: &mut ContainerBe, chunk: &mut Chunk) {
-    // (A jukebox's song advances without `setChanged`: it is saved as it stands.)
-    let playing = c.kind == BeKind::Jukebox && c.song.is_some();
+    // (A jukebox's song advances without `setChanged`: it is saved as it stands; so are a beacon's levels, which its ticks work out without it.)
+    let playing = (c.kind == BeKind::Jukebox && c.song.is_some()) || c.kind == BeKind::Beacon;
     if !(c.dirty || playing) {
         return;
     }
