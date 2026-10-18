@@ -150,8 +150,7 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
                 *egg_time = t as i32;
             }
         }
-        Species::Zombie { can_break_doors, drowning } => {
-            *can_break_doors = r.bool_or("CanBreakDoors", false);
+        Species::Zombie { drowning, .. } => {
             m.zombie_baby = r.bool_or("IsBaby", false);
             drowning.load(r, "InWaterTime", "DrownedConversionTime");
         }
@@ -167,6 +166,10 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
             *ignited = r.bool_or("ignited", false);
         }
         _ => {}
+    }
+    if matches!(m.species, Species::Zombie { .. }) {
+        // `setCanBreakDoors`: the navigation and the goal follow the flag.
+        super::kinds::zombie::set_can_break_doors(m, r.bool_or("CanBreakDoors", false));
     }
     if m.zombie_baby {
         m.attrs.set_transient_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
