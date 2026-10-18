@@ -213,7 +213,7 @@ public class VillagerVectors {
     }
 
     static Villager villager(ServerLevel level) {
-        Villager v = EntityType.VILLAGER.create(level, EntitySpawnReason.COMMAND);
+        Villager v = net.minecraft.world.entity.EntityTypes.VILLAGER.create(level, EntitySpawnReason.COMMAND);
         v.setPos(0.5, 80, 0.5);
         return v;
     }
