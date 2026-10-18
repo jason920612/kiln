@@ -12,3 +12,5 @@ check() {  # name file perl-edit test-args...
 check wither_rose crates/kiln-entity/src/mob/mod.rs 's/    if credit_is_wither \{\n        create_wither_rose/    if false \&\& credit_is_wither {\n        create_wither_rose/' --test wither
 check power_punch crates/kiln-sim/src/enchant.rs 's/self\.0\.projectile_modify_damage\(hit\.weapon, hit\.attacker, hit\.direct, hit\.victim, hit\.damage_type, damage, random\)/{ let _ = (hit, random); damage }/; s/self\.0\.projectile_modify_knockback\(hit\.weapon, hit\.attacker, hit\.direct, hit\.victim, hit\.damage_type, value, random\)/{ let _ = (hit, random); value }/' --test arrow_enchants
 check boss_bar crates/kiln-sim/src/players.rs 's/bars\.push\(\(\*v, b\)\);/let _ = b;/' --test wither
+check bar_default crates/kiln-entity/src/mob/kinds/wither.rs 's/boss_progress: 1\.0,/boss_progress: 0.0,/' --test wither
+check player_rose crates/kiln-sim/src/lib.rs 's/if let Some\(\(dim, at\)\) = d\.rose_at \{/if let Some((dim, at)) = d.rose_at.filter(|_| false) {/' --test wither
