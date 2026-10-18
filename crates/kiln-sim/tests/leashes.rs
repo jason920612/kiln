@@ -301,12 +301,13 @@ fn a_noai_cow_pulled_by_a_lead_keeps_the_motion_vanilla_does() {
         let d = |i: usize| if let Tag::Double(v) = &m[i] { *v } else { f64::NAN };
         Some((d(0), d(1), d(2)))
     };
-    let start = motion(&w).expect("the cow");
-    assert_eq!(start.0, 0.0, "it has not been pulled yet");
     let at = |w: &World| w.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:cow")).and_then(|t| if let Some(Tag::List(p)) = t.get("Pos") { if let Tag::Double(v) = &p[0] { Some(*v) } else { None } } else { None });
     let x0 = at(&w).unwrap();
+    // (The tick the summon command runs in is the first one.)
     for (i, (wx, wz)) in want.iter().enumerate() {
-        w.ticks(1);
+        if i > 0 {
+            w.ticks(1);
+        }
         let (mx, my, mz) = motion(&w).expect("the cow");
         assert_eq!((mx, my, mz), (*wx, 0.0, *wz), "tick {i}");
     }
