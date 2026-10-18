@@ -2,7 +2,6 @@
 //! 32, against `inEntityTickingRange`, 31). Measured on vanilla 26.3 with `tools/wp79/simradius79.py` (simulation distance 6: a baby cow's age rises up to 6 chunks from
 //! the player, a water source spreads up to 7). Kiln used the entity range for everything.
 
-use kiln_data::blocks::default_state as d;
 use kiln_link::ToSim;
 use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
@@ -35,7 +34,7 @@ fn a_water_source_spreads_up_to_one_chunk_beyond_the_simulation_distance() {
         assert!(sim.step(cmds.map(ToSim::Console)));
     }
     tick(&mut sim, 60);
-    let spread = |chunk: i32| sim.block_at(chunk * 16 + 8 + 1, 200, 8) == Some(d::WATER);
+    let spread = |chunk: i32| sim.block_at(chunk * 16 + 8 + 1, 200, 8).is_some_and(|s| kiln_data::blocks_types::block_of(s).name == "minecraft:water");
     assert!(spread(3), "inside the simulation distance");
     assert!(spread(4), "one chunk beyond it: blocks still tick");
     assert!(!spread(5), "two chunks beyond it nothing ticks");
