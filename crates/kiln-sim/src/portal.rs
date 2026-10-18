@@ -88,7 +88,7 @@ impl Sim {
 
 impl Player {
     /// `Entity.canUsePortal(false)`: alive, and not a passenger (what it rides goes, with it).
-    fn can_use_portal(&self) -> bool {
+    pub(crate) fn can_use_portal(&self) -> bool {
         !self.dead && self.health > 0.0 && !self.disconnected && self.vehicle.is_none()
     }
 

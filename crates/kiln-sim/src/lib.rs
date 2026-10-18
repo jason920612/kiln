@@ -3194,13 +3194,41 @@ impl Sim {
 
     /// `ServerPlayer.placeEnderPearlTicket`: the chunks the players' pearls asked a ticket for (they renew the one already there).
     fn collect_pearl_tickets(&mut self) {
+        let mut landings = Vec::new();
         for (dim, d) in self.dims.iter_mut().enumerate() {
             for region in d.regions.iter_mut() {
-                for c in std::mem::take(&mut region.part_mut().1.pearl_tickets) {
+                let part = &mut region.part_mut().1;
+                for c in std::mem::take(&mut part.pearl_tickets) {
                     self.world.timed[dim].add(tickets::Kind::EnderPearl, c);
                 }
+                landings.extend(std::mem::take(&mut part.pearl_landings).into_iter().map(|(owner, at)| (dim, owner, at)));
             }
         }
+        for (dim, owner, at) in landings {
+            self.pearl_lands_for(owner, dim, at);
+        }
+    }
+
+    /// `ThrownEnderpearl.onHit` for an owner who is not in the pearl's region: the player goes to where the pearl was, in the pearl's level (a player
+    /// of another level changes level), takes 5 damage (`ender_pearl`) and hears the teleport.
+    fn pearl_lands_for(&mut self, owner: i32, dim: DimId, at: [f64; 3]) {
+        let Some((&conn, p)) = self.players.iter().find(|(_, p)| p.entity_id == owner && !p.dead && !p.disconnected) else { return };
+        if p.dim != dim && !p.can_use_portal() {
+            return;
+        }
+        let (rot, now) = (p.rot, self.game_time);
+        self.change_dimension(conn, dim, at, rot);
+        let env = self.env(dim);
+        let (mut spawns, mut deaths) = (Vec::new(), Vec::new());
+        if let Some(p) = self.players.get_mut(&conn) {
+            p.fall_distance = 0.0;
+            let source = health::Source { cause: health::Cause::Other("minecraft:ender_pearl"), attacker: None, direct: None, weapon: None, position: None };
+            let mut ctx = health::DamageCtx { rules: env.blocks.damage, game_time: now, spawns: &mut spawns, deaths: &mut deaths, level_rng: None };
+            p.hurt(5.0, &source, &mut ctx);
+            p.sound_for_all("minecraft:entity.player.teleport", kiln_proto::packets::world_fx::SoundSource::Players, 1.0, 1.0);
+        }
+        self.dims[dim].spawns.extend(spawns);
+        self.announce_deaths(deaths);
     }
 
     /// Runs every level's regionizer; whether any topology changed.

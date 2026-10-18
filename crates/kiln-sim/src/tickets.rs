@@ -108,6 +108,7 @@ impl Timed {
         self.list.is_empty()
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.list.len()
     }
@@ -117,6 +118,7 @@ impl Timed {
         self.list.iter().map(|t| (t.chunk, t.radius()))
     }
 
+    #[cfg(test)]
     pub(crate) fn tickets(&self) -> &[Ticket] {
         &self.list
     }

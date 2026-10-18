@@ -55,6 +55,8 @@ pub(crate) struct RegionBlocks {
     pub text_requests: Vec<(u128, kiln_proto::nbt::Tag)>,
     /// The chunks ender pearls of players placed their tickets at this tick (`TicketType.ENDER_PEARL`), for the level's ticket list.
     pub pearl_tickets: Vec<ChunkPos>,
+    /// Pearls that landed whose owner is not in the region (another region of the level, or another level): (owner's network id, where the pearl was).
+    pub pearl_landings: Vec<(i32, [f64; 3])>,
     /// Hives whose nearby bees take a player as their target (`BeehiveBlock.angerNearbyBees`),
     /// for the region, which has the entities.
     pub bee_anger: Vec<BlockPos>,
@@ -95,6 +97,7 @@ impl Default for RegionBlocks {
             raid_events: Vec::new(),
             text_requests: Vec::new(),
             pearl_tickets: Vec::new(),
+            pearl_landings: Vec::new(),
             bee_anger: Vec::new(),
             piglin_anger: Vec::new(),
             bell_events: Vec::new(),
@@ -243,6 +246,7 @@ impl RegionPart for RegionBlocks {
         into.raid_events.append(&mut from.raid_events);
         into.text_requests.append(&mut from.text_requests);
         into.pearl_tickets.append(&mut from.pearl_tickets);
+        into.pearl_landings.append(&mut from.pearl_landings);
         into.bee_anger.append(&mut from.bee_anger);
         into.piglin_anger.append(&mut from.piglin_anger);
         into.bell_events.append(&mut from.bell_events);
@@ -296,6 +300,7 @@ impl RegionPart for RegionBlocks {
         parts[0].raid_events = std::mem::take(&mut self.raid_events);
         parts[0].text_requests = std::mem::take(&mut self.text_requests);
         parts[0].pearl_tickets = std::mem::take(&mut self.pearl_tickets);
+        parts[0].pearl_landings = std::mem::take(&mut self.pearl_landings);
         parts[0].bee_anger = std::mem::take(&mut self.bee_anger);
         parts[0].piglin_anger = std::mem::take(&mut self.piglin_anger);
         parts[0].bell_events = std::mem::take(&mut self.bell_events);

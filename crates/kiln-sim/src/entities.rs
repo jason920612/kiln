@@ -3734,7 +3734,11 @@ fn carry_out(
         // tick, takes 5 `ender_pearl` damage and hears the teleport.
         Event::ProjectileHit { projectile, projectile_type: "minecraft:ender_pearl", owner: Some(owner), .. } => {
             let Some(to) = list.binary_search_by_key(&projectile, |e| e.id).ok().and_then(|i| list[i].phys.as_deref()).map(|e| arr(e.old_pos)) else { return };
-            let Some(p) = players.iter_mut().find(|p| p.entity_id == owner && !p.dead && !p.disconnected) else { return };
+            let Some(p) = players.iter_mut().find(|p| p.entity_id == owner && !p.dead && !p.disconnected) else {
+                // The owner is elsewhere (a pearl in a stasis chamber lands far from its player, maybe in another level): the serial phase takes it there.
+                level.blocks.pearl_landings.push((owner, to));
+                return;
+            };
             let now = env.game_time;
             let rot = p.rot;
             p.dismount_on_teleport |= p.vehicle.is_some();
