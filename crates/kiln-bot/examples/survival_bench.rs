@@ -84,6 +84,9 @@ struct Args {
     seed: u64,
     #[arg(long, default_value_t = 10)]
     view_distance: u8,
+    /// The render distance the bots ask for (default: the server's `--view-distance`; wp79: 2 against a server at 10 is an AFK player at a farm).
+    #[arg(long)]
+    bot_view_distance: Option<u8>,
     #[arg(long, default_value_t = 10)]
     simulation_distance: u8,
     /// Joins per second.
@@ -722,7 +725,7 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
             .args(["--behavior", "survival", "--duration", "86400", "--stdin-control", "--name-prefix", "SB"])
             .args(["--group-size", &a.group_size.to_string(), "--group-spacing", &a.spacing.to_string()])
             .args(if a.roam > 0.0 { vec!["--radius".to_string(), a.roam.to_string()] } else { Vec::new() })
-            .args(["--view-distance", &a.view_distance.to_string(), "--roles", &a.roles])
+            .args(["--view-distance", &a.bot_view_distance.unwrap_or(a.view_distance).to_string(), "--roles", &a.roles])
             .args(["--chat-interval", &a.chat_interval.to_string(), "--seed", &a.seed.to_string()])
             .args(["--report-interval", "10", "--json", "--center", "0,0", "--join-timeout", "900"]);
         survivors = Some(Bots::start(a, bot_cmd)?);
@@ -734,7 +737,7 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
             .args(["--behavior", "fly", "--duration", "86400", "--stdin-control", "--name-prefix", "FB"])
             .args(["--center", &a.fly_center, "--group-spacing", &a.fly_spacing.to_string(), "--speed", &a.fly_speed.to_string()])
             .args(["--fly-dim", &a.fly_dim, "--fly-heading", &a.fly_heading, "--fly-altitude", &a.fly_altitude.to_string()])
-            .args(["--fly-warmup", &a.warmup.to_string(), "--view-distance", &a.view_distance.to_string()])
+            .args(["--fly-warmup", &a.warmup.to_string(), "--view-distance", &a.bot_view_distance.unwrap_or(a.view_distance).to_string()])
             .args(["--report-interval", "10", "--json", "--join-timeout", "900", "--seed", &a.seed.to_string()]);
         flyers = Some(Bots::start(a, cmd)?);
     }
@@ -947,6 +950,7 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         "flyers": a.flyers,
         "fly_dim": a.fly_dim,
         "view_distance": a.view_distance,
+        "bot_view_distance": a.bot_view_distance.unwrap_or(a.view_distance),
         "all_bots_in_after_s": full_at.map(|t| (t.saturating_sub(bots_started)) as f64 / 1000.0),
         "bots_arrived_after_s": arrived_at.map(|t| (t.saturating_sub(bots_started)) as f64 / 1000.0),
         "mspt_measured": stats_json(stats(measured)),
