@@ -75,6 +75,50 @@ fn a_forced_chunk_ticks_entities_in_itself_and_blocks_one_ring_out() {
     assert_eq!(water(32), Some("minecraft:air"), "but not in the ring after that, which is only loaded");
 }
 
+/// wp81 (lock step against vanilla, `tools/wp81/simradius81.py`): water at the east edge of the last block-ticking chunk flows on into the chunk after it,
+/// which only has to be loaded (level 33). Here around a forced chunk (ring 1 ticks blocks, ring 2 is loaded).
+#[test]
+fn water_flows_from_the_block_ticking_ring_into_the_loaded_one() {
+    let mut sim = Sim::new(SimConfig::new(4, 4, None));
+    sim.console_now("gamerule minecraft:spawn_mobs false");
+    sim.console_now("forceload add 4008 4008");
+    for _ in 0..3 {
+        assert!(sim.step([]));
+    }
+    // Ring 1 is the chunk x 4016..4031; its east edge is x = 4031, the next chunk (ring 2) starts at 4032. A stone floor with a hole at x = 4033.
+    sim.console_now("fill 4022 99 4000 4040 99 4016 minecraft:stone");
+    sim.console_now("setblock 4033 99 4008 minecraft:air");
+    sim.console_now("setblock 4031 100 4008 minecraft:water");
+    for _ in 0..40 {
+        assert!(sim.step([]));
+    }
+    let block = |x| sim.block_at(x, 100, 4008).map(|b| kiln_entity::blocks::block_name(b));
+    assert_eq!(block(4032), Some("minecraft:water"), "the water reached the chunk that is only loaded");
+}
+
+/// A player's loading tickets reach two chunks past the server's view distance (level 31 at `V`, 33 at `V + 2`): those chunks are loaded, none of them
+/// is sent, and the one after is not loaded.
+#[test]
+fn the_server_loads_two_chunks_past_its_view_distance() {
+    let mut sim = Sim::new(SimConfig::new(3, 3, None));
+    let (msg, stats) = join(1, "Watcher", 3);
+    assert!(sim.step([msg]));
+    let mut client = Client::new(1, stats);
+    for _ in 0..30 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    let (px, pz) = ((client.pos[0].floor() as i32) >> 4, (client.pos[2].floor() as i32) >> 4);
+    for d in [0, 3, 4, 5] {
+        assert!(loaded(&sim, px + d, pz), "{d} chunks east is loaded");
+        assert!(loaded(&sim, px, pz - d), "{d} chunks north is loaded");
+    }
+    for d in [6, 7] {
+        assert!(!loaded(&sim, px + d, pz), "{d} chunks east is not");
+    }
+}
+
 struct World {
     sim: Sim,
     client: Client,

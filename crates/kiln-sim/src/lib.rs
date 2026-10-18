@@ -3101,8 +3101,9 @@ impl Sim {
         }
         let own_chunks_all = own_chunks.clone();
         for dim in 0..self.dims.len() {
-            // `TicketStorage.purgeStaleTickets`: the timed tickets count down before the level ticks.
-            if !self.world.timed[dim].is_empty() {
+            // `TicketStorage.purgeStaleTickets`: the timed tickets count down before the level ticks (`ServerChunkCache.tick(…, tickChunks)` purges when the
+            // level runs normally; a frozen game's idle ticks leave them alone, its `/tick step` ticks count).
+            if !self.world.timed[dim].is_empty() && self.world.tick_rate.runs_normally() {
                 let d = &self.dims[dim];
                 self.world.timed[dim].purge(|c| d.is_loaded(c));
             }
