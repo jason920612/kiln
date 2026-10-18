@@ -2247,5 +2247,9 @@ mod tests {
             let c = ChunkPos::new(x, 0);
             assert_eq!((capped.contains(c), capped.contains_block(c)), (want_entity, want_block), "capped, distance {x}");
         }
+        // Random ticks need the block-ticking status too: one chunk further than entities when the simulation distance reaches beyond the view distance.
+        for (x, want) in [(8, true), (9, true), (10, false)] {
+            assert_eq!(capped.contains_random(ChunkPos::new(x, 0)), want, "random ticks, distance {x}");
+        }
     }
 }
