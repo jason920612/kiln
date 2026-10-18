@@ -48,6 +48,7 @@ fn closest(kind: MobKind, village: bool, ticks: usize) -> f64 {
 fn a_zombie_at_night_walks_to_a_village() {
     let near = closest(MobKind::Zombie, true, 1500);
     let far = closest(MobKind::Zombie, false, 1500);
+    eprintln!("zombie near {near} far {far}");
     assert!(near < 10.0, "it reached the bell: {near:.1}");
     assert!(far > 30.0, "without the village it only strolls: {far:.1}");
 }

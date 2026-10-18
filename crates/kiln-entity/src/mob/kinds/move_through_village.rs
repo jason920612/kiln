@@ -64,6 +64,7 @@ impl CustomGoal for MoveThroughVillageGoal {
         if m.nav.water_bound {
             return false;
         }
+        eprintln!("DBG mtv can_use bright={} sections={}", level.is_bright_outside(), level.sections_to_village(e.block_position()));
         // `updateVisited`.
         if self.visited.len() > 15 {
             self.visited.remove(0);
