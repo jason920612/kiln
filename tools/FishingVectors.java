@@ -216,6 +216,13 @@ public class FishingVectors {
                     System.out.println("step " + s + " ->" + stepVisits(level, hook, a, b));
                 }
             }
+            if (dbg0 != null && System.getenv("FISHING_BLOCKS") != null) {
+                for (String s : System.getenv("FISHING_BLOCKS").split(";")) {
+                    String[] q = s.split(",");
+                    BlockPos bp = new BlockPos(Integer.parseInt(q[0]), Integer.parseInt(q[1]), Integer.parseInt(q[2]));
+                    System.out.println("block " + s + " = " + level.getBlockState(bp));
+                }
+            }
             if (dbg0 != null) System.out.println("t=" + t + " before " + dbg0 + "\n      after " + debug(hook) + "\n      visits" + visits(level, hook, hook.position(), hook.position()));
             if (hook.isRemoved()) {
                 ticks.append(ticks.length() > 0 ? "," : "").append("null");
