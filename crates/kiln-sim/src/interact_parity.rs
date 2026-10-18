@@ -605,6 +605,9 @@ fn run_case(line: &Value) -> Vec<String> {
     // (The vectors' recorder adds the entities of its setup without ticking them.)
     config.summons_join_late = true;
     let mut sim = Sim::new(config);
+    // (The vectors' level is the_void: no spawn entries, so nothing spawns naturally. Kiln's replay level is not, and animals may spawn farther than 128 blocks from the
+    // player, which the scenarios' player 160 blocks above the floor now has them do, as `EntityType.canSpawnFarFromPlayer` says.)
+    sim.spawn_table = None;
     // (Vaults roll loot tables: the level has the vanilla ones whatever the working directory.)
     if line["ticking"].as_bool() == Some(true) && sim.loot.is_none() {
         sim.loot = crate::combat_parity::vanilla_loot();
@@ -662,9 +665,7 @@ fn run_case(line: &Value) -> Vec<String> {
         assert!(sim.step(idle));
     }
     // (The vectors were recorded without announcements of advancements; with a datapack Kiln has them.)
-    // (The vectors' level is the_void and has no animals; the chunks Kiln loads whole around the player, whatever the client asks for, get the animals chunk
-    // generation makes and a spawn pass at the first tick. The recorded setup comes after this.)
-    let mut console: Vec<ToSim> = vec![ToSim::Console("gamerule minecraft:show_advancement_messages false".into()), ToSim::Console("kill @e[type=!minecraft:player]".into())];
+    let mut console: Vec<ToSim> = vec![ToSim::Console("gamerule minecraft:show_advancement_messages false".into())];
     if line["op"].as_bool() == Some(true) {
         console.push(ToSim::Console("op Interact".into()));
     }
