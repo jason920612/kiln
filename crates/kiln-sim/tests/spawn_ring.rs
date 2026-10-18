@@ -48,7 +48,7 @@ fn spawn_attempts_reach_one_chunk_beyond_the_simulation_distance() {
     let attempts = |cx: i32, cz: i32| counters.get(&format!("chunkAttempt MONSTER {cx},{cz}")).copied().unwrap_or(0);
     assert!(attempts(0, 0) > 0, "the player's own chunk: {:?}", counters.keys().filter(|k| k.starts_with("chunkAttempt")).collect::<Vec<_>>());
     assert!(attempts(3, 0) > 0 && attempts(0, -3) > 0, "within the simulation distance");
-    assert!(attempts(4, 0) > 0 && attempts(0, 4) > 0, "one chunk beyond it");
+    assert!(attempts(4, 0) > 0 && attempts(0, 4) > 0, "one chunk beyond it: {:?}", (0..=6).map(|d| (d, attempts(d, 0), attempts(0, d), attempts(-d, 0), attempts(0, -d))).collect::<Vec<_>>());
     assert_eq!(attempts(5, 0) + attempts(0, 5) + attempts(-5, 0), 0, "two beyond it");
     let _ = std::fs::remove_file(file);
 }
