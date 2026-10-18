@@ -72,7 +72,8 @@ for t in "KV":
         w(t, f"setblock {x} {Y - 41} {Z0 + 8} minecraft:water")
         # at the east edge of the chunk: a water source on an open stone floor, which flows on into chunk d+1 (the edge probe)
         ex = X0 + 16 * d + 15
-        w(t, f"fill {ex - 3} {Y - 36} {Z0 + 4} {ex + 4} {Y - 36} {Z0 + 12} minecraft:stone")
+        w(t, f"fill {ex - 9} {Y - 36} {Z0 - 2} {ex + 9} {Y - 36} {Z0 + 18} minecraft:stone")
+        w(t, f"setblock {ex + 2} {Y - 36} {Z0 + 8} minecraft:air")
         w(t, f"setblock {ex} {Y - 35} {Z0 + 8} minecraft:water")
 time.sleep(0.5)
 before = {t: ages(t) for t in "KV"}
