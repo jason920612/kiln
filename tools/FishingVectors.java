@@ -236,6 +236,12 @@ public class FishingVectors {
                 sb.append(" ").append(f).append("=?");
             }
         }
+        try {
+            sb.append("
+      movements=").append(get(hook, Entity.class, "finalMovementsThisTick"));
+        } catch (Exception e) {
+            sb.append(" movements=?");
+        }
         return sb.toString();
     }
 
