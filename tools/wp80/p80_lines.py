@@ -16,7 +16,7 @@ OB(f"tp KilnTest {X}.5 {Y} {Z}.5")
 time.sleep(1.5)
 for c in cl.values():
     c.cmd("spy on"); c.cmd("spylog clear")
-OB(f"summon minecraft:{mob} {X + 6}.5 {Y} {Z}.5 {{PersistenceRequired:1b{extra}}}")
+OB(f"summon minecraft:{mob} {X + 3}.5 {Y + int(os.environ.get("DROP", "0"))} {Z}.5 {{PersistenceRequired:1b{extra}}}")
 time.sleep(secs)
 for k, c in cl.items():
     lines = json.loads(c.cmd("spylog clear"))

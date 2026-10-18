@@ -873,6 +873,11 @@ impl Level for RegionLevel<'_> {
         self.env.mobs.creaking_active
     }
 
+    /// `gameplay/eyeblossom_open`: the overworld's timeline, open from 12600 to 23401.
+    fn eyeblossom_open(&self, _pos: BlockPos) -> Option<bool> {
+        (self.env.dim == crate::OVERWORLD_ID).then(|| (12600..23401).contains(&self.env.mobs.day_time.rem_euclid(24000)))
+    }
+
     /// `gameplay/turtle_egg_hatch_chance`: certain for 843 ticks around dawn in the overworld,
     /// otherwise the default 1/500.
     fn turtle_egg_hatch_chance(&self, _pos: BlockPos) -> f32 {
@@ -1583,6 +1588,22 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                         randomization: world_fx::ParticleRandomization::Default,
                     });
                     send_near(players, pos, 32.0, &pkt, |_| true);
+                }
+            }
+            // `EyeblossomBlock.Type.spawnTransformParticle`.
+            Effect::TrailParticle { at, target, color, duration } => {
+                if let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:trail") {
+                    let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+                        particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Trail { target, color, duration } },
+                        override_limiter: false,
+                        always_show: false,
+                        pos: at,
+                        offset: [0.0; 3],
+                        max_speed: [0.0; 3],
+                        count: 1,
+                        randomization: world_fx::ParticleRandomization::Default,
+                    });
+                    send_near(players, BlockPos::new(at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32), 32.0, &pkt, |_| true);
                 }
             }
             Effect::NoteBlock { pos, instrument, note } => {

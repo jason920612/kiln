@@ -24,7 +24,7 @@ enable-command-block=true
 generate-structures=true
 pause-when-empty-seconds=-1
 white-list=false
-level-seed=${VSEED:-72}
+level-seed=${VSEED:-80}
 PROP
 # a fresh fifo: a stop nobody read must not stop the new server
 rm -f console; mkfifo console

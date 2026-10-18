@@ -356,6 +356,7 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::SculkShriekerBlock => sculk::shrieker_tick(level, s, pos),
         C::SculkCatalystBlock => sculk::catalyst_tick(level, s, pos),
         C::SnifferEggBlock => misc::sniffer_egg_tick(level, s, pos),
+        C::EyeblossomBlock => misc::eyeblossom_tick(level, s, pos),
         C::FrogspawnBlock => misc::frogspawn_tick(level, pos),
         C::FrostedIceBlock => spread::frosted_tick(level, s, pos),
         C::ChorusPlantBlock | C::ChorusFlowerBlock => growth::chorus_tick(level, s, pos),
@@ -438,6 +439,7 @@ pub fn random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
             C::NyliumBlock => growth::nylium_random_tick(level, s, pos),
             C::ChorusFlowerBlock => growth::chorus_flower_random_tick(level, s, pos),
             C::NetherPortalBlock => portal::random_tick(level, pos),
+            C::EyeblossomBlock => misc::eyeblossom_random_tick(level, s, pos),
             _ => {}
         }
     }
