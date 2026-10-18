@@ -203,7 +203,7 @@ public class FishingVectors {
             boolean seesSky = level.canSeeSky(above);
             String dbg0 = System.getenv("FISHING_DEBUG") != null && Integer.parseInt(System.getenv("FISHING_DEBUG")) == index && t >= Integer.getInteger("fishing.from", 40) && t <= Integer.getInteger("fishing.to", 48) ? debug(hook) : null;
             hook.tick();
-            if (dbg0 != null) System.out.println("t=" + t + " before " + dbg0 + "\n      after " + debug(hook));
+            if (dbg0 != null) System.out.println("t=" + t + " before " + dbg0 + "\n      after " + debug(hook) + "\n      visits" + visits(level, hook, hook.position(), hook.position()));
             if (hook.isRemoved()) {
                 ticks.append(ticks.length() > 0 ? "," : "").append("null");
                 break;
@@ -237,7 +237,7 @@ public class FishingVectors {
     /** wp79: the blocks the swept box of a tick visits (BlockGetter.forEachBlockIntersectedBetween, as Entity.checkInsideBlocks asks for them). */
     static String visits(ServerLevel level, FishingHook hook, Vec3 from, Vec3 to) {
         StringBuilder sb = new StringBuilder();
-        net.minecraft.world.phys.AABB box = hook.makeBoundingBox(to).deflate(9.999999747378752E-6);
+        net.minecraft.world.phys.AABB box = hook.getBoundingBox().deflate(9.999999747378752E-6);
         net.minecraft.world.level.BlockGetter.forEachBlockIntersectedBetween(from, to, box, (pos, i) -> {
             sb.append(" ").append(pos.toShortString()).append(":").append(level.getBlockState(pos).getBlock().getDescriptionId().replace("block.minecraft.", ""));
             return true;
