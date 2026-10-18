@@ -257,7 +257,7 @@ impl Sim {
         players.sort_by_key(|p| p.uuid);
         type Job = (uuid::Uuid, String, Tag, Option<(std::path::PathBuf, String)>, Option<(std::path::PathBuf, String)>);
         // (One look at the entities for every player's pearls.)
-        let mut pearls = self.all_player_pearls();
+        let mut pearls = self.all_player_pearls(None);
         let jobs: Vec<Job> = players
             .iter()
             .map(|p| {
@@ -302,7 +302,7 @@ impl Sim {
 
     /// A player's saved data (`ServerPlayer.saveWithoutId`), as `playerdata` stores it.
     pub(crate) fn player_nbt(&self, p: &Player) -> Tag {
-        let pearls = self.all_player_pearls().remove(&p.entity_id).unwrap_or_default();
+        let pearls = self.all_player_pearls(Some(p)).remove(&p.entity_id).unwrap_or_default();
         self.player_nbt_with(p, pearls)
     }
 
@@ -687,8 +687,13 @@ impl Sim {
     }
 
     /// `ServerPlayer.saveEnderPearls` for every player: the ender pearls in flight by their owner's network id, each saved with `ender_pearl_dimension`.
-    pub(crate) fn all_player_pearls(&self) -> HashMap<i32, Vec<Tag>> {
-        let owners = self.owner_uuids();
+    ///
+    /// `leaving`: a player already out of the player list (`PlayerList.remove` saves it before its pearls go).
+    pub(crate) fn all_player_pearls(&self, leaving: Option<&Player>) -> HashMap<i32, Vec<Tag>> {
+        let mut owners = self.owner_uuids();
+        if let Some(p) = leaving {
+            owners.insert(p.entity_id, p.uuid.as_u128());
+        }
         let owner = |id: i32| owners.get(&id).copied();
         let mut out: HashMap<i32, Vec<(i32, Tag)>> = HashMap::new();
         for (dim, d) in self.dims.iter().enumerate() {
@@ -723,7 +728,6 @@ impl Sim {
                 continue;
             };
             let Some(pos) = vec3_of(tag.get("Pos")) else { continue };
-            eprintln!("DEBUG queue pearl {dim} {pos:?}");
             let chunk = entities::chunk_of(pos);
             self.world.timed[dim].add(crate::tickets::Kind::EnderPearl, chunk);
             self.pearls_returning.push(ReturningPearl { dim, chunk, tag: tag.clone(), owner });
@@ -745,7 +749,6 @@ impl Sim {
                 continue;
             }
             let uuid = pearl.tag.get("UUID").and_then(persist::uuid_from_tag).unwrap_or(0);
-            eprintln!("DEBUG release pearl");
             match entities::Spawn::from_saved(&pearl.tag, entities::seed_for_uuid(uuid), true) {
                 Ok(mut spawn) => {
                     if let entities::Body::Loaded(e) = &mut spawn.body
