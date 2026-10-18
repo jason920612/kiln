@@ -103,6 +103,8 @@ if MODE in ("forced", "pearl"):
         for t in "KV":
             w(t, f"summon ender_pearl {block_x(0) + 0.5} {Y + 3} {CZ * 16 + 8.5} {{Owner:{owner},NoGravity:1b,Motion:[0.0d,0.0d,0.0d],Tags:[\"pearl\"]}}")
         time.sleep(0.5)
+        # the pearl ticks once with the forced chunk still there (its first tick places its ticket); only then the forceload goes
+        step(3)
         both(f"forceload remove {block_x(0)} {CZ * 16 + 8}")
         step(2)
         for t in "KV":
