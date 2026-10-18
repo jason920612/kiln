@@ -36,7 +36,7 @@ fn a_cat_leaves_a_gift_when_its_owner_wakes() {
     // A bed two blocks east (head further east), a cat that belongs to the player.
     run(&mut sim, format!("setblock {} {y} {z} minecraft:red_bed[facing=east,part=foot]", x + 2));
     run(&mut sim, format!("setblock {} {y} {z} minecraft:red_bed[facing=east,part=head]", x + 3));
-    run(&mut sim, format!("summon minecraft:cat {} {y} {} {{Owner:[I;0,1801678958,0,1],Sitting:0b}}", x + 1, z + 1));
+    run(&mut sim, format!("summon minecraft:cat {} {y} {} {{Owner:[I;0,1802071150,0,1],Sitting:0b}}", x + 1, z + 1));
     let mut found = Vec::new();
     for night in 0..8 {
         run(&mut sim, "time set 13000".into());
