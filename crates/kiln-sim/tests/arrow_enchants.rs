@@ -3,6 +3,7 @@
 //! did nothing. They are worked out when the arrow hits now, the way `AbstractArrow.onHitEntity` / `doKnockback` do.
 
 use kiln_link::ToSim;
+use kiln_proto::nbt::Tag;
 use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
 
@@ -53,7 +54,7 @@ impl World {
         self.target_after_arrow("minecraft:iron_golem", weapon)
     }
 
-    /// Health and how far along +x the target (a NoAI mob of `kind`) stands from where it was put, after an arrow flew into it.
+    /// Health and its x motion (a NoAI mob stays put but keeps what it was pushed with), after an arrow flew into it.
     fn target_after_arrow(&mut self, kind: &str, weapon: &str) -> (f32, f64) {
         let p = self.client.pos;
         let (x, y, z) = (p[0] + 12.0, p[1], p[2]);
@@ -61,11 +62,15 @@ impl World {
         self.ticks(2);
         self.console(&format!("summon minecraft:arrow {} {} {z} {{Motion:[3.0d,0.0d,0.0d],crit:0b,damage:2.0d{weapon}}}", x - 6.0, y + 1.0));
         self.ticks(8);
-        let m = self.sim.mobs().into_iter().find(|m| m.1 == kind);
-        match m {
-            Some(m) => (m.3, m.2[0] - x),
-            None => (0.0, 0.0),
-        }
+        let hp = self.sim.mobs().into_iter().find(|m| m.1 == kind).map_or(0.0, |m| m.3);
+        let motion_x = self.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some(kind)).and_then(|t| match t.get("Motion") {
+            Some(Tag::List(l)) => l.first().and_then(|d| match d {
+                Tag::Double(v) => Some(*v),
+                _ => None,
+            }),
+            _ => None,
+        });
+        (hp, motion_x.unwrap_or(f64::NAN))
     }
 }
 
@@ -96,5 +101,5 @@ fn punch_pushes_the_target_along_the_arrow() {
     }
     let (_, none) = World::new().target_after_arrow("minecraft:sheep", "");
     let (_, punch) = World::new().target_after_arrow("minecraft:sheep", &bow("\"minecraft:punch\":2"));
-    assert!(punch > none + 0.3, "knocked along +x: plain {none}, Punch II {punch}");
+    assert!(punch > none + 0.05, "pushed along +x: plain {none}, Punch II {punch}");
 }
