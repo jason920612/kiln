@@ -214,10 +214,9 @@ pub fn register_base_goals(m: &mut MobData) {
 pub fn register_goals(m: &mut MobData) {
     register_base_goals(m);
     let g = &mut m.goals;
-    // `MoveThroughVillageGoal` (no villages) never starts.
     g.add(2, Goal::Custom(Box::new(super::spear_use::SpearUseGoal::new(1.0, 1.0, 10.0, 2.0))));
     g.add(3, melee(1.0));
-    g.add(6, Goal::Never);
+    g.add(6, Goal::Custom(Box::new(super::move_through_village::MoveThroughVillageGoal::new(1.0, true, 4, can_break_doors))));
     g.add(7, stroll(1.0, true));
     let t = &mut m.targets;
     t.add(1, hurt_by(true));
