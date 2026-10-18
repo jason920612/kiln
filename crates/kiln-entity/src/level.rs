@@ -306,6 +306,8 @@ pub enum Event {
     TakeItem { item: i32, collector: i32, amount: i32 },
     /// `Level.levelEvent` (block break particles 2001, fizz 1501, ...).
     LevelEvent { event: i32, pos: BlockPos, data: i32 },
+    /// `Level.destroyBlockProgress(entity, pos, stage)`: the cracks of a block a mob is breaking (-1 clears) to the players within 32 blocks.
+    BlockDestruction { entity: i32, pos: BlockPos, stage: i32 },
     /// `Level.blockEvent(pos, block, a, b)` for the block at `pos` (a spawner's delay reset).
     BlockEvent { pos: BlockPos, a: i32, b: i32 },
     /// `Entity.onExplosionHit(source)` of player `player`: an explosion (`source`, the entity that made it) reached it.

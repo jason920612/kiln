@@ -3490,6 +3490,13 @@ fn carry_out(
                 }
             }
         }
+        Event::BlockDestruction { entity, pos, stage } => {
+            let pkt = kiln_proto::packets::world_fx::block_destruction(entity, [pos.x, pos.y, pos.z], u8::try_from(stage).ok());
+            let c = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+            for p in players.iter_mut().filter(|p| (0..3).map(|i| (p.pos[i] - c[i]).powi(2)).sum::<f64>() < 32.0 * 32.0) {
+                p.send(pkt.clone());
+            }
+        }
         Event::LevelEvent { event, pos, data } => level.effect(Effect::LevelEvent { id: event, pos: kb(pos), data }),
         Event::BlockExploded { pos, state, decay, radius, .. } => {
             level.effect(if decay { Effect::ExplosionDrop { pos: kb(pos), state, radius } } else { Effect::Drop { pos: kb(pos), state } })

@@ -449,29 +449,40 @@ pub(crate) fn door_open(state: u16) -> Option<bool> {
 /// `DoorBlock.setOpen(entity, level, state, pos, open)`: the door (both halves), its sound (the
 /// pitch draws from the level's random) and the game event.
 pub(crate) fn set_door_open(cx: &mut Cx, pos: BlockPos, open: bool) {
-    let state = cx.level.block(pos);
-    let info = kiln_data::blocks_types::block_of(state);
-    if door_open(state) == Some(open) || door_open(state).is_none() {
+    if !door_open_changes(&*cx.level, pos, open) {
         return;
     }
+    let pitch = cx.rng().next_float() * 0.1 + 0.9;
+    let id = cx.e.id;
+    apply_door_open(&mut *cx.level, id, pos, open, pitch);
+}
+
+/// Whether `DoorBlock.setOpen(.., open)` at `pos` would change anything (a mob-interactable door in the other state).
+pub(crate) fn door_open_changes(level: &dyn EntityLevel, pos: BlockPos, open: bool) -> bool {
+    let state = level.block(pos);
+    door_open(state).is_some_and(|o| o != open)
+}
+
+/// What `DoorBlock.setOpen` does once the door is known to change; `pitch` is the sound's (`level.getRandom().nextFloat() * 0.1 + 0.9`).
+pub(crate) fn apply_door_open(level: &mut dyn EntityLevel, entity: i32, pos: BlockPos, open: bool, pitch: f32) {
+    let state = level.block(pos);
+    let info = kiln_data::blocks_types::block_of(state);
     let value = if open { "true" } else { "false" };
     let Some(new) = info.with_property(state, "open", value) else { return };
-    cx.level.set_block(pos, new, 10);
+    level.set_block(pos, new, 10);
     // The other half follows (`updateShape`).
     let other = if info.property(state, "half") == Some("lower") { pos.above() } else { pos.below() };
-    let os = cx.level.block(other);
+    let os = level.block(other);
     if kiln_data::blocks_types::block_of(os).name == info.name
         && let Some(n2) = info.with_property(os, "open", value)
     {
-        cx.level.set_block(other, n2, 10);
+        level.set_block(other, n2, 10);
     }
-    let _pitch = cx.rng().next_float() * 0.1 + 0.9;
     let (sound_open, sound_close) = door_sounds(info.name);
     let p = pos.center();
     let sound = if open { sound_open } else { sound_close };
-    cx.level.emit(crate::level::Event::Sound { pos: p, sound, source: "blocks", volume: 1.0, pitch: _pitch });
-    let id = cx.e.id;
-    cx.level.emit(crate::level::Event::GameEvent { event: if open { "minecraft:block_open" } else { "minecraft:block_close" }, pos: p, entity: Some(id) });
+    level.emit(crate::level::Event::Sound { pos: p, sound, source: "blocks", volume: 1.0, pitch });
+    level.emit(crate::level::Event::GameEvent { event: if open { "minecraft:block_open" } else { "minecraft:block_close" }, pos: p, entity: Some(entity) });
 }
 
 /// A door's block set type sounds (`BlockSetType.doorOpen/doorClose`).

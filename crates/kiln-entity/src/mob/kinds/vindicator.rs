@@ -48,8 +48,8 @@ impl Kind for Vindicator {
         let g = &mut m.goals;
         g.add(0, Goal::Float);
         g.add(1, raider::avoid_creaking(1.0, 1.2));
-        g.add(2, Goal::Custom(Box::new(BreakDoorGoal)));
-        g.add(3, Goal::Custom(Box::new(RaiderOpenDoorGoal)));
+        g.add(2, Goal::Custom(Box::new(super::break_door::BreakDoorGoal::new(super::break_door::Who::Vindicator))));
+        g.add(3, Goal::Custom(Box::new(super::break_door::RaiderOpenDoorGoal::new())));
         g.add(4, Goal::Custom(Box::new(raider::HoldGroundAttackGoal { hostile_radius_sqr: 100.0 })));
         g.add(
             5,
@@ -146,46 +146,6 @@ pub fn apply_raid_buffs(e: &mut Entity, m: &mut MobData, wave: i32, normal_group
         crate::enchanting::enchant_from_provider(&mut axe, provider, 0.0, &mut e.random);
     }
     m.equipment[MAINHAND] = axe;
-}
-
-/// `VindicatorBreakDoorGoal`: only in an active raid, one in ten tries. Kiln's doors cannot be
-/// broken yet: the roll is made, the goal never starts.
-#[derive(Clone, Debug)]
-struct BreakDoorGoal;
-
-impl CustomGoal for BreakDoorGoal {
-    custom_goal_boilerplate!();
-    fn name(&self) -> &'static str {
-        "VindicatorBreakDoorGoal"
-    }
-    fn flags(&self) -> u8 {
-        MOVE
-    }
-    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if !raider::has_active_raid(m, level) {
-            return false;
-        }
-        let _ = e.random.next_int_bounded(reduced_tick_delay(10));
-        false
-    }
-}
-
-/// `AbstractIllager.RaiderOpenDoorGoal` (doors open through the navigation's door flag; the
-/// goal itself is not simulated).
-#[derive(Clone, Debug)]
-struct RaiderOpenDoorGoal;
-
-impl CustomGoal for RaiderOpenDoorGoal {
-    custom_goal_boilerplate!();
-    fn name(&self) -> &'static str {
-        "RaiderOpenDoorGoal"
-    }
-    fn flags(&self) -> u8 {
-        0
-    }
-    fn can_use(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
-        false
-    }
 }
 
 /// `VindicatorJohnnyAttackGoal`: `NearestAttackableTargetGoal<LivingEntity>` without a random

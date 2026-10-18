@@ -149,12 +149,18 @@ pub fn can_break_doors(m: &MobData) -> bool {
     zombie_of(m).is_some_and(|z| z.can_break_doors)
 }
 
-/// `setCanBreakDoors`: ground navigation opens doors (the break-door goal is not simulated:
-/// Kiln has no door breaking yet).
+/// `setCanBreakDoors`: ground navigation opens doors and the break-door goal joins the goals (priority 1).
 pub fn set_can_break_doors(m: &mut MobData, on: bool) {
     // Every zombie type's navigation `canNavigateGround` (amphibious navigation too).
+    if can_break_doors(m) == on {
+        return;
+    }
     with_zombie(m, |d, _| *d = on);
     m.nav.can_open_doors = on;
+    m.goals.remove_where(|g| matches!(g, Goal::Custom(c) if c.name() == "BreakDoorGoal"));
+    if on {
+        m.goals.add(1, Goal::Custom(Box::new(super::break_door::BreakDoorGoal::new(super::break_door::Who::Zombie))));
+    }
 }
 
 /// `setBaby`: the flag and the speed bonus (dimensions follow).
