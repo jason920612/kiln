@@ -41,6 +41,12 @@ CENSUS = ["zombie", "husk", "drowned", "skeleton", "stray", "bogged", "creeper",
           "zombie_villager", "phantom", "bat", "squid", "glow_squid", "cod", "salmon", "tropical_fish", "pufferfish", "dolphin", "axolotl",
           "cow", "sheep", "pig", "chicken", "rabbit", "horse", "donkey", "llama", "wolf", "fox", "goat", "frog", "turtle", "parrot", "panda",
           "polar_bear", "armadillo", "camel", "mooshroom", "ocelot", "cat", "bee", "villager"]
+HAZARD_MOBS = """allay armadillo axolotl bat bee blaze bogged breeze camel camel_husk cat cave_spider chicken cod copper_golem cow creaking creeper dolphin donkey drowned elder_guardian
+enderman endermite evoker fox frog ghast giant glow_squid goat guardian happy_ghast hoglin horse husk illusioner iron_golem llama magma_cube mooshroom mule nautilus ocelot panda
+parched parrot phantom pig piglin piglin_brute pillager polar_bear pufferfish rabbit ravager salmon sheep shulker silverfish skeleton slime sniffer snow_golem spider squid
+stray strider tadpole trader_llama tropical_fish turtle vex villager vindicator wandering_trader warden witch wither wither_skeleton wolf zombie zombie_nautilus zombie_villager zombified_piglin""".split()
+HAZARDS = ["lava", "fire", "powder_snow"]
+HAZARD_BLOCKS = {"lava": "lava", "fire": "fire", "magma_block": "magma_block", "cactus": "cactus", "powder_snow": "powder_snow", "cobweb": "cobweb"}
 GEAR = ["bow", "golden_sword", "iron_helmet", "golden_chestplate", "iron_shovel", "crossbow", "fishing_rod"]
 
 # scene: (x, y, z) of its place (the chamber's floor centre), chunks to forceload around it
@@ -56,6 +62,10 @@ PLACES = {
     # wp74's witch hut farm: an 11x11 floor across chunk borders, a repeating command block killing
     # everything but players outside the box every tick; the drops inside pile up
     "hut": (1280, 150, 1280),
+    # wp74's hazard matrix: 87 mobs (NoAI) in 4x4 cells, each with a hazard at its feet
+    "hazard": (100, 200, 100),
+    # lava poured from the air onto the terrain (what the hazard matrix's lava cells did once they overflowed)
+    "lavafall": (1800, 150, 300),
 }
 SCATTER_R = 120
 
@@ -208,6 +218,25 @@ def write_pack():
             pz = z - 5 + rng.random() * 11
             lines.append(f"summon item {px:.3f} {y + 0.2 + rng.random():.3f} {pz:.3f} {{Item:{item(i, rng)}}}")
         (fn / f"hut{n}.mcfunction").write_text("\n".join(lines) + "\n")
+    # the hazard matrix (wp74 p74_hazard.py): clear the area, build the cells, summon the mobs
+    x0, y0, z0 = PLACES["hazard"]
+    for haz in HAZARDS:
+        lines = ["kill @e[type=!player]", f"fill {x0 - 2} {y0 - 3} {z0 - 2} {x0 + 60} {y0 + 8} {z0 + 60} minecraft:air"]
+        for i, m in enumerate(HAZARD_MOBS):
+            x, z = x0 + 4 * (i % 12), z0 + 4 * (i // 12)
+            lines.append(f"fill {x} {y0 - 1} {z} {x + 3} {y0 - 1} {z + 3} minecraft:stone")
+            lines.append(f"fill {x} {y0} {z} {x + 3} {y0 + 4} {z + 3} minecraft:air")
+            if haz == "magma_block":
+                lines.append(f"setblock {x + 1} {y0 - 1} {z + 1} minecraft:magma_block")
+            else:
+                lines.append(f"setblock {x + 1} {y0} {z + 1} minecraft:{HAZARD_BLOCKS[haz]}")
+        (fn / f"haz_{haz}_build.mcfunction").write_text("\n".join(lines) + "\n")
+        summons = [f"summon minecraft:{m} {x0 + 4 * (i % 12) + 1}.5 {y0} {z0 + 4 * (i // 12) + 1}.5 {{NoAI:1b,PersistenceRequired:1b,Tags:[\"h_{m}\"]}}"
+                   for i, m in enumerate(HAZARD_MOBS)]
+        (fn / f"haz_{haz}_summon.mcfunction").write_text("\n".join(summons) + "\n")
+        (fn / f"haz_{haz}_all.mcfunction").write_text("\n".join(lines + summons) + "\n")
+    x0, y0, z0 = PLACES["lavafall"]
+    (fn / "lavafall.mcfunction").write_text("".join(f"setblock {x0 + 6 * (i % 5)} {y0} {z0 + 6 * (i // 5)} minecraft:lava\n" for i in range(20)))
     # the farm's killer (wp74): every tick, everything but players and items
     (fn / "killer.mcfunction").write_text("kill @e[type=!player,type=!item]\n")
     print("pack written to", pack)
@@ -320,7 +349,8 @@ def run(args):
         s.run(c)
     for scene, (x, y, z) in PLACES.items():
         if scene != "reload":
-            s.run(f"forceload add {x - 24} {z - 24} {x + 24 + (140 if scene == 'stream' else 0)} {z + 24}")
+            wide = {'stream': (140, 0), 'hazard': (40, 40)}.get(scene, (0, 0))
+            s.run(f"forceload add {x - 24} {z - 24} {x + 24 + wide[0]} {z + 24 + wide[1]}")
     bot = subprocess.Popen([str(BOT), "--addr", f"127.0.0.1:{25590 if which == 'K' else 25597}",
                             "--count", "1", "--behavior", "idle", "--view-distance", "10", "--duration", "36000", "--name-prefix", "Bench", "--report-interval", "36000"],
                            stdout=open(W / f"bot_{which}.log", "w"), stderr=subprocess.STDOUT)
@@ -360,6 +390,39 @@ def run(args):
                 results.append(measure(s, args.window, scene + "+killer"))
                 s.run("scoreboard players set killer wp76 0")
                 s.run("kill @e[type=item]")
+            elif scene == "lavafall":
+                x0, y0, z0 = PLACES["lavafall"]
+                s.run(f"tp Bench0 {x0 + 12} {y0 + 20} {z0 + 12}")
+                time.sleep(15)
+                results.append(measure(s, 10, "lavafall idle"))
+                s.run("function wp76:lavafall")
+                for k in range(4):
+                    results.append(measure(s, 15, f"lavafall {15 * k}-{15 * (k + 1)} s"))
+            elif scene == "hazard":
+                x0, y0, z0 = PLACES["hazard"]
+                s.run(f"tp Bench0 {x0 + 30} {y0 + 30} {z0 + 30}")
+                s.run("difficulty normal")
+                s.run("gamerule mob_griefing false")
+                time.sleep(8)
+                for haz in HAZARDS:
+                    for step in ("build", "summon", "all"):
+                        if step == "all":
+                            s.run("kill @e[type=!player]")
+                            time.sleep(6)
+                        s.query()
+                        t = time.time()
+                        s.run(f"function wp76:haz_{haz}_{step}")
+                        wall = time.time() - t
+                        time.sleep(6)
+                        avg, p50, p95, p99 = s.query()
+                        print(f"[{which}] hazard {haz:12s} {step:7s} worst tick {p99:8.1f} ms  (avg of 100 ticks {avg:6.2f}, p50 {p50:5.1f}, wall {wall:5.2f} s)", flush=True)
+                        results.append({"scene": f"hazard {haz} {step}", "p99max": p99, "mean": avg, "p50": p50, "wall": round(wall, 2)})
+                    time.sleep(10)
+                    avg, p50, p95, p99 = s.query()
+                    print(f"[{which}] hazard {haz:12s} running  mean {avg:6.2f} ms  p99 {p99:6.1f}", flush=True)
+                    results.append({"scene": f"hazard {haz} running", "p99max": p99, "mean": avg, "p50": p50})
+                s.run("kill @e[type=!player]")
+                s.run("difficulty peaceful")
             elif scene.startswith("mobfarm"):
                 # wp74's farm rounds: night, monsters spawning around a creative player, `tick sprint 1000`, then
                 # every mob killed where it stands (`kill @e[type=!player,type=!item]`): the drops pile up over

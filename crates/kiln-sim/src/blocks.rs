@@ -1024,7 +1024,20 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
     let can_tick = |k: ChunkKey| ticking.contains(ChunkPos::new(k.0, k.1));
     kiln_blocks::tick::run_block_ticks(level, can_tick);
     let dt = crate::diag::lap("tb.block_ticks", dt);
+    // The fluids' light waits for the end of their ticks and is then spread once (`relight`: the same light as block
+    // by block). A spreading lava flow changes hundreds of blocks that each light up to fifteen around them; vanilla's
+    // light engine likewise takes them later, off the tick (nothing a fluid tick does reads light it would not also
+    // read stale there).
+    let deferred = level.out.unlit.is_none();
+    if deferred {
+        level.out.unlit = Some(Vec::new());
+    }
     kiln_blocks::tick::run_fluid_ticks(level, can_tick);
+    if deferred && let Some(unlit) = level.out.unlit.take() {
+        if !unlit.is_empty() {
+            level.cells.relight(&unlit);
+        }
+    }
     let dt = crate::diag::lap("tb.fluid_ticks", dt);
     let speed = level.env.random_tick_speed;
     // Every ticking chunk rolls for precipitation while it rains (and freezes water in any
