@@ -28,6 +28,15 @@ def loaded(t):
     return res
 
 
+def source(t):
+    res = {}
+    for d in range(0, 14):
+        x = X0 + 16 * d + 8
+        out = ask(t, f"execute if block {x} {Y - 41} {Z0 + 8} minecraft:water", wait=0.15)
+        res[d] = ("pass" in out.lower())
+    return res
+
+
 def water(t):
     res = {}
     for d in range(0, 10):
@@ -61,9 +70,13 @@ time.sleep(2)
 after = {t: ages(t) for t in "KV"}
 spread = {t: water(t) for t in "KV"}
 isloaded = {t: loaded(t) for t in "KV"}
+placed = {t: source(t) for t in "KV"}
 print("distance east (chunks): Age before -> after; the water source spread to its neighbour")
 for d in range(10):
     print(d, "K", before["K"][d], "->", after["K"][d], spread["K"][d], "  V", before["V"][d], "->", after["V"][d], spread["V"][d])
-print("loaded (execute if loaded), distance 0..13:")
+print("execute if loaded (entity ticking), distance 0..13:")
 for t in "KV":
     print(t, "".join("1" if isloaded[t][d] else "0" for d in range(14)))
+print("water source placed (the chunk was loaded when the probes went in), distance 0..13:")
+for t in "KV":
+    print(t, "".join("1" if placed[t][d] else "0" for d in range(14)))

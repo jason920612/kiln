@@ -1039,7 +1039,9 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
 /// Chunks that tick: those within the simulation distance of the region's players (entities, random ticks) or one chunk further (scheduled ticks, block
 /// entities, the chunks natural spawning picks from), and those the level's other tickets reach.
 fn ticking_chunks(players: &[&mut Player], env: &Env) -> Ticking {
-    let mut t = Ticking::around(players.iter().map(|p| p.center), env.blocks.simulation_distance, env.max_view);
+    // (A spectator holds no tickets, unless `spectators_generate_chunks`: `ChunkMap.skipPlayer`.)
+    let holders = players.iter().filter(|p| p.game_mode != 3 || env.spectators_generate_chunks).map(|p| p.center);
+    let mut t = Ticking::around(holders, env.blocks.simulation_distance, env.max_view);
     for &(c, radius) in env.tickets.iter() {
         t.add_ticket(c, radius);
     }

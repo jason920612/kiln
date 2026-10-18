@@ -47,11 +47,17 @@ def water_spread(t, ring):
     return "pass" in out.lower()
 
 
+def placed(t, ring):
+    """The water source placed in the chunk is there: the chunk accepted the command (it was loaded)."""
+    out = ask(t, f"execute if block {block_x(ring)} {Y - 11} {CZ * 16 + 8} minecraft:water", wait=0.15)
+    return "pass" in out.lower()
+
+
 def report(label, rings=range(0, 5)):
     res = {}
     for t in "KV":
-        res[t] = {d: (ageof(t, f"rt{d}"), water_spread(t, d), isloaded(t, block_x(d), Y - 5, CZ * 16 + 8)) for d in rings}
-    print(label, "  (Age, water spread, loaded)")
+        res[t] = {d: (ageof(t, f"rt{d}") if d < 3 else None, placed(t, d), water_spread(t, d), isloaded(t, block_x(d), Y - 5, CZ * 16 + 8)) for d in rings}
+    print(label, "  (Age, source placed, water spread, execute if loaded = entity ticking)")
     for d in rings:
         print(" ring", d, "K", res["K"][d], "  V", res["V"][d])
     sys.stdout.flush()

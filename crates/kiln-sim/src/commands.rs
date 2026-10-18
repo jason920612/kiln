@@ -1400,6 +1400,20 @@ impl Host for Sim {
         crate::dim_id(dimension).is_some_and(|d| self.dims[d].regions.chunk(ChunkPos::new(cx, cz)).is_some())
     }
 
+    /// `ExecuteCommand.isChunkLoaded`: a chunk at the entity-ticking level (level 31 or less: within the simulation distance of a player, or the
+    /// ring of a ticket that reaches that far) with its entities loaded.
+    fn is_chunk_ticking(&self, dimension: &str, cx: i32, cz: i32) -> bool {
+        let Some(d) = crate::dim_id(dimension) else { return false };
+        if self.dims[d].regions.chunk(ChunkPos::new(cx, cz)).is_none() {
+            return false;
+        }
+        let reach = (self.config.simulation_distance as i32).min(self.config.view_distance as i32);
+        let spectators = self.rule_bool("minecraft:spectators_generate_chunks");
+        let near = |c: ChunkPos, r: i32| (c.x - cx).abs() <= r && (c.z - cz).abs() <= r;
+        self.players.values().any(|p| p.dim == d && (p.game_mode != 3 || spectators) && near(p.center, reach))
+            || self.level_tickets(d).into_iter().any(|(c, radius)| near(c, radius - 2))
+    }
+
     fn build_height(&self, dimension: &str) -> (i32, i32) {
         let d = self.dims[crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID)].provider.dimension;
         (d.min_y, d.min_y + d.height)
