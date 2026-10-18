@@ -25,6 +25,14 @@ pub(crate) fn tags_in(tag: &Tag) -> Vec<String> {
     }
 }
 
+/// [`tags_in`] of a compound's fields.
+pub(crate) fn tags_in_fields(fields: &[(String, Tag)]) -> Vec<String> {
+    match fields.iter().find(|(k, _)| k == "Tags") {
+        Some((_, Tag::List(items))) => items.iter().filter_map(|t| t.as_str().map(str::to_owned)).collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Replaces (or with an empty list removes) the `Tags` field of a compound's fields.
 fn put_tags(fields: &mut Vec<(String, Tag)>, tags: &[String]) {
     fields.retain(|(k, _)| k != "Tags");
@@ -1487,7 +1495,11 @@ fn container_size(id: &str) -> Option<i32> {
 
 /// `ItemStack.getHoverName`: the item's name (custom names are not read yet).
 pub(crate) fn hover_name(stack: &kiln_item::ItemStack) -> kiln_command::Text {
-    let name = stack.item_name();
+    hover_name_of(stack.item_name())
+}
+
+/// [`hover_name`] of a stack of `name`.
+pub(crate) fn hover_name_of(name: &str) -> kiln_command::Text {
     let (ns, path) = name.split_once(':').unwrap_or(("minecraft", name));
     let kind = if kiln_data::builtin_id("minecraft:block", name).is_some() { "block" } else { "item" };
     kiln_command::Text::translate(format!("{kind}.{ns}.{path}"), Vec::new())

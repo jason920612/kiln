@@ -652,6 +652,11 @@ impl Scoreboard {
         self.teams.iter().find(|t| t.name == name)
     }
 
+    /// Whether any holder is in a team (else [`Scoreboard::team_of`] is `None` for everyone).
+    pub fn has_team_members(&self) -> bool {
+        !self.team_of.is_empty()
+    }
+
     /// `getPlayersTeam`.
     pub fn team_of(&self, holder: &str) -> Option<&Team> {
         self.team(self.team_of.get(holder)?)

@@ -398,7 +398,7 @@ pub(crate) struct BlockEnv {
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct EntityBox {
     pub min: [f64; 3],
     pub max: [f64; 3],
@@ -409,8 +409,8 @@ pub(crate) struct EntityBox {
     pub conn: Option<ConnId>,
     /// A monster that keeps players from sleeping nearby (`Monster.isPreventingPlayerRest`).
     pub prevents_rest: bool,
-    /// A player as the source of the game events it causes.
-    pub player_source: Option<kiln_entity::vibration::EventSource>,
+    /// A player as the source of the game events it causes (boxed: a crowd of item entities makes these by the thousand).
+    pub player_source: Option<Box<kiln_entity::vibration::EventSource>>,
     /// A hanging entity (item frame, painting): its facing and type.
     pub hanging: Option<(kiln_entity::math::Direction, &'static str)>,
     /// A cushion (placing one does not overlap another).
@@ -418,7 +418,7 @@ pub(crate) struct EntityBox {
     /// What a dispenser asks of a living thing (a player, an armor stand, a mob).
     /// `Entity.canBeCollidedWith(null)`: a boat, a living shulker, a grown happy ghast that stays still (what `Level.noCollision` counts besides blocks).
     pub collides: bool,
-    pub wear: Option<Wear>,
+    pub wear: Option<Box<Wear>>,
 }
 
 /// What a dispenser needs to know of a living thing in front of it (`LivingEntity.canEquipWithDispenser`).
@@ -490,22 +490,27 @@ fn boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Ent
                 blocks_building: true,
                 conn: Some(p.conn),
                 prevents_rest: false,
-                player_source: Some(player_source(p)),
+                player_source: Some(Box::new(player_source(p))),
                 hanging: None,
                 cushion: false,
                 collides: false,
-                wear: (!spots.is_empty() && near(min, max)).then(|| crate::container::equip::wear_of_player(p)),
+                wear: (!spots.is_empty() && near(min, max)).then(|| Box::new(crate::container::equip::wear_of_player(p))),
             }
         })
         .collect();
+    out.reserve(entities.list.len());
     out.extend(entities.list.iter().filter(|e| !e.removed && e.phys.is_some()).map(|e| {
         let (min, max, blocks_building) = e.body();
+        // An item entity is none of the things below (the common case in a crowd).
+        if matches!(e.phys.as_deref().map(|p| &p.kind), Some(kiln_entity::EntityKind::Item(_))) {
+            return EntityBox { min, max, living: false, blocks_building, conn: None, prevents_rest: false, player_source: None, hanging: None, cushion: false, collides: false, wear: None };
+        }
         // Mobs are living entities (pressure plates, lightning targets).
         let living = e.phys.as_deref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
         let wear = if !spots.is_empty() && near(min, max) {
             e.phys.as_deref().and_then(crate::container::equip::wear_of).map(|mut w| {
                 w.leads = holders.contains(&e.id) || e.phys.as_deref().is_some_and(kiln_entity::leash::is_leashed);
-                w
+                Box::new(w)
             })
         } else {
             None
@@ -765,7 +770,7 @@ impl Level for RegionLevel<'_> {
         };
         // `level.gameEvent(player, event, pos)`: the acting player is the source.
         if crate::sculk::listening(self) {
-            let source = self.actor.and_then(|c| self.bodies.iter().find(|b| b.conn == Some(c))).and_then(|b| b.player_source);
+            let source = self.actor.and_then(|c| self.bodies.iter().find(|b| b.conn == Some(c))).and_then(|b| b.player_source.as_deref().copied());
             let at = kiln_entity::math::Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
             crate::sculk::post(self, event, at, kiln_entity::vibration::Context { source, affected_state: state });
         }
@@ -1042,7 +1047,20 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
     let can_tick = |k: ChunkKey| ticking.contains(ChunkPos::new(k.0, k.1));
     kiln_blocks::tick::run_block_ticks(level, can_tick);
     let dt = crate::diag::lap("tb.block_ticks", dt);
+    // The fluids' light waits for the end of their ticks and is then spread once (`relight`: the same light as block
+    // by block). A spreading lava flow changes hundreds of blocks that each light up to fifteen around them; vanilla's
+    // light engine likewise takes them later, off the tick (nothing a fluid tick does reads light it would not also
+    // read stale there).
+    let deferred = level.out.unlit.is_none();
+    if deferred {
+        level.out.unlit = Some(Vec::new());
+    }
     kiln_blocks::tick::run_fluid_ticks(level, can_tick);
+    if deferred && let Some(unlit) = level.out.unlit.take() {
+        if !unlit.is_empty() {
+            level.cells.relight(&unlit);
+        }
+    }
     let dt = crate::diag::lap("tb.fluid_ticks", dt);
     let speed = level.env.random_tick_speed;
     // Every ticking chunk rolls for precipitation while it rains (and freezes water in any
@@ -1405,14 +1423,26 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
     // Drops are seeded by their position and how many drops that position had before in this
     // batch, not by the batch index (which depends on how regions split the world).
     let mut drops_at: std::collections::HashMap<BlockPos, usize> = std::collections::HashMap::new();
+    // One explosion's drops so far (`ServerExplosion.interactWithBlocks`): each stack goes into the
+    // first gathered one it fits (up to 16, `StackCollector.tryMerge`), the rest starts a new one at
+    // its block; they pop once the explosion's blocks end.
+    let mut blast: Option<(u64, Vec<(BlockPos, usize, kiln_item::ItemStack)>)> = None;
+    let pop_blast = |blast: &mut Option<(u64, Vec<(BlockPos, usize, kiln_item::ItemStack)>)>, spawns: &mut Vec<Spawn>| {
+        for (k, (pos, i, stack)) in blast.take().map(|b| b.1).unwrap_or_default().into_iter().enumerate() {
+            spawns.push(pop_resource(pos, stack, effect_hash(env, pos, i.wrapping_mul(64).wrapping_add(k))));
+        }
+    };
     for (i, (actor, effect)) in std::mem::take(&mut out.effects).into_iter().enumerate() {
         let others = |p: &&mut Player| Some(p.conn) != actor;
+        if blast.as_ref().is_some_and(|(b, _)| !matches!(effect, Effect::ExplosionDrop { blast, .. } if blast == *b)) {
+            pop_blast(&mut blast, spawns);
+        }
         match effect {
             effect @ (Effect::Drop { .. } | Effect::ExplosionDrop { .. } | Effect::EntityDrop { .. }) => {
                 let by_entity = matches!(effect, Effect::EntityDrop { .. });
-                let (pos, state, explosion) = match effect {
-                    Effect::Drop { pos, state } | Effect::EntityDrop { pos, state } => (pos, state, None),
-                    Effect::ExplosionDrop { pos, state, radius } => (pos, state, Some(radius)),
+                let (pos, state, explosion, blast_key) = match effect {
+                    Effect::Drop { pos, state } | Effect::EntityDrop { pos, state } => (pos, state, None, None),
+                    Effect::ExplosionDrop { pos, state, radius, blast } => (pos, state, radius, Some(blast)),
                     _ => unreachable!("matched above"),
                 };
                 let i = {
@@ -1440,9 +1470,32 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                     if let (Some(loot), Some(tool)) = (&env.loot, tool.as_ref()) {
                         spawns.extend(block_experience_orbs(loot, pos, state, tool, env, i));
                     }
-                    match &env.loot {
-                        Some(loot) => spawns.extend(block_drops(loot, pos, state, tool, components, env, i, explosion)),
-                        None => spawns.extend(drop_stand_in(pos, state, env, i)),
+                    match (blast_key, &env.loot) {
+                        (Some(key), loot) => {
+                            let stacks = match loot {
+                                Some(loot) => {
+                                    let origin = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+                                    block_items_with(loot, origin, state, tool, components, (effect_hash(env, pos, i) | 1) as i64, explosion)
+                                }
+                                None => stand_in_stack(state).into_iter().collect(),
+                            };
+                            let gathered = &mut blast.get_or_insert_with(|| (key, Vec::new())).1;
+                            for mut stack in stacks.into_iter().filter(|s| !s.is_empty()) {
+                                for (_, _, have) in gathered.iter_mut() {
+                                    if kiln_entity::item::are_mergable(have, &stack) {
+                                        *have = kiln_entity::item::merge_stacks(have, &mut stack, 16);
+                                        if stack.is_empty() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                if !stack.is_empty() {
+                                    gathered.push((pos, i, stack));
+                                }
+                            }
+                        }
+                        (None, Some(loot)) => spawns.extend(block_drops(loot, pos, state, tool, components, env, i, explosion)),
+                        (None, None) => spawns.extend(drop_stand_in(pos, state, env, i)),
                     }
                 }
             }
@@ -1624,6 +1677,7 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
             Effect::PistonMove { .. } | Effect::ShulkerLid { .. } | Effect::GameEvent { .. } | Effect::BlockGameEvent { .. } => {}
         }
     }
+    pop_blast(&mut blast, spawns);
     send_changes(cells, &late, players);
 }
 
@@ -1839,11 +1893,7 @@ fn pop_resource(pos: BlockPos, stack: kiln_item::ItemStack, h: u64) -> Spawn {
 /// Stand-in for loot tables: the block's own item, from a whole block (not the upper half
 /// of a door or plant, nor a bed's head).
 fn drop_stand_in(pos: BlockPos, state: u16, env: &BlockEnv, i: usize) -> Option<Spawn> {
-    use kiln_blocks::state;
-    if state::get(state, "half") == Some("upper") || state::get(state, "part") == Some("head") {
-        return None;
-    }
-    let stack = kiln_item::ItemStack::of(BlockId::of(state).name(), 1)?;
+    let stack = stand_in_stack(state)?;
     let h = effect_hash(env, pos, i);
     let unit = |shift: u32| ((h >> shift) & 0xFFFF) as f64 / 65536.0;
     // `Block.popResource`: jittered around the centre, half an item's height lower.
@@ -1854,6 +1904,15 @@ fn drop_stand_in(pos: BlockPos, state: u16, env: &BlockEnv, i: usize) -> Option<
         vel: [unit(48) * 0.2 - 0.1, 0.2, unit(8) * 0.2 - 0.1],
         body: entities::Body::Item { stack, pickup_delay: 10, thrower: None },
     })
+}
+
+/// [`drop_stand_in`]'s stack.
+fn stand_in_stack(state: u16) -> Option<kiln_item::ItemStack> {
+    use kiln_blocks::state;
+    if state::get(state, "half") == Some("upper") || state::get(state, "part") == Some("head") {
+        return None;
+    }
+    kiln_item::ItemStack::of(BlockId::of(state).name(), 1)
 }
 
 /// Block Update for sections with one change, Section Blocks Update for more, then Block

@@ -613,7 +613,7 @@ impl RegionWork<'_> {
         crate::diag::lap("mv.track", dt);
         mark(&mut self.out.times, 6);
         self.send_light_updates();
-        self.out.portal_candidates = crate::portal::portal_candidates(self.entities, self.cells, env.min_y);
+        self.out.portal_candidates = crate::portal::portal_candidates(self.entities, self.cells, env.min_y, ctx);
         mark(&mut self.out.times, 7);
         for p in self.players.iter_mut() {
             self.out.saved_entities.append(&mut p.released_shoulders);

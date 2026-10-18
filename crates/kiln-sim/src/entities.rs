@@ -408,12 +408,16 @@ impl Entity {
 
     /// Copies what the rest of the simulation reads from the vanilla state.
     pub(crate) fn sync(&mut self) {
-        let p = self.phys();
-        let (pos, vel, on_ground, removed) = (arr(p.position()), arr(p.delta), p.on_ground, p.is_removed());
-        self.pos = pos;
-        self.vel = vel;
-        self.on_ground = on_ground;
-        self.removed |= removed;
+        let s = Synced::of(self.phys());
+        self.sync_from(s);
+    }
+
+    /// [`Entity::sync`] with what was read of the vanilla state beforehand.
+    pub(crate) fn sync_from(&mut self, s: Synced) {
+        self.pos = s.pos;
+        self.vel = s.vel;
+        self.on_ground = s.on_ground;
+        self.removed |= s.removed;
     }
 
     /// `teleportSetPosition` of a command or portal teleport: the entity stands at `pos` (facing
@@ -605,6 +609,21 @@ impl Entity {
     }
 }
 
+/// What [`Entity::sync`] copies out of the vanilla state.
+#[derive(Clone, Copy)]
+pub(crate) struct Synced {
+    pos: [f64; 3],
+    vel: [f64; 3],
+    on_ground: bool,
+    removed: bool,
+}
+
+impl Synced {
+    pub(crate) fn of(p: &kiln_entity::Entity) -> Synced {
+        Synced { pos: arr(p.position()), vel: arr(p.delta), on_ground: p.on_ground, removed: p.is_removed() }
+    }
+}
+
 /// A region's entities in id order, which is spawn order (vanilla's tick order is insertion
 /// order); merges interleave by id, splits go by each entity's cell.
 #[derive(Default)]
@@ -646,6 +665,18 @@ impl RegionPart for Entities {
     fn for_each_cell(&self, f: &mut dyn FnMut(CellPos)) {
         self.list.iter().for_each(|e| f(e.cell));
     }
+}
+
+/// An item entity (by its type, without reading its state: crowds of them are common, and most per-entity passes have
+/// nothing to do with one).
+pub(crate) fn is_item(e: &Entity) -> bool {
+    e.kind.id == kiln_data::entities::types::ITEM.id
+}
+
+/// `KILN_CHECK_PREFILTER=1`: every item an area search passes over by its position is checked against its state (tests).
+fn check_prefilter() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KILN_CHECK_PREFILTER").is_some_and(|v| v != "0"))
 }
 
 pub(crate) fn chunk_of(pos: [f64; 3]) -> ChunkPos {
@@ -719,9 +750,12 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     /// How many times an entity changed a player (speculation: what read the players before
     /// may be out of date).
     player_writes: u32,
+    /// How many times an entity took or gave back a point of interest (speculation: what read them before may be out
+    /// of date).
+    poi_writes: u32,
     /// While an entity's turn runs in place of its speculation: the entities it reached with
     /// `entity_mut`, with their box and whether they were alive before.
-    touched: Option<Vec<(i32, Aabb, bool)>>,
+    touched: Option<Touched>,
     /// The type and position of the entity whose state is out of the list for this turn, for
     /// what it does to players meanwhile (thorns damage names it as the attacker).
     current_info: Option<(&'static str, [f64; 3])>,
@@ -886,13 +920,14 @@ impl SimLevel<'_, '_, '_> {
 
     /// Logs `id` for [`SimLevel::touched`] (once, with its box and liveness as they were).
     fn note_touched(&mut self, id: i32) {
-        if self.touched.as_ref().is_some_and(|t| t.iter().any(|&(t, _, _)| t == id)) {
+        if self.touched.as_ref().is_some_and(|t| t.seen.contains(&id)) {
             return;
         }
         let Some(e) = self.entity(id) else { return };
         let (b, alive) = (e.bounding_box(), e.is_alive());
         if let Some(t) = self.touched.as_mut() {
-            t.push((id, b, alive));
+            t.seen.insert(id);
+            t.list.push((id, b, alive));
         }
     }
 
@@ -906,10 +941,22 @@ impl SimLevel<'_, '_, '_> {
             let kind = match filter {
                 EntityFilter::Any => true,
                 EntityFilter::Item => matches!(e.kind, EntityKind::Item(_)),
+                EntityFilter::MergeableItem => matches!(e.kind, EntityKind::Item(_)),
                 EntityFilter::ExperienceOrb => matches!(e.kind, EntityKind::ExperienceOrb(_)),
                 EntityFilter::Living => matches!(e.kind, EntityKind::Other { .. } | EntityKind::Player(_) | EntityKind::Mob(_)),
             };
-            kind && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area)
+            kind && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area) && (filter != EntityFilter::MergeableItem || kiln_entity::item::is_mergable(e))
+        };
+        // An item entity's box is its position and the type's fixed size, and the list keeps its position as its state
+        // has it (no turn moves another entity; a riding item is moved in its own turn): items clearly away from the area
+        // are passed over without reading their state (a pile has thousands in a section). (The box is 0.25 wide and high; twice that of margin.)
+        let (ilo, ihi) = ([area.min_x - 0.25, area.min_y - 0.5, area.min_z - 0.25], [area.max_x + 0.25, area.max_y + 0.25, area.max_z + 0.25]);
+        let maybe = |e: &Entity| {
+            let near = !is_item(e) || (0..3).all(|k| e.pos[k] > ilo[k] && e.pos[k] < ihi[k]);
+            if !near && check_prefilter() {
+                assert!(!e.phys.as_deref().is_some_and(|p| p.bounding_box().intersects(area)), "item {} passed over at {:?} meets {area:?}", e.id, e.pos);
+            }
+            near
         };
         // Within a section vanilla keeps insertion order, which id order follows here. The
         // sections within 2 blocks of the area hold every entity whose box can touch it.
@@ -918,14 +965,14 @@ impl SimLevel<'_, '_, '_> {
         let mut found: SmallVec<[((i32, i64), i32); 32]> = SmallVec::new();
         let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
         if span > self.grid.cells.len() as i64 * 4 {
-            found.extend(self.list.iter().filter_map(|e| e.phys.as_deref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+            found.extend(self.list.iter().filter(|e| maybe(e)).filter_map(|e| e.phys.as_deref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
         } else {
             for x in lo.0..=hi.0 {
                 for y in lo.1..=hi.1 {
                     for z in lo.2..=hi.2 {
                         let Some(v) = self.grid.cells.get(&(x, y, z)) else { continue };
                         for &i in v {
-                            if let Some(e) = self.list.get(i).and_then(|e| e.phys.as_deref())
+                            if let Some(e) = self.list.get(i).filter(|e| maybe(e)).and_then(|e| e.phys.as_deref())
                                 && wanted(e)
                             {
                                 found.push((section_key(e), e.id));
@@ -953,6 +1000,13 @@ impl SimLevel<'_, '_, '_> {
         // (Read in place: moving the inline array out costs more than the search.)
         found.iter().map(|&(_, id)| id).collect()
     }
+}
+
+/// [`SimLevel::touched`]: the entities a turn reached, in the order it reached them (a merging item reaches hundreds).
+#[derive(Default)]
+pub(crate) struct Touched {
+    pub list: Vec<(i32, Aabb, bool)>,
+    seen: std::collections::HashSet<i32, std::hash::BuildHasherDefault<kiln_entity::memory::FastHasher>>,
 }
 
 /// Vanilla iterates entity sections by x, then by the packed (z, y) section key.
@@ -1031,10 +1085,13 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let kinds = crate::poi::kinds_of(types);
         let accept = |k: u8, p: [i32; 3]| accept(kiln_world::poi::TYPES[k as usize].name, BlockPos::new(p[0], p[1], p[2]));
         let level = self.level.region()?;
-        crate::poi::take(&mut *level.cells, &kinds, [center.x, center.y, center.z], radius, &accept).map(|p| BlockPos::new(p[0], p[1], p[2]))
+        let taken = crate::poi::take(&mut *level.cells, &kinds, [center.x, center.y, center.z], radius, &accept).map(|p| BlockPos::new(p[0], p[1], p[2]));
+        self.poi_writes += u32::from(taken.is_some());
+        taken
     }
 
     fn poi_release(&mut self, pos: BlockPos) {
+        self.poi_writes += 1;
         if let Some(level) = self.level.region() {
             crate::poi::release(&mut *level.cells, [pos.x, pos.y, pos.z]);
         }
@@ -2204,6 +2261,7 @@ pub(crate) fn tick(
         view_index,
         despawn: Some(&nearest),
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -2218,7 +2276,7 @@ pub(crate) fn tick(
     let dt = crate::diag::lap("e.list", dt);
     // `ServerEntity.sendChanges` → `updateDataBeforeSync`: the invisible flag follows the
     // effects once all the entities have ticked.
-    for e in sim.list.iter_mut() {
+    for e in sim.list.iter_mut().filter(|e| !is_item(e)) {
         if let Some(p) = e.phys.as_deref_mut() {
             kiln_entity::mob::update_data_before_sync(p);
         }
@@ -2243,7 +2301,7 @@ pub(crate) fn tick(
     // finds them, in its order).
     let mut by_section: FastMap<(i32, i32, i32), Vec<usize>> = Default::default();
     for (i, e) in sim.list.iter().enumerate() {
-        if !e.removed && e.phys.as_deref().is_some_and(kiln_entity::mob::touches_players) {
+        if !e.removed && !is_item(e) && e.phys.as_deref().is_some_and(kiln_entity::mob::touches_players) {
             by_section.entry(section_of(e.pos)).or_default().push(i);
         }
     }
@@ -2451,13 +2509,20 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
 /// After entity `i`'s tick: its outer state follows the vanilla state, its section and cell
 /// follow its position.
 fn settle(sim: &mut SimLevel, i: usize) {
+    let s = Synced::of(sim.list[i].phys());
+    settle_from(sim, i, s);
+}
+
+/// [`settle`] with what was read of entity `i`'s vanilla state beforehand.
+fn settle_from(sim: &mut SimLevel, i: usize, s: Synced) {
     let e = &mut sim.list[i];
-    e.sync();
+    e.sync_from(s);
     let pos = e.pos;
     sim.grid.moved(i, pos);
     let e = &mut sim.list[i];
     let cell = chunk_of(e.pos).cell();
-    if sim.level.cells().cell(cell).is_some() {
+    // (Most entities stay in their cell: nothing to look up.)
+    if cell != e.cell && sim.level.cells().cell(cell).is_some() {
         e.cell = cell;
     }
 }
@@ -2652,6 +2717,7 @@ pub(crate) fn with_mob<R>(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -2740,6 +2806,7 @@ pub(crate) fn anger_piglins(entities: &mut Entities, level: &mut RegionLevel, pl
             view_index: Default::default(),
             despawn: None,
             player_writes: 0,
+            poi_writes: 0,
             touched: None,
             current_info: None,
             owner_hints: Vec::new(),
@@ -2790,6 +2857,7 @@ pub(crate) fn stab_mob(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -2900,6 +2968,7 @@ pub(crate) fn hurt_by_block(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -2961,6 +3030,7 @@ pub(crate) fn tick_spawns(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -3099,6 +3169,7 @@ pub(crate) fn interact_mob(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -3286,6 +3357,7 @@ pub(crate) fn with_entity<R>(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -3341,6 +3413,7 @@ pub(crate) fn with_level<R>(
         view_index: Default::default(),
         despawn: None,
         player_writes: 0,
+        poi_writes: 0,
         touched: None,
         current_info: None,
         owner_hints: Vec::new(),
@@ -3498,8 +3571,8 @@ fn carry_out(
             }
         }
         Event::LevelEvent { event, pos, data } => level.effect(Effect::LevelEvent { id: event, pos: kb(pos), data }),
-        Event::BlockExploded { pos, state, decay, radius, .. } => {
-            level.effect(if decay { Effect::ExplosionDrop { pos: kb(pos), state, radius } } else { Effect::Drop { pos: kb(pos), state } })
+        Event::BlockExploded { pos, state, decay, radius, blast, .. } => {
+            level.effect(Effect::ExplosionDrop { pos: kb(pos), state, radius: decay.then_some(radius), blast })
         }
         Event::BlockEvent { pos, a, b } => {
             let at = kb(pos);
@@ -3925,9 +3998,28 @@ fn send_entity_sound(
 /// Players touching items that can be picked up take them into their inventory. `players`
 /// is the region's, sorted by connection.
 pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
-    arrow_pickups(entities, players);
+    // Only what lies near a player that can pick things up is looked at: an entity farther than this from every such
+    // player (its position against the player's, with room to spare for the boxes) cannot touch one.
+    let reach: SmallVec<[([f64; 3], [f64; 3]); 4]> = players
+        .iter()
+        .filter(|p| !p.disconnected && !p.dead && p.game_mode != 3)
+        .map(|p| ([p.pos[0] - 4.0, p.pos[1] - 4.0, p.pos[2] - 4.0], [p.pos[0] + 4.0, p.pos[1] + 6.0, p.pos[2] + 4.0]))
+        .collect();
+    if reach.is_empty() {
+        return;
+    }
+    let near: Vec<usize> = (0..entities.list.len())
+        .filter(|&i| {
+            let e = &entities.list[i];
+            !e.removed && reach.iter().any(|(lo, hi)| (0..3).all(|k| e.pos[k] > lo[k] && e.pos[k] < hi[k]))
+        })
+        .collect();
+    if near.is_empty() {
+        return;
+    }
+    arrow_pickups(entities, players, &near);
     // `ItemEntity.getOwner`: who threw the items on the ground (a mob, for the trigger).
-    let throwers: Vec<u128> = entities.list.iter().filter_map(|e| match e.phys.as_deref().map(|p| &p.kind) {
+    let throwers: Vec<u128> = near.iter().map(|&i| &entities.list[i]).filter_map(|e| match e.phys.as_deref().map(|p| &p.kind) {
         Some(EntityKind::Item(i)) if !e.removed && i.pickup_delay <= 0 => i.thrower,
         _ => None,
     }).collect();
@@ -3936,7 +4028,8 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
     } else {
         entities.list.iter().filter(|o| !o.removed).filter_map(|o| o.phys.as_deref()).filter(|p| throwers.contains(&p.uuid)).map(|p| (p.uuid, kiln_entity::level::Seen::of(p))).collect()
     };
-    for e in &mut entities.list {
+    for &k in &near {
+        let e = &mut entities.list[k];
         if e.removed {
             continue;
         }
@@ -3998,10 +4091,11 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
 /// `AbstractArrow.playerTouch` for arrows and tridents at rest (stuck, or a loyal trident on
 /// its way back): `tryPickup` by the pickup mode (a returning trident goes to its thrower);
 /// the viewers see it taken.
-fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player]) {
+fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player], near: &[usize]) {
     use kiln_entity::arrow::{PICKUP_ALLOWED, PICKUP_CREATIVE_ONLY};
     use kiln_entity::ext_entity::trident::Trident;
-    for e in &mut entities.list {
+    for &k in near {
+        let e = &mut entities.list[k];
         if e.removed {
             continue;
         }

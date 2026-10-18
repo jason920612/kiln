@@ -10,7 +10,6 @@ use crate::math::{Aabb, Axis, BlockPos, Direction, Vec3, floor, jmax, jmin, lerp
 use crate::physics;
 use crate::shape::Collider;
 use kiln_javamath::random::{LegacyRandom, RandomSource};
-use std::collections::VecDeque;
 
 /// `MoverType`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,8 +143,9 @@ pub struct Entity {
     pub step_hint: crate::step_sound::StepHint,
     pub(crate) crystal_sound_intensity: f32,
     on_ground_no_blocks: bool,
-    pub(crate) movement_this_tick: VecDeque<Movement>,
-    pub(crate) final_movements_this_tick: Vec<Movement>,
+    /// (Inline: an entity is copied for every speculative turn, and most move once a tick.)
+    pub(crate) movement_this_tick: smallvec::SmallVec<[Movement; 2]>,
+    pub(crate) final_movements_this_tick: smallvec::SmallVec<[Movement; 2]>,
     pub(crate) fluid: FluidInteraction,
     pub was_touching_water: bool,
     pub was_eye_in_water: bool,
@@ -234,8 +234,8 @@ impl Entity {
             step_hint: Default::default(),
             crystal_sound_intensity: 0.0,
             on_ground_no_blocks: false,
-            movement_this_tick: VecDeque::new(),
-            final_movements_this_tick: Vec::new(),
+            movement_this_tick: smallvec::SmallVec::new(),
+            final_movements_this_tick: smallvec::SmallVec::new(),
             fluid: FluidInteraction::default(),
             was_touching_water: false,
             was_eye_in_water: false,
@@ -886,7 +886,7 @@ impl Entity {
 
     /// `removeLatestMovementRecording`.
     pub fn remove_latest_movement_recording(&mut self) {
-        self.movement_this_tick.pop_back();
+        self.movement_this_tick.pop();
     }
 
     /// Whether this is a `BlockAttachedEntity` (item frames, paintings, leash knots, cushions).
@@ -901,11 +901,11 @@ impl Entity {
 
     fn add_movement_this_tick(&mut self, m: Movement) {
         if self.movement_this_tick.len() >= 100 {
-            let a = self.movement_this_tick.pop_front().unwrap();
-            let b = self.movement_this_tick.pop_front().unwrap();
-            self.movement_this_tick.push_front(Movement { from: a.from, to: b.to, axis_dependent_original: None });
+            let a = self.movement_this_tick.remove(0);
+            let b = self.movement_this_tick.remove(0);
+            self.movement_this_tick.insert(0, Movement { from: a.from, to: b.to, axis_dependent_original: None });
         }
-        self.movement_this_tick.push_back(m);
+        self.movement_this_tick.push(m);
     }
 
     /// `Entity.collide`: block and entity collision, then step-up.

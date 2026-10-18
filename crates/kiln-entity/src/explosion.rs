@@ -126,9 +126,11 @@ pub fn explode_ruled(
     let knockbacks = hurt_entities(level, source, causing, center, radius, interaction, damage, rules.knockback.unwrap_or(1.0));
     if interaction != Interaction::Keep {
         shuffle(&mut positions, level);
+        // (Its blocks come in a row; the key only has to differ from the explosions next to it.)
+        let blast = center.x.to_bits() ^ center.y.to_bits().rotate_left(21) ^ center.z.to_bits().rotate_left(42) ^ (positions.len() as u64).rotate_left(11);
         for &pos in &positions {
             let state = level.block(pos);
-            on_explosion_hit(level, source, causing, pos, state, interaction, radius);
+            on_explosion_hit(level, source, causing, pos, state, interaction, radius, blast);
         }
     }
     if fire {
@@ -227,12 +229,13 @@ fn shuffle(list: &mut [BlockPos], level: &mut dyn EntityLevel) {
 }
 
 /// `BlockBehaviour.onExplosionHit` (+ `TntBlock.wasExploded`).
-fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, pos: BlockPos, state: u16, interaction: Interaction, radius: f32) {
+#[allow(clippy::too_many_arguments)]
+fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, pos: BlockPos, state: u16, interaction: Interaction, radius: f32, blast: u64) {
     if physics::is_air(state) || interaction == Interaction::TriggerBlock {
         return;
     }
     if kind(state) != Kind::Tnt {
-        level.emit(Event::BlockExploded { pos, state, decay: interaction == Interaction::DestroyWithDecay, radius, source });
+        level.emit(Event::BlockExploded { pos, state, decay: interaction == Interaction::DestroyWithDecay, radius, source, blast });
     }
     level.set_block(pos, 0, 3);
     if kind(state) == Kind::Tnt {

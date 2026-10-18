@@ -61,7 +61,8 @@ pub(crate) enum CommandSource {
 pub struct PlayerRef {
     pub(crate) conn: ConnId,
     uuid: Uuid,
-    name: String,
+    /// A player's name (a non-player's, its UUID, is made when asked: [`Named`]).
+    name: Named,
     pub(crate) pos: [f64; 3],
     rot: [f32; 2],
     /// The player's level.
@@ -69,7 +70,6 @@ pub struct PlayerRef {
     mode: GameMode,
     /// The player's team, and their name as the team formats it.
     team: Option<String>,
-    display: Text,
     /// A non-player entity: its id, type and eye height (`conn` is then [`NO_CONN`]).
     pub(crate) entity: Option<i32>,
     pub(crate) kind: &'static str,
@@ -84,6 +84,25 @@ pub struct PlayerRef {
     xp_level: Option<i32>,
 }
 
+/// A selector target's name and display name. A non-player's are made when asked (a selector over thousands of item
+/// entities usually asks for neither): its name is its UUID, its display name comes from [`Display`].
+#[derive(Debug, Clone)]
+enum Named {
+    Player(String, Text),
+    Entity(Display),
+}
+
+/// What a non-player's display name comes from.
+#[derive(Debug, Clone)]
+enum Display {
+    /// An item entity: its stack's item (`ItemStack.getHoverName`).
+    Item(&'static str),
+    /// `CustomName`.
+    Custom(Tag),
+    /// The type's name.
+    Type(&'static str),
+}
+
 /// The connection of a non-player selector target: no player has it.
 const NO_CONN: ConnId = ConnId::MAX;
 
@@ -92,13 +111,12 @@ impl PlayerRef {
         Self {
             conn,
             uuid: p.uuid,
-            name: p.name.clone(),
+            name: Named::Player(p.name.clone(), scoreboard.player_display_name(&p.name)),
             pos: p.pos,
             rot: p.rot,
             dim: crate::DIMENSIONS[p.dim].0,
             mode: game_mode(p.game_mode),
             team: scoreboard.team_of(&p.name).map(|t| t.name.clone()),
-            display: scoreboard.player_display_name(&p.name),
             entity: None,
             kind: "minecraft:player",
             size: [0.6, 1.8],
@@ -112,36 +130,34 @@ impl PlayerRef {
 
     /// A non-player entity in level `dim`.
     pub(crate) fn of_entity(dim: usize, e: &crate::entities::Entity, scoreboard: &Scoreboard) -> Self {
-        let key = e.uuid.to_string();
-        let path = e.kind.name.strip_prefix("minecraft:").unwrap_or(e.kind.name);
         let (rot, eye, alive) = match &e.phys {
             Some(p) => ([p.y_rot, p.x_rot], p.eye_height as f64, !p.is_removed() && kiln_entity::mob::data(p).is_none_or(|m| !m.is_dead_or_dying())),
             None => ([0.0, 0.0], e.kind.eye_height as f64, !e.removed),
         };
+        // `Entity.getDisplayName`: the custom name (a name tag, `CustomName` of `/summon`) or the type's name.
+        let display = match e.phys.as_deref().map(|p| &p.kind) {
+            Some(kiln_entity::EntityKind::Item(d)) => Display::Item(d.stack.item_name()),
+            _ => match e.phys.as_deref().and_then(|p| p.extra.iter().find(|(k, _)| k == "CustomName")) {
+                Some((_, name)) => Display::Custom(name.clone()),
+                None => Display::Type(e.kind.name),
+            },
+        };
         Self {
             conn: NO_CONN,
             uuid: e.uuid,
-            team: scoreboard.team_of(&key).map(|t| t.name.clone()),
-            name: key,
+            team: if scoreboard.has_team_members() { scoreboard.team_of(&e.uuid.to_string()).map(|t| t.name.clone()) } else { None },
+            name: Named::Entity(display),
             pos: e.pos,
             rot,
             dim: crate::DIMENSIONS[dim].0,
             mode: GameMode::Survival,
-            // `Entity.getDisplayName`: the custom name (a name tag, `CustomName` of `/summon`) or the type's name.
-            display: match e.phys.as_deref().map(|p| &p.kind) {
-                Some(kiln_entity::EntityKind::Item(d)) => crate::command_data::hover_name(&d.stack),
-                _ => match e.phys.as_deref().and_then(|p| p.extra.iter().find(|(k, _)| k == "CustomName")) {
-                    Some((_, name)) => Text::raw(name.clone()),
-                    None => Text::translate(format!("entity.minecraft.{path}"), Vec::new()),
-                },
-            },
             entity: Some(e.id),
             kind: e.kind.name,
             size: [e.kind.width as f64, e.kind.height as f64],
             eye,
             alive,
             living: e.phys.as_deref().is_some_and(|p| kiln_entity::mob::data(p).is_some()),
-            tags: e.phys.as_deref().map_or_else(Vec::new, |p| crate::command_data::tags_in(&Tag::Compound(p.extra.clone()))),
+            tags: e.phys.as_deref().map_or_else(Vec::new, |p| crate::command_data::tags_in_fields(&p.extra)),
             xp_level: None,
         }
     }
@@ -161,10 +177,20 @@ impl SelectorTarget for PlayerRef {
         self.uuid
     }
     fn name(&self) -> String {
-        self.name.clone()
+        match &self.name {
+            Named::Player(name, _) => name.clone(),
+            Named::Entity(_) => self.uuid.to_string(),
+        }
     }
     fn display_name(&self) -> Text {
-        self.display.clone()
+        match &self.name {
+            Named::Player(_, display) => display.clone(),
+            Named::Entity(Display::Item(item)) => crate::command_data::hover_name_of(item),
+            Named::Entity(Display::Custom(name)) => Text::raw(name.clone()),
+            Named::Entity(Display::Type(kind)) => {
+                Text::translate(format!("entity.minecraft.{}", kind.strip_prefix("minecraft:").unwrap_or(kind)), Vec::new())
+            }
+        }
     }
     fn team(&self) -> Option<&str> {
         self.team.as_deref()
@@ -679,16 +705,25 @@ impl SelectorWorld for Sim {
         v
     }
 
-    fn entities(&self, dimension: Option<&str>, _area: Option<&Aabb>) -> Vec<PlayerRef> {
-        // Players, then the other entities of each level by id.
+    fn entities(&self, dimension: Option<&str>, area: Option<&Aabb>) -> Vec<PlayerRef> {
+        self.entities_of(dimension, area, &|_| true)
+    }
+
+    fn entities_of(&self, dimension: Option<&str>, area: Option<&Aabb>, kind: &dyn Fn(&str) -> bool) -> Vec<PlayerRef> {
+        // Players, then the other entities of each level by id. Those of another type, or too far from the area for their box
+        // to meet it (no box reaches 16 blocks from its entity's position), are not made.
         let mut all = self.players();
         let sb = &self.commands.scoreboard;
+        let near = |p: [f64; 3]| area.is_none_or(|a| (0..3).all(|k| p[k] > a.min[k] - 16.0 && p[k] < a.max[k] + 16.0));
         for (i, d) in self.dims.iter().enumerate() {
+            if dimension.is_some_and(|dim| dim != crate::DIMENSIONS[i].0) {
+                continue;
+            }
             let mut list: Vec<PlayerRef> = d
                 .regions
                 .iter()
                 .flat_map(|r| r.part().0.list.iter())
-                .filter(|e| !e.removed)
+                .filter(|e| !e.removed && near(e.pos) && kind(e.kind.name))
                 .map(|e| PlayerRef::of_entity(i, e, sb))
                 .collect();
             list.sort_by_key(|p| p.entity);
@@ -2127,8 +2162,8 @@ mod display_name_tests {
         };
         let board = Scoreboard::default();
         let mut e = Entity::new(1, Uuid::nil(), spawn());
-        assert_eq!(PlayerRef::of_entity(0, &e, &board).display.key(), Some("entity.minecraft.zombie"));
+        assert_eq!(PlayerRef::of_entity(0, &e, &board).display_name().key(), Some("entity.minecraft.zombie"));
         e.phys.as_deref_mut().unwrap().extra.push(("CustomName".into(), Tag::String("Bob".into())));
-        assert_eq!(PlayerRef::of_entity(0, &e, &board).display.to_plain(), "Bob");
+        assert_eq!(PlayerRef::of_entity(0, &e, &board).display_name().to_plain(), "Bob");
     }
 }

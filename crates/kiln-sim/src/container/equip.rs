@@ -65,7 +65,7 @@ pub(crate) fn wear_of(e: &kiln_entity::Entity) -> Option<Wear> {
 /// The living things whose box meets the block `target`, in id order.
 fn in_front<'a>(level: &'a RegionLevel, target: BlockPos) -> Vec<&'a Wear> {
     let (min, max) = ([target.x as f64, target.y as f64, target.z as f64], [target.x as f64 + 1.0, target.y as f64 + 1.0, target.z as f64 + 1.0]);
-    let mut found: Vec<&Wear> = level.bodies.iter().filter(|b| b.intersects(min, max)).filter_map(|b| b.wear.as_ref()).collect();
+    let mut found: Vec<&Wear> = level.bodies.iter().filter(|b| b.intersects(min, max)).filter_map(|b| b.wear.as_deref()).collect();
     found.sort_by_key(|w| w.id);
     found
 }

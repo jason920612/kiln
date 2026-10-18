@@ -34,6 +34,21 @@ pub(crate) struct Pace {
     pub(crate) wanted: bool,
 }
 
+/// The kinds of [`islands::SERIAL`] that keep a whole region's turns in order: what they change in place may be read
+/// by other turns without a trace. The others (villagers take points of interest, which speculations log reading;
+/// copper golems work containers, which only they read) just run in place.
+const SERIAL_REGION: [&str; 9] = [
+    "minecraft:sulfur_cube",
+    "minecraft:warden",
+    "minecraft:allay",
+    "minecraft:creaking",
+    "minecraft:hopper_minecart",
+    "minecraft:lightning_bolt",
+    "minecraft:ender_dragon",
+    "minecraft:end_crystal",
+    "minecraft:wither",
+];
+
 /// Ran-in-place share (numerator, denominator) above which speculation pauses.
 const RERUN_SHARE: (u32, u32) = (2, 5);
 const PAUSE: u32 = 40;
@@ -57,6 +72,8 @@ struct Log {
     areas: Vec<Aabb>,
     /// The players' own state (not their views) was read.
     players: bool,
+    /// Points of interest (and the villages they make) were read.
+    pois: bool,
     /// Something it cannot leave for later was asked for.
     abort: bool,
 }
@@ -71,6 +88,11 @@ pub(super) struct Spec {
     log: Log,
     seeds: u64,
     rng: LegacyRandom,
+    /// The entity's box and life before and after, and what the list copies out of it: read here, on the worker that
+    /// has the entity in its cache, not in the serial commit.
+    before: Option<(Aabb, bool)>,
+    after: Option<(Aabb, bool)>,
+    synced: Synced,
 }
 
 /// The level a speculative turn sees: the phase's start through `base` (read only), its own
@@ -138,14 +160,17 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
     }
 
     fn village_centers_near(&self, section: (i32, i32, i32), radius: i32) -> Option<Vec<(i32, i32, i32)>> {
+        self.log.borrow_mut().pois = true;
         self.base.village_centers_near(section, radius)
     }
 
     fn sections_to_village(&self, pos: BlockPos) -> i32 {
+        self.log.borrow_mut().pois = true;
         self.base.sections_to_village(pos)
     }
 
     fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: kiln_entity::level::PoiOccupancy) -> Vec<BlockPos> {
+        self.log.borrow_mut().pois = true;
         self.base.poi_in_range(types, center, radius, occupancy)
     }
 
@@ -159,6 +184,7 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
     }
 
     fn poi_type(&self, pos: BlockPos) -> Option<&'static str> {
+        self.log.borrow_mut().pois = true;
         self.base.poi_type(pos)
     }
 
@@ -235,8 +261,14 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
     fn entities_in(&self, area: &Aabb, filter: EntityFilter, exclude: i32) -> Vec<i32> {
         self.check_overlays();
         self.log.borrow_mut().areas.push(*area);
-        let mut found = self.base.entities_in(area, filter, exclude);
+        // Whether an item can merge is its state, not its box: every item of the area is read (and logged) for it,
+        // as it stands for this turn.
+        let mergeable = filter == EntityFilter::MergeableItem;
+        let mut found = self.base.entities_in(area, if mergeable { EntityFilter::Item } else { filter }, exclude);
         found.retain(|&id| id != self.me);
+        if mergeable {
+            found.retain(|&id| self.entity(id).is_some_and(kiln_entity::item::is_mergable));
+        }
         found
     }
 
@@ -654,12 +686,17 @@ fn speculate(sim: &SimLevel, i: usize, ticking: &blocks::Ticking, any_player: bo
     if e.removed || !ticking.contains(chunk_of(e.pos)) {
         return None;
     }
+    // (Kinds whose tick needs region state a speculation cannot leave for later run in place.)
+    if islands::SERIAL.contains(&e.kind.name) {
+        return None;
+    }
     let base = e.phys.as_deref()?;
     if base.vehicle.is_some() || !base.passengers.is_empty() || !base.pending_hurts.is_empty() || !base.pending_effects.is_empty() {
         return None;
     }
     let env = sim.level.env();
     let _enchanting = crate::enchant::install_enchanter(env.loot.as_ref());
+    let before = Some((base.bounding_box(), base.is_alive()));
     let mut phys = Box::new(base.clone());
     let mut lvl = SpecLevel {
         base: sim,
@@ -686,7 +723,8 @@ fn speculate(sim: &SimLevel, i: usize, ticking: &blocks::Ticking, any_player: bo
         phys.tick(&mut lvl);
     }
     let SpecLevel { overlays, spawns, events, packets, log, seeds, rng, .. } = lvl;
-    Some(Spec { phys, overlays, spawns, events, packets, log: log.into_inner(), seeds, rng })
+    let (after, synced) = (Some((phys.bounding_box(), phys.is_alive())), Synced::of(&phys));
+    Some(Spec { phys, overlays, spawns, events, packets, log: log.into_inner(), seeds, rng, before, after, synced })
 }
 
 /// What changed so far this phase, by turns kept or run in place.
@@ -696,6 +734,7 @@ struct Dirty {
     boxes: FastMap<(i32, i32, i32), Vec<Aabb>>,
     any_box: bool,
     player_writes: u32,
+    poi_writes: u32,
     edits: u64,
 }
 
@@ -759,17 +798,28 @@ fn shape(sim: &SimLevel, id: i32) -> Option<(Aabb, bool)> {
 /// The region's entity turns with speculation ([`self`]); `false` if the region does not qualify
 /// (the caller runs the turns in order).
 pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &blocks::Ticking, any_player: bool, ctx: &kiln_sched::Ctx<'_>) -> bool {
-    if !sim.level.env().speculate || !pace.wanted || sim.list.len() < MIN_ENTITIES || ctx.workers() < 2 {
+    let off = |why: &'static str| {
+        crate::diag::add(why, std::time::Duration::from_nanos(1000));
+        false
+    };
+    if !sim.level.env().speculate || sim.list.len() < MIN_ENTITIES || ctx.workers() < 2 {
         return false;
+    }
+    if !pace.wanted {
+        return off("spec.off_unwanted");
     }
     if pace.paused > 0 {
         pace.paused -= 1;
-        return false;
+        return off("spec.off_paused");
     }
     {
         let Some(region) = sim.level.region_ref() else { return false };
-        if !region.blocks.hearts.is_empty() || crate::sculk::listening(region) || sim.list.iter().any(|e| islands::SERIAL.contains(&e.kind.name)) {
-            return false;
+        // (Listeners are fine: a turn that would tell them anything runs in place, see [`SpecLevel`].)
+        if !region.blocks.hearts.is_empty() {
+            return off("spec.off_hearts");
+        }
+        if sim.list.iter().any(|e| SERIAL_REGION.contains(&e.kind.name)) {
+            return off("spec.off_serial");
         }
     }
     let t0 = std::time::Instant::now();
@@ -798,16 +848,15 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
         boxes: Default::default(),
         any_box: false,
         player_writes: sim.player_writes,
+        poi_writes: sim.poi_writes,
         edits: edits(sim),
     };
     let (mut kept, mut ran) = (0u32, 0u32);
     // What the kept turns replaced, freed side by side afterwards (a mob's brain is many
     // small allocations).
     let mut garbage: Vec<Box<kiln_entity::Entity>> = Vec::new();
+    let timed = crate::diag::on();
     for i in 0..n {
-        if carried(sim, i) {
-            continue;
-        }
         let me = sim.list[i].id;
         let mut spec = specs[i].take();
         let valid = spec.as_ref().is_some_and(|s| {
@@ -817,6 +866,8 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
                 "spec.why_edits"
             } else if s.log.players && sim.player_writes != dirty.player_writes {
                 "spec.why_players"
+            } else if s.log.pois && sim.poi_writes != dirty.poi_writes {
+                "spec.why_pois"
             } else if !s.log.ids.iter().all(|id| !dirty.ids.contains(id)) {
                 "spec.why_ids"
             } else if !s.log.areas.iter().all(|a| !dirty.meets(a)) {
@@ -829,24 +880,29 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
             }
             r.is_empty()
         });
-        if !valid && let Some(s) = spec.take() {
-            garbage.push(s.phys);
-            garbage.extend(s.overlays.into_iter().map(|o| o.ent));
+        if !valid {
+            if let Some(s) = spec.take() {
+                garbage.push(s.phys);
+                garbage.extend(s.overlays.into_iter().map(|o| o.ent));
+            }
+            // (A turn that is kept rides nothing: it was speculated riding nothing, and nothing changed it since.)
+            if carried(sim, i) {
+                continue;
+            }
         }
-        let tk = std::time::Instant::now();
+        let tk = timed.then(std::time::Instant::now);
         let was = spec.is_some();
         match spec {
             Some(s) => {
                 kept += 1;
-                let before = shape(sim, me);
+                // (Its state is the phase's start: `before` is what the list holds.)
                 let e = &mut sim.list[i];
                 e.age += 1;
                 garbage.extend(e.phys.replace(s.phys));
                 (sim.current, sim.seeds, sim.rng) = (me, s.seeds, s.rng);
                 sim.current_source = None;
-                settle(sim, i);
-                let after = shape(sim, me);
-                dirty.changed(me, before, after);
+                settle_from(sim, i, s.synced);
+                dirty.changed(me, s.before, s.after);
                 for o in s.overlays {
                     let (id, before) = (o.id, Some((o.before, o.alive)));
                     if o.stand_in {
@@ -880,9 +936,9 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
                     near.extend(p.passengers.iter().copied());
                 }
                 let before: Vec<(i32, Option<(Aabb, bool)>)> = near.iter().map(|&id| (id, shape(sim, id))).collect();
-                sim.touched = Some(Vec::new());
+                sim.touched = Some(Touched::default());
                 tick_turn(sim, i, ticking, any_player);
-                let touched = sim.touched.take().unwrap_or_default();
+                let touched = sim.touched.take().unwrap_or_default().list;
                 for (id, b) in before {
                     let after = shape(sim, id);
                     dirty.changed(id, b, after);
@@ -900,7 +956,9 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
                 }
             }
         }
-        if was { t_keep += tk.elapsed() } else { t_run += tk.elapsed() }
+        if let Some(tk) = tk {
+            if was { t_keep += tk.elapsed() } else { t_run += tk.elapsed() }
+        }
     }
     crate::diag::add("spec.t_keep", t_keep);
     crate::diag::add("spec.t_run", t_run);
@@ -915,6 +973,7 @@ pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &bl
         pace.paused = PAUSE;
     }
     crate::diag::add("spec.kept", std::time::Duration::from_nanos(kept as u64 * 1000));
+    crate::testing::SPEC_KEPT.fetch_add(kept as u64, std::sync::atomic::Ordering::Relaxed);
     crate::diag::add("spec.ran", std::time::Duration::from_nanos(ran as u64 * 1000));
     true
 }

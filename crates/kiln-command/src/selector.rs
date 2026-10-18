@@ -188,6 +188,12 @@ pub trait SelectorWorld: Source {
     /// Candidate entities in `dimension` (all dimensions if `None`); may be pre-filtered to
     /// those intersecting `area`.
     fn entities(&self, dimension: Option<&str>, area: Option<&Aabb>) -> Vec<Self::Entity>;
+    /// [`SelectorWorld::entities`] whose type `kind` accepts (the others may be left out before they are made: a
+    /// selector over a crowd of item entities need not look at each one).
+    fn entities_of(&self, dimension: Option<&str>, area: Option<&Aabb>, kind: &dyn Fn(&str) -> bool) -> Vec<Self::Entity> {
+        let _ = kind;
+        self.entities(dimension, area)
+    }
     fn entity_by_uuid(&self, uuid: Uuid) -> Option<Self::Entity> {
         self.entities(None, None).into_iter().find(|e| e.uuid() == uuid)
     }
@@ -920,6 +926,16 @@ impl EntitySelector {
         })
     }
 
+    /// Whether an entity of type `kind` passes the type options (`type=`, `type=!`, `type=#`).
+    fn type_ok(&self, kind: &str) -> bool {
+        self.entity_type.as_ref().is_none_or(|t| t == kind)
+            && self.filters.iter().all(|f| match f {
+                Filter::Type { id, invert } => (kind == id) != *invert,
+                Filter::TypeTag { tag, invert } => types::entity_type_in_tag(kind, tag) != *invert,
+                _ => true,
+            })
+    }
+
     fn result_limit(&self) -> usize {
         if self.order == Order::Arbitrary { self.max_results } else { usize::MAX }
     }
@@ -967,7 +983,8 @@ impl EntitySelector {
         let dimension = self.world_limited.then(|| world.dimension().to_owned());
         let limit = self.result_limit();
         let mut list = Vec::new();
-        for e in world.entities(dimension.as_deref(), aabb.as_ref()) {
+        let kind = |t: &str| self.type_ok(t);
+        for e in world.entities_of(dimension.as_deref(), aabb.as_ref(), &kind) {
             if self.entity_type.as_ref().is_some_and(|t| t != e.entity_type())
                 || !self.matches(&e, pos, aabb.as_ref(), world.scoreboard())
                 || !self.nbt_ok(&*world, &e)

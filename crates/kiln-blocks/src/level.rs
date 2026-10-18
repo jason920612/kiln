@@ -78,10 +78,11 @@ pub enum Effect {
     /// `Block.dropResources` for a block a non-player entity (a projectile) destroyed: the
     /// loot context has `this_entity` but no tool.
     EntityDrop { pos: BlockPos, state: u16 },
-    /// A block an explosion with drop decay destroyed: its loot rolls with the
+    /// A block an explosion destroyed; with drop decay (`radius`) its loot rolls with the
     /// `explosion_radius` parameter (`survives_explosion` keeps each drop with a chance of
-    /// `1 / radius`).
-    ExplosionDrop { pos: BlockPos, state: u16, radius: f32 },
+    /// `1 / radius`). The drops of one explosion (`blast`, its blocks' effects come in a row) are
+    /// gathered into stacks of up to 16 before they pop (`ServerExplosion.addOrAppendStack`).
+    ExplosionDrop { pos: BlockPos, state: u16, radius: Option<f32>, blast: u64 },
     /// `levelEvent(id, pos, data)`: particles and sounds (1501 lava fizz, 1502 redstone torch
     /// burnout, 2001 block destroyed with data = state id, ...).
     LevelEvent { id: i32, pos: BlockPos, data: i32 },

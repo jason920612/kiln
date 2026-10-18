@@ -10,7 +10,7 @@ static SUMS: Mutex<Vec<(&'static str, Duration)>> = Mutex::new(Vec::new());
 /// 0: not looked up yet, 1: off, 2: on.
 static STATE: AtomicU8 = AtomicU8::new(0);
 
-fn on() -> bool {
+pub(crate) fn on() -> bool {
     match STATE.load(Relaxed) {
         0 => {
             let on = std::env::var_os("KILN_PHASE_DETAIL").is_some();

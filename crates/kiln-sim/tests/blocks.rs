@@ -136,6 +136,31 @@ fn powered_tnt_primes_and_explodes() {
     assert_eq!(w.sim.health(1), Some((20.0, false)), "creative players take no damage");
 }
 
+/// wp76: an explosion gathers its blocks' drops before they pop (`ServerExplosion.addOrAppendStack`,
+/// `StackCollector.tryMerge` with at most 16 a stack): a crater in dirt leaves a few stacks of 16, not an
+/// item per block (Kiln left 1033 items where vanilla left about 300 after the same 405 TNT).
+#[test]
+fn explosion_drops_gather_into_stacks_of_sixteen() {
+    let mut w = World::new("creative");
+    let c = w.at(8, 4, 8);
+    w.run(&format!("fill {} {} {} {} {} {} minecraft:dirt", c[0] - 2, c[1] - 2, c[2] - 2, c[0] + 2, c[1] + 2, c[2] + 2));
+    w.run(&format!("setblock {} {} {} minecraft:tnt", c[0], c[1], c[2]));
+    w.run(&format!("setblock {} {} {} minecraft:redstone_block", c[0] + 1, c[1], c[2]));
+    // Looked at the tick it blew (before the drops could merge as item entities).
+    for _ in 0..100 {
+        w.ticks(1);
+        if !w.sim.entities().iter().any(|(kind, _)| *kind == "minecraft:tnt") {
+            break;
+        }
+    }
+    assert!(!w.sim.entities().iter().any(|(kind, _)| *kind == "minecraft:tnt"), "{:?}", w.sim.entities());
+    let dirt: Vec<i32> = w.sim.item_stacks().iter().filter(|s| s.item_name() == "minecraft:dirt").map(|s| s.count()).collect();
+    let total: i32 = dirt.iter().sum();
+    assert!(total > 16, "the crater dropped dirt: {dirt:?}");
+    assert!(dirt.iter().all(|&n| n <= 16), "{dirt:?}");
+    assert_eq!(dirt.iter().filter(|&&n| n < 16).count(), usize::from(total % 16 != 0), "one stack is not full: {dirt:?}");
+}
+
 #[test]
 fn setblock_updates_neighbours_unless_strict() {
     let mut w = World::new("creative");

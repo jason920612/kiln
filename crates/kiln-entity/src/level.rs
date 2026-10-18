@@ -10,6 +10,8 @@ use kiln_javamath::random::LegacyRandom;
 pub enum EntityFilter {
     Any,
     Item,
+    /// Item entities that can merge (`ItemEntity.isMergable`, the predicate of `mergeWithNeighbours`' search).
+    MergeableItem,
     ExperienceOrb,
     /// Entities that are alive and can be hurt by a falling block or pushed by explosions.
     Living,
@@ -322,7 +324,8 @@ pub enum Event {
     EntityEvent { entity: i32, event: u8 },
     /// A block an explosion destroyed: the simulation drops its loot (`decay`: the
     /// `explosion_radius` loot parameter applies) before this crate sets it to air.
-    BlockExploded { pos: BlockPos, state: u16, decay: bool, radius: f32, source: Option<i32> },
+    /// `blast` tells one explosion's blocks from another's (their drops are gathered).
+    BlockExploded { pos: BlockPos, state: u16, decay: bool, radius: f32, source: Option<i32>, blast: u64 },
     /// Vanilla block side effects of an entity inside a block that this crate does not
     /// simulate (hoppers, pressure plates, tripwires, portals, detector rails).
     EntityInsideBlock { pos: BlockPos, state: u16, entity: i32 },

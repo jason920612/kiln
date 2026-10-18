@@ -181,20 +181,25 @@ fn merge_with_neighbours(e: &mut Entity, level: &mut dyn EntityLevel) {
         return;
     }
     let area = e.bounding_box().inflate(0.5, 0.0, 0.5);
-    let ids = level.entities_in(&area, EntityFilter::Item, e.id);
     // The class query filters with isMergable before the loop re-checks it.
-    let candidates: Vec<i32> =
-        ids.into_iter().filter(|&id| level.entity(id).is_some_and(|o| matches!(o.kind, EntityKind::Item(_)) && is_mergable(o))).collect();
+    let candidates = level.entities_in(&area, EntityFilter::MergeableItem, e.id);
     for id in candidates {
-        let Some(other) = level.entity_mut(id) else { continue };
-        if !is_mergable(other) {
+        // (Looked at first: an item it does not merge with stays as it is.)
+        if !level.entity(id).is_some_and(|other| matches!(other.kind, EntityKind::Item(_)) && is_mergable(other) && merges_with(e, other)) {
             continue;
         }
+        let Some(other) = level.entity_mut(id) else { continue };
         try_to_merge(e, other);
         if e.is_removed() {
             break;
         }
     }
+}
+
+/// Whether [`try_to_merge`] would move anything between the two.
+fn merges_with(e: &Entity, other: &Entity) -> bool {
+    let (mine, theirs) = (data(e), data(other));
+    mine.target == theirs.target && are_mergable(&mine.stack, &theirs.stack)
 }
 
 /// `tryToMerge`: the smaller stack flows into the larger one.

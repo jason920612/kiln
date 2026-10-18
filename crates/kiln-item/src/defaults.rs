@@ -35,6 +35,8 @@ impl ComponentMap {
 
 struct Defaults {
     maps: Vec<ComponentMap>,
+    /// Each item's default `max_stack_size` (1 when it has none), looked up on every item entity's merge check.
+    max_stack: Vec<i32>,
     /// (item id, component type) of values that failed to decode.
     failures: Vec<(i32, ComponentId)>,
 }
@@ -75,7 +77,8 @@ fn load() -> &'static Defaults {
             comps.sort_by_key(Component::id);
             maps.push(ComponentMap(comps));
         }
-        Defaults { maps, failures }
+        let max_stack = maps.iter().map(|m| m.get(crate::component::keys::MAX_STACK_SIZE.id).and_then(|c| crate::component::keys::MAX_STACK_SIZE.get(c)).copied().unwrap_or(1)).collect();
+        Defaults { maps, max_stack, failures }
     })
 }
 
@@ -83,6 +86,11 @@ fn load() -> &'static Defaults {
 pub fn default_components(item: i32) -> &'static ComponentMap {
     static EMPTY: ComponentMap = ComponentMap(Vec::new());
     usize::try_from(item).ok().and_then(|i| load().maps.get(i)).unwrap_or(&EMPTY)
+}
+
+/// The default `max_stack_size` of `item` (1 for none, and for unknown ids).
+pub fn default_max_stack_size(item: i32) -> i32 {
+    usize::try_from(item).ok().and_then(|i| load().max_stack.get(i)).copied().unwrap_or(1)
 }
 
 /// Default values the typed codecs could not decode, as (item id, component type).

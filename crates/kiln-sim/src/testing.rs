@@ -42,6 +42,9 @@ pub fn hash_packets() {
     DIGESTS.store(true, Relaxed);
 }
 
+/// Speculative entity turns kept so far, in every region (tests that need speculation to have run).
+pub static SPEC_KEPT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Makes the locator bar check every receiver's quick share of the movers' turns against
 /// stepping every pair (slow; for tests).
 pub fn verify_locator_bar() {

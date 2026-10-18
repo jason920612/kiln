@@ -552,6 +552,7 @@ impl EntityLevel for MemoryLevel {
                 let wanted = match filter {
                     EntityFilter::Any => true,
                     EntityFilter::Item => matches!(e.kind, EntityKind::Item(_)),
+                    EntityFilter::MergeableItem => matches!(e.kind, EntityKind::Item(_)) && crate::item::is_mergable(e),
                     EntityFilter::ExperienceOrb => matches!(e.kind, EntityKind::ExperienceOrb(_)),
                     EntityFilter::Living => matches!(e.kind, EntityKind::Other { .. } | EntityKind::Player(_) | EntityKind::Mob(_)),
                 };
