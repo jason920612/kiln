@@ -429,7 +429,7 @@ fn the_enchanting_table_and_the_anvil_use_the_packs_enchantments() {
     let swords: Vec<String> = w.enchanted().into_iter().filter(|(id, _)| id == "minecraft:diamond_sword").map(|(_, c)| c).collect();
     assert_eq!(swords.len(), 1, "{swords:?}");
     assert!(swords[0].contains("kz:aura"), "{swords:?}");
-    assert!(!swords[0].contains("minecraft:"), "only kz:aura is in the table's tag: {swords:?}");
+    assert_eq!(swords[0].matches("Int(").count(), 1, "only kz:aura is in the table's tag: {swords:?}");
     // The anvil: two swords with kz:aura 2 make kz:aura 3 (max_level 3 of the pack), not more and not 1.
     w.run("clear Keeper");
     w.run("give Keeper minecraft:diamond_sword[enchantments={\"kz:aura\":2}]");
