@@ -245,3 +245,38 @@ fn an_arrow_from_an_enchanted_bow_runs_its_block_effects() {
     assert_eq!(hit, kiln_blocks::state::parse_state("minecraft:gold_block").unwrap(), "the block the arrow hit turned to gold");
 }
 
+
+#[test]
+fn a_players_tick_effect_asks_periodic_tick_too() {
+    let _x = kiln_data::live::exclusive();
+    let wear = enchantment(BOOTS_SLOT, &format!(r#""minecraft:tick": [{{"effect": {{"type": "minecraft:change_item_damage", "amount": 1.0}}, "requirements": {}}}]"#, periodic(10)));
+    let mut w = World::new("player_wear", &[("wear", wear)]);
+    w.sim.console_now("gamemode survival User");
+    w.sim.console_now("item replace entity User armor.feet with minecraft:golden_boots[enchantments={\"kiln87:wear\":1}]");
+    w.ticks(1);
+    let before = w.sim.item_damage(1, 8).expect("the boots");
+    w.ticks(100);
+    let worn = w.sim.item_damage(1, 8).expect("the boots") - before;
+    // Every 10th tick of the player's age: ten times in a hundred ticks (never for a predicate nobody answers).
+    assert!((9..=11).contains(&worn), "the boots lost {worn} durability in 100 ticks");
+}
+
+#[test]
+fn a_players_tick_explosion_pushes_a_mob_next_to_it() {
+    let _x = kiln_data::live::exclusive();
+    let burst = enchantment(BOOTS_SLOT, &format!(r#""minecraft:tick": [{{"effect": {}, "requirements": {}}}]"#, explode(3.0), periodic(20)));
+    let mut w = World::new("player_burst", &[("burst", burst)]);
+    w.sim.console_now("item replace entity User armor.feet with minecraft:golden_boots[enchantments={\"kiln87:burst\":1}]");
+    let near = w.summon("husk", w.spot(1.5), "{NoAI:1b,PersistenceRequired:1b}");
+    let _ = w.explosions();
+    let mut pushed = false;
+    let mut told = 0;
+    for _ in 0..45 {
+        w.ticks(1);
+        told += w.explosions();
+        let d = w.sim.mob_state(near).expect("the husk").delta;
+        pushed |= d[0] * d[0] + d[2] * d[2] > 1e-4;
+    }
+    assert!(told >= 1, "the explosion packet reached the player ({told})");
+    assert!(pushed, "the husk next to the player was pushed");
+}
