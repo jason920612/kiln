@@ -355,8 +355,9 @@ pub fn tick_leash(e: &mut Entity, mut m: Option<&mut MobData>, level: &mut dyn E
     let dist = h_bb_center.distance_to_sqr(e.bounding_box().center()).sqrt();
     // `PathfinderMob.whenLeashedTo`: the home follows the holder.
     let leasher_block = BlockPos::containing(hp.x, hp.y, hp.z);
+    let radius = elastic_distance_of(e) as i32 - 1;
     if let Some(m) = mob_of(e, &mut m) {
-        m.home = Some((leasher_block, elastic_distance_of(e) as i32 - 1));
+        m.home = Some((leasher_block, radius));
     }
     if dist > snap_distance(e) {
         level.emit(Event::Sound { pos: hp, sound: "minecraft:item.lead.break", source: "neutral", volume: 1.0, pitch: 1.0 });
