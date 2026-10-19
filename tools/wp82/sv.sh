@@ -54,7 +54,11 @@ enforce-whitelist=false
 allow-flight=true
 PROPS
   W=$HOME/kiln/work
-  if [ -n "$AGENT" ]; then
+  if [ -n "$W72" ]; then
+    # the wp72 spawn-counter agent (tools/wp82/agent72/build.sh -> ~/wp82/agent72.jar); AGENT=1 W72=1
+    CP=$(ls $W/versions/*/server-*.jar $(find $W/libraries -name '*.jar') | tr '\n' ':')
+    W72_OUT=$D/agent.out nohup java -Xmx1g -Dw72.box=${BOX:-0,0,0,0,0,0} -Dw72.trace=$D/trace.out -javaagent:$HOME/wp82/agent72.jar --add-opens java.base/java.lang=ALL-UNNAMED -cp "$CP" net.minecraft.server.Main --nogui < console > server.log 2>&1 &
+  elif [ -n "$AGENT" ]; then
     CP=$(ls $W/versions/*/server-*.jar $(find $W/libraries -name '*.jar') | tr '\n' ':')
     W82_OUT=$D/agent.out nohup java -Xmx1g -javaagent:$HOME/wp82/agent82.jar --add-opens java.base/java.lang=ALL-UNNAMED -cp "$CP" net.minecraft.server.Main --nogui < console > server.log 2>&1 &
   else
