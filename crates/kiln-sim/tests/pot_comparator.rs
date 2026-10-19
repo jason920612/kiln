@@ -4,7 +4,6 @@
 use kiln_link::{PlayIn, ToSim};
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets::ItemStack;
-use kiln_proto::packets::serverbound::Hand;
 use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
 
@@ -30,7 +29,7 @@ fn a_comparator_follows_a_decorated_pot_as_it_fills() {
     let held = ItemStack { item: stone, count: 64, added: Vec::new(), removed: Vec::new() };
     assert!(sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot: 36, item: Some(held) })]));
     for i in 0..44 {
-        assert!(sim.step([ToSim::Packet(1, PlayIn::UseItemOn { hand: Hand::Main, pos: [x, y, z], face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: i + 1 })]));
+        assert!(sim.step([ToSim::Packet(1, PlayIn::UseItemOn { hand: 0, pos: [x, y, z], face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: i + 1 })]));
         assert!(sim.step([ToSim::Packet(1, PlayIn::ClientTickEnd)]));
     }
     for _ in 0..6 {
