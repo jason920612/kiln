@@ -449,3 +449,21 @@ fn the_enchanting_table_and_the_anvil_use_the_packs_enchantments() {
     let merged: Vec<String> = w.enchanted().into_iter().filter(|(id, c)| id == "minecraft:diamond_sword" && c.contains("kz:aura")).map(|(_, c)| c).collect();
     assert!(merged.iter().any(|c| c.contains("Int(3)")), "kz:aura III: {merged:?}");
 }
+
+#[test]
+fn every_enchantment_with_a_charge_time_effect_speeds_the_crossbow_up() {
+    let Some(mut w) = World::new("crossbow", &["kz_effects"]) else { return };
+    // Quick charge III (-0.75 s) and the pack's kz:swift (-0.25 s) both apply to 1.25 s: 0.25 s = 5 ticks. (Only the highest level's
+    // effect would leave 0.5 s = 10 ticks.)
+    let charged_after = |w: &mut World, enchantments: &str, ticks: usize| -> bool {
+        w.run("clear Keeper");
+        w.equip("weapon.mainhand", &format!("minecraft:crossbow[enchantments={{{enchantments}}}]"));
+        w.run("give Keeper minecraft:arrow 4");
+        w.ticks(2);
+        assert!(w.sim.step([ToSim::Packet(1, PlayIn::UseItem { hand: kiln_proto::packets::serverbound::Hand::Main, sequence: 5, yaw: 0.0, pitch: 0.0 })]));
+        w.ticks(ticks);
+        w.enchanted().iter().any(|(id, c)| id == "minecraft:crossbow" && c.contains("charged_projectiles"))
+    };
+    assert!(charged_after(&mut w, "\"minecraft:quick_charge\":3,\"kz:swift\":1", 8), "both effects: charged within 8 ticks");
+    assert!(!charged_after(&mut w, "\"minecraft:quick_charge\":3", 8), "quick charge III alone needs 10 ticks");
+}
