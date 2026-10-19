@@ -165,12 +165,31 @@ fn omitted(registry: &str) -> &'static [&'static str] {
     }
 }
 
+/// The environment attributes the network codec of a biome or a dimension type sends (`EnvironmentAttribute.syncable`);
+/// the rest (`gameplay/natural_mob_spawns`, `bed_rule`, `respawn_anchor_works`...) stays on the server.
+const SYNCED_ATTRIBUTES: &[&str] = &[
+    "visual/fog_color", "visual/fog_start_distance", "visual/fog_end_distance", "visual/sky_fog_end_distance", "visual/cloud_fog_end_distance",
+    "visual/water_fog_color", "visual/water_fog_start_distance", "visual/water_fog_end_distance", "visual/sky_color", "visual/sunrise_sunset_color",
+    "visual/cloud_color", "visual/cloud_height", "visual/sun_angle", "visual/moon_angle", "visual/star_angle", "visual/moon_phase",
+    "visual/star_brightness", "visual/block_light_tint", "visual/sky_light_color", "visual/sky_light_factor", "visual/night_vision_color",
+    "visual/ambient_light_color", "visual/default_dripstone_particle", "visual/ambient_particles", "audio/background_music", "audio/music_volume",
+    "audio/ambient_sounds", "audio/firefly_bush_sounds", "gameplay/sky_light_level", "gameplay/water_evaporates", "gameplay/fast_lava",
+    "gameplay/piglins_zombify", "gameplay/creaking_active",
+];
+
 /// An entry as the network sends it.
 pub(crate) fn network_entry(registry: &str, json: &Json) -> Tag {
     let mut tag = json_to_nbt(json);
     if let Tag::Compound(fields) = &mut tag {
         let skip = omitted(registry);
         fields.retain(|(k, _)| !skip.contains(&k.as_str()));
+        if matches!(registry, "minecraft:worldgen/biome" | "minecraft:dimension_type") {
+            for (k, v) in fields.iter_mut() {
+                if let (true, Tag::Compound(attributes)) = (k == "attributes", v) {
+                    attributes.retain(|(name, _)| SYNCED_ATTRIBUTES.iter().any(|a| name.strip_prefix("minecraft:") == Some(a)));
+                }
+            }
+        }
     }
     tag
 }
