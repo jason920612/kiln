@@ -1,0 +1,1 @@
+{"assets":{"wild":"kiln83:entity/wolf/azure","tame":"kiln83:entity/wolf/azure_tame","angry":"kiln83:entity/wolf/azure_angry"},"baby_assets":{"wild":"kiln83:entity/wolf/azure_baby","tame":"kiln83:entity/wolf/azure_tame_baby","angry":"kiln83:entity/wolf/azure_angry_baby"},"spawn_conditions":[{"priority":50,"condition":{"type":"minecraft:biome","biomes":"minecraft:desert"}}]}

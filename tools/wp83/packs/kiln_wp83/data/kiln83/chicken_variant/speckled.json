@@ -1,0 +1,1 @@
+{"asset_id":"kiln83:entity/chicken/speckled","baby_asset_id":"kiln83:entity/chicken/speckled_baby","model":"normal","spawn_conditions":[{"priority":50,"condition":{"type":"minecraft:biome","biomes":"minecraft:desert"}}]}
