@@ -567,7 +567,7 @@ mod tests {
         (0..n)
             .map(|i| {
                 let fin = Finalize { ctx: difficulty_instance(2, 0, 0, 1.0), seed: seed + i as i64, persistent: false, natural: true, monsters_disabled: false, camel_space: false, black_cat: false, group: group.cloned() };
-                crate::entities::Entity::new(i as i32 + 1, i as u128 + 1, spawn(kind, [0.5, 64.0, 0.5], Some(0.0), Some(fin)))
+                crate::entities::Entity::new(i as i32 + 1, uuid::Uuid::from_u128(i as u128 + 1), spawn(kind, [0.5, 64.0, 0.5], Some(0.0), Some(fin)))
             })
             .collect()
     }
