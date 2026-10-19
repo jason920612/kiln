@@ -90,7 +90,7 @@ con("give KilnTest minecraft:diamond_hoe", side)
 time.sleep(0.5)
 slot = next(i for i in range(9) if "diamond_hoe" in c.cmd(f"item {i}"))
 c.cmd(f"hotbar {slot + 1}")
-tx, tz = x - 2, z + 4
+tx, tz = x - 1, z + 2
 for dx, kind in enumerate(("stone", "gravel", "grass_block")):
     con(f"setblock {tx + dx} {y - 1} {tz} minecraft:stone", side, 0.1)
     con(f"setblock {tx + dx} {y} {tz} minecraft:{kind}", side, 0.1)
