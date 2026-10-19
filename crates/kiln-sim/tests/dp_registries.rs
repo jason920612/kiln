@@ -112,6 +112,7 @@ fn the_login_of_a_server_without_packs_is_the_vanilla_one() {
     let sync = config.data_sync.clone();
     let sim = Sim::new(config);
     assert!(sync.registry_packets().is_none(), "the built-in packets (names only) are sent");
+    assert!(sync.config_tags().is_none(), "and the built-in tags");
     assert!(!kiln_data::live::is_custom());
     for (registry, names) in kiln_data::registries::SYNCHRONIZED {
         assert_eq!(kiln_data::live::synced_entries(registry).unwrap(), *names);
