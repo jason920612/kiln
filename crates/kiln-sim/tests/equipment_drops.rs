@@ -6,7 +6,7 @@ use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
 use std::path::PathBuf;
 
-const PLUNDER: &str = r#"{
+const PLUNDER: &str = r##"{
   "description": {"text": "Plunder"},
   "supported_items": "#minecraft:enchantable/melee_weapon",
   "weight": 1,
@@ -22,7 +22,7 @@ const PLUNDER: &str = r#"{
       "requirements": {"condition": "minecraft:entity_properties", "entity": "attacker", "predicate": {"type": "minecraft:player"}}
     }]
   }
-}"#;
+}"##;
 
 struct World {
     sim: Sim,
