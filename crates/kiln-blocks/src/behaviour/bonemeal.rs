@@ -235,6 +235,43 @@ pub fn grow<L: Level>(level: &mut L, pos: BlockPos) -> Option<bool> {
             }
             Some(valid)
         }
+        // Nylium grows the nether's vegetation on top; netherrack beside nylium turns into nylium (both kinds around: either at random).
+        C::NyliumBlock => {
+            let valid = is_air(level.block(pos.above())) && inside_build_height(level, pos.above());
+            if valid {
+                feature_host::place(level, FeatureRef::Configured("minecraft:nylium_bonemeal"), pos.above());
+            }
+            Some(valid)
+        }
+        C::NetherrackBlock => {
+            let nylium = |level: &L| -> (bool, bool) {
+                let (mut warped, mut crimson) = (false, false);
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            let b = level.block(pos.offset(dx, dy, dz));
+                            warped |= is_named(b, "minecraft:warped_nylium");
+                            crimson |= is_named(b, "minecraft:crimson_nylium");
+                        }
+                    }
+                }
+                (warped, crimson)
+            };
+            let skylight = kiln_data::block_props::propagates_skylight_down(level.block(pos.above()));
+            let (warped, crimson) = nylium(level);
+            let valid = skylight && (warped || crimson);
+            if valid {
+                let to = if warped && crimson {
+                    if level.random().next_bool() { "minecraft:warped_nylium" } else { "minecraft:crimson_nylium" }
+                } else if warped {
+                    "minecraft:warped_nylium"
+                } else {
+                    "minecraft:crimson_nylium"
+                };
+                crate::update::set_block_and_update(level, pos, named(to));
+            }
+            Some(valid)
+        }
         C::PitcherCropBlock => {
             let Some((lower_pos, lower)) = pitcher_lower(level, pos, s) else { return Some(false) };
             let valid = pitcher_can_grow(level, lower_pos, lower, state::get_int(lower, "age") + 1);
@@ -633,5 +670,20 @@ mod tests {
         assert!(seagrass >= 5, "a cloud of seagrass: {seagrass}");
         let mut dry = level();
         assert!(!grow_water_plant(&mut dry, BlockPos::new(0, -62, 0), None), "air is not water");
+    }
+
+    #[test]
+    fn bone_meal_turns_netherrack_beside_nylium_into_nylium() {
+        let mut l = level();
+        put(&mut l, 0, -62, 0, named("minecraft:netherrack"));
+        assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(false), "no nylium near");
+        put(&mut l, 1, -62, 0, named("minecraft:warped_nylium"));
+        assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(true));
+        assert!(is_named(at(&l, 0, -62, 0), "minecraft:warped_nylium"));
+        let mut covered = level();
+        put(&mut covered, 0, -62, 0, named("minecraft:netherrack"));
+        put(&mut covered, 1, -62, 0, named("minecraft:crimson_nylium"));
+        put(&mut covered, 0, -61, 0, d::STONE);
+        assert_eq!(grow(&mut covered, BlockPos::new(0, -62, 0)), Some(false), "stone on top blocks the sky");
     }
 }
