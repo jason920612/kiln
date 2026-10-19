@@ -296,10 +296,10 @@ pub fn is_suffocating(state: u16) -> bool {
 
 /// Whether the block of `state` is in `#minecraft:causes_suffocation`.
 fn causes_suffocation(state: u16) -> bool {
-    static STATES: OnceLock<Vec<bool>> = OnceLock::new();
-    let states = STATES.get_or_init(|| {
+    static STATES: kiln_data::live::Cached<Vec<bool>> = kiln_data::live::Cached::new();
+    let states = STATES.get(|| {
         let mut out = vec![false; table().states.len()];
-        let tags = kiln_data::registries::TAGS.iter().find(|(r, _)| *r == "minecraft:block").map_or(&[][..], |(_, tags)| *tags);
+        let tags = kiln_data::live::tags().iter().find(|(r, _)| *r == "minecraft:block").map_or(&[][..], |(_, tags)| *tags);
         let ids = tags.iter().find(|(t, _)| *t == "minecraft:causes_suffocation").map_or(&[][..], |(_, ids)| *ids);
         let names = kiln_data::builtin_entries("minecraft:block").unwrap_or(&[]);
         for &id in ids {

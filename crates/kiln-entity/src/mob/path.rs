@@ -38,13 +38,13 @@ pub fn path_type_from_state(state: u16) -> PathType {
 /// tags bound, so trapdoors, speleothems, fences and walls, fire and lit campfires fell through,
 /// lava came out as fire and water as open. `getPathTypeFromState` checks in this order.
 fn corrected() -> &'static [u8] {
-    static T: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-    T.get_or_init(|| {
+    static T: kiln_data::live::Cached<Vec<u8>> = kiln_data::live::Cached::new();
+    T.get(|| {
         let raw = table();
         let n = raw.len() / 2;
         let mut out: Vec<u8> = (0..n).map(|s| raw[s * 2]).collect();
         let tagged = |tag: &str| -> Vec<u16> {
-            let Some(ids) = kiln_data::registries::TAGS
+            let Some(ids) = kiln_data::live::tags()
                 .iter()
                 .find(|(r, _)| *r == "minecraft:block")
                 .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

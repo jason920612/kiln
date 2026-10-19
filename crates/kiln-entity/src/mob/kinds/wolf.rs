@@ -115,18 +115,18 @@ pub fn wants_to_attack(level: &dyn EntityLevel, t: &Living, owner: &PlayerView) 
 
 /// A synchronized registry entry's name.
 pub fn synced_name(registry: &str, id: i32) -> Option<&'static str> {
-    let (_, entries) = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == registry)?;
+    let (_, entries) = kiln_data::live::synced().iter().find(|(r, _)| *r == registry)?;
     entries.get(id as usize).copied()
 }
 
 fn synced_len(registry: &str) -> i32 {
-    kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == registry).map_or(1, |(_, e)| e.len() as i32)
+    kiln_data::live::synced().iter().find(|(r, _)| *r == registry).map_or(1, |(_, e)| e.len() as i32)
 }
 
 /// Whether biome `id` is `spec` (a biome name, or `#tag`).
 pub fn biome_is(id: i32, spec: &str) -> bool {
     match spec.strip_prefix('#') {
-        Some(tag) => kiln_data::registries::TAGS
+        Some(tag) => kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:worldgen/biome")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
@@ -142,18 +142,19 @@ pub fn biome_is(id: i32, spec: &str) -> bool {
 pub fn block_in_tag(state: u16, tag: &str) -> bool {
     use std::cell::RefCell;
     thread_local! {
-        static CACHE: RefCell<Vec<(String, Box<[u64]>)>> = const { RefCell::new(Vec::new()) };
+        static CACHE: RefCell<(u64, Vec<(String, Box<[u64]>)>)> = const { RefCell::new((0, Vec::new())) };
     }
     CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
+        let generation = kiln_data::live::generation();
+        if cache.0 != generation {
+            *cache = (generation, Vec::new());
+        }
+        let cache = &mut cache.1;
         let i = match cache.iter().position(|(t, _)| t == tag) {
             Some(i) => i,
             None => {
-                let ids = kiln_data::registries::TAGS
-                    .iter()
-                    .find(|(r, _)| *r == "minecraft:block")
-                    .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
-                    .map(|(_, ids)| *ids);
+                let ids = kiln_data::live::tag("minecraft:block", tag);
                 let count = kiln_data::blocks::STATE_COUNT as usize;
                 let mut bits = vec![0u64; count.div_ceil(64)].into_boxed_slice();
                 if let Some(ids) = ids {

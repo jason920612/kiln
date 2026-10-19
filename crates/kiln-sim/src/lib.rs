@@ -1634,7 +1634,7 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
 
 impl Sim {
     pub fn new(config: SimConfig) -> Sim {
-        let biome_count = kiln_data::registries::SYNCHRONIZED
+        let biome_count = kiln_data::live::synced()
             .iter()
             .find(|(r, _)| *r == "minecraft:worldgen/biome")
             .map_or(0, |(_, e)| e.len());

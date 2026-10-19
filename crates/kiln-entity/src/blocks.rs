@@ -145,10 +145,10 @@ const TAGS: &[(Tag, &str)] = &[
 ];
 
 pub fn has_tag(state: u16, tag: Tag) -> bool {
-    static FLAGS: OnceLock<Vec<u32>> = OnceLock::new();
-    FLAGS.get_or_init(|| {
+    static FLAGS: kiln_data::live::Cached<Vec<u32>> = kiln_data::live::Cached::new();
+    FLAGS.get(|| {
         let mut out = vec![0u32; STATE_COUNT as usize];
-        let block_tags = kiln_data::registries::TAGS
+        let block_tags = kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:block")
             .map_or(&[][..], |(_, tags)| *tags);

@@ -177,7 +177,7 @@ pub fn climate(biome: Option<i32>) -> Climate {
 
 /// Whether biome id `biome` is in the `minecraft:worldgen/biome` tag `tag`.
 pub fn biome_tag(biome: i32, tag: &str) -> bool {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:worldgen/biome")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

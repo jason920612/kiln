@@ -1,4 +1,17 @@
-//! Mobs: vanilla's `LivingEntity` / `Mob` / `PathfinderMob` behaviour for the types Kiln
+//! Mobs: vanilla's `LivingEn    // (Dropped when the tags change.)
+    thread_local! {
+        static TAGS: std::cell::RefCell<(u64, std::collections::HashMap<String, std::rc::Rc<Vec<bool>>>)> = Default::default();
+    }
+    let flags = TAGS.with(|t| {
+        let generation = kiln_data::live::generation();
+        {
+            let mut t = t.borrow_mut();
+            if t.0 != generation {
+                *t = (generation, Default::default());
+            }
+        }
+        let mut t = std::cell::RefMut::map(t.borrow_mut(), |t| &mut t.1);
+        if let Some(f) = t.get(tag) {ity` / `Mob` / `PathfinderMob` behaviour for the types Kiln
 //! simulates (pig, cow, sheep, chicken, zombie, skeleton, creeper, spider).
 //!
 //! A mob is an [`Entity`] whose kind is [`EntityKind::Mob`] holding a [`MobData`]: health and
@@ -974,7 +987,7 @@ pub fn sound_event(name: &str) -> &'static str {
 /// Whether item id `item` is in the `minecraft:item` tag `tag`.
 pub fn item_tag(item: i32, tag: &str) -> bool {
     item > 0
-        && kiln_data::registries::TAGS
+        && kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:item")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
@@ -986,27 +999,30 @@ pub fn item_tag(item: i32, tag: &str) -> bool {
 pub fn entity_type_tag(type_name: &str, tag: &str) -> bool {
     let Some(id) = kiln_data::builtin_id("minecraft:entity_type", type_name) else { return false };
     // Each tag as a flag per entity type, made on first use.
+    // (Dropped when the tags change.)
     thread_local! {
-        static TAGS: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<Vec<bool>>>> = Default::default();
+        static TAGS: std::cell::RefCell<(u64, std::collections::HashMap<String, std::rc::Rc<Vec<bool>>>)> = Default::default();
     }
     let flags = TAGS.with(|t| {
-        if let Some(f) = t.borrow().get(tag) {
+        let mut t = t.borrow_mut();
+        let generation = kiln_data::live::generation();
+        if t.0 != generation {
+            *t = (generation, Default::default());
+        }
+        let t = &mut t.1;
+        if let Some(f) = t.get(tag) {
             return f.clone();
         }
         let count = kiln_data::builtin_entries("minecraft:entity_type").map_or(0, |e| e.len());
         let mut flags = vec![false; count];
-        let ids = kiln_data::registries::TAGS
-            .iter()
-            .find(|(r, _)| *r == "minecraft:entity_type")
-            .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
-            .map(|(_, ids)| *ids);
+        let ids = kiln_data::live::tag("minecraft:entity_type", tag);
         for &i in ids.unwrap_or(&[]) {
             if let Some(f) = usize::try_from(i).ok().and_then(|i| flags.get_mut(i)) {
                 *f = true;
             }
         }
         let flags = std::rc::Rc::new(flags);
-        t.borrow_mut().insert(tag.to_owned(), flags.clone());
+        t.insert(tag.to_owned(), flags.clone());
         flags
     });
     flags.get(id as usize).copied().unwrap_or(false)
@@ -3504,7 +3520,7 @@ fn sound_variant_count(kind: MobKind) -> i32 {
         MobKind::Cow => "minecraft:cow_sound_variant",
         _ => "minecraft:chicken_sound_variant",
     };
-    kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == reg).map_or(1, |(_, e)| e.len() as i32)
+    kiln_data::live::synced().iter().find(|(r, _)| *r == reg).map_or(1, |(_, e)| e.len() as i32)
 }
 /// `isPersistenceRequired() || requiresCustomPersistence()`: the mobs `NaturalSpawner.createState` leaves out of its counts.
 pub fn persistent_for_counts(e: &Entity, m: &MobData) -> bool {
@@ -3610,7 +3626,7 @@ impl DamageKind {
             "minecraft:spit" => return DamageKind::Spit,
             _ => {}
         }
-        kiln_data::registries::SYNCHRONIZED
+        kiln_data::live::synced()
             .iter()
             .find(|(r, _)| *r == "minecraft:damage_type")
             .and_then(|(_, ids)| ids.iter().copied().find(|t| *t == name))
@@ -3682,7 +3698,7 @@ impl DamageKind {
     /// Whether the damage type is in a `minecraft:damage_type` tag.
     pub fn is_tag(self, tag: &str) -> bool {
         let Some(id) = kiln_data::synced_id("minecraft:damage_type", self.type_name()) else { return false };
-        kiln_data::registries::TAGS
+        kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:damage_type")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

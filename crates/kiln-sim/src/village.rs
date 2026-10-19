@@ -240,7 +240,7 @@ impl Sim {
     fn biome_in_tag(&self, pos: [i32; 3], tag: &str) -> bool {
         let Some(name) = self.biome_name(OVERWORLD_ID, pos) else { return false };
         let Some(id) = kiln_data::synced_id("minecraft:worldgen/biome", name) else { return false };
-        kiln_data::registries::TAGS
+        kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:worldgen/biome")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

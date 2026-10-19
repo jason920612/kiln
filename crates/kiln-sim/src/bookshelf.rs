@@ -42,7 +42,7 @@ fn occupied(s: u16, slot: usize) -> bool {
 
 /// Whether the item is a book that can stand on the shelf (`#minecraft:bookshelf_books`).
 fn is_book(stack: &ItemStack) -> bool {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:item")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == "minecraft:bookshelf_books"))

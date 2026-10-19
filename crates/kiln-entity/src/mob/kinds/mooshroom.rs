@@ -254,7 +254,7 @@ impl Kind for Mooshroom {
 
 /// Whether block id `id` is in the `minecraft:block` tag `tag`.
 fn block_tag(id: i32, tag: &str) -> bool {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:block")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

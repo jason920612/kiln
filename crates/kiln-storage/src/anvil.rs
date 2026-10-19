@@ -156,7 +156,7 @@ fn encode_payload(pos: ChunkPos, chunk: &Chunk, preserved: Option<&Tag>) -> Vec<
 
 impl AnvilSource {
     pub fn new(region_dir: impl Into<PathBuf>) -> Self {
-        let biomes = kiln_data::registries::SYNCHRONIZED
+        let biomes = kiln_data::live::synced()
             .iter()
             .find(|(r, _)| *r == "minecraft:worldgen/biome")
             .map(|(_, e)| e.iter().enumerate().map(|(i, &n)| (n, i as u16)).collect())
@@ -588,7 +588,7 @@ pub(crate) fn light_tag(l: &Light) -> Tag {
 
 /// Biome names by registry id.
 pub(crate) fn biome_names() -> &'static [&'static str] {
-    kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome").map(|(_, e)| *e).unwrap_or(&[])
+    kiln_data::live::synced().iter().find(|(r, _)| *r == "minecraft:worldgen/biome").map(|(_, e)| *e).unwrap_or(&[])
 }
 
 /// The sections a saved chunk lists, in order: Y, the section inside the build height, and

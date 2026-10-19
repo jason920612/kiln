@@ -83,7 +83,7 @@ pub fn type_for_biome(biome: &str) -> &'static str {
 
 /// The `minecraft:worldgen/biome` entry of a network id.
 pub fn biome_name(id: i32) -> Option<&'static str> {
-    let (_, entries) = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?;
+    let (_, entries) = kiln_data::live::synced().iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?;
     entries.get(usize::try_from(id).ok()?).copied()
 }
 

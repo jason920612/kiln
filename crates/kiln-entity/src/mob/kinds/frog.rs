@@ -74,11 +74,11 @@ fn frogs_spawnable_on(state: u16) -> bool {
 /// The state's membership in the block tags this module reads (a table of flags per state).
 fn block_flag(state: u16, which: usize) -> bool {
     use std::sync::OnceLock;
-    static T: OnceLock<Vec<u8>> = OnceLock::new();
-    T.get_or_init(|| {
+    static T: kiln_data::live::Cached<Vec<u8>> = kiln_data::live::Cached::new();
+    T.get(|| {
         let tags = ["minecraft:frog_prefer_jump_to", "minecraft:frogs_spawnable_on"];
         let mut out = vec![0u8; kiln_data::blocks::STATE_COUNT as usize];
-        let block_tags = kiln_data::registries::TAGS.iter().find(|(r, _)| *r == "minecraft:block").map_or(&[][..], |(_, t)| *t);
+        let block_tags = kiln_data::live::tags().iter().find(|(r, _)| *r == "minecraft:block").map_or(&[][..], |(_, t)| *t);
         let names = kiln_data::builtin_entries("minecraft:block").unwrap_or(&[]);
         for (i, name) in tags.iter().enumerate() {
             let ids = block_tags.iter().find(|(t, _)| t == name).map_or(&[][..], |(_, ids)| *ids);

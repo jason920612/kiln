@@ -108,7 +108,7 @@ impl EntityView {
 
 /// Whether a `minecraft:damage_type` network id is in a damage type tag.
 pub fn damage_type_in_tag(id: i32, tag: &str) -> bool {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:damage_type")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

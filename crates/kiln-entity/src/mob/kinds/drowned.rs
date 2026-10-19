@@ -272,7 +272,7 @@ impl Kind for Drowned {
 
 /// Whether biome `id` (`minecraft:worldgen/biome`) is in `tag`.
 fn biome_tag(id: i32, tag: &str) -> bool {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:worldgen/biome")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

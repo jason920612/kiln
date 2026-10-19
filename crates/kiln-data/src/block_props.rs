@@ -167,7 +167,7 @@ pub fn collision(state: u16) -> &'static [Aabb] {
 fn tag_members(registry: &str, tag: &str) -> Vec<bool> {
     let n = crate::blocks::STATE_COUNT as usize;
     let mut out = vec![false; n];
-    let blocks = crate::registries::TAGS
+    let blocks = crate::live::tags()
         .iter()
         .find(|(r, _)| *r == registry)
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
@@ -184,15 +184,15 @@ fn tag_members(registry: &str, tag: &str) -> Vec<bool> {
 /// Counts toward the MOTION_BLOCKING heightmap (26.3: the `blocks_motion_in_heightmap`
 /// tag, or a non-empty fluid).
 pub fn motion_blocking(state: u16) -> bool {
-    static T: OnceLock<Vec<bool>> = OnceLock::new();
-    T.get_or_init(|| tag_members("minecraft:block", "minecraft:blocks_motion_in_heightmap"))[state as usize]
+    static T: crate::live::Cached<Vec<bool>> = crate::live::Cached::new();
+    T.get(|| tag_members("minecraft:block", "minecraft:blocks_motion_in_heightmap"))[state as usize]
         || crate::blocks_types::has_fluid(state)
 }
 
 /// Counts toward the MOTION_BLOCKING_NO_LEAVES heightmap.
 pub fn motion_blocking_no_leaves(state: u16) -> bool {
-    static T: OnceLock<Vec<bool>> = OnceLock::new();
-    T.get_or_init(|| tag_members("minecraft:block", "minecraft:blocks_motion_in_heightmap_no_leaves"))[state as usize]
+    static T: crate::live::Cached<Vec<bool>> = crate::live::Cached::new();
+    T.get(|| tag_members("minecraft:block", "minecraft:blocks_motion_in_heightmap_no_leaves"))[state as usize]
         || crate::blocks_types::has_fluid(state)
 }
 

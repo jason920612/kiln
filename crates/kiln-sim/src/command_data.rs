@@ -392,7 +392,7 @@ impl Sim {
         by: Option<&PlayerRef>,
         from: Option<&PlayerRef>,
     ) -> Result<bool, CommandError> {
-        let ty = kiln_data::registries::SYNCHRONIZED
+        let ty = kiln_data::live::synced()
             .iter()
             .find(|(r, _)| *r == "minecraft:damage_type")
             .and_then(|(_, ids)| ids.iter().copied().find(|t| *t == damage_type))

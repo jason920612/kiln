@@ -58,7 +58,7 @@ pub fn wither_can_destroy(state: u16) -> bool {
 /// Whether block state `state` is in the `minecraft:block` tag `tag`.
 pub fn block_tag(state: u16, tag: &str) -> bool {
     let Some(id) = kiln_data::builtin_id("minecraft:block", crate::blocks::block_name(state)) else { return false };
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:block")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

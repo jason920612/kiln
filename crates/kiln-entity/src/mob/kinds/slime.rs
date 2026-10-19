@@ -423,7 +423,7 @@ pub fn dimensions(m: &MobData, base: (f32, f32, f32)) -> (f32, f32, f32) {
 
 /// Whether biome `id` is in the `minecraft:worldgen/biome` tag `tag`.
 pub fn biome_in_tag(id: i32, tag: &str) -> bool {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:worldgen/biome")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

@@ -82,9 +82,9 @@ pub fn resonance_event(frequency: i32) -> &'static str {
 
 /// Game event tags as bit sets over protocol ids (there are fewer than 128 events).
 fn event_tags() -> &'static [(&'static str, u128)] {
-    static TAGS: OnceLock<Vec<(&'static str, u128)>> = OnceLock::new();
-    TAGS.get_or_init(|| {
-        kiln_data::registries::TAGS
+    static TAGS: kiln_data::live::Cached<Vec<(&'static str, u128)>> = kiln_data::live::Cached::new();
+    TAGS.get(|| {
+        kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:game_event")
             .map_or(&[][..], |(_, t)| *t)
@@ -103,11 +103,11 @@ pub fn in_tag(event: &str, tag: &str) -> bool {
 /// Block tags vibrations consult, per state (bit 0 `#occludes_vibration_signals`, bit 1
 /// `#dampens_vibrations`, bit 2 `#vibration_resonators`).
 fn block_flags(state: u16) -> u8 {
-    static FLAGS: OnceLock<Vec<u8>> = OnceLock::new();
-    let flags = FLAGS.get_or_init(|| {
+    static FLAGS: kiln_data::live::Cached<Vec<u8>> = kiln_data::live::Cached::new();
+    let flags = FLAGS.get(|| {
         let states = kiln_data::blocks::STATE_COUNT as usize;
         let mut out = vec![0u8; states];
-        let tags = kiln_data::registries::TAGS.iter().find(|(r, _)| *r == "minecraft:block").map_or(&[][..], |(_, t)| *t);
+        let tags = kiln_data::live::tags().iter().find(|(r, _)| *r == "minecraft:block").map_or(&[][..], |(_, t)| *t);
         let names = kiln_data::builtin_entries("minecraft:block").unwrap_or(&[]);
         for (bit, tag) in ["minecraft:occludes_vibration_signals", "minecraft:dampens_vibrations", "minecraft:vibration_resonators"].iter().enumerate() {
             let ids = tags.iter().find(|(t, _)| t == tag).map_or(&[][..], |(_, ids)| *ids);

@@ -961,7 +961,7 @@ impl Level for RegionLevel<'_> {
 
     fn biome_name(&self, pos: BlockPos) -> Option<String> {
         let id = crate::weather::biome_at(self.cells, self.env, pos);
-        let (_, names) = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?;
+        let (_, names) = kiln_data::live::synced().iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?;
         names.get(id as usize).map(|n| (*n).to_owned())
     }
 

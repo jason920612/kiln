@@ -33,10 +33,12 @@ pub fn game_rule_default(rule: &str) -> Option<GameRuleDefault> {
     game_rules::GAME_RULES.iter().find(|(r, _)| *r == rule).map(|&(_, d)| d)
 }
 
-/// Index of `entry` in a synchronized registry, i.e. its network id.
+pub mod live;
+
+/// Index of `entry` in a synchronized registry, i.e. its network id (the registry as the
+/// running server has it, see [`live`]).
 pub fn synced_id(registry: &str, entry: &str) -> Option<i32> {
-    let (_, entries) = registries::SYNCHRONIZED.iter().find(|(r, _)| *r == registry)?;
-    entries.iter().position(|e| *e == entry).map(|i| i as i32)
+    live::synced_id(registry, entry)
 }
 
 /// Protocol id of `entry` in a built-in registry such as `minecraft:entity_type`.

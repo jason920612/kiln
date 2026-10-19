@@ -245,7 +245,7 @@ fn translate_plain(key: &str) -> Tag {
 
 /// Whether a `minecraft:damage_type` network id is in a damage type tag.
 pub(crate) fn damage_type_tag(id: i32, tag: &str) -> bool {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:damage_type")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

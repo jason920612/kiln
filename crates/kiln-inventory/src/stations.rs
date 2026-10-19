@@ -42,7 +42,7 @@ fn selectable_patterns(pattern_item: &ItemStack) -> Vec<i32> {
             "diagonal_right", "circle", "rhombus", "half_vertical", "half_horizontal", "half_vertical_right", "half_horizontal_bottom", "border",
             "gradient", "gradient_up",
         ];
-        let names = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:banner_pattern").map_or(&[][..], |(_, n)| *n);
+        let names = kiln_data::live::synced().iter().find(|(r, _)| *r == "minecraft:banner_pattern").map_or(&[][..], |(_, n)| *n);
         return NO_ITEM_REQUIRED
             .iter()
             .filter_map(|n| names.iter().position(|x| x.strip_prefix("minecraft:").unwrap_or(x) == *n).map(|i| i as i32))

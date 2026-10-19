@@ -535,7 +535,7 @@ fn fluid_matches(j: &Json, state: u16) -> bool {
             Some(t) if t.starts_with('#') => {
                 let tag = t.trim_start_matches('#');
                 let tag = if tag.contains(':') { tag.to_string() } else { format!("minecraft:{tag}") };
-                kiln_data::registries::TAGS
+                kiln_data::live::tags()
                     .iter()
                     .find(|(r, _)| *r == "minecraft:fluid")
                     .and_then(|(_, tags)| tags.iter().find(|(n, _)| *n == tag))

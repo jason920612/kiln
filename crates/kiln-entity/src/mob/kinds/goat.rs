@@ -367,7 +367,7 @@ fn create_horn(e: &Entity, m: &MobData) -> Option<ItemStack> {
     let hash = ((hilo >> 32) as u32 ^ hilo as u32) as i32;
     let mut r = LegacyRandom::new(hash as i64);
     let tag = if is_screaming(m) { "minecraft:screaming_goat_horns" } else { "minecraft:regular_goat_horns" };
-    let list = kiln_data::registries::TAGS
+    let list = kiln_data::live::tags()
         .iter()
         .find(|(reg, _)| *reg == "minecraft:instrument")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

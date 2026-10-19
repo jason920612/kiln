@@ -1301,7 +1301,7 @@ impl MobKind {
             MobKind::Chicken => "minecraft:chicken_food",
             _ => return self.ext().is_some_and(|k| k.tempted_by(item)),
         };
-        kiln_data::registries::TAGS
+        kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:item")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

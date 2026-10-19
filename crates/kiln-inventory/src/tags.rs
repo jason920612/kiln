@@ -1,15 +1,14 @@
-//! Registry tags from kiln-data's generated tables (the vanilla datapack's tags, resolved).
+//! Registry tags of the running server (`kiln_data::live`: the enabled data packs' tags, the vanilla ones before they load).
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
 
 type Index = HashMap<(&'static str, &'static str), &'static [i32]>;
 
 fn index() -> &'static Index {
-    static INDEX: OnceLock<Index> = OnceLock::new();
-    INDEX.get_or_init(|| {
+    static INDEX: kiln_data::live::Cached<Index> = kiln_data::live::Cached::new();
+    INDEX.get(|| {
         let mut m = HashMap::new();
-        for (registry, tags) in kiln_data::registries::TAGS {
+        for (registry, tags) in kiln_data::live::tags() {
             for (tag, ids) in *tags {
                 m.insert((*registry, *tag), *ids);
             }

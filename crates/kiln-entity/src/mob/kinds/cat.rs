@@ -64,7 +64,7 @@ fn sound(m: &MobData, what: &str) -> &'static str {
 }
 
 fn synced_len(registry: &str) -> i32 {
-    kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == registry).map_or(1, |(_, e)| e.len() as i32)
+    kiln_data::live::synced().iter().find(|(r, _)| *r == registry).map_or(1, |(_, e)| e.len() as i32)
 }
 
 impl Kind for Cat {
@@ -209,7 +209,7 @@ impl Kind for Cat {
         // `CatVariants`: the ten common cats, and the all-black one under a (nearly) full moon; inside a swamp
         // hut (`#cats_spawn_as_black`, priority 1) only the all-black one.
         let full_moon = ctx.moon_brightness >= 0.9;
-        let candidates: Vec<&str> = kiln_data::registries::SYNCHRONIZED
+        let candidates: Vec<&str> = kiln_data::live::synced()
             .iter()
             .find(|(r, _)| *r == "minecraft:cat_variant")
             .map_or(&[][..], |(_, e)| *e)

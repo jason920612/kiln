@@ -755,7 +755,7 @@ fn item_display_name(stack: &ItemStack, name: kiln_proto::nbt::Tag) -> kiln_prot
 /// Whether an item is in a `minecraft:item` tag.
 pub(crate) fn item_in_tag(stack: &ItemStack, tag: &str) -> bool {
     !stack.is_empty()
-        && kiln_data::registries::TAGS
+        && kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:item")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

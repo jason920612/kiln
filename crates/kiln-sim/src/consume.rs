@@ -351,7 +351,7 @@ fn consume_ticks(c: &kiln_item::component::Consumable) -> i32 {
 /// Entries of a registry tag (network ids).
 fn tag_entries(registry: &str, tag: &str) -> Vec<i32> {
     let tag = tag.strip_prefix('#').unwrap_or(tag);
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == registry)
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

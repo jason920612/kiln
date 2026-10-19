@@ -121,14 +121,14 @@ impl Tags {
 /// Whether kiln-data has network ids for `registry`.
 pub fn has_id_table(registry: &str) -> bool {
     kiln_data::builtin_entries(registry).is_some()
-        || kiln_data::registries::SYNCHRONIZED.iter().any(|(r, _)| *r == registry)
+        || kiln_data::live::synced().iter().any(|(r, _)| *r == registry)
 }
 
 /// The `'static` registry name kiln-data uses (so a [`Registry`] can be built at runtime).
 fn static_name(registry: &str) -> &'static str {
     kiln_data::registries::BUILTIN
         .iter()
-        .chain(kiln_data::registries::SYNCHRONIZED)
+        .chain(kiln_data::live::synced())
         .find(|(r, _)| *r == registry)
         .map(|(r, _)| *r)
         .expect("registry with an id table")

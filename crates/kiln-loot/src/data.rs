@@ -240,7 +240,7 @@ impl LootData {
         let known = |registry: &str, id: &Identifier| {
             if tags::has_id_table(registry) {
                 kiln_data::builtin_entries(registry)
-                    .or_else(|| kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == registry).map(|(_, e)| *e))
+                    .or_else(|| kiln_data::live::synced().iter().find(|(r, _)| *r == registry).map(|(_, e)| *e))
                     .is_some_and(|entries| entries.contains(&id.as_str()))
             } else {
                 true
