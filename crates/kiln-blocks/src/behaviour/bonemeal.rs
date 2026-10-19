@@ -236,6 +236,15 @@ pub fn grow<L: Level>(level: &mut L, pos: BlockPos) -> Option<bool> {
             Some(valid)
         }
         // Nylium grows the nether's vegetation on top; netherrack beside nylium turns into nylium (both kinds around: either at random).
+        // A pale moss carpet on the ground puts another on top of itself: `createTopperWithSideChance` (every side that can hold one takes it).
+        C::MossyCarpetBlock => {
+            let valid = state::get_bool(s, "bottom") && !is_air(mossy_topper(level, pos));
+            if valid {
+                let topper = mossy_topper(level, pos);
+                crate::update::set_block_and_update(level, pos.above(), topper);
+            }
+            Some(valid)
+        }
         // A fungus on its own nylium grows into a huge fungus four times in ten.
         C::NetherFungusBlock => {
             let (required, feature) = if is_named(s, "minecraft:warped_fungus") {
@@ -468,6 +477,19 @@ fn small_dripleaf<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
     }
 }
 
+/// `MossyCarpetBlock.createTopperWithSideChance(level, pos, () -> true)`: the carpet that goes on top of the one at `pos` (air when none can).
+fn mossy_topper<L: Level>(level: &L, pos: BlockPos) -> u16 {
+    let above_pos = pos.above();
+    let above = level.block(above_pos);
+    let is_carpet = is_named(above, "minecraft:pale_moss_carpet");
+    if (is_carpet && state::get_bool(above, "bottom")) || (!is_carpet && !kiln_data::block_props::replaceable(above)) {
+        return kiln_data::blocks::default_state::AIR;
+    }
+    let fresh = state::set_bool(named("minecraft:pale_moss_carpet"), "bottom", false);
+    let updated = crate::place_rules::mossy_carpet_state(level, fresh, above_pos, true);
+    if crate::place_rules::mossy_carpet_faces(updated) && updated != above { updated } else { kiln_data::blocks::default_state::AIR }
+}
+
 /// `BoneMealItem.growWaterPlant`: bone meal on the water beside a solid face: 128 tries to scatter seagrass (and in a warm ocean corals and coral fans, a wall coral
 /// on the first try when `face` is a side) in a growing cloud around `pos`, ripening seagrass already there one time in ten. False when `pos` is not still water.
 pub fn grow_water_plant<L: Level>(level: &mut L, pos: BlockPos, face: Option<Direction>) -> bool {
@@ -698,5 +720,23 @@ mod tests {
         put(&mut covered, 1, -62, 0, named("minecraft:crimson_nylium"));
         put(&mut covered, 0, -61, 0, d::STONE);
         assert_eq!(grow(&mut covered, BlockPos::new(0, -62, 0)), Some(false), "stone on top blocks the sky");
+    }
+
+    #[test]
+    fn bone_meal_puts_a_pale_moss_carpet_on_top_of_one_on_the_ground() {
+        let mut l = level();
+        let carpet = state::set_bool(named("minecraft:pale_moss_carpet"), "bottom", true);
+        put(&mut l, 0, -62, 0, carpet);
+        // A stone wall beside it gives the upper carpet a side to climb.
+        put(&mut l, 1, -62, 0, d::STONE);
+        put(&mut l, 1, -61, 0, d::STONE);
+        assert_eq!(grow(&mut l, BlockPos::new(0, -62, 0)), Some(true));
+        let top = at(&l, 0, -61, 0);
+        assert!(is_named(top, "minecraft:pale_moss_carpet") && !state::get_bool(top, "bottom"), "a carpet on top: {top}");
+        assert_eq!(state::get(top, "east"), Some("low"), "it climbs the stone beside it");
+        // With nothing to hold on to, no topper: not a valid target.
+        let mut bare = level();
+        put(&mut bare, 0, -62, 0, carpet);
+        assert_eq!(grow(&mut bare, BlockPos::new(0, -62, 0)), Some(false));
     }
 }
