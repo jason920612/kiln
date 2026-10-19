@@ -634,6 +634,9 @@ struct Player {
     brush_ticks: Option<i32>,
     /// The operator permission level (`/op`), kept by the server for the regions' sake (game master blocks).
     permission: u8,
+    /// `clientIsFloating` and `aboveGroundTickCount`: the client's last move left it with nothing under it, and for how long.
+    client_is_floating: bool,
+    above_ground_ticks: i32,
     /// Whether the player is in the operators list (`PlayerList.isOp`, which spawn protection asks).
     is_op: bool,
     /// The level the client was last told (`EntityEvent.PERMISSION_LEVEL_*`); `None` until the first notice.
@@ -2941,6 +2944,7 @@ impl Sim {
             border: self.world.borders[dim].bounds(),
             tickets: std::sync::Arc::new(self.level_tickets(dim)),
             // `DedicatedServer.isUnderSpawnProtection`: in the spawn's level, once somebody is an operator.
+            allow_flight: self.config.server.allow_flight,
             spawn_protection: (dim == OVERWORLD_ID && self.config.server.spawn_protection > 0 && !self.commands.ops.is_empty())
                 .then_some((self.config.server.spawn_protection, self.spawn)),
         }
@@ -4302,6 +4306,8 @@ impl Sim {
             brush_ticks: None,
             permission: 0,
             is_op: false,
+            client_is_floating: false,
+            above_ground_ticks: 0,
             permission_sent: None,
             plugin_gate: None,
             recent_stabs: Vec::new(),

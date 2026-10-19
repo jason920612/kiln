@@ -29,6 +29,7 @@ impl Sim {
         self.commands.idle_timeout = s.player_idle_timeout.max(0);
         crate::world_state::set_absolute_max_size(s.max_world_size);
         crate::blocks::set_max_chained_neighbor_updates(s.max_chained_neighbor_updates);
+        crate::entities::set_broadcast_range_percentage(s.entity_broadcast_range_percentage);
     }
 
     /// `MinecraftServer.tickServer`'s pause: after `pause-when-empty-seconds` without players the world

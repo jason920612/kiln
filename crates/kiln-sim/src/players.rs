@@ -416,7 +416,7 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
         /// In spectator mode: sees everyone, and is seen only by other spectators.
         spectator: bool,
     }
-    let range_cap = PLAYER.tracking_range as f64 * 16.0;
+    let range_cap = crate::entities::scaled_tracking_range(PLAYER.tracking_range as i32);
     let snaps: Vec<Snap> = players
         .iter_mut()
         .map(|p| {
