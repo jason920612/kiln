@@ -106,12 +106,17 @@
 
 ## MSPT 與區塊
 
-(見最後一節「驗證」之後的數字。)
+只有最後一次啟動(物品×生物矩陣,一位玩家在平台上)的 Kiln log 還在(前面每次重啟都覆寫了 log):`mspt` 報告 64 筆(63 筆有玩家):平均的平均 **0.48 ms**、中位數 0.46 ms、p99 的中位數 2.2 ms,最大平均 0.79 ms,沒有任何一筆單刻 > 400 ms 或平均 > 5 ms;區塊:`disk_hits=379`、`sync_loads=0`、`gen_done=0`(世界已生成)。
+遊玩當中沒有看到異常的停頓;兩個舊問題照舊(wp73、wp78 記過):`forceload`/tp 到沒生成的地方、終界閘道出口(950,66,425)的冷生成會讓一個 tick 停 2~3 秒,vanilla 同樣會。這一輪的 VM 負載(另一個 session 的測試)常在 10 以上,所以延遲數字不當依據。
 
 ## 截圖
 
 `docs/wp80/eyeblossom_KV.jpg`:夜晚的蒼白苔蘚上,眼眨花全部開啟(兩個客戶端:Kiln 大視窗、vanilla 小視窗疊在上面)。
 
-## 驗證(VM,最後一個程式碼 commit)
+## 驗證(VM,最後一個程式碼 commit `wp80: pale moss carpet test`;之後只改文件與驗證腳本)
 
-(待補。)
+* `cargo test --release --workspace --no-fail-fast`:**不帶**與**帶** `KILN_DATAPACK=/home/test/kiln/work/generated` 各一次(`tools/wp80/verify80.sh`):都是 **1441 通過、0 失敗、23 個本來就 ignore**(wp78 是 1410;新增 31 個:`player_hurt_animation`(2)、`landing_dust`(1)、`eyeblossom`(1)、`bone_meal_dispenser`(1)、`beacon_pyramids`(4)、`gateway_entities`(2)、`lodestone_compass`(1)、`love_cause`(1)、`bonemeal.rs` 單元測試(10)…);含 `determinism.rs`(各 6 個)、`mob_parity`(`mobs_match_vanilla`,`work/m6-mobs2/vectors.jsonl` 全部案例)、`crowd_golden`(4 個)。
+* `tools/parity_suites.py --skip-workspace`:**113 個步驟全部 exit 0**(`container parity` 30+14 個 scenario、`sculk` 4160/4160、`spear` 148、`mob_parity`…)。
+* `crowd_golden` **沒有重錄**:玩家封包與狀態雜湊都沒變(測試場景裡沒有玩家被投射物打到,也沒有生物落地)。
+* 沒有新增向量檔(`work/wp80/` 空);`work/m6-mobs2/vectors.jsonl` 沒有動。證據是鎖步並排與真客戶端並排(本文各節)。
+* 負向檢查(`tools/wp80/neg80.sh`,把修正過的檔案或那一行退回,對應的測試必須失敗):玩家受傷封包、落地塵土、眼眨花(排程刻與隨機刻兩處)、骨粉(發射器)、信標 `data get block`、指令放的合成器欄位、`data merge` 保留信標層數、閘道實體、羅盤、`LoveCause`:**11 項全部失敗(good)**。
