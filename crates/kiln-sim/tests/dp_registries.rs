@@ -273,6 +273,7 @@ fn a_disc_of_a_song_of_the_pack_plays_for_its_length_and_the_comparator_reads_it
     let mut g = Game::new("jukebox", &["kiln_wp83"], "Dj");
     let [x, y, z] = g.spot(2);
     let song = kiln_data::synced_id("minecraft:jukebox_song", "kiln83:tune").unwrap();
+    g.console(&format!("fill {x} {} {z} {} {} {z} minecraft:stone", y - 1, x + 2, y - 1));
     g.console(&format!("setblock {x} {y} {z} minecraft:jukebox"));
     g.console(&format!("setblock {} {y} {z} minecraft:comparator[facing=east]", x + 1));
     g.console(&format!("setblock {} {y} {z} minecraft:redstone_wire", x + 2));
