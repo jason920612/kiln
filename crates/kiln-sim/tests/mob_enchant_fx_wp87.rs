@@ -280,3 +280,23 @@ fn a_players_tick_explosion_pushes_a_mob_next_to_it() {
     assert!(told >= 1, "the explosion packet reached the player ({told})");
     assert!(pushed, "the husk next to the player was pushed");
 }
+
+#[test]
+fn boots_with_a_damage_immunity_protect_a_mob_on_magma() {
+    let _x = kiln_data::live::exclusive();
+    let cool = enchantment(
+        BOOTS_SLOT,
+        r#""minecraft:damage_immunity": [{"effect": {}, "requirements": {"type": "minecraft:damage_source_properties", "predicate": {"tags": [{"id": "minecraft:burn_from_stepping", "expected": true}]}}}]"#,
+    );
+    let mut w = World::new("cool", &[("cool", cool)]);
+    let g = w.ground;
+    w.sim.console_now(&format!("fill {} {} {} {} {} {} minecraft:magma_block", g[0] + 2, g[1], g[2] - 3, g[0] + 8, g[1], g[2] + 3));
+    w.ticks(2);
+    let still = "attributes:[{id:\"minecraft:movement_speed\",base:0.0d}]";
+    let plain = w.summon("husk", w.spot(4.0), &format!("{{PersistenceRequired:1b,{still}}}"));
+    let booted = w.summon("husk", w.spot(6.0), &format!("{{PersistenceRequired:1b,{still},{}}}", worn("husk", "feet", "golden_boots", "cool")));
+    w.ticks(60);
+    let health = |w: &World, id| w.sim.mob_state(id).expect("the husk").health;
+    assert!(health(&w, plain) < 20.0, "the husk without boots is burned by the magma: {}", health(&w, plain));
+    assert_eq!(health(&w, booted), 20.0, "the husk in boots with the immunity is not");
+}

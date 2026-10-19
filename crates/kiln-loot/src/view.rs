@@ -366,6 +366,19 @@ impl LootData {
         self.damage_protection(equipment, rng, |level| MobDamageContext { level, this: victim, attacker, damage_type })
     }
 
+    /// `EnchantmentHelper.isImmuneToDamage(level, victim, source)` for a mob victim: its equipment's `damage_immunity` effects (frost walker and
+    /// the damage of stepping on magma).
+    pub fn mob_damage_immunity(
+        &self,
+        equipment: &[(EquipmentSlot, &ItemStack)],
+        victim: &EntityView,
+        attacker: &EntityView,
+        damage_type: i32,
+        rng: &mut dyn RandomSource,
+    ) -> bool {
+        self.is_immune_to_damage(equipment, rng, |level| MobDamageContext { level, this: victim, attacker, damage_type })
+    }
+
     /// `EnchantmentHelper.modifyKnockback(level, weapon, victim, source, value)` for a mob's weapon.
     pub fn mob_modify_knockback(
         &self,

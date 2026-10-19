@@ -2688,6 +2688,23 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     if kind.is_tag("minecraft:is_fire") && effects::has(m, crate::effect::ids::fire_resistance()) {
         return false;
     }
+    // `LivingEntity.isInvulnerableTo`: the equipment's enchantments may make the mob immune to this damage (frost walker boots on magma).
+    if m.equipment.iter().any(|s| !s.is_empty() && s.get(kiln_item::keys::ENCHANTMENTS).is_some_and(|l| !l.is_empty()))
+        && !kind.is_tag("minecraft:bypasses_invulnerability")
+    {
+        use kiln_item::component::EquipmentSlot as S;
+        let equipment: Vec<(S, &ItemStack)> = [(S::MainHand, MAINHAND), (S::OffHand, OFFHAND), (S::Feet, FEET), (S::Legs, LEGS), (S::Chest, CHEST), (S::Head, HEAD)]
+            .into_iter()
+            .filter(|(_, i)| !m.equipment[*i].is_empty())
+            .map(|(s, i)| (s, &m.equipment[i]))
+            .collect();
+        let view = weapon::attacker_view(e);
+        let damage_type = kiln_data::synced_id("minecraft:damage_type", kind.type_name()).unwrap_or(0);
+        let mut random = kiln_javamath::random::LegacyRandom::new(0);
+        if crate::enchanting::damage_immunity(&equipment, &view, damage_type, &mut random) {
+            return false;
+        }
+    }
     m.no_action_time = 0;
     let mut amount = amount.max(0.0);
     if kind.is_tag("minecraft:damages_helmet") && !m.equipment[HEAD].is_empty() {

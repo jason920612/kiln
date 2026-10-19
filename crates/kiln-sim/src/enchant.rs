@@ -60,6 +60,10 @@ impl kiln_entity::enchanting::Enchanter for LootEnchanter {
         self.0.mob_damage_protection(equipment, victim, attacker, damage_type, random)
     }
 
+    fn damage_immunity(&self, equipment: &[(EquipmentSlot, &ItemStack)], victim: &EntityView, attacker: &EntityView, damage_type: i32, random: &mut dyn kiln_javamath::random::RandomSource) -> bool {
+        self.0.mob_damage_immunity(equipment, victim, attacker, damage_type, random)
+    }
+
     fn post_attack(&self, hit: &kiln_entity::enchanting::Hit, random: &mut dyn kiln_javamath::random::RandomSource) -> Vec<kiln_entity::enchanting::MobPostAttack> {
         self.0.mob_post_attack(hit.weapon, hit.attacker, hit.victim, hit.damage_type, random)
     }

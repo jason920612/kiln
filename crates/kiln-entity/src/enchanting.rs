@@ -76,6 +76,12 @@ pub trait Enchanter {
         0.0
     }
 
+    /// `EnchantmentHelper.isImmuneToDamage` of a mob's equipment.
+    fn damage_immunity(&self, equipment: &[(kiln_item::component::EquipmentSlot, &ItemStack)], victim: &EntityView, attacker: &EntityView, damage_type: i32, random: &mut dyn RandomSource) -> bool {
+        let _ = (equipment, victim, attacker, damage_type, random);
+        false
+    }
+
     /// What the weapon's `post_attack` enchantments do to the victim.
     fn post_attack(&self, hit: &Hit, random: &mut dyn RandomSource) -> Vec<MobPostAttack> {
         let _ = (hit, random);
@@ -212,6 +218,14 @@ pub fn damage_protection(equipment: &[(kiln_item::component::EquipmentSlot, &Ite
     let Some(e) = enchanter else { return 0.0 };
     let attacker = ATTACK.with(|a| a.borrow().as_ref().map(|s| s.attacker.clone())).unwrap_or_default();
     e.damage_protection(equipment, victim, &attacker, damage_type, random)
+}
+
+/// `EnchantmentHelper.isImmuneToDamage(level, victim, source)` of a mob's equipment.
+pub fn damage_immunity(equipment: &[(kiln_item::component::EquipmentSlot, &ItemStack)], victim: &EntityView, damage_type: i32, random: &mut dyn RandomSource) -> bool {
+    let enchanter = ENCHANTER.with(|e| e.borrow().clone());
+    let Some(e) = enchanter else { return false };
+    let attacker = ATTACK.with(|a| a.borrow().as_ref().map(|s| s.attacker.clone())).unwrap_or_default();
+    e.damage_immunity(equipment, victim, &attacker, damage_type, random)
 }
 
 /// Runs `f` with the enchantment definitions of the installed [`Enchanter`], if it has them.
