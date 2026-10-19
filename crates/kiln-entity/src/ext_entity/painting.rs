@@ -3,7 +3,7 @@
 //! a hit breaks it and it drops itself; the wall going takes it off.
 
 use super::hanging::{self, center_relative, data_value, of_size};
-use super::painting_variants::VARIANTS;
+use super::painting_variants::{placeable, variants};
 use crate::entity::{Entity, EntityKind, RemovalReason};
 use crate::ext_entity::EntityExt;
 use crate::level::{DamageKind, EntityLevel, Event};
@@ -20,14 +20,14 @@ pub const PAINTING: &str = "minecraft:painting";
 pub struct Painting {
     pub direction: Direction,
     pub pos: BlockPos,
-    /// Index into [`VARIANTS`].
+    /// The variant's `minecraft:painting_variant` network id (an index into [`variants`]).
     pub variant: usize,
     since_check: i32,
 }
 
 /// The variant named `name`.
 pub fn variant_index(name: &str) -> Option<usize> {
-    VARIANTS.iter().position(|v| v.0 == name)
+    variants().iter().position(|v| v.name == name)
 }
 
 /// The painting variant a new painting starts with (`VariantUtils.getAny`: the first one).
@@ -49,11 +49,11 @@ pub fn bare(id: i32, pos: BlockPos, direction: Direction, seed: i64) -> Entity {
 /// nothing fits.
 pub fn create(survives: &dyn Fn(&Entity) -> bool, id: i32, pos: BlockPos, direction: Direction, seed: i64) -> Option<Entity> {
     let mut e = bare(id, pos, direction, seed);
+    let all = variants();
+    // `getTagOrEmpty(PLACEABLE)`: the tag's own order; the variants that survive here.
     let mut fits: Vec<usize> = Vec::new();
-    for (i, v) in VARIANTS.iter().enumerate() {
-        if !v.3 {
-            continue;
-        }
+    for &id in placeable() {
+        let Some(i) = usize::try_from(id).ok().filter(|&i| i < all.len()) else { continue };
         let Some(p) = crate::ext_entity::get_mut::<Painting>(&mut e) else { return None };
         p.variant = i;
         let p = p.clone();
@@ -62,8 +62,8 @@ pub fn create(survives: &dyn Fn(&Entity) -> bool, id: i32, pos: BlockPos, direct
             fits.push(i);
         }
     }
-    let max = fits.iter().map(|&i| VARIANTS[i].1 * VARIANTS[i].2).max()?;
-    fits.retain(|&i| VARIANTS[i].1 * VARIANTS[i].2 >= max);
+    let max = fits.iter().map(|&i| all[i].area()).max()?;
+    fits.retain(|&i| all[i].area() >= max);
     let pick = fits[e.random.next_int_bounded(fits.len() as i32) as usize];
     let p = crate::ext_entity::get_mut::<Painting>(&mut e)?;
     p.variant = pick;
@@ -100,7 +100,8 @@ pub fn after_load(e: &mut Entity, block_pos: Option<&Tag>) {
 
 impl Painting {
     pub fn size(&self) -> (i32, i32) {
-        (VARIANTS[self.variant].1, VARIANTS[self.variant].2)
+        let v = variants()[self.variant];
+        (v.width, v.height)
     }
 
     /// `calculateBoundingBox`.
@@ -220,14 +221,12 @@ impl EntityExt for Painting {
         o.put("facing", Tag::Byte(hanging::data_value_2d(self.direction) as i8));
         let b = self.pos;
         o.put("block_pos", Tag::IntArray(vec![b.x, b.y, b.z]));
-        o.put("variant", Tag::String(VARIANTS[self.variant].0.to_owned()));
+        o.put("variant", Tag::String(variants()[self.variant].name.to_owned()));
     }
 
     fn entity_data(&self, _e: &Entity, d: &mut EntityData) {
         d.set(kiln_data::entities::data::hanging_entity::DIRECTION, &DataValue::Direction(proto_direction(self.direction)));
-        if let Some(id) = kiln_data::synced_id("minecraft:painting_variant", VARIANTS[self.variant].0) {
-            d.set(kiln_data::entities::data::painting::PAINTING_VARIANT, &DataValue::PaintingVariant(id as i32));
-        }
+        d.set(kiln_data::entities::data::painting::PAINTING_VARIANT, &DataValue::PaintingVariant(self.variant as i32));
     }
 
     fn spawn_data(&self) -> i32 {
