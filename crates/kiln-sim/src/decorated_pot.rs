@@ -67,6 +67,8 @@ pub(crate) fn use_item_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
         }
         c.mark_changed();
     }
+    // `setChanged` -> `updateNeighbourForOutputSignal`: a comparator beside the pot reads the new fullness.
+    kiln_blocks::update::update_neighbour_for_output_signal(level, pos, BlockId::of(s));
     level.effect(Effect::Sound { pos, sound: "minecraft:block.decorated_pot.insert", volume: 1.0, pitch: 0.7 + 0.5 * fill });
     if let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:dust_plume") {
         let at = [pos.x as f64 + 0.5, pos.y as f64 + 1.2, pos.z as f64 + 0.5];
