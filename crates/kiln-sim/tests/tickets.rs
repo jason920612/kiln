@@ -311,5 +311,16 @@ fn a_portal_ticket_keeps_its_chunk_loaded_after_a_restart() {
         assert!(sim.step(inbox));
     }
     assert_eq!(cows_in_nether(&sim), 1, "the nether chunk is back with the ticket, and the cow with it");
+    let mut tick = |sim: &mut Sim, n: usize| {
+        for _ in 0..n {
+            let mut inbox = Vec::new();
+            client.tick(None, &mut inbox);
+            assert!(sim.step(inbox));
+        }
+    };
+    tick(&mut sim, 100);
+    assert_eq!(cows_in_nether(&sim), 1, "130 ticks after the restart the ticket (about 250 left when it was saved) still holds the chunk");
+    tick(&mut sim, 200);
+    assert_eq!(cows_in_nether(&sim), 0, "and 330 ticks after it is spent: the chunk unloads with the cow");
     let _ = std::fs::remove_dir_all(&dir);
 }
