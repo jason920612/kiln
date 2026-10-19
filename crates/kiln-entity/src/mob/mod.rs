@@ -2950,7 +2950,8 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     // `Mob.dropCustomDeathLoot`: equipment with its drop chance.
     for i in 0..6 {
         let chance = m.drop_chances[i];
-        if !m.kind.is_mob() || !should_drop || chance == 0.0 || m.equipment[i].is_empty() {
+        // (`EnchantmentHelper.has(item, PREVENT_EQUIPMENT_DROP)`: the curse of vanishing and the like keep it.)
+        if !m.kind.is_mob() || !should_drop || chance == 0.0 || m.equipment[i].is_empty() || kiln_item::enchant_flags::has(&m.equipment[i], kiln_item::enchant_flags::Marker::PreventEquipmentDrop) {
             continue;
         }
         let preserved = chance > 1.0;
@@ -2968,7 +2969,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     // The same for the slots past the six (a horse's body armor and saddle).
     if let Some(k) = m.kind.ext() {
         for (mut stack, chance) in k.take_extra_equipment_for_drop(m) {
-            if !should_drop || chance == 0.0 || stack.is_empty() {
+            if !should_drop || chance == 0.0 || stack.is_empty() || kiln_item::enchant_flags::has(&stack, kiln_item::enchant_flags::Marker::PreventEquipmentDrop) {
                 continue;
             }
             let preserved = chance > 1.0;

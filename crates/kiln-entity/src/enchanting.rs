@@ -266,7 +266,7 @@ pub fn run_projectile_effects(
 ) {
     use kiln_loot::fx::{Action, Subject};
     use kiln_loot::view::FxContext;
-    if weapon.is_empty() {
+    if weapon.get(kiln_item::keys::ENCHANTMENTS).is_none_or(|l| l.is_empty()) {
         return;
     }
     let this = crate::mob::weapon::attacker_view(e);
@@ -280,8 +280,8 @@ pub fn run_projectile_effects(
         silent: e.silent,
         living: false,
     };
-    let seed = level.random().next_long();
-    let mut level_rng = kiln_javamath::random::LegacyRandom::new(seed);
+    // (The requirements' random: derived, so the level's own stream is not drawn from for effects that mostly do not exist.)
+    let mut level_rng = kiln_javamath::random::LegacyRandom::new(((e.id as i64) << 24) ^ level.game_time());
     let mut actions: Vec<Action> = Vec::new();
     let ran = with_loot(|loot| {
         let probe = LevelProbe(&*level);
@@ -344,12 +344,11 @@ pub fn run_projectile_post_attack(
     use kiln_loot::effects::Target;
     use kiln_loot::fx::{Action, Subject};
     use kiln_loot::view::FxContext;
-    if weapon.is_empty() {
+    if weapon.get(kiln_item::keys::ENCHANTMENTS).is_none_or(|l| l.is_empty()) {
         return;
     }
     let (att, direct, target) = crate::arrow::projectile_views(&*level, e, owner, victim);
-    let seed = level.random().next_long();
-    let mut level_rng = kiln_javamath::random::LegacyRandom::new(seed);
+    let mut level_rng = kiln_javamath::random::LegacyRandom::new(((e.id as i64) << 24) ^ level.game_time() ^ victim as i64);
     let mut done: Vec<(Target, Vec<Action>)> = Vec::new();
     let ran = with_loot(|loot| {
         let probe = LevelProbe(&*level);
