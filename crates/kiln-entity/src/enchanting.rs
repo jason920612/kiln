@@ -303,14 +303,18 @@ pub fn run_projectile_effects(
         match action {
             Action::Ignite { seconds } => e.ignite_for_seconds(seconds),
             Action::Impulse { delta } => e.delta = e.delta.add(delta[0], delta[1], delta[2]),
-            other => level_action(level, owner, "neutral", other),
+            // (`ExplodeEffect`: the projectile is the effect's entity.)
+            other => level_action(level, owner, Some(e.id), "neutral", other),
         }
     }
 }
 
 /// What a resolved action does to the level: a sound (heard in the sound `source` of the entity the effect belongs to), particles, a summoned
 /// entity (a lightning bolt credits the player who shot the projectile), blocks replaced or an explosion; the rest is the caller's.
-pub(crate) fn level_action(level: &mut dyn crate::level::EntityLevel, owner: Option<i32>, source: &'static str, action: kiln_loot::fx::Action) {
+///
+/// `owner` is the player or mob the effect credits (a lightning bolt), `user` the entity the effect is done to (an explosion's source with
+/// `attribute_to_user`).
+pub(crate) fn level_action(level: &mut dyn crate::level::EntityLevel, owner: Option<i32>, user: Option<i32>, source: &'static str, action: kiln_loot::fx::Action) {
     use crate::level::Event;
     use kiln_loot::effects::EntityEffect;
     use kiln_loot::fx::Action;
@@ -336,7 +340,7 @@ pub(crate) fn level_action(level: &mut dyn crate::level::EntityLevel, owner: Opt
         }
         Action::Level { effect, level: enchant_level, at } => {
             if matches!(effect, EntityEffect::Explode { .. }) {
-                explode_effect(level, owner, &effect, enchant_level, at);
+                explode_effect(level, user, &effect, enchant_level, at);
             } else {
                 level.emit(Event::BlockFx { effect: crate::level::BlockFx(std::sync::Arc::new(effect)), level: enchant_level, at });
             }
@@ -395,7 +399,14 @@ pub fn run_projectile_post_attack(
                     Target::DamagingEntity => e.ignite_for_seconds(seconds),
                     Target::Attacker => {}
                 },
-                other => level_action(level, owner, "neutral", other),
+                other => {
+                    let user = match affected {
+                        Target::Victim => Some(victim),
+                        Target::DamagingEntity => Some(e.id),
+                        Target::Attacker => owner,
+                    };
+                    level_action(level, owner, user, "neutral", other)
+                }
             }
         }
     }

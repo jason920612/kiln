@@ -34,6 +34,7 @@ pub fn attacker_view(e: &Entity) -> EntityView {
         on_fire: e.is_on_fire(),
         has_vehicle: e.vehicle.is_some(),
         in_water: e.is_in_water(),
+        fall_distance: e.fall_distance,
         ..EntityView::default()
     }
 }
@@ -111,6 +112,11 @@ pub fn post_attack(level: &mut dyn EntityLevel, e: &Entity, m: &MobData, t: &Liv
     for effect in enchanting::post_attack(&hit, level.random()) {
         match effect {
             MobPostAttack::Ignite { seconds } => level.ignite(t.id, seconds),
+            // `ExplodeEffect.apply` for the wielder (the wind burst of a mace) or the victim: at the position of the entity it is done to.
+            MobPostAttack::Explode { effect, level: lvl, on_victim } => {
+                let (user, at) = if on_victim { (t.id, [t.pos.x, t.pos.y, t.pos.z]) } else { (e.id, [e.x(), e.y(), e.z()]) };
+                enchanting::explode_effect(level, Some(user), &effect.0, lvl, at);
+            }
             MobPostAttack::MobEffect { effect, duration, amplifier } => {
                 if let Some(name) = kiln_data::builtin_entries("minecraft:mob_effect").and_then(|l| l.iter().find(|n| **n == effect).copied()) {
                     level.add_effect(t.id, name, duration, amplifier, Some(e.id));

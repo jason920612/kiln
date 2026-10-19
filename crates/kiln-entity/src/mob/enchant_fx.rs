@@ -341,7 +341,7 @@ fn apply(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, slot: usi
         }
         // (A player's food exhaustion.)
         Action::Exhaustion { .. } => {}
-        other => enchanting::level_action(level, Some(e.id), m.kind.sound_source(), other),
+        other => enchanting::level_action(level, Some(e.id), Some(e.id), m.kind.sound_source(), other),
     }
 }
 

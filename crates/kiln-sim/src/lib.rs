@@ -2580,6 +2580,13 @@ impl Sim {
         })
     }
 
+    /// The value of a mob's attribute (`minecraft:movement_speed`...) with its modifiers, for tests and tools.
+    pub fn mob_attribute(&self, id: i32, attribute: &str) -> Option<f64> {
+        let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id)?;
+        let attr = kiln_entity::mob::attributes::Attr::by_name(attribute)?;
+        Some(kiln_entity::mob::data(e.phys.as_deref()?)?.attrs.value(attr))
+    }
+
     /// A mob's combat state, as `tools/CombatVectors.java` records it (for tests and tools).
     pub fn mob_state(&self, id: i32) -> Option<MobState> {
         let list = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter());

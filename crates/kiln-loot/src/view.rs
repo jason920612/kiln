@@ -281,6 +281,18 @@ pub enum MobPostAttack {
     /// `apply_mob_effect` (bane of arthropods): `effect` with the duration (ticks) and amplifier
     /// as rolled.
     MobEffect { effect: String, duration: i32, amplifier: i32 },
+    /// `explode` (the mace's wind burst): an explosion at the wielder (`on_victim` false) or at the victim.
+    Explode { effect: EffectRef, level: i32, on_victim: bool },
+}
+
+/// An entity effect handed on whole (never equal to another).
+#[derive(Debug, Clone)]
+pub struct EffectRef(pub std::sync::Arc<EntityEffect>);
+
+impl PartialEq for EffectRef {
+    fn eq(&self, other: &EffectRef) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 impl LootData {
@@ -384,17 +396,18 @@ impl LootData {
         });
         let mut out = Vec::new();
         for (t, level) in found {
-            if t.affected == Target::Victim {
-                collect_post_attack(&t.effect, level, rng, &mut out);
-            }
+            collect_post_attack(&t.effect, level, rng, t.affected == Target::Victim, &mut out);
         }
         out
     }
 }
 
-fn collect_post_attack(effect: &EntityEffect, level: i32, rng: &mut dyn RandomSource, out: &mut Vec<MobPostAttack>) {
+fn collect_post_attack(effect: &EntityEffect, level: i32, rng: &mut dyn RandomSource, on_victim: bool, out: &mut Vec<MobPostAttack>) {
     match effect {
-        EntityEffect::AllOf(list) => list.iter().for_each(|e| collect_post_attack(e, level, rng, out)),
+        EntityEffect::AllOf(list) => list.iter().for_each(|e| collect_post_attack(e, level, rng, on_victim, out)),
+        EntityEffect::Explode { .. } => out.push(MobPostAttack::Explode { effect: EffectRef(std::sync::Arc::new(effect.clone())), level, on_victim }),
+        // (What the wielder itself undergoes besides the explosion is not carried out for a mob.)
+        _ if !on_victim => {}
         EntityEffect::Ignite(seconds) => out.push(MobPostAttack::Ignite { seconds: seconds.calculate(level) }),
         // `ApplyMobEffect.apply`: a random entry of the list, duration and amplifier rolled.
         EntityEffect::ApplyMobEffect { to_apply, min_duration, max_duration, min_amplifier, max_amplifier } => {
