@@ -475,6 +475,9 @@ fn a_shovel_mines_stone_when_the_pack_tags_it_mineable_with_a_shovel() {
     dig(&mut g, 1);
     // 8 (diamond) / 1.5 (hardness) / 30 per tick, a fifth of it for a player in the air (this void world has no ground): broken
     // within 30 ticks; by hand or without the tag (1 / 1.5 / 100 per tick) it takes 150 or 750.
+    g.ticks(2);
+    // The client says it is done (`STOP_DESTROY_BLOCK`) when its own clock agrees; the server finishes the break once the progress is 1.
+    assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::PlayerAction { action: 3, pos: [x, y, z], face: 1, sequence: 2 })]));
     g.ticks(35);
     assert_eq!(kiln_blocks::state::state_string(g.sim.block_at(x, y, z).unwrap()), "minecraft:air", "the shovel broke the stone");
     g.ticks(3);
