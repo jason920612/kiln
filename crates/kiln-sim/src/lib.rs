@@ -2353,6 +2353,19 @@ impl Sim {
         self.dims[dim_id(dimension)?].regions.get_block(x, y, z)
     }
 
+    /// The stored biome (its network id) of the 4x4x4 cell holding a position of the level `dimension`, if its chunk is
+    /// loaded (for tests and tools).
+    pub fn biome_in(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u16> {
+        let dim = dim_id(dimension)?;
+        let chunk = self.dims[dim].regions.chunk(ChunkPos::of_block(x, z))?;
+        let rel = y - self.dims[dim].provider.dimension.min_y;
+        let section = chunk.sections.get((rel >> 4).max(0) as usize)?;
+        Some(match &section.biomes {
+            kiln_world::section::Biomes::Single(b) => *b,
+            kiln_world::section::Biomes::Cells(cells) => cells[(((rel & 15) >> 2) as usize) << 4 | (((z & 15) >> 2) as usize) << 2 | ((x & 15) >> 2) as usize],
+        })
+    }
+
     /// The level a player is in, and where (for tests and tools).
     pub fn player_level(&self, conn: ConnId) -> Option<(&'static str, [f64; 3])> {
         self.players.get(&conn).map(|p| (dim_key(p.dim), p.pos))
