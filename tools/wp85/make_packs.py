@@ -129,10 +129,6 @@ def crystal():
 def hills():
     pack = "kiln85_hills"
     mcmeta(pack, "wp85: own noise settings")
-    shifted = lambda noise: {
-        "type": "minecraft:shifted_noise", "noise": noise, "xz_scale": 0.25, "y_scale": 0.0,
-        "shift_x": "minecraft:shift_x", "shift_y": 0.0, "shift_z": "minecraft:shift_z",
-    }
     density = {
         "type": "minecraft:add",
         "left": {
@@ -141,7 +137,7 @@ def hills():
                 "type": "minecraft:interpolated", "cell_size_xz": 4, "cell_size_y": 8,
                 "input": {
                     "type": "minecraft:add",
-                    "left": {"type": "minecraft:y_clamped_gradient", "from_y": -64, "to_y": 200, "from_value": 1.5, "to_value": -1.5},
+                    "left": {"type": "minecraft:gradient", "axis": "y", "from_coordinate": -64, "to_coordinate": 200, "from_value": 1.5, "to_value": -1.5},
                     "right": {
                         "type": "minecraft:mul",
                         "left": {"type": "minecraft:noise", "noise": "minecraft:jagged", "xz_scale": 0.5, "y_scale": 0.0},
@@ -158,10 +154,10 @@ def hills():
         "disable_mob_generation": False,
         "legacy_random_source": False,
         "material_rule": "minecraft:overworld",
-        "noise": {"min_y": -64, "height": 384, "size_horizontal": 1, "size_vertical": 2},
+        "noise": {"min_y": -64, "height": 384},
         "noise_router": {
-            "temperature": shifted("minecraft:temperature"),
-            "vegetation": shifted("minecraft:vegetation"),
+            "temperature": "minecraft:overworld/temperature",
+            "vegetation": "minecraft:overworld/vegetation",
             "continents": "minecraft:overworld/continents",
             "erosion": "minecraft:overworld/erosion",
             "depth": "minecraft:overworld/depth",

@@ -11,29 +11,11 @@
   "material_rule": "minecraft:overworld",
   "noise": {
     "min_y": -64,
-    "height": 384,
-    "size_horizontal": 1,
-    "size_vertical": 2
+    "height": 384
   },
   "noise_router": {
-    "temperature": {
-      "type": "minecraft:shifted_noise",
-      "noise": "minecraft:temperature",
-      "xz_scale": 0.25,
-      "y_scale": 0.0,
-      "shift_x": "minecraft:shift_x",
-      "shift_y": 0.0,
-      "shift_z": "minecraft:shift_z"
-    },
-    "vegetation": {
-      "type": "minecraft:shifted_noise",
-      "noise": "minecraft:vegetation",
-      "xz_scale": 0.25,
-      "y_scale": 0.0,
-      "shift_x": "minecraft:shift_x",
-      "shift_y": 0.0,
-      "shift_z": "minecraft:shift_z"
-    },
+    "temperature": "minecraft:overworld/temperature",
+    "vegetation": "minecraft:overworld/vegetation",
     "continents": "minecraft:overworld/continents",
     "erosion": "minecraft:overworld/erosion",
     "depth": "minecraft:overworld/depth",
@@ -50,9 +32,10 @@
           "input": {
             "type": "minecraft:add",
             "left": {
-              "type": "minecraft:y_clamped_gradient",
-              "from_y": -64,
-              "to_y": 200,
+              "type": "minecraft:gradient",
+              "axis": "y",
+              "from_coordinate": -64,
+              "to_coordinate": 200,
               "from_value": 1.5,
               "to_value": -1.5
             },
