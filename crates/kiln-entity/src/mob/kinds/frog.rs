@@ -19,7 +19,7 @@ use crate::mob::brain::util;
 use crate::mob::brain::{self, Activity, ActivityData, Behavior, Brain, Cx, Gate, Mem, Sensor, Status, Timed, Val, WalkTarget, shot};
 use crate::mob::ext::{self, Info, Kind, MobExt, SpawnView};
 use crate::mob::path::PathType;
-use crate::mob::{self, GroupData, MobData, MobKind, SpawnContext, mth, species};
+use crate::mob::{self, GroupData, MobData, MobKind, SpawnContext, mth};
 use crate::persist::{Input, Output};
 use crate::sensor_boilerplate;
 use kiln_data::entities::pose;

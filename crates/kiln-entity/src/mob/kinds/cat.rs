@@ -208,7 +208,7 @@ impl Kind for Cat {
         ext::mob_finalize(m, r);
         // `VariantUtils.selectVariantToSpawn` (`CatVariants`: the ten common cats, and the all-black one inside a
         // `#cats_spawn_as_black` structure or under a (nearly) full moon).
-        if let Some(v) = crate::mob::variants::select_for(MobKind::Cat, ctx, group, r) {
+        if let Some(v) = crate::mob::variants::select_for(crate::mob::MobKind::Cat, ctx, group, r) {
             m.variant = v;
         }
         m.sound_variant = r.next_int_bounded(synced_len("minecraft:cat_sound_variant"));
