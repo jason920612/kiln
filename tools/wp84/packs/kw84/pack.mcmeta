@@ -1,0 +1,7 @@
+{
+ "pack": {
+  "description": "wp84 data pack: functions, macros, advancements, predicates, loot and recipe overrides, enchantments, tags",
+  "min_format": 121,
+  "max_format": 121
+ }
+}

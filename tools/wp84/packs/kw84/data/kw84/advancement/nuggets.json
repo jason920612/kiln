@@ -1,0 +1,42 @@
+{
+ "parent": "kw84:root",
+ "display": {
+  "icon": {
+   "id": "minecraft:gold_nugget"
+  },
+  "title": {
+   "text": "Nugget hoard"
+  },
+  "description": {
+   "text": "Hold three gold nuggets"
+  },
+  "frame": "goal",
+  "show_toast": true,
+  "announce_to_chat": true
+ },
+ "criteria": {
+  "three": {
+   "trigger": "minecraft:inventory_changed",
+   "conditions": {
+    "items": [
+     {
+      "items": "minecraft:gold_nugget",
+      "count": {
+       "min": 3
+      }
+     }
+    ]
+   }
+  }
+ },
+ "rewards": {
+  "experience": 37,
+  "loot": [
+   "kw84:gift"
+  ],
+  "recipes": [
+   "kw84:dirt_diamond"
+  ],
+  "function": "kw84:reward"
+ }
+}

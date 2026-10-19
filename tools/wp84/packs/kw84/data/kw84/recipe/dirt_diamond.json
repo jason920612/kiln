@@ -1,0 +1,13 @@
+{
+ "type": "minecraft:crafting_shapeless",
+ "category": "misc",
+ "ingredients": [
+  "minecraft:dirt",
+  "minecraft:dirt",
+  "minecraft:gold_nugget"
+ ],
+ "result": {
+  "count": 2,
+  "id": "minecraft:diamond"
+ }
+}

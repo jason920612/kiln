@@ -1,0 +1,31 @@
+{
+ "parent": "kw84:root",
+ "display": {
+  "icon": {
+   "id": "minecraft:sand"
+  },
+  "title": {
+   "text": "Dry feet"
+  },
+  "description": {
+   "text": "Stand in a desert"
+  },
+  "show_toast": true,
+  "announce_to_chat": true
+ },
+ "criteria": {
+  "here": {
+   "trigger": "minecraft:location",
+   "conditions": {
+    "player": [
+     {
+      "condition": "minecraft:location_check",
+      "predicate": {
+       "biomes": "minecraft:desert"
+      }
+     }
+    ]
+   }
+  }
+ }
+}

@@ -1,0 +1,56 @@
+{
+ "anvil_cost": 2,
+ "weight": 10,
+ "min_cost": {
+  "base": 1,
+  "per_level_above_first": 8
+ },
+ "max_cost": {
+  "base": 30,
+  "per_level_above_first": 8
+ },
+ "description": {
+  "text": "Venom"
+ },
+ "supported_items": "#minecraft:enchantable/sharp_weapon",
+ "primary_items": "#minecraft:enchantable/sharp_weapon",
+ "max_level": 3,
+ "slots": [
+  "mainhand"
+ ],
+ "effects": {
+  "minecraft:damage": [
+   {
+    "effect": {
+     "type": "minecraft:add",
+     "value": {
+      "type": "minecraft:linear",
+      "base": 2.0,
+      "per_level_above_first": 1.5
+     }
+    },
+    "requirements": {
+     "condition": "minecraft:entity_properties",
+     "entity": "this",
+     "predicate": {
+      "type": "#minecraft:zombies"
+     }
+    }
+   }
+  ],
+  "minecraft:post_attack": [
+   {
+    "enchanted": "attacker",
+    "affected": "victim",
+    "effect": {
+     "type": "minecraft:apply_mob_effect",
+     "to_apply": "minecraft:poison",
+     "min_duration": 3.0,
+     "max_duration": 3.0,
+     "min_amplifier": 0.0,
+     "max_amplifier": 0.0
+    }
+   }
+  ]
+ }
+}

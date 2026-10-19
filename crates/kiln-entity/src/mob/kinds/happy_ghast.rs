@@ -378,7 +378,9 @@ impl Kind for HappyGhast {
             out.ride = e.passengers.len() < 4;
             return Some(out);
         }
-        Some(interact::animal_interact(e, m, level, who, stack))
+        // `super.mobInteract` (`Animal.mobInteract`): a grown one never `canFallInLove` and only a baby takes food to grow up, so the
+        // snowball stays in the hand.
+        Some(Outcome::PASS)
     }
 
     /// Whether a player riding first steers it: harnessed, grown, and not standing still (`getControllingPassenger`).
@@ -422,6 +424,11 @@ impl Kind for HappyGhast {
     }
 
     fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
+        // `AgeableMob.readAdditionalSaveData` -> `setAge` crosses zero for a saved ghastling: `ageBoundaryReached` -> `babyGhastSetup`
+        // (no goals, the flying move control; the brain steers it), before `still_timeout` is read.
+        if m.baby() {
+            self.baby_setup(m);
+        }
         let still = r.int_or("still_timeout", 0);
         let body = match r.get("equipment") {
             Some(Tag::Compound(eq)) => eq.iter().find(|(k, _)| k == "body").and_then(|(_, v)| ItemStack::from_nbt(v).ok()),
