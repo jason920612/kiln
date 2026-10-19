@@ -184,7 +184,6 @@ fn a_packs_hit_block_effect_summons_lightning_where_an_arrow_lands() {
     let mut bolts = 0;
     for _ in 0..10 {
         w.ticks(1);
-        eprintln!("DEBUG strike entities: {:?}", w.sim.entities());
         bolts = bolts.max(w.sim.entity_ids_of("minecraft:lightning_bolt").len());
     }
     assert_eq!(bolts, 1, "the hit_block effect of kz:strike summoned a lightning bolt");

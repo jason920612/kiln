@@ -706,7 +706,6 @@ impl Sim {
             }
         }
         for (conn, name, at) in jobs {
-            eprintln!("DEBUG run function {name} at {at:?}");
             let Some(f) = Identifier::parse(&name).and_then(|id| self.commands.packs.library.get(&id)) else {
                 error!("Enchantment run_function effect failed for non-existent function {name}");
                 continue;
