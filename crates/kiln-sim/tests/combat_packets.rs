@@ -72,24 +72,28 @@ fn a_hit_from_a_living_entity_starts_a_fight_and_three_hundred_ticks_later_it_en
     lab.ticks(10);
     // Another hit inside the fight does not start a second one.
     lab.console("damage Fighter 1 minecraft:mob_attack by @e[tag=foe,limit=1]");
-    lab.ticks(310);
+    lab.ticks(290);
     assert_eq!(lab.with_id(cb::PLAYER_COMBAT_ENTER).len(), 1);
     let end = lab.with_id(cb::PLAYER_COMBAT_END);
     assert!(end.is_empty(), "300 ticks have not passed since the last hit yet: {end:?}");
-    lab.ticks(30);
+    lab.ticks(40);
     let end = lab.with_id(cb::PLAYER_COMBAT_END);
     assert_eq!(end.len(), 1, "the fight ended");
     let mut r = kiln_proto::codec::Reader::new(&end[0]);
     r.varint().unwrap();
     let duration = r.varint().unwrap();
-    // From the first hit to the check (every 20th tick) after the last hit's 300 ticks.
-    assert!((311..=331).contains(&duration), "{duration}");
+    // From the first hit to the check (every 20th tick) after the last hit's 300 ticks: the last hit was 12 ticks after the first.
+    assert!((313..=332).contains(&duration), "{duration}");
 }
 
 #[test]
 fn a_fireballs_acceleration_power_comes_with_its_motion_in_a_bundle() {
     let mut lab = Lab::new();
     let p = lab.client.pos;
+    // An arrow moves without one.
+    lab.console(&format!("summon minecraft:arrow {} {} {} {{Motion:[-1.0d,0.3d,0.0d]}}", p[0] + 12.0, p[1] + 3.0, p[2] + 6.0));
+    lab.ticks(6);
+    assert!(lab.with_id(cb::PROJECTILE_POWER).is_empty());
     lab.clear();
     lab.console(&format!("summon minecraft:small_fireball {} {} {} {{Motion:[-0.5d,0.0d,0.0d],power:[-0.5d,0.0d,0.0d]}}", p[0] + 12.0, p[1] + 3.0, p[2] + 3.0));
     lab.ticks(6);
@@ -106,9 +110,4 @@ fn a_fireballs_acceleration_power_comes_with_its_motion_in_a_bundle() {
         assert_eq!(kiln_proto::codec::Reader::new(&all[i - 2]).varint().ok(), Some(cb::BUNDLE_DELIMITER));
         assert_eq!(kiln_proto::codec::Reader::new(&all[i + 1]).varint().ok(), Some(cb::BUNDLE_DELIMITER));
     }
-    // An arrow moves without one.
-    lab.clear();
-    lab.console(&format!("summon minecraft:arrow {} {} {} {{Motion:[-1.0d,0.3d,0.0d]}}", p[0] + 12.0, p[1] + 3.0, p[2] + 6.0));
-    lab.ticks(6);
-    assert!(lab.with_id(cb::PROJECTILE_POWER).is_empty());
 }

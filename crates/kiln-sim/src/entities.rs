@@ -323,8 +323,18 @@ impl Entity {
                 }
                 if let Some(f) = finalize {
                     let mut r = LegacyRandom::new(f.seed);
-                    let mut group = kiln_entity::mob::GroupData { monsters_disabled: f.monsters_disabled, camel_space: f.camel_space, black_cat: f.black_cat, ..Default::default() };
-                    kiln_entity::mob::finalize_spawn(&mut e, &mut r, &f.ctx, &mut group, f.natural);
+                    // A natural spawn pack shares its group data (the second cow of a herd may be a calf, the fish follow the first, ...); the mob's own
+                    // inputs and outputs (`monsters_disabled`, the jockeys) are set and taken for each.
+                    let mut own = kiln_entity::mob::GroupData::default();
+                    let mut shared = f.group.as_ref().map(|g| g.0.lock().expect("group"));
+                    let group: &mut kiln_entity::mob::GroupData = match shared.as_mut() {
+                        Some(g) => g,
+                        None => &mut own,
+                    };
+                    (group.monsters_disabled, group.camel_space, group.black_cat) = (f.monsters_disabled, f.camel_space, f.black_cat);
+                    group.companions.clear();
+                    group.nearby_chicken = false;
+                    kiln_entity::mob::finalize_spawn(&mut e, &mut r, &f.ctx, group, f.natural);
                     if !group.companions.is_empty() || group.nearby_chicken {
                         jockeys = Some(Box::new(Jockeys { companions: std::mem::take(&mut group.companions), loaded: false, nearby_chicken: group.nearby_chicken }));
                     }

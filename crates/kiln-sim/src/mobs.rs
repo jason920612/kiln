@@ -310,12 +310,18 @@ pub(crate) struct Finalize {
     pub camel_space: bool,
     /// The mob appears inside a piece of a `#cats_spawn_as_black` structure (a swamp hut).
     pub black_cat: bool,
+    /// The group data of the pack the mob spawns in (`SpawnGroupData`, handed from one mob of a natural spawn pack to the next as the spawner makes them).
+    pub group: Option<Group>,
 }
+
+/// A pack's shared group data.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Group(pub std::sync::Arc<std::sync::Mutex<mob::GroupData>>);
 
 impl Finalize {
     /// A summoned or egg-spawned mob (not `NATURAL`).
     pub(crate) fn command(ctx: mob::SpawnContext, seed: i64, persistent: bool, monsters_disabled: bool) -> Finalize {
-        Finalize { ctx, seed, persistent, natural: false, monsters_disabled, camel_space: false, black_cat: false }
+        Finalize { ctx, seed, persistent, natural: false, monsters_disabled, camel_space: false, black_cat: false, group: None }
     }
 }
 

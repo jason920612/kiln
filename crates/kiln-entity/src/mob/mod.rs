@@ -3330,6 +3330,11 @@ pub struct GroupData {
     pub natural: bool,
     /// The variant the first mob of a group picked (`WolfPackData`, horses' `HorseGroupData`).
     pub variant: Option<i32>,
+    /// `AbstractSchoolingFish.SchoolSpawnGroupData.leader`: the entity id of the pack's first fish; the others follow it.
+    pub school_leader: Option<i32>,
+    /// Whether the pack's tropical fish are a school (a common variant, 9 in 10 packs) or one single odd fish (`TropicalFish.isSchool`): decided before the first
+    /// fish is made when the spawner needs it (`isMaxGroupSizeReached` ends a single fish's pack).
+    pub tropical_school: Option<bool>,
     /// `EntitySpawnReason.PATROL`, `EVENT` (raids) and `STRUCTURE`.
     pub patrol: bool,
     pub event: bool,

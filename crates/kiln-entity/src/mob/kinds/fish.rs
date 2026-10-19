@@ -126,6 +126,8 @@ pub struct FishState {
     pub variant: i32,
     /// `TropicalFish.isSchool`.
     pub is_school: bool,
+    /// Made in a pack behind a leader (`startFollowing` at spawn): the leader counts it at the fish's first tick.
+    pending_join: bool,
     /// `Pufferfish.PUFF_STATE`, `inflateCounter`, `deflateTimer`.
     pub puff: i32,
     inflate_counter: i32,
@@ -230,6 +232,7 @@ impl Kind for Fish {
             school_size: 1,
             variant,
             is_school: true,
+            pending_join: false,
             puff: 0,
             inflate_counter: 0,
             deflate_timer: 0,
@@ -281,6 +284,13 @@ impl Kind for Fish {
 
     /// `AbstractSchoolingFish.tick` after `Mob.tick`: a leader left alone forgets its school.
     fn post_tick(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        // `addFollower` of the leader a pack member started following when it was made.
+        if st(m).pending_join {
+            st_mut(m).pending_join = false;
+            if let Some(leader) = st(m).leader {
+                with_fish(e.id, m, level, leader, |s| s.school_size += 1);
+            }
+        }
         if !self.schooling() || st(m).school_size <= 1 || level.random().next_int_bounded(200) != 1 {
             return;
         }
@@ -461,10 +471,23 @@ impl Kind for Fish {
             mob::refresh_dimensions(e, m);
         }
         ext::mob_finalize(m, r);
+        // `AbstractSchoolingFish.finalizeSpawn`: the pack's first fish leads, the others follow it (the leader counts them at their first tick).
+        if self.schooling() {
+            match group.school_leader {
+                None => group.school_leader = Some(e.id),
+                Some(leader) => {
+                    let s = st_mut(m);
+                    s.leader = Some(leader);
+                    s.pending_join = true;
+                }
+            }
+        }
         if self.0 == FishType::TropicalFish {
+            // (A pack the spawner already decided on: `tropical_school`; else the first fish rolls: 9 in 10 are a school of a common variant.)
+            let school = group.variant.is_some() || group.tropical_school.unwrap_or_else(|| r.next_float() < 0.9);
             let variant = if let Some(v) = group.variant {
                 v
-            } else if r.next_float() < 0.9 {
+            } else if school {
                 let (p, b, c) = COMMON_VARIANTS[r.next_int_bounded(COMMON_VARIANTS.len() as i32) as usize];
                 let v = pack_variant(p, b, c);
                 group.variant = Some(v);

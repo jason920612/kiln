@@ -377,6 +377,7 @@ fn a_wave_spawns_where_entities_tick() {
     assert!(raiders.len() >= 4, "{raiders:?}");
     for (id, kind, pos, _) in &raiders {
         let (cx, cz) = ((pos[0].floor() as i32).div_euclid(16), (pos[2].floor() as i32).div_euclid(16));
-        assert!((cx - pcx).abs().max((cz - pcz).abs()) <= 3, "{kind} {id} at {pos:?} stands outside the simulation distance of the player at {:?}", w.pos());
+        // (A raider may have walked a few blocks into the next chunk since it came: the wave stood 6 chunks out before.)
+        assert!((cx - pcx).abs().max((cz - pcz).abs()) <= 4, "{kind} {id} at {pos:?} stands outside the simulation distance of the player at {:?}", w.pos());
     }
 }

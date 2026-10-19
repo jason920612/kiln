@@ -888,7 +888,7 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
         let count = 1 + r.next_int_bounded(env.mobs.difficulty as i32 + 1);
         for _ in 0..count {
             let seed = r.next_long();
-            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: false, monsters_disabled: false, camel_space: false, black_cat: false };
+            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: false, monsters_disabled: false, camel_space: false, black_cat: false, group: None };
             spawns.push(crate::mobs::spawn(MobKind::Phantom, [at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5], Some(0.0), Some(fin)));
         }
     }
@@ -936,9 +936,9 @@ fn spawn_category_for_chunk(
     for _ in 0..3 {
         let (mut px, mut pz) = (x, z);
         let mut data: Option<SpawnerData> = None;
-        let mut group = mob::GroupData::default();
+        // The pack's `SpawnGroupData`: the mobs share it as they are made (the first of a herd decides what the others are like).
+        let group = crate::mobs::Group::default();
         let mut pack = mob::mth::ceil((r.next_float() * 4.0) as f64);
-        let mut in_group = 0;
         let mut k = 0;
         while k < pack {
             k += 1;
@@ -1046,25 +1046,33 @@ fn spawn_category_for_chunk(
             let mut ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, inhabited, moon_brightness(env.mobs.day_time));
             ctx.biome = Some(biome as i32);
             let seed = r.next_long();
-            let _ = &mut group;
             let monsters_disabled = env.mobs.difficulty == 0 || !env.mobs.spawn_monsters;
             // `Husk.finalizeSpawn`: a camel husk jockey needs the room for the camel.
             let camel_space = kind == MobKind::Husk
                 && kiln_data::entities::by_name("minecraft:camel_husk").is_some_and(|c| no_collision(level, [fx.floor() + 0.5, y as f64, fz.floor() + 0.5], c.width, c.height));
             // `VariantUtils`: a cat inside a swamp hut is all black.
             let black_cat = kind == MobKind::Cat && black_cat_structure(level, [fx.floor() as i32, y, fz.floor() as i32]);
-            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: true, monsters_disabled, camel_space, black_cat };
+            // A tropical fish pack is a school of a common variant (9 in 10) or one odd fish (`TropicalFish.finalizeSpawn` rolls it for the first fish).
+            if kind == MobKind::TropicalFish {
+                let mut g = group.0.lock().expect("group");
+                if g.tropical_school.is_none() {
+                    g.tropical_school = Some(r.next_float() < 0.9);
+                }
+            }
+            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: true, monsters_disabled, camel_space, black_cat, group: Some(group.clone()) };
             // The caller counts it (nothing below reads the counts).
             let charge = cost.map(|(c, _)| ([pos.x, pos.y, pos.z], c));
             mine.extend(charge);
             spawns.push((crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(fin)), pc, charge));
             stats::spawned(d_.type_name, [pos.x, pos.y, pos.z]);
             spawned += 1;
-            in_group += 1;
             if spawned >= kind.ext().map_or(4, |k| k.max_spawn_cluster()) {
                 return;
             }
-            let _ = in_group;
+            // `TropicalFish.isMaxGroupSizeReached`: a fish that is no part of a school ends its pack.
+            if kind == MobKind::TropicalFish && group.0.lock().expect("group").tropical_school == Some(false) {
+                break;
+            }
         }
     }
 }
