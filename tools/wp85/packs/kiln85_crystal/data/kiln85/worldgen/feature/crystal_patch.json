@@ -1,4 +1,7 @@
 {
   "type": "minecraft:simple_block",
-  "to_place": "minecraft:amethyst_block"
+  "to_place": {
+    "type": "minecraft:simple",
+    "state": "minecraft:amethyst_block"
+  }
 }
