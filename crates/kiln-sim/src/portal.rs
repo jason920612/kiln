@@ -1161,6 +1161,21 @@ impl Sim {
         use kiln_world::spawn::LoadChunks;
         let chunk = self.dims[END_ID].load_chunk(c);
         let top = chunk.sections.iter().rposition(|s| !s.is_empty())? as i32 * 16 + chunk.min_y() + 15;
+        if c.x == 29 && c.z == -59 {
+            let mut hist: std::collections::BTreeMap<(String, String), usize> = Default::default();
+            for z in 12..16 {
+                for y in 30..=top {
+                    for x in 0..16 {
+                        if kiln_blocks::state::is(chunk.get(x, y, z), block::END_STONE) {
+                            let a = kiln_data::blocks_types::block_of(chunk.get(x, y + 1, z)).name.to_string();
+                            let b = kiln_data::blocks_types::block_of(chunk.get(x, y + 2, z)).name.to_string();
+                            *hist.entry((a, b)).or_default() += 1;
+                        }
+                    }
+                }
+            }
+            info!("WP82 rows z>=-932 of chunk 29,-59: stone with (above1, above2): {hist:?}");
+        }
         let mut best: Option<(f64, BlockPos)> = None;
         for z in 0..16 {
             for y in 30..=top {
