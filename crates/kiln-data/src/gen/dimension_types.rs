@@ -28,6 +28,7 @@ pub const DIMENSION_TYPES: &[DimensionType] = &[
         piglins_zombify: true,
         can_start_raid: true,
         nether_portal_spawns_piglin: true,
+        timelines: &["minecraft:villager_schedule", "minecraft:day", "minecraft:moon", "minecraft:early_game"],
     },
     DimensionType {
         name: "minecraft:overworld_caves",
@@ -54,6 +55,7 @@ pub const DIMENSION_TYPES: &[DimensionType] = &[
         piglins_zombify: true,
         can_start_raid: true,
         nether_portal_spawns_piglin: true,
+        timelines: &["minecraft:villager_schedule", "minecraft:day", "minecraft:moon", "minecraft:early_game"],
     },
     DimensionType {
         name: "minecraft:the_end",
@@ -80,6 +82,7 @@ pub const DIMENSION_TYPES: &[DimensionType] = &[
         piglins_zombify: true,
         can_start_raid: true,
         nether_portal_spawns_piglin: false,
+        timelines: &["minecraft:villager_schedule"],
     },
     DimensionType {
         name: "minecraft:the_nether",
@@ -106,5 +109,6 @@ pub const DIMENSION_TYPES: &[DimensionType] = &[
         piglins_zombify: false,
         can_start_raid: false,
         nether_portal_spawns_piglin: false,
+        timelines: &["minecraft:villager_schedule"],
     },
 ];

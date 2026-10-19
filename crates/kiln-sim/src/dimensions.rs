@@ -115,8 +115,8 @@ pub(crate) fn levels(stems: &[LevelStem]) -> Vec<(String, String, String)> {
 }
 
 /// A `dimension_type` entry as the simulation reads it (`DimensionType.DIRECT_CODEC`): `Err` for an entry the
-/// codec would reject.
-pub(crate) fn dimension_type_from_json(name: &str, v: &serde_json::Value) -> Result<DimensionType, String> {
+/// codec would reject. `timeline_tag` lists the timelines of a `timeline` tag.
+pub(crate) fn dimension_type_from_json(name: &str, v: &serde_json::Value, timeline_tag: &dyn Fn(&str) -> Vec<String>) -> Result<DimensionType, String> {
     let int = |k: &str| v.get(k).and_then(serde_json::Value::as_i64).ok_or_else(|| format!("{k} is missing or not a number"));
     let boolean = |k: &str| v.get(k).and_then(serde_json::Value::as_bool).ok_or_else(|| format!("{k} is missing or not a boolean"));
     let (min_y, height, logical_height) = (int("min_y")?, int("height")?, int("logical_height")?);
@@ -143,6 +143,15 @@ pub(crate) fn dimension_type_from_json(name: &str, v: &serde_json::Value) -> Res
     let when = |k: &str| bed.and_then(|b| b.get(k)).and_then(serde_json::Value::as_str).and_then(BedWhen::parse).unwrap_or(BedWhen::Always);
     let name = kiln_data::levels::leak_name(name);
     let text = |k: &str| v.get(k).and_then(serde_json::Value::as_str);
+    let timelines: Vec<String> = match v.get("timelines") {
+        Some(serde_json::Value::String(s)) => match s.strip_prefix('#') {
+            Some(tag) => timeline_tag(tag),
+            None => vec![s.clone()],
+        },
+        Some(serde_json::Value::Array(list)) => list.iter().filter_map(|t| t.as_str().map(str::to_owned)).collect(),
+        _ => Vec::new(),
+    };
+    let timelines: Vec<&'static str> = timelines.iter().map(|t| kiln_data::levels::leak_name(t)).collect();
     Ok(DimensionType {
         name,
         min_y: min_y as i32,
@@ -168,15 +177,18 @@ pub(crate) fn dimension_type_from_json(name: &str, v: &serde_json::Value) -> Res
         piglins_zombify: bool_attr("minecraft:gameplay/piglins_zombify", true),
         can_start_raid: bool_attr("minecraft:gameplay/can_start_raid", true),
         nether_portal_spawns_piglin: bool_attr("minecraft:gameplay/nether_portal_spawns_piglin", false),
+        timelines: Box::leak(timelines.into_boxed_slice()),
     })
 }
 
 /// Reads the dimension types of the data packs from the installed registry entries and installs them.
 pub(crate) fn install_types() {
+    let roots = crate::world_state::worldgen_roots();
+    let timeline_tag = |tag: &str| crate::world_state::tag_entries(&roots, "timeline", tag, 0).unwrap_or_default();
     let mut types = Vec::new();
     for name in kiln_data::live::custom_entries("minecraft:dimension_type") {
         let Some(text) = kiln_data::live::entry_data("minecraft:dimension_type", name) else { continue };
-        let parsed = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string()).and_then(|v| dimension_type_from_json(name, &v));
+        let parsed = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string()).and_then(|v| dimension_type_from_json(name, &v, &timeline_tag));
         match parsed {
             Ok(t) => types.push(t),
             Err(e) => error!("Failed to load dimension_type/{name}: {e}"),

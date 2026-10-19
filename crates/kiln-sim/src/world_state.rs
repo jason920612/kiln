@@ -1253,7 +1253,7 @@ pub(crate) fn worldgen_tag(kind: &str, tag: &str) -> Option<Vec<String>> {
     tag_entries(&worldgen_roots(), kind, tag, 0)
 }
 
-fn tag_entries(roots: &[std::path::PathBuf], kind: &str, tag: &str, depth: usize) -> Option<Vec<String>> {
+pub(crate) fn tag_entries(roots: &[std::path::PathBuf], kind: &str, tag: &str, depth: usize) -> Option<Vec<String>> {
     if depth > 32 {
         return None;
     }

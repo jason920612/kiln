@@ -129,6 +129,21 @@ pub struct DimensionType {
     pub can_start_raid: bool,
     /// `minecraft:gameplay/nether_portal_spawns_piglin`.
     pub nether_portal_spawns_piglin: bool,
+    /// The ids of the `timelines` of the type (the tag expanded): the overworld's `minecraft:day` and the others drive
+    /// what depends on the time of day.
+    pub timelines: &'static [&'static str],
+}
+
+impl DimensionType {
+    /// Whether timeline `id` applies to levels of this type.
+    pub fn has_timeline(&self, id: &str) -> bool {
+        self.timelines.contains(&id)
+    }
+
+    /// Whether the type's default clock is the overworld's.
+    pub fn overworld_clock(&self) -> bool {
+        self.default_clock == Some("minecraft:overworld")
+    }
 }
 
 /// A dimension type by name, e.g. `minecraft:the_nether`: the loaded data packs' (see [`levels`]), else vanilla's.

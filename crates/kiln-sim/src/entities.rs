@@ -1040,7 +1040,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn piglins_zombify(&self) -> bool {
-        !self.level.env().rules.fast_lava
+        crate::dim_type(self.level.env().dim).piglins_zombify
     }
 
     fn snow_golem_melts(&self, pos: Vec3) -> bool {

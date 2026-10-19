@@ -74,7 +74,7 @@ pub(crate) fn load(roots: &[PathBuf]) -> Loaded {
                             continue;
                         }
                         if *registry == "minecraft:dimension_type" {
-                            let checked = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string()).and_then(|v| crate::dimensions::dimension_type_from_json(&name, &v));
+                            let checked = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string()).and_then(|v| crate::dimensions::dimension_type_from_json(&name, &v, &|_| Vec::new()));
                             if let Err(e) = checked {
                                 error!("Failed to load {registry}/{name}: {e}");
                                 continue;

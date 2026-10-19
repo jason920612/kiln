@@ -202,7 +202,8 @@ impl LevelWeather {
 
 /// `Level.canHaveWeather`: sky light, no ceiling, not the End.
 pub(crate) fn can_have_weather(dim: crate::DimId) -> bool {
-    dim == OVERWORLD_ID
+    let kind = crate::dim_type(dim);
+    kind.has_skylight && !kind.has_ceiling && dim != crate::END_ID
 }
 
 /// The overworld `day` timeline's `minecraft:gameplay/sky_light_level` multiplier: 1 by day,
@@ -241,7 +242,7 @@ pub(crate) fn sky_light_level(day_time: i64, weather: &LevelWeather) -> f32 {
 
 /// `Level.updateSkyBrightness` for level `dim`: `15 - sky light level`; 0 without a clock.
 pub(crate) fn sky_darken(dim: crate::DimId, day_time: i64, weather: &LevelWeather) -> i32 {
-    if dim != OVERWORLD_ID {
+    if !crate::dim_type(dim).has_timeline("minecraft:day") {
         // No day timeline modifies their sky light level (and the nether has no sky light).
         return 0;
     }

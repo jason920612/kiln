@@ -42,11 +42,13 @@ struct BedRule {
 }
 
 fn bed_rule(dim: DimId) -> BedRule {
-    if dim == OVERWORLD_ID {
-        BedRule { can_sleep: When::WhenDark, can_set_spawn: When::Always, destroy_on_use: false, error: Some("block.minecraft.bed.no_sleep") }
-    } else {
-        BedRule { can_sleep: When::Never, can_set_spawn: When::Never, destroy_on_use: true, error: None }
-    }
+    let kind = crate::dim_type(dim);
+    let when = |w: kiln_data::BedWhen| match w {
+        kiln_data::BedWhen::Always => When::Always,
+        kiln_data::BedWhen::WhenDark => When::WhenDark,
+        kiln_data::BedWhen::Never => When::Never,
+    };
+    BedRule { can_sleep: when(kind.bed_can_sleep), can_set_spawn: when(kind.bed_can_set_spawn), destroy_on_use: kind.bed_explodes, error: kind.bed_error }
 }
 
 /// `BedRule.Rule.test`: `WHEN_DARK` is `Level.isDarkOutside` (sky darkened by 4 or more in a
@@ -55,13 +57,13 @@ fn test(when: When, dim: DimId, sky_darken: i32) -> bool {
     match when {
         When::Always => true,
         When::Never => false,
-        When::WhenDark => dim == OVERWORLD_ID && sky_darken >= 4,
+        When::WhenDark => !crate::dim_type(dim).has_fixed_time && sky_darken >= 4,
     }
 }
 
-/// `minecraft:gameplay/respawn_anchor_works` (the nether only).
+/// `minecraft:gameplay/respawn_anchor_works` of the dimension type (the nether's).
 fn respawn_anchor_works(dim: DimId) -> bool {
-    dim == NETHER_ID
+    crate::dim_type(dim).respawn_anchor_works
 }
 
 fn is_bed(s: u16) -> bool {
@@ -587,7 +589,7 @@ impl Sim {
             if deep < needed {
                 continue;
             }
-            if self.rule_bool("minecraft:advance_time") && dim == OVERWORLD_ID {
+            if self.rule_bool("minecraft:advance_time") && crate::dim_type(dim).overworld_clock() {
                 if let Some(to) = crate::weather::marker_move(self.day_time, 0) {
                     self.day_time = to;
                     self.clock_runs[0].partial = 0.0;

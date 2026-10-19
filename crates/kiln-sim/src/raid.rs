@@ -1174,7 +1174,7 @@ impl Sim {
     /// `Raids.createOrExtendRaid`: a raid centered on the occupied village points of interest
     /// within 64 (or the omen's position), created or joined, absorbs the player's omen.
     pub(crate) fn create_or_extend_raid(&mut self, dim: DimId, conn: kiln_link::ConnId, pos: [i32; 3], amplifier: i32) -> Option<i32> {
-        if !self.rule_bool("minecraft:raids") || dim_key(dim) == "minecraft:the_nether" {
+        if !self.rule_bool("minecraft:raids") || !crate::dim_type(dim).can_start_raid {
             return None;
         }
         let village = poi::kinds_of(&["#minecraft:village"]);

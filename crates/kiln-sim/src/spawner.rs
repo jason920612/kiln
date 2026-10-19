@@ -1369,7 +1369,7 @@ fn top_non_colliding(level: &RegionLevel, kind: MobKind, x: i32, z: i32) -> KBlo
         .chunk(ChunkPos::of_block(x, z))
         .map_or(env.min_y, |ch| ch.column_height((x & 15) as usize, (z & 15) as usize, |s| if leaves { kiln_data::block_props::motion_blocking(s) } else { kiln_data::block_props::motion_blocking_no_leaves(s) }));
     let mut pos = KBlockPos::new(x, h, z);
-    if env.dim == crate::NETHER_ID {
+    if crate::dim_type(env.dim).has_ceiling {
         loop {
             pos = pos.below();
             if kiln_data::blocks_types::is_air(level.block(pos)) {

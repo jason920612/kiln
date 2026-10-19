@@ -2809,7 +2809,7 @@ impl Sim {
                 day_time: self.day_time,
                 sky_darken: weather::sky_darken(dim, self.day_time, &self.level_weather[dim]),
                 monsters_burn: mobs::monsters_burn(self.day_time),
-                creaking_active: dim == OVERWORLD_ID && mobs::creaking_active(self.day_time),
+                creaking_active: dim_type(dim).has_timeline("minecraft:day") && mobs::creaking_active(self.day_time),
                 griefing: self.rule_bool("minecraft:mob_griefing"),
                 drops: self.rule_bool("minecraft:mob_drops"),
                 entity_drops: self.rule_bool("minecraft:entity_drops"),

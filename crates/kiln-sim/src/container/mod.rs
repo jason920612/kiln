@@ -1292,7 +1292,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
             BeKind::DaylightDetector => {
                 // `DaylightDetectorBlock.tickEntity` (only where the level has sky light).
                 let s = level.block(pos);
-                if level.env.dim == crate::OVERWORLD_ID && level.env.game_time % 20 == 0 && kiln_data::block_logic::block_class(s) == kiln_data::block_logic::BlockClass::DaylightDetectorBlock {
+                if crate::dim_type(level.env.dim).has_skylight && level.env.game_time % 20 == 0 && kiln_data::block_logic::block_class(s) == kiln_data::block_logic::BlockClass::DaylightDetectorBlock {
                     kiln_blocks::behaviour::daylight::update_signal(level, s, pos);
                 }
             }
