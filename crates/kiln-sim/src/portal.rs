@@ -1282,6 +1282,24 @@ impl Sim {
 mod tests {
     use super::*;
 
+    /// wp82: `findValidSpawnInChunk` (found with an agent on a vanilla server) returns the far corner of the chunk at the top of its highest section, whichever block
+    /// was the nearest candidate; nothing when the chunk has no end stone with room above it.
+    #[test]
+    fn the_valid_spawn_of_a_chunk_is_its_far_corner_at_the_top_of_its_highest_section() {
+        let mut sim = Sim::new(crate::SimConfig::new(2, 3, None));
+        let far = BlockPos::new(1600, 40, 1600);
+        sim.load_area(END_ID, far, 20);
+        let c = ChunkPos::new(100, 100);
+        assert_eq!(sim.valid_spawn_in_chunk(c), None, "no end stone yet");
+        // One candidate at the corner nearest the origin, at y 32; a block higher up (section 3: y 48 to 63) that is no candidate.
+        sim.set_level_block(END_ID, BlockPos::new(1600, 32, 1600), block::END_STONE, kiln_blocks::flags::ALL);
+        sim.set_level_block(END_ID, BlockPos::new(1605, 50, 1605), block::STONE, kiln_blocks::flags::ALL);
+        assert_eq!(sim.valid_spawn_in_chunk(c), Some(BlockPos::new(1615, 63, 1615)));
+        // Capped: with a full block over it the stone is no candidate.
+        sim.set_level_block(END_ID, BlockPos::new(1600, 33, 1600), block::STONE, kiln_blocks::flags::ALL);
+        assert_eq!(sim.valid_spawn_in_chunk(c), None);
+    }
+
     #[test]
     fn spiral_visits_the_square_ring_by_ring() {
         let s = spiral(BlockPos::new(0, 0, 0), 1, Direction::East, Direction::South);
