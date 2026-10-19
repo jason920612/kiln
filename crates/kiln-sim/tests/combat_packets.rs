@@ -8,6 +8,8 @@ use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
 
 struct Lab {
+    /// Steps taken since the player joined (the player's own tick count is this much, less the join step).
+    steps: usize,
     sim: Sim,
     client: Client,
     log: std::sync::Arc<kiln_sim::testing::SinkStats>,
@@ -20,7 +22,7 @@ impl Lab {
         *stats.log.lock().unwrap() = Some(Vec::new());
         let log = stats.clone();
         assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into()), ToSim::Console("gamerule minecraft:natural_health_regeneration false".into())]));
-        let mut lab = Lab { sim, client: Client::new(1, stats), log };
+        let mut lab = Lab { steps: 1, sim, client: Client::new(1, stats), log };
         lab.ticks(5);
         lab.console("gamemode survival Fighter");
         lab.console("difficulty normal");
@@ -29,11 +31,13 @@ impl Lab {
     }
 
     fn console(&mut self, c: &str) {
+        self.steps += 1;
         assert!(self.sim.step([ToSim::Console(c.into())]));
     }
 
     fn ticks(&mut self, n: usize) {
         for _ in 0..n {
+            self.steps += 1;
             let mut inbox = Vec::new();
             self.client.tick(None, &mut inbox);
             assert!(self.sim.step(inbox));
@@ -76,6 +80,12 @@ fn a_hit_from_a_living_entity_starts_a_fight_and_three_hundred_ticks_later_it_en
     assert_eq!(lab.with_id(cb::PLAYER_COMBAT_ENTER).len(), 1);
     let end = lab.with_id(cb::PLAYER_COMBAT_END);
     assert!(end.is_empty(), "300 ticks have not passed since the last hit yet: {end:?}");
+    while lab.with_id(cb::PLAYER_COMBAT_END).is_empty() {
+        lab.ticks(1);
+        assert!(lab.steps < 1000);
+    }
+    // `LivingEntity.tick` rechecks when `tickCount % 20 == 0` (the player's tick count is this test's steps less the one of the join, and raised before the check).
+    assert_eq!((lab.steps - 1) % 20, 0, "the fight ended on the player's 20th tick: step {}", lab.steps);
     lab.ticks(40);
     let end = lab.with_id(cb::PLAYER_COMBAT_END);
     assert_eq!(end.len(), 1, "the fight ended");
