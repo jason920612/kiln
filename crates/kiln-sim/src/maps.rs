@@ -833,6 +833,10 @@ pub(crate) struct MapStore {
     index_dirty: bool,
     /// The world folder maps are saved under.
     dir: Option<std::path::PathBuf>,
+    /// `StructureStart.references` of the structure starts a map that skips known structures pointed at (key `chunk x,chunk z,structure`). Vanilla keeps the
+    /// count in the start, in its chunk's saved data; here it is a saved data file of its own.
+    references: BTreeMap<String, i32>,
+    references_dirty: bool,
 }
 
 pub(crate) type SharedMaps = Arc<Mutex<MapStore>>;
@@ -844,7 +848,27 @@ impl MapStore {
             .and_then(|d| kiln_storage::saved_data::read(d, "maps/last_id"))
             .and_then(|t| t.get("map").and_then(Tag::as_i64))
             .map_or(-1, |v| v as i32);
-        MapStore { maps: BTreeMap::new(), last_id, index_dirty: false, dir }
+        let references = dir
+            .as_deref()
+            .and_then(|d| kiln_storage::saved_data::read(d, "structure_references"))
+            .map(|t| match t {
+                Tag::Compound(fields) => fields.into_iter().filter_map(|(k, v)| Some((k, v.as_i64()? as i32))).collect(),
+                _ => BTreeMap::new(),
+            })
+            .unwrap_or_default();
+        MapStore { maps: BTreeMap::new(), last_id, index_dirty: false, dir, references, references_dirty: false }
+    }
+
+    /// `StructureManager.tryAddReference`: the start in `chunk` of `structure` can be pointed at once (`StructureStart.canBeReferenced`: fewer references than
+    /// `getMaxReferences`, 1) and is, now.
+    pub(crate) fn try_add_reference(&mut self, chunk: (i32, i32), structure: &str) -> bool {
+        let n = self.references.entry(format!("{},{},{structure}", chunk.0, chunk.1)).or_insert(0);
+        if *n >= 1 {
+            return false;
+        }
+        *n += 1;
+        self.references_dirty = true;
+        true
     }
 
     pub(crate) fn shared(dir: Option<std::path::PathBuf>) -> SharedMaps {
@@ -898,6 +922,13 @@ impl MapStore {
                 tracing::warn!("failed to save map {id}: {e}");
             }
             m.dirty = false;
+        }
+        if self.references_dirty {
+            let data = Tag::Compound(self.references.iter().map(|(k, v)| (k.clone(), Tag::Int(*v))).collect());
+            if let Err(e) = kiln_storage::saved_data::write(&dir, "structure_references", data) {
+                tracing::warn!("failed to save the structure references: {e}");
+            }
+            self.references_dirty = false;
         }
         if self.index_dirty {
             let data = Tag::Compound(vec![("map".to_owned(), Tag::Int(self.last_id))]);
@@ -1012,7 +1043,15 @@ impl kiln_loot::MapExplorer for Explorer {
         let at = [origin[0].floor() as i32, origin[1].floor() as i32, origin[2].floor() as i32];
         let names: Vec<String> = request.destination.names.iter().map(|n| n.to_string()).collect();
         let mut gs = kiln_worldgen::generator::GenScratch::default();
-        let (target, _) = self.pipeline.find_nearest_structure(&mut gs, &names, at, request.search_radius)?;
+        // `ExplorationMapFunction` / `ChunkGenerator.findNearestMapStructure(…, skipKnownStructures)`: a start an earlier map pointed at is passed over.
+        let (target, _) = if request.skip_existing_chunks {
+            let maps = self.maps.clone();
+            self.pipeline.find_nearest_structure_claiming(&mut gs, &names, at, request.search_radius, &mut |chunk, name| {
+                maps.lock().unwrap_or_else(|e| e.into_inner()).try_add_reference(chunk, name)
+            })?
+        } else {
+            self.pipeline.find_nearest_structure(&mut gs, &names, at, request.search_radius)?
+        };
         // `MapItem.applyNewSavedData(level, stack, x, z, zoom, true, true)`.
         let mut data = MapData::create_fresh(target[0] as f64, target[2] as f64, request.zoom, true, true, "minecraft:overworld");
         // `renderBiomePreviewMap` at the sea level.
@@ -1072,6 +1111,45 @@ mod tests {
         assert_eq!(loaded.colors[5 + 6 * 128], 77);
         assert_eq!(loaded.decorations().count(), 2);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// wp82 (wp81 map 37): a map that skips known structures (`skip_existing_chunks`, the default) points at a structure start once: `findNearestMapStructure`
+    /// adds a reference to the start it found (`StructureStart.references`, at most 1) and the next search from the same place passes it over. Kiln made
+    /// the second map for the same place point at the same structure.
+    #[test]
+    fn a_second_map_from_the_same_place_points_at_the_next_structure() {
+        let dir = crate::datapack_dir(None);
+        if !dir.join("reports/biome_parameters").is_dir() {
+            eprintln!("skipped: no data pack");
+            return;
+        }
+        let pack = kiln_worldgen::Datapack::load(&dir).expect("datapack");
+        let world = kiln_worldgen::Worldgen::overworld(&pack, 12345, true).expect("overworld");
+        let pipeline = Arc::new(kiln_worldgen::Pipeline::new(Arc::new(world)));
+        let store = MapStore::shared(None);
+        let explorer = Explorer::new(store.clone(), pipeline);
+        let names: Vec<kiln_item::Identifier> = crate::world_state::worldgen_tag("worldgen/structure", "minecraft:on_taiga_village_maps")
+            .or_else(|| crate::world_state::worldgen_tag("worldgen/structure", "minecraft:village"))
+            .unwrap_or_else(|| vec!["minecraft:village_plains".to_owned()])
+            .iter()
+            .filter_map(|n| kiln_item::Identifier::parse(n))
+            .collect();
+        let destination = kiln_loot::parse::NameSet { tag: None, names };
+        let kind = kiln_data::builtin_id("minecraft:map_decoration_type", "minecraft:target_x").unwrap();
+        let ask = |skip: bool| {
+            let request = kiln_loot::ExplorationMap { destination: &destination, decoration: kind, zoom: 2, search_radius: 100, skip_existing_chunks: skip };
+            let stack = ItemStack::of("minecraft:filled_map", 1).unwrap();
+            let made = explorer.explore(&stack, [0.0, 64.0, 0.0], &request)?;
+            let id = map_id_of(&made)?;
+            let center = store.lock().unwrap().get(id)?.center;
+            Some(center)
+        };
+        let first = ask(true).expect("a village within 100 regions");
+        let second = ask(true).expect("another one");
+        assert_ne!(first, second, "the second map points at the next structure");
+        // Without skipping, the nearest one again, whatever was pointed at before.
+        assert_eq!(ask(false), Some(first));
+        assert_eq!(ask(false), Some(first));
     }
 
     /// `ExplorationMapFunction` against the vectors of `tools/ExploreMapVectors.java` (`KILN_EXPLORE_VECTORS`): the
