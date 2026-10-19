@@ -427,7 +427,7 @@ mod tests {
              max-world-size=0\nonline-mode=yes\nlevel-type=MineCraft:FLAT\nannounce-player-achievements=true\nfoo=bar\n",
         );
         assert_eq!(p.server_port, 25565, "unparsable number: default");
-        assert_eq!(p.max_players, 20, "leading space: not a number");
+        assert_eq!(p.max_players, 20, "trailing space: not a number");
         assert_eq!(p.view_distance, 12);
         assert_eq!(p.difficulty, 1, "names are case sensitive, unknown is easy");
         assert_eq!(p.gamemode, 0, "an id out of range is survival");

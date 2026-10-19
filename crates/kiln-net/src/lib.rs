@@ -6,6 +6,7 @@ mod cipher;
 pub mod lobby;
 mod profile;
 pub mod proxy;
+pub mod status;
 
 pub use lobby::LobbyConfig;
 pub use profile::GameProfile;
@@ -42,6 +43,28 @@ pub struct Config {
     pub simulation_distance: u8,
     /// `None` disables compression. Behind a proxy `LoginConfig::proxy_compression_threshold` applies.
     pub compression_threshold: Option<usize>,
+    /// The server list icon (`data:image/png;base64,...`, from `server-icon.png`).
+    pub favicon: Option<String>,
+    /// `enforcesSecureChat` of the server list: `enforce-secure-profile` in online mode.
+    pub enforces_secure_chat: bool,
+    /// `rate-limit`: packets per second a connection may average before it is kicked (0: no limit).
+    pub rate_limit: u32,
+}
+
+impl Config {
+    pub fn new(bind: SocketAddr, motd: &str, max_players: usize, view_distance: u8) -> Self {
+        Self {
+            bind,
+            motd: motd.to_owned(),
+            max_players,
+            view_distance,
+            simulation_distance: view_distance,
+            compression_threshold: Some(256),
+            favicon: None,
+            enforces_secure_chat: false,
+            rate_limit: 0,
+        }
+    }
 }
 
 /// How players prove who they are.
@@ -76,7 +99,7 @@ impl LoginConfig {
         Self::from_vars(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()))
     }
 
-    fn from_vars(var: impl Fn(&str) -> Option<String>) -> Result<Self> {
+    pub fn from_vars(var: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let flag = |k: &str| -> Result<bool> {
             match var(k).as_deref().map(str::trim) {
                 None => Ok(false),
@@ -171,6 +194,10 @@ pub struct Shared {
     auth: Option<Authenticator>,
     /// Whitelist and bans, checked at login; the simulation's commands change them.
     pub access: kiln_link::access::SharedAccess,
+    /// The player list and the settings the server list shows (shared with the simulation).
+    pub info: Arc<kiln_link::ServerInfo>,
+    status_cache: std::sync::Mutex<status::StatusCache>,
+    sample_rng: std::sync::Mutex<status::SampleRng>,
 }
 
 impl Shared {
@@ -187,12 +214,25 @@ impl Shared {
         self
     }
 
+    /// The status response, rebuilt every five seconds (`MinecraftServer.status`).
+    pub fn status_json(&self) -> String {
+        let mut cache = self.status_cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut rng = self.sample_rng.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache
+            .get(std::time::Instant::now(), || {
+                status::build(&self.info, self.config.favicon.as_deref(), self.config.enforces_secure_chat, &mut rng)
+            })
+            .to_owned()
+    }
+
     /// `MinecraftServer.isResourcePackRequired`.
     pub fn resource_pack_required(&self) -> bool {
         self.lobby.resource_pack.as_ref().is_some_and(|p| p.required)
     }
 
     pub fn with_login(config: Config, login: LoginConfig, to_sim: crossbeam_channel::Sender<ToSim>) -> Self {
+        let (motd, max_players) = (config.motd.clone(), config.max_players);
+        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
         // Encoded once and reused for every login.
         let registry_packets = kiln_data::registries::SYNCHRONIZED
             .iter()
@@ -216,7 +256,16 @@ impl Shared {
             data_sync: Arc::default(),
             auth,
             access: kiln_link::access::AccessLists::new(None).shared(),
+            info: Arc::new(kiln_link::ServerInfo::new(&motd, max_players as i32, "world")),
+            status_cache: Default::default(),
+            sample_rng: std::sync::Mutex::new(status::SampleRng::new(seed)),
         }
+    }
+
+    /// Shares the player list and server list settings with the simulation.
+    pub fn with_info(mut self, info: Arc<kiln_link::ServerInfo>) -> Self {
+        self.info = info;
+        self
     }
 
     /// Uses `access` for the login checks (shared with the simulation).
@@ -415,7 +464,30 @@ fn split_id(pkt: &[u8]) -> Result<(i32, Reader<'_>)> {
     Ok((id, r))
 }
 
-async fn handle(stream: TcpStream, addr: SocketAddr, shared: Arc<Shared>) -> Result<()> {
+/// `LegacyQueryHandler`: answers the pre-1.7 server list pings (`FE`, `FE 01`, `FE 01 FA
+/// MC|PingHost ...`) with a kick packet and closes. `false`: not such a ping, handle the
+/// connection as usual (the bytes are still unread).
+async fn legacy_ping(stream: &mut TcpStream, addr: SocketAddr, shared: &Shared) -> Result<bool> {
+    let mut buf = [0u8; 512];
+    let Ok(Ok(n)) = tokio::time::timeout(PRE_PLAY_TIMEOUT, stream.peek(&mut buf)).await else { return Ok(false) };
+    if n == 0 || buf[0] != 0xfe {
+        return Ok(false);
+    }
+    let info = &shared.info;
+    let reply = status::legacy_ping_reply(&buf[..n], &info.motd(), &info.version_name, info.player_count(), info.max_players());
+    let Some(reply) = reply else { return Ok(false) };
+    debug!("Ping: (legacy, {n} bytes) from {addr}");
+    stream.read_exact(&mut buf[..n]).await?;
+    stream.write_all(&reply).await?;
+    stream.shutdown().await?;
+    Ok(true)
+}
+
+async fn handle(mut stream: TcpStream, addr: SocketAddr, shared: Arc<Shared>) -> Result<()> {
+    // The legacy handler is part of the pipeline only while the server answers status requests.
+    if shared.info.enable_status.load(Ordering::Relaxed) && legacy_ping(&mut stream, addr, &shared).await? {
+        return Ok(());
+    }
     let mut conn = Conn::new(stream);
     let pkt = conn.read().await?;
     let (id, mut r) = split_id(&pkt)?;
@@ -447,22 +519,23 @@ async fn handle(stream: TcpStream, addr: SocketAddr, shared: Arc<Shared>) -> Res
 }
 
 async fn status(conn: &mut Conn, shared: &Shared, _client_protocol: i32) -> Result<()> {
+    // `ServerHandshakePacketListenerImpl`: with `enable-status` off the connection is just closed.
+    if !shared.info.enable_status.load(Ordering::Relaxed) {
+        bail!("status requests are disabled (enable-status=false)");
+    }
+    let mut requested = false;
     loop {
         let pkt = conn.read().await?;
         let (id, mut r) = split_id(&pkt)?;
         match id {
             ids::status::serverbound::STATUS_REQUEST => {
-                let json = serde_json::json!({
-                    "version": { "name": version::NAME, "protocol": version::PROTOCOL },
-                    "players": {
-                        "max": shared.config.max_players,
-                        "online": shared.online.load(Ordering::Relaxed),
-                        "sample": [],
-                    },
-                    "description": { "text": shared.config.motd },
-                    "enforcesSecureChat": false,
-                });
-                conn.send(&packets::status_response(&json.to_string())).await?;
+                // `ServerStatusPacketListenerImpl`: one status request per connection.
+                if requested {
+                    bail!("status requested twice");
+                }
+                requested = true;
+                let json = shared.status_json();
+                conn.send(&packets::status_response(&json)).await?;
             }
             ids::status::serverbound::PING_REQUEST => {
                 let ts = r.i64()?;
@@ -483,8 +556,9 @@ async fn login(mut conn: Conn, addr: SocketAddr, shared: &Shared, protocol: i32,
     let name = login_ext::read_login_start(&mut r)?.name.to_owned();
 
     if protocol != version::PROTOCOL {
-        let msg = format!("Kiln runs Minecraft {} (protocol {}).", version::NAME, version::PROTOCOL);
-        conn.send(&packets::login_disconnect(&msg)).await?;
+        // `ServerHandshakePacketListenerImpl.beginLogin`: older than the 1.16 protocol is outdated.
+        let key = if protocol < 754 { "multiplayer.disconnect.outdated_client" } else { "multiplayer.disconnect.incompatible" };
+        conn.send(&login_ext::login_disconnect_translated_with(key, &[version::NAME])).await?;
         bail!("{name}: unsupported protocol {protocol}");
     }
     if !valid_name(&name) {
@@ -493,7 +567,7 @@ async fn login(mut conn: Conn, addr: SocketAddr, shared: &Shared, protocol: i32,
     }
     // Reserved until the connection ends, so concurrent logins cannot overfill the server.
     let Some(_slot) = PlayerSlot::reserve(shared) else {
-        conn.send(&packets::login_disconnect("The server is full.")).await?;
+        conn.send(&login_ext::login_disconnect_translated("multiplayer.disconnect.server_full")).await?;
         bail!("{name}: server full");
     };
 
@@ -878,7 +952,7 @@ struct PlayerSlot<'a>(&'a AtomicUsize);
 
 impl<'a> PlayerSlot<'a> {
     fn reserve(shared: &'a Shared) -> Option<Self> {
-        let max = shared.config.max_players;
+        let max = shared.info.max_players().max(0) as usize;
         shared.online.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < max).then_some(n + 1)).ok()?;
         Some(Self(&shared.online))
     }

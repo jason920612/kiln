@@ -771,11 +771,15 @@ pub struct ClientInfo {
     pub skin_parts: u8,
     /// 0 left, 1 right.
     pub main_hand: i32,
+    /// `ChatVisiblity` id: 0 full, 1 commands only, 2 hidden.
+    pub chat_visibility: u8,
+    /// Whether the player shows in the server list's sample (`allowsListing`).
+    pub allows_listing: bool,
 }
 
 impl Default for ClientInfo {
     fn default() -> Self {
-        Self { view_distance: 8, skin_parts: 0x7f, main_hand: 1 }
+        Self { view_distance: 8, skin_parts: 0x7f, main_hand: 1, chat_visibility: 0, allows_listing: true }
     }
 }
 
@@ -783,14 +787,15 @@ impl Default for ClientInfo {
 pub fn read_client_information(r: &mut Reader) -> Result<ClientInfo, DecodeError> {
     let _locale = r.string(16)?;
     let view_distance = r.i8()?.max(2) as u8;
-    let _chat_mode = r.varint()?;
+    let chat_mode = r.varint()?;
     let _chat_colors = r.bool()?;
     let skin_parts = r.u8()?;
     let main_hand = r.varint()?;
     let _text_filtering = r.bool()?;
-    let _allow_listing = r.bool()?;
+    let allows_listing = r.bool()?;
     let _particles = r.varint()?;
-    Ok(ClientInfo { view_distance, skin_parts, main_hand })
+    // `ChatVisiblity.BY_ID` wraps around.
+    Ok(ClientInfo { view_distance, skin_parts, main_hand, chat_visibility: chat_mode.rem_euclid(3) as u8, allows_listing })
 }
 
 #[cfg(test)]

@@ -24,6 +24,9 @@ fn shared(login: LoginConfig, compression: Option<usize>) -> (Arc<Shared>, cross
         view_distance: 8,
         simulation_distance: 8,
         compression_threshold: compression,
+        favicon: None,
+        enforces_secure_chat: false,
+        rate_limit: 0,
     };
     let (to_sim, sim_rx) = crossbeam_channel::unbounded();
     (Arc::new(Shared::with_login(config, login, to_sim)), sim_rx)
@@ -282,6 +285,9 @@ fn online(url: &str, compression: Option<usize>) -> (Arc<Shared>, crossbeam_chan
         view_distance: 8,
         simulation_distance: 8,
         compression_threshold: compression,
+        favicon: None,
+        enforces_secure_chat: false,
+        rate_limit: 0,
     };
     let mut shared = Shared::with_login(config, LoginConfig::default(), to_sim);
     shared.auth = Some(Authenticator { key: test_key(), session: Arc::new(SessionService::with_endpoint(url)) });

@@ -3,4 +3,5 @@
 
 pub mod eula;
 pub mod javaprops;
+pub mod launch;
 pub mod properties;

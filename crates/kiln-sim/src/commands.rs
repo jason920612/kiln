@@ -51,6 +51,9 @@ pub(crate) fn has_illegal_chars(s: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandSource {
     Console,
+    /// A remote console (`RconConsoleSource`): permission level 4, at the world spawn, named
+    /// "Rcon"; what it prints is kept in [`CommandState::rcon_buffer`].
+    Rcon,
     Player(ConnId),
     /// A command block (`BaseCommandBlock.createCommandSourceStack`): in level `dim`, at `pos`.
     Block { dim: usize, pos: [i32; 3] },
@@ -276,6 +279,8 @@ pub(crate) struct CommandState {
     pub gametests: crate::gametest::GameTests,
     /// Console lines kept for tests ([`Sim::capture_console`]).
     pub console_capture: Option<Vec<String>>,
+    /// What the running RCON command printed (`RconConsoleSource.buffer`, texts joined as they come).
+    pub rcon_buffer: String,
     /// `fetchprofile` lookups on their way: who asked, and what for.
     pub profile_requests: HashMap<u64, (CommandSource, kiln_command::host::ProfileQuery)>,
     pub next_profile_request: u64,
@@ -323,6 +328,7 @@ impl CommandState {
             stopwatches_dirty: false,
             gametests: Default::default(),
             console_capture: None,
+            rcon_buffer: String::new(),
             profile_requests: HashMap::new(),
             next_profile_request: 1,
             profile_results: Vec::new(),
@@ -500,6 +506,13 @@ impl Sim {
         self.execute_as(CommandSource::Console, command);
     }
 
+    /// `DedicatedServer.runCommand`: runs `command` as the RCON source and returns what it printed.
+    pub(crate) fn run_rcon_command(&mut self, command: &str) -> String {
+        self.commands.rcon_buffer.clear();
+        self.execute_as(CommandSource::Rcon, command.strip_prefix('/').unwrap_or(command));
+        std::mem::take(&mut self.commands.rcon_buffer)
+    }
+
     /// [`Sim::run_console_command`] between ticks, to look at the world right after a command
     /// returns (for tests).
     pub fn console_now(&mut self, command: &str) {
@@ -546,6 +559,7 @@ impl Sim {
             CommandSource::Console => {
                 SourceStack::new(Text::literal("Server"), OVERWORLD, self.spawn.map(|v| v as f64))
             }
+            CommandSource::Rcon => SourceStack::new(Text::literal("Rcon"), OVERWORLD, self.spawn.map(|v| v as f64)),
             // `CommandBlockEntity$1.createCommandSourceStack`: the block's name, the middle of the block, facing
             // the way the block does, without an entity, at permission level 2.
             CommandSource::Block { dim, pos } => {
@@ -615,6 +629,10 @@ impl Sim {
     fn reply(&mut self, text: Text) {
         match self.commands.source {
             CommandSource::Console => self.reply_console(&text),
+            CommandSource::Rcon => {
+                let line = console_text(&text);
+                self.commands.rcon_buffer.push_str(&line);
+            }
             // `CloseableCommandBlockSource.sendSystemMessage`: the last output, with the time.
             CommandSource::Block { .. } => crate::command_block::output(self, text),
             CommandSource::Player(conn) => {
@@ -637,7 +655,7 @@ impl Source for Sim {
 
     fn permission_level(&self) -> u8 {
         match self.commands.source {
-            CommandSource::Console => 4,
+            CommandSource::Console | CommandSource::Rcon => 4,
             CommandSource::Player(conn) => self.permission_level_of(conn),
             CommandSource::Block { .. } => 2,
         }
@@ -694,6 +712,12 @@ impl Source for Sim {
 
     fn command_limit(&self) -> i32 {
         Host::game_rule(self, "minecraft:max_command_sequence_length").command_result()
+    }
+}
+
+impl kiln_link::AdminHost for Sim {
+    fn rcon_command(&mut self, command: &str) -> String {
+        self.run_rcon_command(command)
     }
 }
 
@@ -794,9 +818,15 @@ impl Host for Sim {
         let feedback = self.rule_bool("minecraft:send_command_feedback");
         let me = match self.commands.source {
             CommandSource::Player(c) => Some(c),
-            CommandSource::Console | CommandSource::Block { .. } => None,
+            CommandSource::Console | CommandSource::Rcon | CommandSource::Block { .. } => None,
         };
-        if broadcast {
+        // `shouldInformAdmins`: the console and RCON have a property for it.
+        let informs = match self.commands.source {
+            CommandSource::Console => self.config.broadcast_console_to_ops,
+            CommandSource::Rcon => self.config.broadcast_rcon_to_ops,
+            _ => true,
+        };
+        if broadcast && informs {
             // Other operators see a gray, italic "[Source: message]" (chat.type.admin).
             let admin = kiln_command::tr!("chat.type.admin", self.source_name(), text.clone()).color("gray").italic();
             if feedback {
@@ -837,6 +867,10 @@ impl Host for Sim {
         match self.commands.source {
             CommandSource::Player(conn) => self.send_to(conn, chat_disguised(&message)),
             CommandSource::Console | CommandSource::Block { .. } => info!("{}", console_text(&message.to_text())),
+            CommandSource::Rcon => {
+                let line = console_text(&message.to_text());
+                self.commands.rcon_buffer.push_str(&line);
+            }
         }
     }
 

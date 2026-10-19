@@ -220,7 +220,73 @@ pub struct MobState {
     pub pos: [f64; 3],
 }
 
+/// What `server.properties` decides about the game itself (the rest of a dedicated server's
+/// settings is the network's or the launcher's). The defaults are vanilla's, except that nothing
+/// pauses an empty server: tests and tools run worlds without players.
+#[derive(Debug, Clone)]
+pub struct ServerSettings {
+    /// `gamemode`: the default game mode, 0 survival .. 3 spectator.
+    pub default_game_mode: u8,
+    /// `force-gamemode`: every join sets the default game mode.
+    pub force_gamemode: bool,
+    /// `hardcore`: a new world is hardcore.
+    pub hardcore: bool,
+    /// `spawn-protection`: the radius around the world spawn only operators may build in.
+    pub spawn_protection: i32,
+    /// `allow-flight`: survival players are not kicked for flying.
+    pub allow_flight: bool,
+    /// `player-idle-timeout` in minutes (0: off).
+    pub player_idle_timeout: i32,
+    /// `pause-when-empty-seconds`: the world stops ticking after this long without players (0 or less: never).
+    pub pause_when_empty_seconds: i32,
+    /// `max-tick-time` in milliseconds (0 or less: no watchdog).
+    pub max_tick_time_ms: i64,
+    /// `entity-broadcast-range-percentage`.
+    pub entity_broadcast_range_percentage: i32,
+    /// `max-world-size`: the world border's largest radius.
+    pub max_world_size: i32,
+    /// `max-chained-neighbor-updates`.
+    pub max_chained_neighbor_updates: i32,
+    /// `op-permission-level`: what `/op` grants.
+    pub op_permission_level: u8,
+    /// `function-permission-level`: what data pack functions run with.
+    pub function_permission_level: u8,
+    /// `enforce-secure-profile` while the server is in online mode: chat needs a chat session.
+    pub enforce_secure_profile: bool,
+    /// `command-spam-threshold-seconds` and `chat-spam-threshold-seconds` (the `TickThrottler` thresholds).
+    pub command_spam_threshold_seconds: i32,
+    pub chat_spam_threshold_seconds: i32,
+    /// `log-ips`: logins and logouts print the address.
+    pub log_ips: bool,
+}
+
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self {
+            default_game_mode: 0,
+            force_gamemode: false,
+            hardcore: false,
+            spawn_protection: 16,
+            allow_flight: false,
+            player_idle_timeout: 0,
+            pause_when_empty_seconds: 0,
+            max_tick_time_ms: 0,
+            entity_broadcast_range_percentage: 100,
+            max_world_size: 29_999_984,
+            max_chained_neighbor_updates: 1_000_000,
+            op_permission_level: 4,
+            function_permission_level: 2,
+            enforce_secure_profile: false,
+            command_spam_threshold_seconds: 10,
+            chat_spam_threshold_seconds: 10,
+            log_ips: true,
+        }
+    }
+}
+
 pub struct SimConfig {
+    /// The `server.properties` settings that concern the game.
+    pub server: ServerSettings,
     pub max_players: usize,
     pub view_distance: u8,
     pub simulation_distance: u8,
@@ -278,6 +344,12 @@ pub struct SimConfig {
     /// dedicated server's `difficulty` property, which it applies over the save's at every start.
     /// Without it a world starts in its saved difficulty, a new one in normal.
     pub difficulty: Option<u8>,
+    /// The player list and server list settings that threads outside the simulation read.
+    pub info: std::sync::Arc<kiln_link::ServerInfo>,
+    /// `broadcast-console-to-ops`: console commands' feedback goes to the operators.
+    pub broadcast_console_to_ops: bool,
+    /// `broadcast-rcon-to-ops`: so does RCON commands'.
+    pub broadcast_rcon_to_ops: bool,
     /// Tests: entities that console commands and functions summon join the level after the tick, as they did before wp72 (the
     /// recorders of some vanilla vectors add entities without ticking them; vanilla's `/summon` ticks the entity in the same tick).
     pub summons_join_late: bool,
@@ -330,6 +402,7 @@ impl SimConfig {
     pub fn new(max_players: usize, view_distance: u8, world: Option<std::path::PathBuf>) -> Self {
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
         Self {
+            server: ServerSettings::default(),
             max_players,
             view_distance,
             simulation_distance: view_distance,
@@ -361,6 +434,9 @@ impl SimConfig {
             profile_lookup: None,
             replies: None,
             difficulty: None,
+            info: std::sync::Arc::new(kiln_link::ServerInfo::new("A Minecraft Server", max_players as i32, "world")),
+            broadcast_console_to_ops: true,
+            broadcast_rcon_to_ops: true,
             summons_join_late: false,
         }
     }
@@ -1937,6 +2013,7 @@ impl Sim {
         // B0: connection events, chunks, topology, joins, membership.
         let (mut packets, mut joins, mut console, mut leaves) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut profile_results = Vec::new();
+        let mut admin_work = Vec::new();
         for msg in inbox {
             match msg {
                 ToSim::Join(j) => joins.push(j),
@@ -1953,6 +2030,7 @@ impl Sim {
                     return false;
                 }
                 ToSim::ProfileLookup { request, result } => profile_results.push((request, result)),
+                ToSim::Admin(work) => admin_work.push(work),
             }
         }
         // `/kiln use` clicks, as if their players had sent them.
@@ -2018,7 +2096,10 @@ impl Sim {
         // G: console, time, autosave.
         self.deliver_profile_answers();
         for command in console {
-            self.run_console_command(command.trim_start_matches('/'));
+            self.run_console_command(command.strip_prefix('/').unwrap_or(&command));
+        }
+        for work in admin_work {
+            work(self);
         }
         self.run_structure_triggers();
         for (request, result) in profile_results {
@@ -3845,6 +3926,9 @@ impl Sim {
     }
 
     fn leave(&mut self, conn: ConnId) {
+        if let Ok(mut roster) = self.config.info.roster.write() {
+            roster.retain(|e| e.conn != conn);
+        }
         self.dragon_fight_left(conn);
         // `ServerPlayer.disconnect`: a sleeper gets out of bed first.
         if let Some(mut p) = self.players.remove(&conn) {
@@ -4365,6 +4449,9 @@ impl Sim {
             player.send(pkt);
         }
         self.sleep_status[player.dim].dirty = true;
+        if let Ok(mut roster) = self.config.info.roster.write() {
+            roster.push(kiln_link::RosterEntry { conn: j.conn, uuid, name: player.name.clone(), allows_listing: player.client.allows_listing });
+        }
         self.players.insert(j.conn, player);
         self.queue_player_pearls(entity_id, &saved_pearls);
         self.refresh_permissions();
