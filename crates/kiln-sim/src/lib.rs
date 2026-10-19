@@ -2353,6 +2353,26 @@ impl Sim {
         self.dims[dim_id(dimension)?].regions.get_block(x, y, z)
     }
 
+    /// The natural spawn list of `biome` for the spawning category `category` (`monster`, `creature`...): entity type names (for tests).
+    pub fn spawn_list(&self, biome: &str, category: &str) -> Vec<&'static str> {
+        use kiln_entity::mob::Category;
+        let (Some(table), Some(id), Some(cat)) = (
+            self.spawn_table.as_ref(),
+            kiln_data::synced_id("minecraft:worldgen/biome", biome),
+            Category::SPAWNING.into_iter().find(|c| c.name() == category),
+        ) else {
+            return Vec::new();
+        };
+        table.list(id as u16, cat).iter().map(|s| s.type_name).collect()
+    }
+
+    /// The nearest start of any structure in `names` near `origin` in level `dimension`, with its id (`/locate structure`; for tests).
+    pub fn locate_structure_near(&mut self, dimension: &str, origin: [i32; 3], names: &[&str]) -> Option<([i32; 3], String)> {
+        let dim = dim_id(dimension)?;
+        let names: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+        self.locate_structure(dim, origin, &names)
+    }
+
     /// The stored biome (its network id) of the 4x4x4 cell holding a position of the level `dimension`, if its chunk is
     /// loaded (for tests and tools).
     pub fn biome_in(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u16> {
