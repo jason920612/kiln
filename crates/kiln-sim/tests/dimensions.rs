@@ -309,3 +309,20 @@ fn a_mob_in_an_end_gateway_goes_to_its_exit() {
     let be = w.sim.block_entity_data(END, 0, 80, 40).expect("the gateway's block entity");
     assert!(be.get("exit_portal").is_some(), "which now knows its exit: {be:?}");
 }
+
+/// wp82 (lock step against vanilla, `tools/wp82/portal82.py`): a mob that stands in a portal is taken through on the NEXT tick: the first tick it stands there
+/// `applyEffectsFromBlocks` calls `setAsInsidePortal`, and `handlePortal` of the second tick sends it. Kiln sent it at the end of the first tick, one tick early.
+#[test]
+fn a_mob_in_a_portal_goes_through_on_the_second_tick() {
+    let mut w = World::new("creative");
+    frame(&mut w, 11, -61, 12);
+    w.run("setblock 11 -60 12 minecraft:fire");
+    assert!(state::is(w.sim.block_at(12, -59, 12).unwrap(), d::NETHER_PORTAL));
+    w.run("summon minecraft:cow 11.5 -60 12.5 {NoAI:1b,PersistenceRequired:1b}");
+    let in_nether = |w: &World| w.sim.entities_in(NETHER).iter().any(|(k, _)| *k == "minecraft:cow");
+    assert!(!in_nether(&w), "made, not ticked yet");
+    w.ticks(1);
+    assert!(!in_nether(&w), "the first tick in the portal only marks it");
+    w.ticks(1);
+    assert!(in_nether(&w), "the second tick takes it through");
+}

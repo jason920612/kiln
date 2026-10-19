@@ -8,6 +8,7 @@ for t in "KV":
     w(t, "execute in minecraft:the_nether run forceload add 0 0 60 60")
 time.sleep(4)
 import os
+NOAI = os.environ.get("NOAI", "1")
 X, Y, Z = int(os.environ.get("PX", "20")), int(os.environ.get("PY", "150")), int(os.environ.get("PZ", "20"))
 
 def where(t):
@@ -41,9 +42,11 @@ for src in ("overworld", "the_nether"):
         both_(f"execute in minecraft:overworld run fill {tx - 24} 67 {tz - 24} {tx + 24} 110 {tz + 24} minecraft:air")
         time.sleep(2)
     time.sleep(1)
-    both_(f"execute in minecraft:{src} run summon minecraft:{MOB} {X + 1}.5 {Y + 1} {Z}.5 {{Tags:[\"c82\"],NoAI:1b,PersistenceRequired:1b}}")
+    # frozen first, then the mob: it must not tick before the first step (Kiln runs the console one tick later than vanilla)
     both_("tick freeze")
-    time.sleep(0.6)
+    time.sleep(1.0)
+    both_(f"execute in minecraft:{src} run summon minecraft:{MOB} {X + 1}.5 {Y + 1} {Z}.5 {{Tags:[\"c82\"],NoAI:{NOAI}b,PersistenceRequired:1b}}")
+    time.sleep(1.0)
     F("==", src, "-> the other level; after every step:")
     rows = {"K": [], "V": []}
     for i in range(STEPS):
