@@ -525,3 +525,26 @@ fn the_default_components_of_items_follow_the_registries_numbering() {
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn damage_exhaustion_follows_the_type() {
+    use support::Game;
+    let _x = kiln_data::live::exclusive();
+    let mut g = Game::new("exhaustion", &["kiln_wp83"], "Hungry");
+    let hurt = |g: &mut Game, ty: &str, times: usize| {
+        for _ in 0..times {
+            g.console(&format!("damage Hungry 0.5 {ty}"));
+            g.ticks(25);
+            g.console("effect give Hungry minecraft:instant_health 1 3");
+        }
+    };
+    // `kiln83:mild` exhausts nothing; `kiln83:acid` 0.7 a hit: six hits are 4.2, past the 4 that takes a point of saturation.
+    let (food0, sat0) = g.sim.food(1).unwrap();
+    hurt(&mut g, "kiln83:mild", 6);
+    assert_eq!(g.sim.food(1), Some((food0, sat0)));
+    hurt(&mut g, "kiln83:acid", 6);
+    let (food, sat) = g.sim.food(1).unwrap();
+    assert_eq!(food, food0);
+    assert_eq!(sat, sat0 - 1.0, "four points of exhaustion cost a point of saturation");
+    g.cleanup();
+}
