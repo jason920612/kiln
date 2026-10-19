@@ -155,6 +155,13 @@ fn check(name: &str, dimension: &str, packs: &[&str]) {
             }
         }
         let data = pipeline.structure_data(&mut gs, t.x, t.z);
+        if std::env::var_os("KILN_PACK_STARTS").is_some()
+            && let Some(kiln_proto::nbt::Tag::Compound(starts)) = data.get("starts")
+        {
+            for (id, start) in starts {
+                eprintln!("  start {id} in chunk {},{}: {start:?}", t.x, t.z);
+            }
+        }
         let mut ours: Vec<String> = match data.get("starts") {
             Some(kiln_proto::nbt::Tag::Compound(starts)) => starts.iter().map(|(k, _)| k.clone()).collect(),
             _ => Vec::new(),
