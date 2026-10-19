@@ -271,12 +271,13 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 項目 | 級別 | A 數量 | 依據 | 缺口 |
 |---|---|---|---|---|
 | 地形密度函數與 noise router（overworld） | A | 5 seed×約 5.1M 角點×3 模式 | `tests/parity.rs` | – |
-| 生物群系（overworld、nether、end） | A | 3 維度×5 seed×2,560 chunk | `tests/chunks.rs` | 只有 multi_noise 與 end source |
+| 生物群系（overworld、nether、end） | A | 3 維度×5 seed×2,560 chunk | `tests/chunks.rs` | wp85 補 `fixed`、`checkerboard`、內嵌參數表與資料包的群系（見 6.28） |
 | 地形填充、表面規則、洞穴與峽谷、beardifier | A | 三維度各 12,800 chunk、0 不符 | `tests/chunks.rs`、`features.rs` | – |
 | 特徵（29 型，樹、礦、湖、geode、冰、化石、植被等） | A | overworld 2,920,065 次放置；nether 186,873；end 14,121 | `tests/features.rs` | nether／end 只留 commit 訊息，沒有 log |
 | 結構（16 種 StructureType、52 個 JSON） | A | overworld 1,234 個 start；nether／end 另計 | `features.rs --structures` | 8 個 abandoned_camp 變體未被取樣；結構內實體與方塊實體 NBT（箱子戰利品種子、spawner）無向量 |
 | 出生點、基礎高度 | A | 6 seed／約 4,000 欄 | `tests/spawn.rs`、`heights.rs` | seed 12345 差 1 格（MC-55596） |
-| 生成期光照、dimension types | C／B | – | – | 光照無原版比對 |
+| 生成期光照、dimension types | C／B | – | – | 光照無原版比對；dimension types 由 registry 解碼（wp85，見 6.28：7 個測試，條目驗證與 vanilla 的載入器 50／13 逐條相同） |
+| worldgen 資料包（群系、噪音設定、地物、結構、結構集、模板池、處理器、維度類型、維度） | A（生成）／B（維度執行期） | 6 個案例共約 700 chunk 與 vanilla 逐方塊、群系格、結構 start NBT 相同 | `kiln-worldgen/tests/packs.rs`、`kiln-sim/tests/dp_worldgen.rs`、`dp_dimensions.rs`、`wp85_vanilla.rs` | wp85，見 6.28；平坦維度無結構與地物；自訂時鐘不支援 |
 | 世界初始動物、bonus chest、blending、舊世界升級 | D | 0 | – | – |
 | 天氣週期、天空暗度、降水結冰降雪、睡眠起床 | A | 515 tick／112／8 區域／12 | `weather_parity.rs` | 隨機源是 stand-in |
 | 雷擊、避雷針、骷髏陷阱、`/time`、睡眠 | C | 0 | `tests/weather.rs` | – |
@@ -317,7 +318,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 - A（11）：Region `.mca`、section 與 palette、方塊實體、entities、玩家核心資料、物品 NBT、advancement、level.dat 核心欄位、Anvil↔native 轉換。
 - C（15）：biomes、光照、heightmap、排程 tick、POI、scoreboard、boss bar、weather、world_border、raids、dragon fight、random_sequences（Kiln 只與自己比，原版沒載入過這些檔）。
 - B（6，wp44-admin）：`world_gen_settings.dat` 的 seed、`level.dat` 的難度與鎖、`game_rules.dat`、command storage、`ops.json`、區塊的 `InhabitedTime`（`admin_check.py` 27 項互載）。
-- D（5）：非 full chunk（一律丟棄重生，參考世界 2,500 個 chunk 中 1,716 個不被使用）、`wandering_trader.dat` 路徑與原版不同、`LastDeathLocation`、地圖、自訂維度；不模擬的實體只存在磁碟。
+- D（5）：非 full chunk（一律丟棄重生，參考世界 2,500 個 chunk 中 1,716 個不被使用）、`wandering_trader.dat` 路徑與原版不同、`LastDeathLocation`、地圖；不模擬的實體只存在磁碟（自訂維度已在 wp85 做，見 6.28）。
 
 ### 3.10 近似開關（只列原版可見的）
 
@@ -951,8 +952,23 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 物品預設元件的 registry id | **修**(找到的):唱片、錠等的預設元件存 vanilla 的 id,資料包新增條目後會錯位(歌曲 `kiln83:tune` 排在 `wait` 之前,`music_disc_wait` 會放成別首)。`the_default_components_of_items…` |
 | 附魔 | 見 `docs/wp83-enchant.md`:每種效果元件解碼並評估(`tick`、`location_changed`、`hit_block`、`projectile_spawned`、音效、`prevent_*`)、靈魂疾行者與霜行者就是它們的定義、絲綢之觸與詛咒讀 tag/元件、附魔定義世界載入時讀一次;`enchant_packs.rs` 14 個 |
 | loot 呼叫 | 見 `docs/wp83-loot.md`:甜莓(以前不能採)、洞穴藤、蜂巢、南瓜、鋤根土、充能苦力怕(以前不掉頭)、生怪磚裝備(以前只保存)、村民禮物、叢林神廟發射器的表 id(以前是空的);`loot_calls.rs` 10 個 |
-| 沒做 | worldgen 資料包(`docs/wp83.md` §5 寫了現況與做法);`block_transformer` 沒覆寫的三個(鋤、斧、鏟)仍是 Kiln 內建規則、不讀 vanilla 的 JSON(資料包覆寫時才照資料執行);`/give … decorated_pot[pot_decorations=[…]]` Kiln 收下、vanilla 回「Not a map」(與資料包無關,沒修);客戶端沒有 `minecraft:core` 時 Kiln 斷線(vanilla 全送資料);壞條目只擋缺必要欄位或壞 JSON 的 |
+| 沒做 | (wp85 已補:worldgen 資料包、鋤斧鏟讀 vanilla 的 JSON,見 6.28);`/give … decorated_pot[pot_decorations=[…]]` Kiln 收下、vanilla 回「Not a map」(與資料包無關,沒修);客戶端沒有 `minecraft:core` 時 Kiln 斷線(vanilla 全送資料);壞條目只擋缺必要欄位或壞 JSON 的 |
 | 效能 | 登入(連線到第一批區塊,暖機後 p50):base 36~51 ms、new 46~59 ms、new+資料包 49~56 ms;伺服器啟動到 ready:4.60 / 4.64 / 4.48 s。`sim_load`(50 玩家、10 組、noise 地形、模板世界,8 對交替):mspt 平均 base 19.61、new 19.99,p50 18.8 / 18.7,使用者 CPU 22.57 / 22.84 s(VM 與另一個工作階段共用,同一邊內變動 ±1.5 ms);`survival_bench` 50 機器人各一次:mean 21.2→17.6、p99 44.1→41.9(不同時段,不是證據);沒有退步 |
+
+### 6.28 wp85(`wp85-worldgen-packs`):worldgen 資料包與自訂維度(生成與遊玩如 vanilla 跑同一批資料包)
+
+細節見 `docs/wp85.md`。工具(`tools/wp85/`):`make_packs.py` + `packs/`(`kiln85_desert`、`crystal`、`hills`、`structure`、`dims`、`nether`、`bad`,全是自己寫的)、`cases.json`、`PackVectors.java`(vanilla 伺服器載入同一批資料包、正規順序生成並傾印)、`vgen85.py`、`sv85.sh`、`schema85.py` + `schema_accepted.txt`、`check_registries85.sh`、`neg85.py`。
+
+| 區域 | 結果 |
+|---|---|
+| 一疊根目錄 | **補**:`Datapack::load_stack`(vanilla 在底、啟用的資料包在上、同 id 後蓋前、tag 依 `TagLoader` 疊加含 `replace`),條目依 `Identifier` 順序(**修**:原本 `ns:path` 字串排序,資料包的新結構會排到 vanilla 結構之前,`setFeatureSeed` 編號與結構集順序都錯);結構模板從疊起來的根找 |
+| 自訂群系、噪音設定、地物、結構、結構集、模板池、處理器清單 | **補**:群系源支援 `multi_noise`(`preset`/內嵌)、`the_end`、`fixed`、`checkerboard`;噪音設定 id 或內嵌;`/locate`、`/place`、探險家地圖、tag 補全、生怪與氣候都讀疊起來的資料。`packs.rs`:desert 144、crystal 144(seed 86)、hills 144、huts 144、dims_cavern 100 個 chunk 的方塊、群系格、結構 start NBT 與 vanilla **0 不符**,每個案例有「資料包的內容真的出現在傾印裡」的斷言;`dp_worldgen.rs` 3 個 |
+| 維度類型與維度(執行期清單) | **補**:`kiln_data::levels`,維度數量不再是 3;`dimension/*.json` 疊在存檔的 `dimensions` 上;存檔 `dimensions/<ns>/<path>`、Login/Respawn 的類型 id、天氣/時間/睡眠/邊界/強制載入/路標依維度、`/execute in`、`/tp`、傳送門的 `coordinate_scale`;寫死維度的行為改讀維度類型(`bed_rule`、`respawn_anchor_works`、`can_start_raid`、`piglins_zombify`、`nether_portal_spawns_piglin`、`fast_lava`、`timelines`、`default_clock`、`has_ceiling`…)。`dp_dimensions.rs` 7 個、`wp85_vanilla.rs` 6 個;沒有資料包時登入封包位元組不變 |
+| 條目驗證 | **補**:14 個 registry 的欄位型別與範圍,規則取自 vanilla 載入 `kiln85_bad` 的錯誤清單(50 擋掉、13 接受,逐條與 Kiln 相同);維度類型的 codec 範圍 |
+| 客戶端 codec | `check_registries85.sh`:五個 wp85 資料包,32 個 registry、帶資料的 5 個條目(覆寫的沙漠、新群系、自己的維度類型…)經 vanilla 的 network codec 解碼再編回與 vanilla 相同、774 個 tag 逐個相同,**0 問題**。**修**(找到的):群系與維度類型的 `attributes` 只送 `syncable` 的(`gameplay/natural_mob_spawns`、`bed_rule`、`respawn_anchor_works` 留在伺服器端) |
+| wp83 尾巴 | **補**:鋤/斧/鏟讀 vanilla 的 `block_transformer/*.json`(`transformer_parity.rs`:47,480 個有變化的組合與內建規則逐項相同)、沙漠水井(查證是舊註記有誤,26.3 的地物都已實作)、刷子的 `tool`(`brush/armadillo`)、附魔 `equipment_drops`(`equipment_drops.rs`:+1.0 的資料包附魔,12/12 掉,普通劍 8.5%) |
+| 沒做 | loot `random_sequence`(vanilla 是伺服器全域序列,Kiln 區域平行 tick 共用會破壞決定性);生物端附魔的 `tick`/`location_changed`、`explode`(`post_attack` 以外)、`hit_block` 其他效果;`brush/armadillo` 的 `interacting_entity`;`piglin_bartering` 多給的 `origin`;自訂維度的自訂時鐘(只有 overworld/the_end 的時鐘);平坦維度沒有結構與地物;wp82 的 MONSTER 生怪比例(項目 7) |
+| 驗證與效能 | 見 `docs/wp85.md` §7 |
 
 ## 7. 重跑
 
