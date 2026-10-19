@@ -96,6 +96,7 @@ fn an_enchantment_with_equipment_drops_raises_the_chance_a_killed_mob_drops_its_
     w.sim.console_now("clear User");
     w.sim.console_now("give User minecraft:diamond_sword[enchantments={\"kiln85:plunder\":1}]");
     w.ticks(2);
+    eprintln!("DEBUG slot36 {:?}", w.sim.inventory(1).map(|i| i[36]));
     let plunder = w.kills(12);
     assert_eq!(plunder, 12, "the effect adds 1.0 to the chance (a plain sword dropped {plain})");
 }
