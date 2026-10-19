@@ -47,7 +47,7 @@ elif scene == "beacon":
 elif scene == "pale_moss":
     X, Y, Z = 30, 160, 30
     both_("time set 6000")
-    OB(f"fill {X - 9} {Y - 1} {Z - 9} {X + 9} {Y + 4} {Z + 9} minecraft:air")
+    OB(f"fill {X - 14} {Y - 8} {Z - 14} {X + 14} {Y + 14} {Z + 14} minecraft:air")
     OB(f"fill {X - 9} {Y - 1} {Z - 9} {X + 9} {Y - 1} {Z + 9} minecraft:grass_block")
     both_("tick freeze")
     time.sleep(0.5)
@@ -68,7 +68,9 @@ elif scene == "pale_moss":
     time.sleep(3)
     OB(f"tp KilnTest {X}.5 {Y + 5} {Z + 9}.5")
     look(X + 0.5, Y, Z)
-    time.sleep(3)
+    time.sleep(13)
+    look(X + 0.5, Y, Z)
+    time.sleep(1)
 elif scene == "guardian":
     X, Y, Z = 30, 160, 30
     both_("time set 6000")
