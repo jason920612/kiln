@@ -10,7 +10,7 @@ packs=${@:-kiln_wp83}
 W=${KILN_WORK:-$HOME/kiln/work}
 D=$(mktemp -d)
 mkdir -p $D/world/datapacks
-for p in $packs; do cp -r tools/wp83/packs/$p $D/world/datapacks/$p; done
+for p in $packs; do cp -r tools/wp83/packs/$p $D/world/datapacks/$(basename $p); done
 KILN_DATAPACK=$W/generated cargo run -q --release --example wp83_dump -p kiln-sim -- $D/world > $D/kiln.txt 2> $D/kiln.err || { cat $D/kiln.err; exit 1; }
 CP=$(ls $W/versions/*/server-*.jar $(find $W/libraries -name '*.jar') | tr '\n' ':')
 ROOT=$PWD
