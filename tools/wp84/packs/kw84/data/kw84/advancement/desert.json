@@ -17,14 +17,12 @@
   "here": {
    "trigger": "minecraft:location",
    "conditions": {
-    "player": [
-     {
-      "condition": "minecraft:location_check",
-      "predicate": {
-       "biomes": "minecraft:desert"
-      }
+    "player": {
+     "type": "minecraft:location_check",
+     "predicate": {
+      "biomes": "minecraft:desert"
      }
-    ]
+    }
    }
   }
  }

@@ -27,17 +27,6 @@
       "base": 3.0,
       "per_level_above_first": 2.0
      }
-    },
-    "requirements": {
-     "condition": "minecraft:damage_source_properties",
-     "predicate": {
-      "tags": [
-       {
-        "id": "minecraft:is_fall",
-        "expected": false
-       }
-      ]
-     }
     }
    }
   ],

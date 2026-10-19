@@ -15,7 +15,7 @@
    ],
    "conditions": [
     {
-     "condition": "minecraft:killed_by_player"
+     "type": "minecraft:killed_by_player"
     }
    ]
   },

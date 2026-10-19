@@ -12,7 +12,7 @@
  "description": {
   "text": "Looter"
  },
- "supported_items": "#minecraft:enchantable/sword",
+ "supported_items": "#minecraft:enchantable/sharp_weapon",
  "max_level": 2,
  "slots": [
   "mainhand"

@@ -28,8 +28,10 @@
   ],
   "minecraft:repair_with_xp": [
    {
-    "type": "minecraft:multiply",
-    "factor": 4.0
+    "effect": {
+     "type": "minecraft:multiply",
+     "factor": 4.0
+    }
    }
   ]
  }

@@ -12,7 +12,7 @@
        "name": "minecraft:dirt",
        "conditions": [
         {
-         "condition": "minecraft:match_tool",
+         "type": "minecraft:match_tool",
          "predicate": {
           "predicates": {
            "minecraft:enchantments": [

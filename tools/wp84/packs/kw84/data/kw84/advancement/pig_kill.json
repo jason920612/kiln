@@ -17,21 +17,14 @@
   "kill": {
    "trigger": "minecraft:player_killed_entity",
    "conditions": {
-    "player": [
-     {
-      "condition": "minecraft:reference",
-      "name": "kw84:holding_gold"
+    "player": "kw84:holding_gold",
+    "entity": {
+     "type": "minecraft:entity_properties",
+     "entity": "this",
+     "predicate": {
+      "minecraft:entity_type": "minecraft:pig"
      }
-    ],
-    "entity": [
-     {
-      "condition": "minecraft:entity_properties",
-      "entity": "this",
-      "predicate": {
-       "type": "minecraft:pig"
-      }
-     }
-    ]
+    }
    }
   }
  },
