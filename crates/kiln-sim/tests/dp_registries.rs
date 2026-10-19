@@ -383,3 +383,46 @@ fn looms_offer_the_banner_patterns_of_the_pack() {
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn dialogs_of_the_pack_can_be_shown_by_their_registry_id() {
+    use support::Game;
+    let _x = kiln_data::live::exclusive();
+    let mut g = Game::new("dialog", &["kiln_wp83"], "Reader");
+    g.log();
+    g.console("dialog show Reader kiln83:hello");
+    let id = kiln_data::packets::play::clientbound::SHOW_DIALOG;
+    let log = g.log();
+    let shown = log
+        .iter()
+        .find_map(|p| {
+            let mut r = kiln_proto::Reader::new(p);
+            (r.varint().ok()? == id).then(|| r.varint().unwrap())
+        })
+        .expect("a show_dialog packet");
+    // A registered dialog is its network id + 1 (0 means an inline definition follows).
+    let dialog = kiln_data::synced_id("minecraft:dialog", "kiln83:hello").unwrap();
+    assert_eq!(shown, dialog + 1);
+    // An unknown one is refused when the command is parsed.
+    g.log();
+    g.console("dialog show Reader kiln83:nope");
+    assert!(!g.log().iter().any(|p| kiln_proto::Reader::new(p).varint().ok() == Some(id)));
+    g.cleanup();
+}
+
+#[test]
+fn chat_types_of_the_pack_are_registry_entries_with_their_data() {
+    let _x = kiln_data::live::exclusive();
+    let (sim, dir, sync) = start("chat");
+    let packets = sync.registry_packets().unwrap();
+    let (_, entries) = packets.iter().map(registry_data).find(|(r, _)| r == "minecraft:chat_type").unwrap();
+    let shout = entries.iter().find(|(n, _)| n == "kiln83:shout").unwrap().1.clone().expect("data");
+    assert_eq!(shout.get("chat").and_then(|c| c.get("translation_key")).and_then(|t| t.as_str()), Some("chat.type.text"));
+    // `minecraft:chat` (what a player's message uses) keeps the id vanilla's numbering gives it, shifted by the new entry.
+    let chat = kiln_data::synced_id("minecraft:chat_type", "minecraft:chat").unwrap();
+    let vanilla = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:chat_type").unwrap().1.iter().position(|n| *n == "minecraft:chat").unwrap();
+    let shout_id = kiln_data::synced_id("minecraft:chat_type", "kiln83:shout").unwrap();
+    assert_eq!(chat as usize, vanilla + usize::from((shout_id as usize) < chat as usize));
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}
