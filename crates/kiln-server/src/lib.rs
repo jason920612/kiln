@@ -5,3 +5,5 @@ pub mod eula;
 pub mod javaprops;
 pub mod launch;
 pub mod properties;
+pub mod query;
+pub mod rcon;

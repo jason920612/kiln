@@ -284,6 +284,39 @@ fn main() -> Result<()> {
         }
     })?;
 
+    // `DedicatedServer.initServer`: Query, then RCON, once the server is up.
+    let host_ip = match props.server_ip.trim() {
+        "" | "0.0.0.0" => kiln_server::query::local_host_address().unwrap_or_else(|| "0.0.0.0".to_owned()),
+        ip => ip.to_owned(),
+    };
+    let mut query = None;
+    if props.enable_query {
+        info!("Starting GS4 status listener");
+        let facts = Arc::new(kiln_server::query::LiveFacts { info: shared.info.clone(), port: i32::from(port), host_ip });
+        let random = Arc::new(|| {
+            use rand_core::RngCore;
+            (rand_core::OsRng.next_u32() >> 8) as i32
+        });
+        query = kiln_server::query::QueryServer::start(&props.server_ip, props.query_port, facts, random);
+    }
+    let mut rcon = None;
+    if props.enable_rcon {
+        info!("Starting remote control listener");
+        let to_sim = shutdown.clone();
+        let runner: kiln_server::rcon::Runner = Arc::new(move |command: &str| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let command = command.to_owned();
+            let work = Box::new(move |host: &mut dyn kiln_link::AdminHost| {
+                let _ = tx.send(host.rcon_command(&command));
+            });
+            if to_sim.send(kiln_link::ToSim::Admin(work)).is_err() {
+                return String::new();
+            }
+            rx.recv_timeout(std::time::Duration::from_secs(60)).unwrap_or_default()
+        });
+        rcon = kiln_server::rcon::RconServer::start(&props.server_ip, props.rcon_port, &props.rcon_password, runner);
+    }
+
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("net").enable_all().build()?;
     let sim_stopped = runtime.block_on(async {
         tokio::select! {
@@ -292,7 +325,17 @@ fn main() -> Result<()> {
             _ = sim_done_rx => Ok(true),
         }
     })?;
+    // `DedicatedServer.onServerExit`: the listeners stop with the server.
+    let stop_listeners = |rcon: &mut Option<kiln_server::rcon::RconServer>, query: &mut Option<kiln_server::query::QueryServer>| {
+        if let Some(r) = rcon.as_mut() {
+            r.stop();
+        }
+        if let Some(q) = query.as_mut() {
+            q.stop();
+        }
+    };
     if sim_stopped {
+        stop_listeners(&mut rcon, &mut query);
         let _ = sim.join();
         return Ok(());
     }
@@ -301,6 +344,7 @@ fn main() -> Result<()> {
     if shutdown.send(kiln_link::ToSim::Shutdown { done: done_tx }).is_ok() {
         let _ = done_rx.recv_timeout(std::time::Duration::from_secs(60));
     }
+    stop_listeners(&mut rcon, &mut query);
     let _ = sim.join();
     Ok(())
 }
