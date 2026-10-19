@@ -586,7 +586,7 @@ fn a_block_transformer_of_the_pack_decides_what_the_hoe_does() {
     assert_eq!(flint, 3, "the pack's loot table");
     // The pack's `hoe` replaces vanilla's rules: grass does not till; a rule's `copy_properties` keeps the axis.
     use_on(&mut g, [x + 2, y, z], 1, 3);
-    assert_eq!(block(&g, [x + 2, y, z]), "minecraft:grass_block");
+    assert_eq!(block(&g, [x + 2, y, z]), "minecraft:grass_block[snowy=false]");
     use_on(&mut g, [x + 3, y, z], 1, 4);
     assert_eq!(block(&g, [x + 3, y, z]), "minecraft:crimson_stem[axis=x]");
     // The axe is not in the pack: the built-in rules strip as before.
