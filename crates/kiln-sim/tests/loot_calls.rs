@@ -285,3 +285,23 @@ fn a_villager_throws_the_hero_gift_its_table_rolls() {
     }
     assert!(diamonds(&w) > 0, "no gift from the pack's table in {n} ticks");
 }
+
+#[test]
+fn shearing_a_sheep_rolls_the_shearing_table_with_the_shears_as_the_tool() {
+    // A diamond only if the context has the shears as its `tool`, an emerald whatever the tool.
+    let tool = r#"{"rolls":1,"entries":[{"type":"minecraft:item","name":"minecraft:diamond","condition":{"type":"minecraft:match_tool","predicate":{"items":"minecraft:shears"}}}]}"#;
+    let t = table("shearing", &[tool.to_owned(), pool(&[item("emerald", 1)])]);
+    let mut w = World::new("shear", &[("shearing/sheep/white", &t)]);
+    let [x, y, z] = w.at(1, 1, 0);
+    w.run(&format!("summon minecraft:sheep {x} {y} {z} {{Color:0b,NoAI:1b}}"));
+    w.ticks(2);
+    let id = w.sim.entity_ids_of("minecraft:sheep")[0];
+    w.hold("minecraft:shears", 1);
+    let pkt = PlayIn::Interact { entity_id: id, hand: kiln_proto::packets::serverbound::Hand::Main, location: [0.0, 0.5, 0.0], sneaking: false };
+    assert!(w.sim.step([ToSim::Packet(1, pkt)]));
+    w.ticks(2);
+    let items = w.items();
+    assert_eq!(items.get("minecraft:emerald"), Some(&1), "the pack's table: {items:?}");
+    assert_eq!(items.get("minecraft:diamond"), Some(&1), "the shears are the tool of the context: {items:?}");
+    assert!(!items.contains_key("minecraft:white_wool"), "{items:?}");
+}
