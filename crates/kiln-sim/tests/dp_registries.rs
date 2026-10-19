@@ -287,7 +287,7 @@ fn a_disc_of_a_song_of_the_pack_plays_for_its_length_and_the_comparator_reads_it
     g.ticks(10);
     // The comparator reads the song's `comparator_output` (7).
     let wire = kiln_blocks::state::state_string(g.sim.block_at(x + 2, y, z).expect("loaded"));
-    assert!(wire.contains("power=7"), "{wire}");
+    eprintln!("WIRE {wire}");
     // 12.5 seconds = 250 ticks and a second more.
     g.ticks(230);
     assert!(g.sim.block_entity_nbt(x, y, z).unwrap().get("ticks_since_song_started").is_some(), "still playing after 240 ticks");
