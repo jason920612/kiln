@@ -60,7 +60,6 @@ pub(crate) const FALL_DAMAGE_MULTIPLIER: Attr =
     Attr { name: "minecraft:fall_damage_multiplier", base: 1.0, min: 0.0, max: 100.0 };
 pub(crate) const GRAVITY: Attr = Attr { name: "minecraft:gravity", base: 0.08, min: -1.0, max: 1.0 };
 pub(crate) const JUMP_STRENGTH: Attr = Attr { name: "minecraft:jump_strength", base: 0.41999998688697815, min: 0.0, max: 32.0 };
-pub(crate) const MOVEMENT_EFFICIENCY: Attr = Attr { name: "minecraft:movement_efficiency", base: 0.0, min: 0.0, max: 1.0 };
 pub(crate) const WATER_MOVEMENT_EFFICIENCY: Attr = Attr { name: "minecraft:water_movement_efficiency", base: 0.0, min: 0.0, max: 1.0 };
 pub(crate) const OXYGEN_BONUS: Attr = Attr { name: "minecraft:oxygen_bonus", base: 0.0, min: 0.0, max: 1024.0 };
 pub(crate) const WAYPOINT_TRANSMIT_RANGE: Attr =

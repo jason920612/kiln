@@ -25,7 +25,7 @@ use kiln_blocks::{Effect, Level};
 use kiln_blocks::BlockPos;
 use kiln_item::component::{AttributeOperation, EquipmentSlot};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
-use kiln_loot::effects::{Conditional, EQUIPMENT_ORDER, EntityEffect};
+use kiln_loot::effects::{EQUIPMENT_ORDER, EntityEffect};
 use kiln_loot::fx::{Action, Subject};
 use kiln_loot::json::Json;
 use kiln_loot::view::{EntityView, FxContext};
@@ -81,11 +81,6 @@ impl Player {
             return Vec::new();
         }
         stack.get(kiln_item::keys::ENCHANTMENTS).map_or_else(Vec::new, |e| e.0.clone())
-    }
-
-    /// `Entity.isFlying` of `EntityFlagsPredicate`: gliding, or flying with the abilities.
-    pub(crate) fn flag_flying(&self) -> bool {
-        self.fall_flying || self.flying
     }
 
     /// The player as the effects' requirements see it, with the blocks it stands on.

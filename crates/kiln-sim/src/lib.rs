@@ -2017,6 +2017,8 @@ impl Sim {
         self.collect_pearl_tickets();
         // The command blocks whose tick came run their commands (they may change anything).
         self.run_command_blocks();
+        // The functions the players' enchantments run (`run_function`).
+        self.run_enchantment_functions();
         self.run_structure_triggers();
         // Entities from here on have newer ids.
         let first_new = self.next_entity_id;

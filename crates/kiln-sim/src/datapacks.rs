@@ -695,6 +695,37 @@ impl Sim {
         self.flush_scoreboard();
     }
 
+    /// `RunFunction.apply` for the `run_function` effects the players' enchantments asked for this tick: each function runs as the
+    /// player, at the effect's position and the player's rotation, silent, at permission level 2. A function that does not
+    /// exist is logged.
+    pub(crate) fn run_enchantment_functions(&mut self) {
+        let mut jobs = Vec::new();
+        for (&conn, p) in self.players.iter_mut().filter(|(_, p)| !p.function_requests.is_empty()) {
+            for (name, at) in std::mem::take(&mut p.function_requests) {
+                jobs.push((conn, name, at));
+            }
+        }
+        for (conn, name, at) in jobs {
+            let Some(f) = Identifier::parse(&name).and_then(|id| self.commands.packs.library.get(&id)) else {
+                error!("Enchantment run_function effect failed for non-existent function {name}");
+                continue;
+            };
+            let Some(p) = self.players.get(&conn) else { continue };
+            let mut stack = SourceStack::of_entity(crate::commands::PlayerRef::of(conn, p, &self.commands.scoreboard));
+            stack.position = at;
+            stack.rotation = p.rot;
+            let dispatcher = self.commands.dispatcher.clone();
+            let previous = std::mem::replace(&mut self.commands.source, crate::commands::CommandSource::Console);
+            let saved = std::mem::replace(&mut self.commands.stack, stack.clone());
+            if let Err(e) = self.editing(|s| kiln_command::vanilla::run_as_server(&dispatcher, s, &f, stack)) {
+                warn!("Failed to execute function {}: {}", f.id, e.to_plain());
+            }
+            self.commands.stack = saved;
+            self.commands.source = previous;
+            self.flush_scoreboard();
+        }
+    }
+
     /// Writes the scheduled functions if they changed.
     pub(crate) fn save_timers(&mut self) {
         let Some(storage) = &self.storage else { return };
