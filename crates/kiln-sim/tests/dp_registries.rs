@@ -296,3 +296,35 @@ fn a_disc_of_a_song_of_the_pack_plays_for_its_length_and_the_comparator_reads_it
     assert!(level_events(&g.log()).iter().any(|e| e.0 == 1011), "the clients are told to stop");
     g.cleanup();
 }
+
+#[test]
+fn a_goat_horn_of_an_instrument_of_the_pack_plays_for_its_duration() {
+    use kiln_proto::packets::serverbound::Hand;
+    use support::Game;
+    let _x = kiln_data::live::exclusive();
+    let mut g = Game::new("horn", &["kiln_wp83"], "Herd");
+    g.console(r#"give Herd minecraft:goat_horn[minecraft:instrument="kiln83:horn"]"#);
+    g.console(r#"give Herd minecraft:goat_horn[minecraft:instrument="minecraft:ponder_goat_horn"]"#);
+    g.ticks(2);
+    g.log();
+    let cooldown = |g: &mut Game| -> Vec<i32> {
+        let id = kiln_data::packets::play::clientbound::COOLDOWN;
+        g.log()
+            .iter()
+            .filter_map(|p| {
+                let mut r = kiln_proto::Reader::new(p);
+                (r.varint().ok()? == id).then(|| {
+                    r.string(256).unwrap();
+                    r.varint().unwrap()
+                })
+            })
+            .collect()
+    };
+    assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::UseItem { hand: Hand::Main, sequence: 1, yaw: 0.0, pitch: 0.0 })]));
+    assert_eq!(cooldown(&mut g), [70], "the pack's instrument plays 3.5 seconds");
+    // A vanilla instrument is unchanged: 7 seconds (the second horn is the next hotbar slot).
+    assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::SetCarriedItem { slot: 1 })]));
+    assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::UseItem { hand: Hand::Main, sequence: 2, yaw: 0.0, pitch: 0.0 })]));
+    assert_eq!(cooldown(&mut g), [140]);
+    g.cleanup();
+}

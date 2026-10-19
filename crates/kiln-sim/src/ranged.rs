@@ -114,6 +114,15 @@ fn instrument(stack: &ItemStack) -> Option<(String, f32, f32)> {
     match &comp.0 {
         kiln_item::Holder::Reference(id) => {
             let name = kiln_item::registry::INSTRUMENT.name(*id)?;
+            // An instrument a data pack defines or overrides: its own sound, duration and range.
+            if let Some(json) = kiln_data::live::entry_data("minecraft:instrument", name).and_then(|t| kiln_loot::Json::parse(t).ok()) {
+                let sound = match json.get("sound_event")? {
+                    kiln_loot::Json::Str(s) => s.clone(),
+                    other => other.get("sound_id")?.as_str()?.to_owned(),
+                };
+                let sound = if sound.contains(':') { sound } else { format!("minecraft:{sound}") };
+                return Some((sound, json.get("use_duration")?.as_f32()?, json.get("range")?.as_f32()?));
+            }
             let short = name.strip_prefix("minecraft:").unwrap_or(name).strip_suffix("_goat_horn")?;
             let i = HORNS.iter().position(|h| *h == short)?;
             Some((format!("minecraft:item.goat_horn.sound.{i}"), 7.0, 256.0))
