@@ -185,3 +185,46 @@ fn reload_rereads_the_tags_but_not_the_registries() {
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn animals_spawn_with_the_variants_of_the_pack() {
+    use kiln_entity::mob::{self, GroupData, MobKind, SpawnContext};
+    use kiln_javamath::random::LegacyRandom;
+    let _x = kiln_data::live::exclusive();
+    let (sim, dir, _) = start("variants");
+    let ctx = |biome: &str| SpawnContext {
+        special_multiplier: 0.0,
+        effective_difficulty: 1.5,
+        hard: false,
+        halloween: false,
+        biome: kiln_data::synced_id("minecraft:worldgen/biome", biome),
+        moon_brightness: 0.0,
+    };
+    let variant_of = |kind: MobKind, biome: &str, seed: i64| {
+        let mut e = mob::new(kind, 1, 0, 5);
+        mob::finalize_spawn(&mut e, &mut LegacyRandom::new(seed), &ctx(biome), &mut GroupData::default(), true);
+        mob::data(&e).unwrap().variant
+    };
+    // The pack's variants (priority 50 in a desert) beat vanilla's (priority 1 warm / 0 fallback) there and only there.
+    for (kind, ours, plains) in [
+        (MobKind::Wolf, "kiln83:azure", "minecraft:pale"),
+        (MobKind::Cat, "kiln83:calico", "minecraft:tabby"),
+        (MobKind::Pig, "kiln83:spotted", "minecraft:temperate"),
+        (MobKind::Cow, "kiln83:dun", "minecraft:temperate"),
+        (MobKind::Chicken, "kiln83:speckled", "minecraft:temperate"),
+        (MobKind::Frog, "kiln83:dusk", "minecraft:temperate"),
+        (MobKind::ZombieNautilus, "kiln83:murky", "minecraft:temperate"),
+    ] {
+        let registry = format!("{}_variant", kind.type_name());
+        let id = |name: &str| kiln_data::synced_id(&registry, name).unwrap_or_else(|| panic!("{name} in {registry}"));
+        assert_eq!(variant_of(kind, "minecraft:desert", 9), id(ours), "{kind:?} in a desert");
+        if kind != MobKind::Cat {
+            assert_eq!(variant_of(kind, "minecraft:plains", 9), id(plains), "{kind:?} in plains");
+        } else {
+            // Cats: ten equal candidates; any of the vanilla ones.
+            assert_ne!(variant_of(kind, "minecraft:plains", 9), id(ours));
+        }
+    }
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}
