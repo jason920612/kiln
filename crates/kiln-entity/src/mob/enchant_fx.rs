@@ -152,6 +152,7 @@ pub fn tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
 
 /// `LivingEntity.baseTick`: the block position changed since the last tick.
 pub fn block_changed(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    eprintln!("DBG block_changed");
     let here = BlockPos::containing(e.x(), e.y(), e.z());
     let fx = m.fx.get_or_insert_with(Default::default);
     if fx.last_pos == Some(here) {
@@ -179,6 +180,7 @@ fn changed_location(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
 /// `EnchantmentHelper.runLocationChangedEffects(level, stack, entity, slot)`.
 fn location_slot(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, index: usize, slot: EquipmentSlot) {
     let enchants = enchantments(&m.equipment[index]);
+    eprintln!("DBG location_slot {index} {enchants:?}");
     if enchants.is_empty() {
         return;
     }
@@ -218,6 +220,7 @@ fn location_slot(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, i
     });
     m.brain_random = rng;
     m.fx = Some(fx);
+    eprintln!("DBG ran {} due {}", ran.is_some(), due.len());
     if ran.is_none() {
         return;
     }
