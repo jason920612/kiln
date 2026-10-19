@@ -82,15 +82,10 @@ fn a_gateway_keeps_the_motion_of_what_goes_through_but_not_of_a_pearl() {
     for c in [
         format!("fill {} {} {} {} {} {} minecraft:air", gx - 4, gy - 3, gz - 4, gx + 25, gy + 6, gz + 4),
         format!("setblock {gx} {gy} {gz} minecraft:end_gateway{{exit_portal:[I;{},{},{}],ExactTeleport:1b}}", gx + 20, gy + 2, gz),
-        // an arrow in the gateway moving north-east and a pearl with the same motion (their exit is the same block; the first one through starts the cooldown, so each has its own gateway below)
-        format!("summon minecraft:snowball {gx}.5 {gy}.5 {gz}.5 {{Motion:[0.0d,0.0d,0.0d]}}"),
     ] {
         assert!(sim.step([ToSim::Console(c)]));
     }
-    tick(&mut sim, 3);
-    // A boat-less test of the motion: a minecart-free item thrown through with a motion the tick after it arrives still has most of it.
-    assert!(sim.step([ToSim::Console(format!("kill @e[type=minecraft:snowball]"))]));
-    assert!(sim.step([ToSim::Console(format!("summon minecraft:item {gx}.5 {gy} {gz}.5 {{Item:{{id:\"minecraft:stone\",count:1}},PickupDelay:32767s,Motion:[0.0d,0.2d,0.0d]}}"))]));
+    assert!(sim.step([ToSim::Console(format!("summon minecraft:item {gx}.5 {gy} {gz}.5 {{Item:{{id:\"minecraft:stone\",count:1}},PickupDelay:32767s,Motion:[0.0d,0.4d,0.0d]}}"))]));
     tick(&mut sim, 3);
     let m = motion_of(&sim, "minecraft:item").expect("the item");
     let p = pos_of(&sim, "minecraft:item").expect("the item");
