@@ -1510,6 +1510,11 @@ pub struct Sim {
     spawn_rot: [f32; 2],
     storage: Option<persist::Storage>,
     players: FastMap<ConnId, Player>,
+    /// Non-player entities that stood in a portal at the end of the last tick (`Entity.setAsInsidePortal` in `applyEffectsFromBlocks`); `Entity.handlePortal`
+    /// of the next tick sends them: the ones whose destination level ticks after theirs arrive at the start of that tick and take part in it, the others
+    /// (nether to overworld, the end to the overworld) when it is over and tick from the one after (see [`portal`]).
+    portal_trips_start: Vec<portal::PendingTrip>,
+    portal_trips_end: Vec<portal::PendingTrip>,
     next_entity_id: i32,
     started: Instant,
     stats: stats::TickStats,
@@ -1781,6 +1786,8 @@ impl Sim {
             spawn_rot: level.as_ref().map_or([0.0; 2], |l| [l.spawn.yaw, l.spawn.pitch]),
             storage,
             players: FastMap::default(),
+            portal_trips_start: Vec::new(),
+            portal_trips_end: Vec::new(),
             next_entity_id: 1,
             started: Instant::now(),
             stats: stats::TickStats::default(),
@@ -1967,6 +1974,11 @@ impl Sim {
         self.deliver_plugin_messages();
         lap(&mut self.stats, "global");
 
+        // The entities that were in a portal when the last tick ended go through it now, at the start of their turn (`Entity.handlePortal` in `baseTick`),
+        // into a level that ticks after theirs.
+        if self.world.tick_rate.runs_normally() {
+            self.run_portal_trips(true);
+        }
         // L: regions tick in parallel; in independent mode, regions too slow for the tick
         // tick away on their own.
         self.lend_slow_regions();
@@ -2021,7 +2033,10 @@ impl Sim {
             self.travel(t);
         }
         portal_candidates.sort_unstable();
-        self.entity_portals(looked.then_some((&portal_candidates[..], first_new)));
+        // (A frozen game's entities do not tick, and `applyEffectsFromBlocks` and `handlePortal` are part of that.)
+        if self.world.tick_rate.runs_normally() {
+            self.entity_portals(looked.then_some((&portal_candidates[..], first_new)));
+        }
         self.materialize_spawns();
         lap(&mut self.stats, "regions");
         // CPU time summed over regions (the "regions" phase is wall time).
