@@ -625,6 +625,8 @@ pub struct MobData {
     /// `Animal.inLove` ticks and the player who fed it (`loveCause`).
     pub in_love: i32,
     pub love_cause: Option<i32>,
+    /// `Animal.loveCause`'s UUID: what is saved (`LoveCause`); the id above is looked up again from it when the player is around.
+    pub love_cause_uuid: Option<u128>,
     pub target: Option<i32>,
     pub look: control::LookControl,
     pub mov: control::MoveControl,
@@ -792,6 +794,7 @@ impl MobData {
             age_lock_timer: 0,
             in_love: 0,
             love_cause: None,
+            love_cause_uuid: None,
             target: None,
             look: control::LookControl::default(),
             mov: control::MoveControl::default(),
@@ -1925,6 +1928,9 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         crate::prof!("mob", "travel");
         travel(e, m, level, input);
     }
+    if let Some((fall, state, at)) = e.landing.take() {
+        landing_dust(e, m, level, fall, state, at);
+    }
     if let Some((distance, multiplier)) = e.pending_fall.take() {
         let hurt = cause_fall_damage(e, m, level, distance, multiplier);
         // `HoneyBlock.fallOn`: the block's fall sound follows a landing that hurt.
@@ -2088,6 +2094,25 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
     if !k.is_some_and(|k| k.tick_jump(e, m, level)) {
         control::tick_jump(m);
     }
+}
+
+/// `LivingEntity.checkFallDamage`: a landing from above the safe fall distance kicks up the block's dust (`sendParticles(BlockParticleOption(BLOCK, state), ..., 150 * min(0.2 + power / 15, 2.5), 0, 0, 0, 0.15)`),
+/// from the block's edge when the mob stands past it.
+fn landing_dust(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, fall: f64, state: u16, at: BlockPos) {
+    let power = crate::math::floor(fall + 1.0e-6 - m.attrs.value(Attr::SafeFallDistance)).max(0) as f64;
+    if power <= 0.0 || kiln_data::blocks_types::is_air(state) {
+        return;
+    }
+    let here = e.block_position();
+    let (mut x, y, mut z) = (e.x(), e.y(), e.z());
+    if at.x != here.x || at.z != here.z {
+        let (dx, dz) = (x - at.x as f64 - 0.5, z - at.z as f64 - 0.5);
+        let longest = dx.abs().max(dz.abs());
+        x = at.x as f64 + 0.5 + dx / longest * 0.5;
+        z = at.z as f64 + 0.5 + dz / longest * 0.5;
+    }
+    let count = (150.0 * (0.20000000298023224 + power / 15.0).min(2.5)) as i32;
+    level.block_particles("minecraft:block", Vec3::new(x, y, z), state, count, Vec3::ZERO, 0.15);
 }
 
 /// `LivingEntity.causeFallDamage` (the landing happened in the move just done): the fall

@@ -68,6 +68,8 @@ pub struct Entity {
     /// A mob's landing (`causeFallDamage(distance, multiplier)`) during its move, applied by
     /// the mob once its travel is done (its data is out of the entity meanwhile).
     pub pending_fall: Option<(f64, f32)>,
+    /// `LivingEntity.checkFallDamage`: a landing this move (fall distance, the block landed on and its position), for the dust it kicks up.
+    pub landing: Option<(f64, u16, BlockPos)>,
     /// The landing was on honey, which lets the block's fall sound follow a landing that hurt (`HoneyBlock.fallOn`).
     pub honey_fall: bool,
     /// Damage a minecart took from what it stood in (lava, fire) while its own tick held its
@@ -175,6 +177,7 @@ impl Entity {
         let t = kiln_data::entities::by_name(type_name).unwrap_or_else(|| panic!("unknown entity type {type_name}"));
         let mut e = Entity {
             pending_fall: None,
+            landing: None,
             honey_fall: false,
             pending_hurts: Vec::new(),
             pending_effects: Vec::new(),
@@ -1010,6 +1013,9 @@ impl Entity {
         }
         if on_ground {
             if self.fall_distance > 0.0 {
+                if matches!(self.kind, EntityKind::MobTicking { .. } | EntityKind::Mob(_)) {
+                    self.landing = Some((self.fall_distance, state, pos));
+                }
                 crate::fall::fall_on(self, level, state, pos);
                 level.block_game_event("minecraft:hit_ground", self.position, Some(self.id), state);
             }

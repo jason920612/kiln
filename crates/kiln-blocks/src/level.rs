@@ -119,6 +119,8 @@ pub enum Effect {
     ShulkerLid { pos: BlockPos, facing: Direction, progress_old: f32, progress: f32 },
     /// `SnifferEggBlock.tick`: a baby sniffer hatches at the egg's center (the egg is gone).
     HatchSniffer { pos: BlockPos },
+    /// `sendParticles(TrailParticleOption(target, color, duration), at, 1, 0, 0, 0, 0)`: the dust an eyeblossom sheds as it opens or closes.
+    TrailParticle { at: [f64; 3], target: [f64; 3], color: i32, duration: i32 },
     /// `FrogspawnBlock.tick`: the tadpoles that hatch at `pos` (the spawn is gone): for each,
     /// the x and z offsets in the block and the yaw.
     HatchFrogspawn { pos: BlockPos, tadpoles: Vec<(f64, f64, i32)> },
@@ -335,6 +337,12 @@ pub trait Level {
     /// overworld's night): what wakes a creaking heart.
     fn creaking_active(&self, _pos: BlockPos) -> bool {
         false
+    }
+
+    /// The `minecraft:gameplay/eyeblossom_open` environment attribute at `pos` (the overworld's night; `None`, the attribute's default,
+    /// elsewhere): an eyeblossom opens or closes to match it.
+    fn eyeblossom_open(&self, _pos: BlockPos) -> Option<bool> {
+        None
     }
 
     /// Makes the level random's next draws for work at `pos` independent of what else the

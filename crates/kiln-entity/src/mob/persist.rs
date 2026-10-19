@@ -127,6 +127,7 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
     }
     if super::breed::is_animal(kind) {
         m.in_love = r.int_or("InLove", 0);
+        m.love_cause_uuid = r.get("LoveCause").and_then(crate::persist::uuid_from_tag);
     }
     if kind == MobKind::Chicken {
         m.chicken_jockey = r.bool_or("IsChickenJockey", false);
@@ -267,6 +268,9 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     }
     if super::breed::is_animal(m.kind) {
         o.put("InLove", Tag::Int(m.in_love));
+        if let Some(u) = m.love_cause_uuid {
+            o.put("LoveCause", crate::persist::uuid_to_tag(u));
+        }
     }
     if matches!(m.kind, MobKind::Pig | MobKind::Cow | MobKind::Chicken) {
         if let Some(v) = super::kinds::wolf::synced_name(&format!("{}_variant", m.kind.type_name()), m.variant) {

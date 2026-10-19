@@ -29,6 +29,16 @@ fn tags() -> &'static HashMap<&'static str, Box<[bool]>> {
     })
 }
 
+/// The blocks of the block tag `name` in the tag's own order (`BuiltInRegistries.BLOCK.getRandomElementOf(tag, random)` picks from this list).
+pub fn members(name: &str) -> Vec<crate::state::BlockId> {
+    let names = kiln_data::builtin_entries("minecraft:block").unwrap_or(&[]);
+    kiln_data::registries::TAGS
+        .iter()
+        .find(|(r, _)| *r == "minecraft:block")
+        .and_then(|(_, t)| t.iter().find(|(n, _)| *n == name))
+        .map_or_else(Vec::new, |(_, ids)| ids.iter().filter_map(|&id| names.get(id as usize).and_then(|n| crate::state::BlockId::by_name(n))).collect())
+}
+
 /// Whether `state`'s block is in the block tag `name` (e.g. `minecraft:fences`); false for
 /// unknown tags.
 pub fn is(state: u16, name: &str) -> bool {

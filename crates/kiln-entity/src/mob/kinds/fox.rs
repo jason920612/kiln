@@ -528,8 +528,8 @@ impl Kind for Fox {
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, level: &mut dyn EntityLevel) {
         st_mut(child).variant = if e.random.next_bool() { st(m).variant } else { ext::state::<State>(partner).map_or(RED, |s| s.variant) };
         // `FoxBreedGoal.breed`: the players who fed the parents are trusted.
-        let a = m.love_cause.and_then(|id| level.player(id)).map(|p| p.uuid);
-        let b = partner.love_cause.and_then(|id| level.player(id)).map(|p| p.uuid);
+        let a = crate::mob::breed::love_cause(m, level).and_then(|id| level.player(id)).map(|p| p.uuid);
+        let b = crate::mob::breed::love_cause(partner, level).and_then(|id| level.player(id)).map(|p| p.uuid);
         if let Some(a) = a {
             add_trusted(child, a);
         }

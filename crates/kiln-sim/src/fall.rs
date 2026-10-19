@@ -214,12 +214,31 @@ impl Player {
         if on_ground {
             if self.fall_distance > 0.0 {
                 // `LivingEntity.checkFallDamage`: landing is a change of block for the enchantments.
+                self.landing_dust(state, pos);
                 self.loc_landed = true;
                 self.landing_block = blocks(BlockPos::new(self.pos[0].floor() as i32, (self.pos[1] - 0.20000000298023224).floor() as i32, self.pos[2].floor() as i32)).unwrap_or(0);
                 self.fall_on(state, pos, ctx);
             }
             self.reset_fall_distance();
         }
+    }
+
+    /// `LivingEntity.checkFallDamage`: a landing from above the safe fall distance kicks up the block's dust, from the block's edge when the player
+    /// stands past it.
+    fn landing_dust(&mut self, state: u16, pos: BlockPos) {
+        let power = (self.fall_distance + 1.0e-6 - self.attribute(crate::combat::SAFE_FALL_DISTANCE)).floor().max(0.0);
+        if power <= 0.0 || kiln_data::blocks_types::is_air(state) {
+            return;
+        }
+        let (mut x, y, mut z) = (self.pos[0], self.pos[1], self.pos[2]);
+        if pos.x != x.floor() as i32 || pos.z != z.floor() as i32 {
+            let (dx, dz) = (x - pos.x as f64 - 0.5, z - pos.z as f64 - 0.5);
+            let longest = dx.abs().max(dz.abs());
+            x = pos.x as f64 + 0.5 + dx / longest * 0.5;
+            z = pos.z as f64 + 0.5 + dz / longest * 0.5;
+        }
+        let count = (150.0 * (0.20000000298023224 + power / 15.0).min(2.5)) as i32;
+        self.queue_block_particles("minecraft:block", [x, y, z], state, count, 0.15);
     }
 
     /// `Block.fallOn` for the block landed on.

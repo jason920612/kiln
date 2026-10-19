@@ -103,6 +103,8 @@ pub(crate) fn item_use_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
         light(p, level, pos, s, "minecraft:item.flintandsteel.use")
     } else if name == crate::brush::ITEM {
         crate::brush::use_on(p, level, off_hand)
+    } else if name == "minecraft:compass" {
+        lodestone_compass(p, level, pos, s, off_hand, spawns)
     } else {
         return false;
     };
@@ -118,6 +120,42 @@ pub(crate) fn item_use_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
     p.award_stat(Stat::item(player_stats::USED, stack.item()), 1);
     let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     p.used_on_block("minecraft:item_used_on_block", [pos.x, pos.y, pos.z], level.block(pos), &stack, &probe);
+    true
+}
+
+/// `CompassItem.useOn`: on a lodestone one compass locks onto it (`lodestone_tracker` with the lodestone's level and position, tracked). A survival
+/// player holding one compass changes it; with more, or in creative, a new compass is made, which goes to the inventory (or to the ground).
+fn lodestone_compass(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: u16, off_hand: bool, spawns: &mut Vec<Spawn>) -> bool {
+    use kiln_item::component::{GlobalPos, LodestoneTracker};
+    if short(s) != "lodestone" {
+        return false;
+    }
+    p.queue_sound_for_all_at(
+        [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5],
+        "minecraft:item.lodestone_compass.lock",
+        kiln_proto::packets::world_fx::SoundSource::Players,
+        1.0,
+        1.0,
+    );
+    let Some(dimension) = kiln_item::Identifier::parse(crate::DIMENSIONS[level.env.dim].0) else { return true };
+    let tracker = LodestoneTracker { target: Some(GlobalPos { dimension, pos: [pos.x, pos.y, pos.z] }), tracked: true };
+    let i = p.hand_index(off_hand);
+    let infinite = p.infinite_materials();
+    let hand = kiln_inventory::Container::item_mut(&mut p.inv, i);
+    if !infinite && hand.count() == 1 {
+        hand.insert(kiln_item::keys::LODESTONE_TRACKER, tracker);
+    } else {
+        let mut one = hand.with_count(1);
+        if !infinite {
+            hand.shrink(1);
+        }
+        one.insert(kiln_item::keys::LODESTONE_TRACKER, tracker);
+        p.add_to_inventory(&mut one);
+        if !one.is_empty() {
+            spawns.push(p.throw(one));
+        }
+    }
+    p.inv.times_changed += 1;
     true
 }
 
@@ -258,8 +296,18 @@ fn next_int_between(r: &mut dyn RandomSource, lo: i32, hi: i32) -> i32 {
 
 /// `BoneMealItem.useOn`: `growCrop` on a bonemealable block (the bone meal is used up whether
 /// or not it took), with the growth particles.
-fn bone_meal(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, _face: Direction, off_hand: bool, spawns: &mut Vec<Spawn>) -> bool {
+fn bone_meal(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, face: Direction, off_hand: bool, spawns: &mut Vec<Spawn>) -> bool {
     if !bone_meal_block(level, pos, spawns) {
+        // `BoneMealItem.useOn`: against a solid face, the water in front of it takes the bone meal (seagrass, corals).
+        let clicked = level.block(pos);
+        let relative = pos.relative(face);
+        if logic::face_sturdy(clicked, face as u8, logic::Support::Full) && kiln_blocks::behaviour::bonemeal::grow_water_plant(level, relative, Some(face)) {
+            let i = p.hand_index(off_hand);
+            kiln_inventory::Container::item_mut(&mut p.inv, i).shrink(1);
+            p.inv.times_changed += 1;
+            level.effect(Effect::LevelEvent { id: 1505, pos: relative, data: 15 });
+            return true;
+        }
         return false;
     }
     let i = p.hand_index(off_hand);
@@ -274,7 +322,7 @@ fn bone_meal(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, _face: Dire
 pub(crate) fn bone_meal_block(level: &mut RegionLevel, pos: BlockPos, spawns: &mut Vec<Spawn>) -> bool {
     let s = level.block(pos);
     // Saplings, propagules, azaleas, huge mushrooms, grass: kiln-blocks (with the level's worldgen).
-    match kiln_blocks::behaviour::trees::grow_crop(level, pos) {
+    match kiln_blocks::behaviour::trees::grow_crop(level, pos).or_else(|| kiln_blocks::behaviour::bonemeal::grow(level, pos)) {
         Some(true) => true,
         Some(false) => false,
         None => {
@@ -312,7 +360,7 @@ fn valid_target(_level: &RegionLevel, _pos: BlockPos, s: u16) -> bool {
         C::StemBlock => state::get_int(s, "age") != 7,
         C::SweetBerryBushBlock => state::get_int(s, "age") < 3,
         C::CocoaBlock => state::get_int(s, "age") < 2,
-        C::TallFlowerBlock => true,
+        C::TallFlowerBlock | C::FlowerBedBlock => true,
         _ => false,
     }
 }
@@ -342,7 +390,12 @@ fn perform(level: &mut RegionLevel, pos: BlockPos, s: u16, spawns: &mut Vec<Spaw
             let age = state::get_int(s, "age") + 1;
             kiln_blocks::set_block(level, pos, state::set_int(s, "age", age), flags::CLIENTS);
         }
-        C::TallFlowerBlock => {
+        // `FlowerBedBlock.performBonemeal`: one more flower, or the flower as an item at four.
+        C::FlowerBedBlock if state::get_int(s, "flower_amount") < 4 => {
+            let amount = state::get_int(s, "flower_amount") + 1;
+            kiln_blocks::set_block(level, pos, state::set_int(s, "flower_amount", amount), flags::CLIENTS);
+        }
+        C::TallFlowerBlock | C::FlowerBedBlock => {
             // `popResource(level, pos, new ItemStack(this))`.
             if let Some(item) = ItemStack::of(BlockId::of(s).name(), 1) {
                 let r = level.random();

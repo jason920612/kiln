@@ -209,7 +209,7 @@ fn is_boat(name: &str) -> bool {
 /// `DispenseItemBehavior$5`: bone meal grows the plant in front (the stack is used up when the block takes it).
 fn bone_meal(level: &mut RegionLevel, target: BlockPos, mut stack: ItemStack) -> Done {
     let mut spawns = Vec::new();
-    let grew = crate::tools::bone_meal_block(level, target, &mut spawns);
+    let grew = crate::tools::bone_meal_block(level, target, &mut spawns) || kiln_blocks::behaviour::bonemeal::grow_water_plant(level, target, None);
     level.out.spawns.extend(spawns);
     if !grew {
         return failed(stack);

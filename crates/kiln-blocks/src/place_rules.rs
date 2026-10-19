@@ -174,7 +174,7 @@ pub(crate) fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, 
 // ---------------------------------------------------------------- mossy carpet
 
 /// `MossyCarpetBlock.hasFaces`: a side that is not none.
-fn mossy_carpet_faces(s: u16) -> bool {
+pub(crate) fn mossy_carpet_faces(s: u16) -> bool {
     state::get_bool(s, "bottom") || Direction::HORIZONTAL.iter().any(|d| state::get(s, d.name()) != Some("none"))
 }
 

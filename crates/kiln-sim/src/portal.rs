@@ -435,8 +435,8 @@ impl Sim {
     /// Non-player entities in portals (basic): an entity touching a nether or end portal block
     /// moves to the other level at once (their transition time is 0) and then waits out
     /// `Entity.getDimensionChangingDelay` (300 ticks) before another trip. It arrives as a
-    /// copy with a new network id, as vanilla's `teleportCrossDimension` makes one; end
-    /// gateways and riders are not handled.
+    /// copy with a new network id, as vanilla's `teleportCrossDimension` makes one; riders go with their vehicle.
+    /// An end gateway moves it to the gateway's exit in the same level (`teleportSameDimension`: the same entity).
     ///
     /// `only`: the entities the regions found may touch a portal block ([`portal_candidates`]),
     /// sorted, and the first id given out after the regions ran: only those and the newer ones

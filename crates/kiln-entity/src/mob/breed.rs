@@ -89,11 +89,17 @@ pub fn custom_server_ai_step(m: &mut MobData) {
     }
 }
 
+/// `Animal.getLoveCause`: the player who fed it; after a reload the player is looked up again by the saved UUID.
+pub fn love_cause(m: &MobData, level: &dyn EntityLevel) -> Option<i32> {
+    m.love_cause.or_else(|| m.love_cause_uuid.and_then(|u| level.player_by_uuid(u)).map(|p| p.id))
+}
+
 /// `Animal.setInLove`: love for 600 ticks, remembering the player; the hearts for viewers.
 pub fn set_in_love(e: &Entity, m: &mut MobData, level: &mut dyn EntityLevel, player: Option<i32>) {
     m.in_love = IN_LOVE_TIME;
     if player.is_some() {
         m.love_cause = player;
+        m.love_cause_uuid = player.and_then(|id| level.player(id)).map(|p| p.uuid);
     }
     level.emit(Event::EntityEvent { entity: e.id, event: 18 });
 }
@@ -113,7 +119,7 @@ pub fn spawn_child(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
     // `Frog.spawnChildFromBreeding`: `finalizeSpawnChildFromBreeding` with no baby (the caller
     // makes the mother pregnant).
     if m.kind.ext().is_some_and(|k| k.breed_as_pregnancy()) {
-        let cause = m.love_cause.or(pm.love_cause);
+        let cause = love_cause(m, level).or_else(|| love_cause(pm, level));
         if let Some(player) = cause.filter(|&c| level.player(c).is_some()) {
             let partner_seen = crate::level::Seen::of(p);
             let criterion = crate::level::Criterion::BredAnimals { parent: crate::level::Seen::of_mob(e, m), partner: partner_seen, child: None };
@@ -151,7 +157,7 @@ pub fn spawn_child(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
     child.set_old_pos_and_rot();
     // `finalizeSpawnChildFromBreeding`: the player who made either parent fall in love bred
     // them (the `animals_bred` statistic and `bred_animals`).
-    let cause = m.love_cause.or_else(|| level.entity(partner).and_then(super::data).and_then(|p| p.love_cause));
+    let cause = love_cause(m, level).or_else(|| level.entity(partner).and_then(super::data).and_then(|p| love_cause(p, level)));
     if let Some(player) = cause.filter(|&c| level.player(c).is_some()) {
         let partner_seen = level.entity(partner).map(crate::level::Seen::of);
         if let Some(partner_seen) = partner_seen {

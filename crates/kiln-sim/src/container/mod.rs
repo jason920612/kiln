@@ -994,6 +994,8 @@ impl Containers {
     /// [`Containers::store`] for the container at `p` alone.
     pub fn store_at(&mut self, p: BlockPos, chunk: &mut Chunk) {
         if let Some(c) = self.map.get_mut(&p) {
+            // (A command that reads the block entity sees the live container whether or not it changed: a crafter placed by `/setblock` saves its defaults too.)
+            c.dirty = true;
             store_one(p, c, chunk);
         }
     }
@@ -1020,6 +1022,13 @@ impl Containers {
                 // The same block entity with new data keeps its place in the ticker list.
                 if let Some(old) = self.map.get(&pos).filter(|o| o.type_id == be.kind) {
                     loaded.order = old.order;
+                    // (`BeaconBlockEntity.loadAdditional` reads the powers and nothing else: the levels and the beam it worked out stay.)
+                    if let (Some(nb), Some(ob)) = (loaded.beacon.as_mut(), old.beacon.as_ref()) {
+                        nb.levels = ob.levels;
+                        nb.last_check_y = ob.last_check_y;
+                        nb.checking = ob.checking.clone();
+                        nb.beam = ob.beam.clone();
+                    }
                 }
                 // (A command block's plain last output is kept for tests while the output itself stays.)
                 if let (Some(new), Some(old)) = (loaded.command.as_deref_mut(), self.map.get(&pos).and_then(|c| c.command.as_deref()))
@@ -1485,8 +1494,8 @@ mod tests {
 
 /// Writes the container at `p` into its chunk's NBT if it changed.
 fn store_one(p: BlockPos, c: &mut ContainerBe, chunk: &mut Chunk) {
-    // (A jukebox's song advances without `setChanged`: it is saved as it stands.)
-    let playing = c.kind == BeKind::Jukebox && c.song.is_some();
+    // (A jukebox's song advances without `setChanged`: it is saved as it stands; so are a beacon's levels, which its ticks work out without it.)
+    let playing = (c.kind == BeKind::Jukebox && c.song.is_some()) || c.kind == BeKind::Beacon;
     if !(c.dirty || playing) {
         return;
     }

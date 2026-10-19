@@ -152,6 +152,63 @@ pub fn sniffer_egg_on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     schedule_block_tick(level, pos, BlockId::of(s), delay + extra, TickPriority::Normal);
 }
 
+/// `EyeblossomBlock.tryChangingState`: the flower follows the `gameplay/eyeblossom_open` attribute (open at night in the overworld); when it changes
+/// it sheds trail dust and wakes the eyeblossoms of its own kind around it (3 blocks across, 2 up and down) a few ticks later, nearest first.
+/// Returns whether it changed, for the sound of the caller's kind (the long one from a random tick, the short one from a scheduled tick).
+fn eyeblossom_change<L: Level>(level: &mut L, s: u16, pos: BlockPos) -> bool {
+    use kiln_javamath::random::RandomSource;
+    let open = s == kiln_data::blocks::default_state::OPEN_EYEBLOSSOM;
+    if level.eyeblossom_open(pos).unwrap_or(open) == open {
+        return false;
+    }
+    let new = if open { kiln_data::blocks::default_state::CLOSED_EYEBLOSSOM } else { kiln_data::blocks::default_state::OPEN_EYEBLOSSOM };
+    set_block(level, pos, new, crate::level::flags::ALL);
+    level.effect(Effect::BlockGameEvent { pos, event: "minecraft:block_change", state: s });
+    // `Type.spawnTransformParticle` of the new kind.
+    let speed = 0.5 + level.random().next_double();
+    let dir = [level.random().next_double() - 0.5, level.random().next_double() + 1.0, level.random().next_double() - 0.5];
+    let center = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+    let target = [center[0] + dir[0] * speed, center[1] + dir[1] * speed, center[2] + dir[2] * speed];
+    let color = if open { 6250335 } else { 16545810 };
+    level.effect(Effect::TrailParticle { at: center, target, color, duration: (20.0 * speed) as i32 });
+    // The blocks of the same state in the box, in `BlockScanUtils.findBlocks`' order: the sections by x, then z, then y, and inside a section y, z, x.
+    let mut found: Vec<((i32, i32, i32, i32, i32, i32), BlockPos)> = Vec::new();
+    for y in pos.y - 2..=pos.y + 2 {
+        for z in pos.z - 3..=pos.z + 3 {
+            for x in pos.x - 3..=pos.x + 3 {
+                let at = BlockPos::new(x, y, z);
+                if level.block(at) == s {
+                    found.push(((x >> 4, z >> 4, y >> 4, y, z, x), at));
+                }
+            }
+        }
+    }
+    found.sort_by_key(|f| f.0);
+    for (_, at) in found {
+        let d = (((at.x - pos.x).pow(2) + (at.y - pos.y).pow(2) + (at.z - pos.z).pow(2)) as f64).sqrt();
+        let (lo, hi) = ((d * 5.0) as i32, (d * 10.0) as i32);
+        let delay = level.random().next_int_bounded(hi - lo + 1) + lo;
+        schedule_block_tick(level, at, BlockId::of(s), delay, TickPriority::Normal);
+    }
+    true
+}
+
+/// `EyeblossomBlock.randomTick`.
+pub fn eyeblossom_random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    if eyeblossom_change(level, s, pos) {
+        let sound = if s == kiln_data::blocks::default_state::OPEN_EYEBLOSSOM { "minecraft:block.eyeblossom.close_long" } else { "minecraft:block.eyeblossom.open_long" };
+        level.effect(Effect::Sound { pos, sound, volume: 1.0, pitch: 1.0 });
+    }
+}
+
+/// `EyeblossomBlock.tick` (scheduled by a neighbour that changed).
+pub fn eyeblossom_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    if eyeblossom_change(level, s, pos) {
+        let sound = if s == kiln_data::blocks::default_state::OPEN_EYEBLOSSOM { "minecraft:block.eyeblossom.close" } else { "minecraft:block.eyeblossom.open" };
+        level.effect(Effect::Sound { pos, sound, volume: 1.0, pitch: 1.0 });
+    }
+}
+
 /// `CreakingHeartBlock.hasRequiredLogs`: a `#pale_oak_logs` block on both sides along the
 /// heart's axis, standing along the same axis.
 pub fn creaking_heart_has_logs<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool {

@@ -354,7 +354,7 @@ impl CustomGoal for TurtleBreedGoal {
 
 /// `TurtleBreedGoal.breed`.
 fn breed(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, partner: i32) {
-    let cause = m.love_cause.or_else(|| level.entity(partner).and_then(crate::mob::data).and_then(|p| p.love_cause));
+    let cause = crate::mob::breed::love_cause(m, level).or_else(|| level.entity(partner).and_then(crate::mob::data).and_then(|p| crate::mob::breed::love_cause(p, level)));
     if let Some(player) = cause.filter(|&c| level.player(c).is_some())
         && let Some(partner_seen) = level.entity(partner).map(crate::level::Seen::of)
     {
