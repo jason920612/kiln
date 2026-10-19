@@ -168,7 +168,19 @@ pub(crate) fn dimension_type_from_json(name: &str, v: &serde_json::Value, timeli
 /// Reads the dimension types of the data packs from the installed registry entries and installs them.
 pub(crate) fn install_types() {
     let roots = crate::world_state::worldgen_roots();
-    let timeline_tag = |tag: &str| crate::world_state::tag_entries(&roots, "timeline", tag, 0).unwrap_or_default();
+    // (Without the vanilla data the timeline tags of the vanilla dimension types are the built-in ones.)
+    let timeline_tag = |tag: &str| {
+        crate::world_state::tag_entries(&roots, "timeline", tag, 0).unwrap_or_else(|| {
+            let of = |name: &str| kiln_data::dimension_type(name).map(|t| t.timelines.iter().map(|s| (*s).to_owned()).collect()).unwrap_or_default();
+            match tag {
+                "minecraft:in_overworld" => of("minecraft:overworld"),
+                "minecraft:in_nether" => of("minecraft:the_nether"),
+                "minecraft:in_end" => of("minecraft:the_end"),
+                "minecraft:universal" => vec!["minecraft:villager_schedule".to_owned()],
+                _ => Vec::new(),
+            }
+        })
+    };
     let mut types = Vec::new();
     for name in kiln_data::live::custom_entries("minecraft:dimension_type") {
         let Some(text) = kiln_data::live::entry_data("minecraft:dimension_type", name) else { continue };
