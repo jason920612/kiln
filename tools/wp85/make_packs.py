@@ -403,6 +403,12 @@ def bad():
     entry("painting_variant", "edge_string_height", {**ok_painting, "height": "2"})
     entry("painting_variant", "edge_bool_height", {**ok_painting, "height": True})
     entry("painting_variant", "edge_number_title", {**ok_painting, "title": 5})
+    entry("painting_variant", "edge_title_bool", {**ok_painting, "title": True})
+    entry("painting_variant", "edge_title_empty_object", {**ok_painting, "title": {}})
+    entry("painting_variant", "edge_title_list", {**ok_painting, "title": ["a", {"text": "b"}]})
+    entry("painting_variant", "edge_title_null", {**ok_painting, "title": None})
+    entry("trim_pattern", "edge_decal_number", {"asset_id": "kiln85:wave", "description": {"text": "x"}, "decal": 1})
+    entry("damage_type", "edge_exhaustion_int", {"message_id": "x", "scaling": "never", "exhaustion": 1})
     ok_damage = {"message_id": "x", "scaling": "never", "exhaustion": 0.1}
     entry("damage_type", "bad_scaling", {**ok_damage, "scaling": "sometimes"})
     entry("damage_type", "bad_exhaustion", {**ok_damage, "exhaustion": "lots"})
@@ -442,6 +448,13 @@ def bad():
     write(pack, "data/kiln85/worldgen/biome/bad_modifier.json", {**ok_biome, "temperature_modifier": "hot"})
     write(pack, "data/kiln85/worldgen/biome/edge_temperature_string.json", {**ok_biome, "temperature": "0.5"})
     write(pack, "data/kiln85/worldgen/biome/edge_short_color.json", {**ok_biome, "effects": {"water_color": "#fff"}})
+    write(pack, "data/kiln85/worldgen/biome/edge_color_8.json", {**ok_biome, "effects": {"water_color": "#80ff0000"}})
+    write(pack, "data/kiln85/worldgen/biome/edge_color_nohash.json", {**ok_biome, "effects": {"water_color": "3f76e4"}})
+    write(pack, "data/kiln85/worldgen/biome/edge_color_negative.json", {**ok_biome, "effects": {"water_color": -1}})
+    write(pack, "data/kiln85/worldgen/biome/edge_color_float.json", {**ok_biome, "effects": {"water_color": 1.5}})
+    write(pack, "data/kiln85/worldgen/biome/edge_precipitation_number.json", {**ok_biome, "has_precipitation": 1})
+    write(pack, "data/kiln85/worldgen/biome/edge_temperature_int.json", {**ok_biome, "temperature": 1})
+    write(pack, "data/kiln85/worldgen/biome/edge_no_carvers.json", {k: v for k, v in ok_biome.items() if k not in ("carvers", "features")})
     ok_type = {"has_skylight": True, "has_ceiling": False, "has_ender_dragon_fight": False, "coordinate_scale": 1.0, "min_y": 0, "height": 64, "logical_height": 64,
                "infiniburn": "#minecraft:infiniburn_overworld", "ambient_light": 0.0, "monster_spawn_light_level": 7, "monster_spawn_block_light_limit": 0}
     write(pack, "data/kiln85/dimension_type/bad_height.json", {**ok_type, "height": 100, "logical_height": 96})
@@ -449,6 +462,9 @@ def bad():
     write(pack, "data/kiln85/dimension_type/bad_scale.json", {**ok_type, "coordinate_scale": 0})
     write(pack, "data/kiln85/dimension_type/bad_skylight.json", {**ok_type, "has_skylight": "yes"})
     write(pack, "data/kiln85/dimension_type/edge_ok.json", ok_type)
+    write(pack, "data/kiln85/dimension_type/edge_skylight_number.json", {**ok_type, "has_skylight": 1})
+    write(pack, "data/kiln85/dimension_type/edge_height_float.json", {**ok_type, "height": 64.0})
+    write(pack, "data/kiln85/dimension_type/edge_light_object.json", {**ok_type, "monster_spawn_light_level": {"type": "minecraft:uniform", "min_inclusive": 0, "max_inclusive": 7}})
 
 
 if __name__ == "__main__":

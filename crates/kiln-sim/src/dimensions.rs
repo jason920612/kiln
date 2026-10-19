@@ -101,7 +101,7 @@ pub(crate) fn levels(stems: &[LevelStem]) -> Vec<(String, String, String)> {
 /// A `dimension_type` entry as the simulation reads it (`DimensionType.DIRECT_CODEC`): `Err` for an entry the
 /// codec would reject. `timeline_tag` lists the timelines of a `timeline` tag.
 pub(crate) fn dimension_type_from_json(name: &str, v: &serde_json::Value, timeline_tag: &dyn Fn(&str) -> Vec<String>) -> Result<DimensionType, String> {
-    let int = |k: &str| v.get(k).and_then(serde_json::Value::as_i64).ok_or_else(|| format!("{k} is missing or not a number"));
+    let int = |k: &str| v.get(k).and_then(serde_json::Value::as_number).and_then(serde_json::Number::as_f64).map(|f| f as i64).ok_or_else(|| format!("{k} is missing or not a number"));
     let boolean = |k: &str| v.get(k).and_then(serde_json::Value::as_bool).ok_or_else(|| format!("{k} is missing or not a boolean"));
     let (min_y, height, logical_height) = (int("min_y")?, int("height")?, int("logical_height")?);
     if !(-2032..=2031).contains(&min_y) || !(16..=4064).contains(&height) || !(0..=4064).contains(&logical_height) {
