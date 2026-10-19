@@ -384,7 +384,12 @@ fn perform(level: &mut RegionLevel, pos: BlockPos, s: u16, spawns: &mut Vec<Spaw
         }
         C::StemBlock => {
             let age = (state::get_int(s, "age") + next_int_between(level.random(), 2, 5)).min(7);
-            kiln_blocks::set_block(level, pos, state::set_int(s, "age", age), flags::CLIENTS);
+            let ripe = state::set_int(s, "age", age);
+            kiln_blocks::set_block(level, pos, ripe, flags::CLIENTS);
+            // `StemBlock.performBonemeal`: a full-grown stem tries to bear its fruit at once (`randomTick`).
+            if age == 7 {
+                kiln_blocks::behaviour::farming::random_tick(level, ripe, pos);
+            }
         }
         C::SweetBerryBushBlock | C::CocoaBlock => {
             let age = state::get_int(s, "age") + 1;

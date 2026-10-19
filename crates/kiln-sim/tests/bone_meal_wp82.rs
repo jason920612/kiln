@@ -121,3 +121,33 @@ fn bone_meal_spreads_glow_lichen_to_another_face() {
     assert_eq!(faces, 2, "one more face: {blocks} blocks, {faces} faces");
     assert!(blocks <= 2);
 }
+
+#[test]
+fn bone_meal_that_ripens_a_stem_lets_it_try_to_bear_fruit_at_once() {
+    // `StemBlock.performBonemeal`: age + 2..5 (at most 7), and at 7 the stem's `randomTick` runs on the spot: it bears a melon beside it with about 1 in 7.
+    let mut lab = Lab::new();
+    let (x, y, z) = (lab.x, lab.y, lab.z);
+    let mut cmds = vec![
+        format!("fill {} {} {} {} {} {} minecraft:air", x - 3, y - 2, z - 3, x + 3 * 40, y + 4, z + 6),
+        format!("fill {} {} {} {} {} {} minecraft:farmland[moisture=7]", x - 3, y - 1, z - 3, x + 3 * 40, y - 1, z + 6),
+    ];
+    for i in 0..40 {
+        let sx = x + 3 * i;
+        cmds.push(format!("setblock {sx} {y} {z} minecraft:melon_stem[age=6]"));
+        cmds.push(format!("setblock {sx} {y} {} minecraft:dispenser[facing=north]{{Items:[{{Slot:0b,id:\"minecraft:bone_meal\",count:1}}]}}", z + 1));
+    }
+    lab.run(&cmds);
+    lab.ticks(3);
+    let fire: Vec<String> = (0..40).map(|i| format!("setblock {} {} {} minecraft:redstone_block", x + 3 * i, y + 1, z + 1)).collect();
+    lab.run(&fire);
+    lab.ticks(8);
+    let mut fruit = 0;
+    for i in 0..40 {
+        for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            if lab.state(3 * i + dx, 0, dz) == "minecraft:melon" {
+                fruit += 1;
+            }
+        }
+    }
+    assert!(fruit >= 1, "of 40 stems brought to age 7 by bone meal some bore a melon at once (1 in 7 each): {fruit}");
+}
