@@ -17,6 +17,7 @@ mod enums;
 
 pub mod component;
 pub mod defaults;
+pub mod enchant_flags;
 pub mod hash;
 pub mod hashed;
 pub mod holder;

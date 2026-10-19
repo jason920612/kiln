@@ -10,8 +10,11 @@
 //! - `damage_immunity`, `attributes`, `post_attack` (with its entity effects);
 //! - unconditional values `crossbow_charge_time` and `trident_spin_attack_strength`.
 //!
-//! Everything else (location changed, tick, hit block, projectile spawned, sounds, the
-//! prevent-* markers) is kept by name only: nothing evaluates it yet.
+//! - the entity-effect lists `tick`, `location_changed`, `hit_block` and `projectile_spawned`, the
+//!   sounds `trident_sound` and `crossbow_charging_sounds`, and the markers `prevent_equipment_drop`
+//!   and `prevent_armor_change`.
+//!
+//! A component this decoder does not know stays in `Effects::other` by name.
 //!
 //! Requirements are loot conditions evaluated against a context the caller builds for each
 //! enchantment level (vanilla's `damageContext`, `itemContext`...): the helpers take a closure
@@ -168,15 +171,179 @@ pub enum EntityEffect {
         large_particle: String,
         sound: Identifier,
     },
+    /// `replace_block`: the block at the position (plus `offset`) turns into `block_state` where
+    /// `predicate` (a `BlockPredicate`, kept as written) holds.
+    ReplaceBlock { offset: [i32; 3], predicate: Option<Json>, block_state: StateSource, trigger_game_event: Option<Identifier> },
+    /// `replace_disk`: a disk of blocks (radius by level) turns into `block_state`.
+    ReplaceDisk {
+        radius: LevelBasedValue,
+        height: LevelBasedValue,
+        offset: [i32; 3],
+        predicate: Option<Json>,
+        block_state: StateSource,
+        trigger_game_event: Option<Identifier>,
+    },
+    /// `set_block_properties`: properties of the block at the position.
+    SetBlockProperties { properties: Vec<(String, String)>, offset: [i32; 3], trigger_game_event: Option<Identifier> },
+    /// `run_function`: a function run as the entity, at its position.
+    RunFunction(Identifier),
+    /// `spawn_particles`.
+    SpawnParticles(SpawnParticles),
+    /// `summon_entity`: one of `entity` (entity type ids, or a `#tag`).
+    SummonEntity { entity: Vec<String>, join_team: bool },
+    /// `attribute` (location-based effects only): a transient attribute modifier while active.
+    Attribute(AttributeEffect),
     Other(Identifier),
 }
 
+/// A `BlockStateProvider` as `replace_block` and `replace_disk` use it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StateSource {
+    /// `simple_state_provider` (also the bare block state).
+    Simple { name: Identifier, properties: Vec<(String, String)> },
+    /// Any other provider type.
+    Other(String),
+}
+
+impl StateSource {
+    fn parse(j: &Json) -> PResult<StateSource> {
+        let state = |s: &Json| -> PResult<StateSource> {
+            let name = match s.get("Name").or_else(|| s.get("id")) {
+                Some(n) => ident(n)?,
+                None => return fail("block state without a name"),
+            };
+            let properties = match s.get("Properties").or_else(|| s.get("properties")) {
+                Some(p) => string_map(p)?,
+                None => Vec::new(),
+            };
+            Ok(StateSource::Simple { name, properties })
+        };
+        match j.get("type") {
+            None => state(j),
+            Some(t) => match ident(t)?.as_str() {
+                "minecraft:simple_state_provider" => req(j, "state", state),
+                other => Ok(StateSource::Other(other.to_owned())),
+            },
+        }
+    }
+}
+
+fn string_map(j: &Json) -> PResult<Vec<(String, String)>> {
+    obj(j)?.iter().map(|(k, v)| crate::parse::string(v).map(|v| (k.clone(), v))).collect()
+}
+
+/// `SpawnParticlesEffect.PositionSource`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParticlePosition {
+    /// `in_bounding_box`: a random point in the box; else the entity's position.
+    pub in_bounding_box: bool,
+    pub offset: f32,
+    pub scale: f32,
+}
+
+/// `SpawnParticlesEffect.VelocitySource`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParticleVelocity {
+    pub movement_scale: f32,
+    pub base: crate::provider::Floats,
+}
+
+/// `SpawnParticlesEffect`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpawnParticles {
+    /// The particle type (options of a particle are not carried).
+    pub particle: Identifier,
+    pub has_options: bool,
+    pub horizontal_position: ParticlePosition,
+    pub vertical_position: ParticlePosition,
+    pub horizontal_velocity: ParticleVelocity,
+    pub vertical_velocity: ParticleVelocity,
+    pub speed: crate::provider::Floats,
+}
+
+fn vec3i(j: &Json, key: &str) -> PResult<[i32; 3]> {
+    match opt(j, key, |v| list(v, crate::parse::int))? {
+        Some(v) if v.len() == 3 => Ok([v[0], v[1], v[2]]),
+        Some(_) => fail(format!("{key} needs three numbers")),
+        None => Ok([0; 3]),
+    }
+}
+
+fn game_event(j: &Json, default: Option<&str>) -> PResult<Option<Identifier>> {
+    match opt(j, "trigger_game_event", ident)? {
+        Some(e) => Ok(Some(e)),
+        None => Ok(default.and_then(Identifier::parse)),
+    }
+}
+
 impl EntityEffect {
-    pub fn parse(j: &Json) -> PResult<EntityEffect> {
+    pub fn parse(p: &Parser, j: &Json) -> PResult<EntityEffect> {
         let ty = req(j, "type", ident)?;
         let lbv = |key: &str| req(j, key, LevelBasedValue::parse);
         Ok(match ty.as_str() {
-            "minecraft:all_of" => EntityEffect::AllOf(req(j, "effects", |v| list(v, EntityEffect::parse))?),
+            "minecraft:all_of" => EntityEffect::AllOf(req(j, "effects", |v| list(v, |e| EntityEffect::parse(p, e)))?),
+            "minecraft:attribute" => EntityEffect::Attribute(AttributeEffect::parse(p, j)?),
+            "minecraft:replace_block" => EntityEffect::ReplaceBlock {
+                offset: vec3i(j, "offset")?,
+                predicate: j.get("predicate").cloned(),
+                block_state: req(j, "block_state", StateSource::parse)?,
+                trigger_game_event: game_event(j, None)?,
+            },
+            "minecraft:replace_disk" => EntityEffect::ReplaceDisk {
+                radius: lbv("radius")?,
+                height: lbv("height")?,
+                offset: vec3i(j, "offset")?,
+                predicate: j.get("predicate").cloned(),
+                block_state: req(j, "block_state", StateSource::parse)?,
+                trigger_game_event: game_event(j, None)?,
+            },
+            "minecraft:set_block_properties" => EntityEffect::SetBlockProperties {
+                properties: req(j, "properties", string_map)?,
+                offset: vec3i(j, "offset")?,
+                trigger_game_event: game_event(j, Some("minecraft:block_change"))?,
+            },
+            "minecraft:run_function" => EntityEffect::RunFunction(req(j, "function", ident)?),
+            "minecraft:summon_entity" => EntityEffect::SummonEntity {
+                entity: req(j, "entity", |v| match v {
+                    Json::Arr(_) => list(v, crate::parse::string),
+                    _ => Ok(vec![crate::parse::string(v)?]),
+                })?,
+                join_team: opt(j, "join_team", crate::parse::boolean)?.unwrap_or(false),
+            },
+            "minecraft:spawn_particles" => {
+                let position = |key: &str| -> PResult<ParticlePosition> {
+                    req(j, key, |v| {
+                        let in_bounding_box = match req(v, "type", ident)?.as_str() {
+                            "minecraft:entity_position" => false,
+                            "minecraft:in_bounding_box" => true,
+                            other => return fail(format!("unknown position source {other}")),
+                        };
+                        Ok(ParticlePosition {
+                            in_bounding_box,
+                            offset: opt(v, "offset", crate::parse::float)?.unwrap_or(0.0),
+                            scale: opt(v, "scale", crate::parse::float)?.unwrap_or(1.0),
+                        })
+                    })
+                };
+                let velocity = |key: &str| -> PResult<ParticleVelocity> {
+                    req(j, key, |v| {
+                        Ok(ParticleVelocity {
+                            movement_scale: opt(v, "movement_scale", crate::parse::float)?.unwrap_or(0.0),
+                            base: opt(v, "base", crate::provider::Floats::parse)?.unwrap_or(crate::provider::Floats::Constant(0.0)),
+                        })
+                    })
+                };
+                let (particle, has_options) = req(j, "particle", |v| Ok((req(v, "type", ident)?, obj(v)?.len() > 1)))?;
+                EntityEffect::SpawnParticles(SpawnParticles {
+                    particle,
+                    has_options,
+                    horizontal_position: position("horizontal_position")?,
+                    vertical_position: position("vertical_position")?,
+                    horizontal_velocity: velocity("horizontal_velocity")?,
+                    vertical_velocity: velocity("vertical_velocity")?,
+                    speed: opt(j, "speed", crate::provider::Floats::parse)?.unwrap_or(crate::provider::Floats::Constant(0.0)),
+                })
+            }
             "minecraft:apply_mob_effect" => EntityEffect::ApplyMobEffect {
                 to_apply: req(j, "to_apply", |v| match v {
                     Json::Arr(_) => list(v, ident),
@@ -393,8 +560,45 @@ pub struct Effects {
     pub equipment_drops: Vec<Targeted<ValueEffect>>,
     pub crossbow_charge_time: Option<ValueEffect>,
     pub trident_spin_attack_strength: Option<ValueEffect>,
+    /// `tick`: entity effects run every tick for the equipment in its slot.
+    pub tick: Vec<Conditional<EntityEffect>>,
+    /// `location_changed`: location-based effects (entity effects and `attribute`), active while
+    /// their requirements hold.
+    pub location_changed: Vec<Conditional<EntityEffect>>,
+    /// `hit_block`: what a projectile with the item does when it hits a block.
+    pub hit_block: Vec<Conditional<EntityEffect>>,
+    /// `projectile_spawned`: what a projectile shot with the item gets.
+    pub projectile_spawned: Vec<Conditional<EntityEffect>>,
+    /// `trident_sound`: sounds for the use of a trident, by level.
+    pub trident_sound: Vec<Identifier>,
+    /// `crossbow_charging_sounds`: sounds for charging a crossbow, by level.
+    pub crossbow_charging_sounds: Vec<ChargingSounds>,
+    /// `prevent_equipment_drop` is present (the curse of vanishing).
+    pub prevent_equipment_drop: bool,
+    /// `prevent_armor_change` is present (the curse of binding).
+    pub prevent_armor_change: bool,
     /// Components kept by name only.
     pub other: Vec<Identifier>,
+}
+
+/// A sound event reference: its id (an inline `{sound_id}` object is accepted too).
+fn sound_name(j: &Json) -> PResult<Identifier> {
+    match j {
+        Json::Obj(_) => req(j, "sound_id", ident),
+        _ => ident(j),
+    }
+}
+
+fn entity_effects(p: &Parser, v: &Json) -> PResult<Vec<Conditional<EntityEffect>>> {
+    list(v, |e| Conditional::parse(p, e, |j| EntityEffect::parse(p, j)))
+}
+
+/// `CrossbowItem.ChargingSounds`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ChargingSounds {
+    pub start: Option<Identifier>,
+    pub mid: Option<Identifier>,
+    pub end: Option<Identifier>,
 }
 
 impl Effects {
@@ -415,11 +619,24 @@ impl Effects {
                 }
                 "minecraft:attributes" => out.attributes = list(v, |e| AttributeEffect::parse(p, e)).map_err(at)?,
                 "minecraft:post_attack" => {
-                    out.post_attack = list(v, |e| Targeted::parse(p, e, EntityEffect::parse)).map_err(at)?;
+                    out.post_attack = list(v, |e| Targeted::parse(p, e, |j| EntityEffect::parse(p, j))).map_err(at)?;
                 }
                 "minecraft:post_piercing_attack" => {
-                    out.post_piercing_attack = list(v, |e| Conditional::parse(p, e, EntityEffect::parse)).map_err(at)?;
+                    out.post_piercing_attack = list(v, |e| Conditional::parse(p, e, |j| EntityEffect::parse(p, j))).map_err(at)?;
                 }
+                "minecraft:tick" => out.tick = entity_effects(p, v).map_err(at)?,
+                "minecraft:location_changed" => out.location_changed = entity_effects(p, v).map_err(at)?,
+                "minecraft:hit_block" => out.hit_block = entity_effects(p, v).map_err(at)?,
+                "minecraft:projectile_spawned" => out.projectile_spawned = entity_effects(p, v).map_err(at)?,
+                "minecraft:trident_sound" => out.trident_sound = list(v, |s| sound_name(s)).map_err(at)?,
+                "minecraft:crossbow_charging_sounds" => {
+                    out.crossbow_charging_sounds = list(v, |s| {
+                        Ok(ChargingSounds { start: opt(s, "start", sound_name)?, mid: opt(s, "mid", sound_name)?, end: opt(s, "end", sound_name)? })
+                    })
+                    .map_err(at)?;
+                }
+                "minecraft:prevent_equipment_drop" => out.prevent_equipment_drop = true,
+                "minecraft:prevent_armor_change" => out.prevent_armor_change = true,
                 "minecraft:equipment_drops" => {
                     out.equipment_drops = list(v, |e| Targeted::parse(p, e, ValueEffect::parse)).map_err(at)?;
                 }
@@ -721,6 +938,77 @@ impl LootData {
                 }
             }
         });
+    }
+}
+
+impl LootData {
+    /// `EnchantmentHelper.getHighestLevel(stack, component)`: the component's value of the
+    /// enchantment with the highest level among the stack's that have it (the first of equals) and that level.
+    pub fn highest_level<'a, T: ?Sized>(&'a self, stack: &ItemStack, component: impl Fn(&'a Effects) -> Option<&'a T>) -> Option<(&'a T, i32)> {
+        let mut best: Option<(&'a T, i32)> = None;
+        self.for_each_enchantment(stack, |e, level| {
+            if best.is_none_or(|(_, l)| l < level)
+                && let Some(v) = component(&e.effects)
+            {
+                best = Some((v, level));
+            }
+        });
+        best
+    }
+
+    /// `EnchantmentHelper.pickHighestLevel(stack, component)` for a list component: the entry
+    /// for the highest level (`min(level, size) - 1`).
+    pub fn pick_highest_level<'a, T>(&'a self, stack: &ItemStack, component: impl Fn(&'a Effects) -> &'a [T]) -> Option<&'a T> {
+        let (list, level) = self.highest_level(stack, |e| Some(component(e)).filter(|l| !l.is_empty()))?;
+        list.get((level.min(list.len() as i32) - 1).max(0) as usize)
+    }
+
+    /// `EnchantmentHelper.has(stack, component)` for the markers: any enchantment on the stack
+    /// that has the component.
+    pub fn has_component(&self, stack: &ItemStack, component: impl Fn(&Effects) -> bool) -> bool {
+        let mut any = false;
+        self.for_each_enchantment(stack, |e, _| any |= component(&e.effects));
+        any
+    }
+
+    /// `minecraft:enchantment` ids of the enchantments with `prevent_armor_change`, and with
+    /// `prevent_equipment_drop`.
+    pub fn marker_enchantments(&self) -> (Vec<i32>, Vec<i32>) {
+        let mut armor = Vec::new();
+        let mut drop = Vec::new();
+        for e in self.enchantments.iter().flatten() {
+            if e.effects.prevent_armor_change {
+                armor.push(e.id);
+            }
+            if e.effects.prevent_equipment_drop {
+                drop.push(e.id);
+            }
+        }
+        (armor, drop)
+    }
+
+    /// `EnchantmentHelper.modifyCrossbowChargingTime`: every enchantment's `crossbow_charge_time`
+    /// applied in turn to `base`, at least 0.
+    pub fn crossbow_charge_time(&self, stack: &ItemStack, rng: &mut dyn RandomSource, base: f32) -> f32 {
+        let mut value = base;
+        self.for_each_enchantment(stack, |e, level| {
+            if let Some(effect) = &e.effects.crossbow_charge_time {
+                value = effect.process(level, rng, value);
+            }
+        });
+        value.max(0.0)
+    }
+
+    /// `EnchantmentHelper.getTridentSpinAttackStrength`: every enchantment's
+    /// `trident_spin_attack_strength` applied in turn to 0.
+    pub fn trident_spin_attack_strength(&self, stack: &ItemStack, rng: &mut dyn RandomSource) -> f32 {
+        let mut value = 0.0;
+        self.for_each_enchantment(stack, |e, level| {
+            if let Some(effect) = &e.effects.trident_spin_attack_strength {
+                value = effect.process(level, rng, value);
+            }
+        });
+        value
     }
 }
 

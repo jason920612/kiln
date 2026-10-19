@@ -2803,7 +2803,6 @@ impl Sim {
             drowning: self.rule_bool("minecraft:drowning_damage"),
             difficulty: self.commands.difficulty as u8,
             keep_inventory: self.rule_bool("minecraft:keep_inventory"),
-            vanishing: self.rules.equipment_drop_lock(),
         }
     }
 

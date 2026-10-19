@@ -388,17 +388,14 @@ pub(crate) fn neighbour_fire(level: &mut RegionLevel, pos: BlockPos, s: u16) {
 }
 
 /// `BeehiveBlock.playerDestroy` for a hive about to go: its bees come out (and the ones nearby turn
-/// on the player) unless the tool prevents it (silk touch).
+/// on the player) unless the tool prevents it (`#prevents_bee_spawns_when_mining`).
 pub(crate) fn player_destroy(level: &mut RegionLevel, pos: BlockPos, s: u16, p: &Player) {
     if hive(level, pos).is_none() {
         return;
     }
-    let silk = p
-        .inv
-        .selected_item()
-        .get(kiln_item::keys::ENCHANTMENTS)
-        .is_some_and(|e| kiln_item::registry::ENCHANTMENT.id("minecraft:silk_touch").is_some_and(|id| e.level(id) > 0));
-    if silk {
+    // `#prevents_bee_spawns_when_mining` (silk touch)
+    let prevents = p.inv.selected_item().has_enchantment_tag("minecraft:prevents_bee_spawns_when_mining");
+    if prevents {
         return;
     }
     empty_all(level, pos, s, Some((p.entity_id, p.pos, p.game_mode == 0 || p.game_mode == 2)), Release::Emergency);

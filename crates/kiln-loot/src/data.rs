@@ -146,6 +146,39 @@ pub struct LootData {
     pub(crate) songs: Vec<Option<JukeboxSong>>,
     /// What `exploration_map` functions ask for the structure and the map (set by the server that has a world).
     pub explorer: Option<ExplorerHandle>,
+    /// The registry entries vanilla loads once with the world (see [`WorldDefs`]).
+    pub world: std::sync::Arc<WorldDefs>,
+}
+
+/// The text of the registry entries that vanilla loads once, when the world loads, and keeps until
+/// it is closed: `enchantment`, `enchantment_provider`, `jukebox_song`, `trade_set` and
+/// `villager_trade` (`RegistryDataLoader`; `/reload` only reloads loot tables, predicates, item
+/// modifiers, slot sources, number providers, advancements and recipes). A reload decodes these
+/// again from here, not from the packs, against the reloaded tags.
+#[derive(Debug, Default, Clone)]
+pub struct WorldDefs {
+    files: Vec<(&'static str, Identifier, String)>,
+}
+
+impl WorldDefs {
+    /// The registry directories that are loaded with the world.
+    pub const DIRS: [&'static str; 5] = ["enchantment", "enchantment_provider", "jukebox_song", "villager_trade", "trade_set"];
+
+    /// Reads the entries from `packs` (a later pack's file replaces an earlier one's).
+    pub fn read(packs: &[&Path]) -> Result<WorldDefs, LoadError> {
+        let mut files = Vec::new();
+        for dir in WorldDefs::DIRS {
+            for (id, path) in list_pack_files(packs, dir)? {
+                files.push((dir, id, text));
+            }
+        }
+        Ok(WorldDefs { files })
+    }
+
+    /// The entries of one directory, in identifier order.
+    pub(crate) fn dir<'a>(&'a self, dir: &'a str) -> impl Iterator<Item = (&'a Identifier, &'a str)> {
+        self.files.iter().filter(move |(d, _, _)| *d == dir).map(|(_, id, text)| (id, text.as_str()))
+    }
 }
 
 /// A [`crate::MapExplorer`] shared by the loot data.
@@ -237,6 +270,16 @@ impl LootData {
     /// [`load_lenient`](Self::load_lenient) over several packs in order: later packs replace
     /// files with the same id and add to (or, with `replace`, replace) tags.
     pub fn load_lenient_packs(packs: &[&Path]) -> Result<LootData, LoadError> {
+        LootData::load_lenient_packs_with(packs, None)
+    }
+
+    /// [`load_lenient_packs`](Self::load_lenient_packs) with the registry entries of the world (the
+    /// first load's [`LootData::world`]) instead of the packs' (`None`: read them from the packs).
+    pub fn load_lenient_packs_with(packs: &[&Path], world: Option<&WorldDefs>) -> Result<LootData, LoadError> {
+        let world = match world {
+            Some(w) => w.clone(),
+            None => WorldDefs::read(packs)?,
+        };
         let known = |registry: &str, id: &Identifier| {
             if tags::has_id_table(registry) {
                 kiln_data::builtin_id(registry, id.as_str()).is_some() || kiln_data::live::synced_id(registry, id.as_str()).is_some()
@@ -267,14 +310,12 @@ impl LootData {
         }
 
         // Enchantment definitions.
-        let enchantment_files = list_pack_files(packs, "enchantment")?;
         let mut enchantments: Vec<Option<Enchantment>> = vec![None; registry::ENCHANTMENT.len()];
         let mut errors = Vec::new();
         {
             let parser = Parser { names: &data.names, tags: &data.tags };
-            for (id, path) in enchantment_files {
-                let text = std::fs::read_to_string(&path).map_err(io(&path))?;
-                let result = Json::parse(&text).map_err(|e| ParseError::new(e.to_string())).and_then(|j| {
+            for (id, text) in world.dir("enchantment") {
+                let result = Json::parse(text).map_err(|e| ParseError::new(e.to_string())).and_then(|j| {
                     let net = crate::parse::registry_id(registry::ENCHANTMENT, &id)?;
                     Enchantment::parse(&parser, net, &j)
                 });
@@ -293,14 +334,13 @@ impl LootData {
         {
             let parser = Parser { names: &data.names, tags: &data.tags };
             let mut providers = HashMap::new();
-            for (id, path) in list_pack_files(packs, "enchantment_provider")? {
-                let text = std::fs::read_to_string(&path).map_err(io(&path))?;
-                let result = Json::parse(&text)
+            for (id, text) in world.dir("enchantment_provider") {
+                let result = Json::parse(text)
                     .map_err(|e| ParseError::new(e.to_string()))
                     .and_then(|j| crate::provider::Provider::parse(&parser, &j));
                 match result {
                     Ok(p) => {
-                        providers.insert(id, p);
+                        providers.insert(id.clone(), p);
                     }
                     Err(e) => errors.push(FileError { element: format!("enchantment_provider/{id}"), error: e.to_string() }),
                 }
@@ -311,9 +351,8 @@ impl LootData {
         // Jukebox songs (`jukebox_song/`).
         {
             let mut songs: Vec<Option<JukeboxSong>> = vec![None; registry::JUKEBOX_SONG.len()];
-            for (id, path) in list_pack_files(packs, "jukebox_song")? {
-                let text = std::fs::read_to_string(&path).map_err(io(&path))?;
-                let result = Json::parse(&text).map_err(|e| ParseError::new(e.to_string())).and_then(|j| {
+            for (id, text) in world.dir("jukebox_song") {
+                let result = Json::parse(text).map_err(|e| ParseError::new(e.to_string())).and_then(|j| {
                     let net = crate::parse::registry_id(registry::JUKEBOX_SONG, &id)?;
                     let song = JukeboxSong {
                         length_in_seconds: crate::parse::req(&j, "length_in_seconds", crate::parse::float)?,
@@ -374,7 +413,8 @@ impl LootData {
             let (element, error) = e.split_once(": ").unwrap_or((&e, ""));
             data.errors.push(FileError { element: format!("tags/{element}"), error: error.to_owned() });
         }
-        data.trades = crate::trade::Trades::load(packs, &data);
+        data.trades = crate::trade::Trades::load_world(&world, &data);
+        data.world = std::sync::Arc::new(world);
         for e in std::mem::take(&mut data.trades.errors) {
             let (element, error) = e.split_once(": ").unwrap_or((&e, ""));
             data.errors.push(FileError { element: element.to_owned(), error: error.to_owned() });
