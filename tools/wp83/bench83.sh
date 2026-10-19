@@ -5,7 +5,7 @@
 #   put in the world's datapacks before it starts (`kiln_wp83`): the registries and tags of a pack in the hot paths.
 #   Results in ~/wp83/out/<tag>*; the numbers that matter are the tick time (mean, p50, p99, max), the bots' join and chunk latencies.
 #   Build both first: cargo build --release -p kiln-server -p kiln-bot --bins --examples (CARGO_BUILD_JOBS=3), in each checkout.
-which=$1; packs=${2:-}; shift 2 2>/dev/null
+which=$1; packs=${2:-}; shift $(( $# < 2 ? $# : 2 ))
 case $which in base) dir=$HOME/wt/wp83-base;; new) dir=$HOME/wt/wp83-datapacks;; *) echo "base|new [packs]"; exit 2;; esac
 tag="$which-${packs:-nopack}-$(date +%H%M)"
 out="$HOME/wp83/out"; mkdir -p "$out"
