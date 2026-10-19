@@ -35,10 +35,10 @@ fn a_comparator_follows_a_decorated_pot_as_it_fills() {
     for _ in 0..6 {
         assert!(sim.step([ToSim::Packet(1, PlayIn::ClientTickEnd)]));
     }
-    let pot = sim.block_entity_nbt(x, y, z).expect("the pot");
+    let pot = sim.block_entity_data("minecraft:overworld", x, y, z).expect("the pot");
     let count = pot.get("item").and_then(|i| i.get("count")).and_then(Tag::as_i64).unwrap_or(0);
     assert!(count >= 40, "the pot took the stones: {pot:?}");
-    let comparator = sim.block_entity_nbt(x, y, z - 1).expect("the comparator");
+    let comparator = sim.block_entity_data("minecraft:overworld", x, y, z - 1).expect("the comparator");
     let out = comparator.get("OutputSignal").and_then(Tag::as_i64).unwrap_or(-1);
     let want = 1 + (count as f64 / 64.0 * 14.0).floor() as i64;
     assert_eq!(out, want, "{count} of 64 stones read as {want}: {comparator:?}");
