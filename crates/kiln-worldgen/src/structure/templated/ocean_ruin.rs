@@ -186,13 +186,15 @@ pub struct OceanRuinPiece {
     temp: Temp,
     integrity: f32,
     large: bool,
+    /// Where placing put the template (`postProcess` moves `templatePosition` to the sea floor, and the box with it): what the saved piece says.
+    settled: std::sync::Mutex<Option<BlockPos>>,
 }
 
 impl OceanRuinPiece {
     fn new(tm: &TemplateManager, name: &str, p: BlockPos, rotation: Rotation, integrity: f32, s: &OceanRuin, large: bool) -> Self {
         let processors = vec![Processor::BlockRot { rottable: None, integrity }, IGNORE_STRUCTURE_AND_AIR.clone(), s.archaeology.clone()];
         let t = TemplatePiece::new("minecraft:orp", tm, name, rotation, Mirror::None, BlockPos::new(0, 0, 0), processors, LiquidSettings::ApplyWaterlogging, p);
-        OceanRuinPiece { t, temp: s.temp, integrity, large }
+        OceanRuinPiece { t, temp: s.temp, integrity, large, settled: std::sync::Mutex::new(None) }
     }
 
     /// `OceanRuinPiece.getHeight(templatePos, level, corner)`.
@@ -231,6 +233,15 @@ impl OceanRuinPiece {
     }
 }
 
+impl OceanRuinPiece {
+    fn save_fields(&self, tag: &mut Vec<(String, Tag)>) {
+        tag.push(("Rot".into(), Tag::String(self.t.rotation.enum_name().into())));
+        tag.push(("Integrity".into(), Tag::Float(self.integrity)));
+        tag.push(("BiomeType".into(), Tag::String(if self.temp == Temp::Warm { "WARM" } else { "COLD" }.into())));
+        tag.push(("IsLarge".into(), Tag::Byte(self.large as i8)));
+    }
+}
+
 impl Piece for OceanRuinPiece {
     fn base(&self) -> &PieceBase {
         &self.t.base
@@ -248,6 +259,7 @@ impl Piece for OceanRuinPiece {
         let c = transform(BlockPos::new(size[0] - 1, 0, size[2] - 1), Mirror::None, t.rotation, BlockPos::new(0, 0, 0));
         let corner = tp.offset(c.x, c.y, c.z);
         let pos = BlockPos::new(tp.x, self.height(r, tp, corner), tp.z);
+        *self.settled.lock().unwrap() = Some(pos);
         let large = self.large;
         t.post_process(pos, r, random, chunk_box, pivot, &mut |metadata, p, r, random| match metadata {
             "chest" => {
@@ -271,10 +283,22 @@ impl Piece for OceanRuinPiece {
 
     fn save_extra(&self, tag: &mut Vec<(String, Tag)>) {
         self.t.save_template(tag);
-        tag.push(("Rot".into(), Tag::String(self.t.rotation.enum_name().into())));
-        tag.push(("Integrity".into(), Tag::Float(self.integrity)));
-        tag.push(("BiomeType".into(), Tag::String(if self.temp == Temp::Warm { "WARM" } else { "COLD" }.into())));
-        tag.push(("IsLarge".into(), Tag::Byte(self.large as i8)));
+        self.save_fields(tag);
+    }
+
+    fn bbox_now(&self) -> BoundingBox {
+        match *self.settled.lock().unwrap() {
+            Some(pos) => self.t.bbox_at(pos),
+            None => self.t.base.bbox,
+        }
+    }
+
+    fn save(&self) -> Tag {
+        let (pos, bbox) = match *self.settled.lock().unwrap() {
+            Some(pos) => (pos, self.t.bbox_at(pos)),
+            None => (self.t.position, self.t.base.bbox),
+        };
+        self.t.save_settled(self.t.base.kind, pos, bbox, |tag| self.save_fields(tag))
     }
 
     fn shift(&mut self, dx: i32, dy: i32, dz: i32) {

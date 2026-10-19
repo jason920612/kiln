@@ -81,10 +81,29 @@ impl TemplatePiece {
 
     /// `TemplateStructurePiece.addAdditionalSaveData`.
     pub fn save_template(&self, tag: &mut Vec<(String, Tag)>) {
-        tag.push(("TPX".into(), Tag::Int(self.position.x)));
-        tag.push(("TPY".into(), Tag::Int(self.position.y)));
-        tag.push(("TPZ".into(), Tag::Int(self.position.z)));
+        self.save_template_at(self.position, tag);
+    }
+
+    /// [`TemplatePiece::save_template`] for a piece that settled at `pos` while it was placed.
+    pub fn save_template_at(&self, pos: BlockPos, tag: &mut Vec<(String, Tag)>) {
+        tag.push(("TPX".into(), Tag::Int(pos.x)));
+        tag.push(("TPY".into(), Tag::Int(pos.y)));
+        tag.push(("TPZ".into(), Tag::Int(pos.z)));
         tag.push(("Template".into(), Tag::String(self.name.clone())));
+    }
+
+    /// `StructurePiece.createTag` of a piece whose position and box are `pos` and `bbox` now (it moved while it was placed): `extra` after the common fields.
+    pub fn save_settled(&self, kind: &'static str, pos: BlockPos, bbox: BoundingBox, extra: impl FnOnce(&mut Vec<(String, Tag)>)) -> Tag {
+        let b = &self.base;
+        let mut tag = vec![
+            ("id".to_string(), Tag::String(kind.to_string())),
+            ("BB".to_string(), bbox.to_tag()),
+            ("O".to_string(), Tag::Int(b.orientation().map_or(-1, crate::block_facts::Dir::index_2d))),
+            ("GD".to_string(), Tag::Int(b.gen_depth)),
+        ];
+        self.save_template_at(pos, &mut tag);
+        extra(&mut tag);
+        Tag::Compound(tag)
     }
 
     /// `TemplateStructurePiece.postProcess` with the template at `pos`: places it, then runs
