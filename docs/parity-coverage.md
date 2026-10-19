@@ -881,6 +881,25 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 附帶 | `crowd_golden` 四個封包摘要重錄(狀態雜湊不變,少 2~3 個區塊批次);`raids`、`slime_rooms`、`interact_parity` 的重播對齊新的載入/生怪規則 |
 
 
+### 6.23 wp81(`wp81-gaps`):區塊票、載入圈、豬布林殘差、凋零箭盾,以及 wp78 沒做完的並排比較
+
+細節見 `docs/wp81.md`。新工具(`tools/wp81/`):`ring81.py`(強制載入/珍珠/傳送門/傳送門計時的鎖步探針)、`simradius81.py`(加 `execute if loaded`、方塊邊緣的水)、`fill81.py`、`sumctr81.sh`、`gateway81.py`、`maps81.py`、`jungle81.py`、`neg81.sh`;Java agent 加 `spawned`/`potential`/`localCap`;Kiln 的 `KILN_SPAWN_COUNTERS` 有同樣的鍵。
+
+| 區域 | 結果 |
+|---|---|
+| 區塊票(`/forceload`、末影珍珠、傳送門、龍) | **修**:`tickets.rs`——強制區塊的實體 tick 只在那一格、方塊 tick 外一圈、載入再外一圈;玩家的珍珠每 39 刻/換區塊放半徑 2、40 刻的票(珍珠飛出玩家範圍照舊 tick,擁有者在別的區域/維度也會被傳到落點),登出存 `ender_pearls`(含維度)、登入放回;傳送門/閘道到達放半徑 3、300 刻的票(存進 `chunk_tickets.dat`);龍的票半徑 9;票只在「照常執行的刻」倒數(凍結的空閒刻不算,`/tick step` 算)。鎖步證據:珍珠被殺後區塊還 tick 的刻數 K = V(38、77) |
+| vanilla 載入但不 tick 的圈 | **修**:一律載入到 `V+2`(水從方塊 tick 圈邊緣流進外圈 K = V);`execute if loaded` = 載入票等級(視野 `V` 內,不是模擬距離);旁觀者不放票 |
+| 自然生怪的候選區塊 | **修**(wp79 判斷錯):跟著**視野**而不是 `S+1`(128 格的整個圓);每刻候選區塊 K 193.9 → 205.3、V 205.5;隨機刻 `min(S, V+1)`、`InhabitedTime` 的狀態圈 `V+1` |
+| 下界屋頂的殭屍豬人 | 機制差異(上一列)修掉;殘差(啟用刻 K 比 V 高約 10%,vanilla 自己四次跑 7.5~9.2%)在雜訊邊緣,另兩個下界生物群系的殭屍豬人符號相反 |
+| 凋零的箭盾 | **修**:只看直接實體(`/damage … arrow` 扣血) |
+| 傳送門 | **修**:非玩家的實體站在傳送門裡每刻重設 300 刻冷卻(Kiln 每 300 刻來回);玩家的傳送門計時受傷/殭屍打不影響(10.2~10.3 s,K = V)。剩下:非玩家實體抵達早一刻 |
+| 終界閘道 | **修**:實體(牛、物品)穿過閘道(原本只有玩家);出口搜尋 16 步(原本 15)。三個樣本 K = V 兩個,第三個差一格(原因不明) |
+| 叢林神廟拉桿 | 位置完全相同、18 步拉動 0 差異 |
+| 製圖師的探險家地圖 | **修**:`/reload`/`/datapack enable` 後 `exploration_map` 沒有 explorer(地圖物品原樣、交易整個消失);存檔省略預設值欄位如 vanilla。40 張地圖中心 39/40 相同,每張 5~30 像素顏色不同(已知生物群系來源差異) |
+| 靈魂沙谷、玄武岩三角洲的自然生怪 | 並排的普查與計數器沒有系統性、單向的類型偏差 |
+| 附帶 | `afterSpawn` 計入出發區塊附近的玩家;投擲物的 `Owner` UUID 對到線上玩家 |
+
+
 
 ## 7. 重跑
 
@@ -997,6 +1016,11 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 #   python tools/parity_suites.py --only saved77,brain77,fishing77,villagers77
 #   VM：bash tools/wp77/agent/build.sh；ORDER ~/wp77/run77.sh nether|end|portal ROUNDS TICKS BOX SIMDIST（KILN 25599、vanilla 25596）；python3 tools/wp77/starts.py K/trace.out V/trace.out BOX；python3 tools/wp77/leash9.py 1 40 [knot|player] [stride]
 #   負向檢查：python3 tools/wp77_neg.py [case…]
+# wp81：區塊票、載入圈、並排比較(VM;Kiln 25599、vanilla 25596;見 docs/wp81.md)
+#   bash agent/build.sh（~/wp81/agent81.jar）；SEED=77 VIEWDIST=5 ./sv.sh K|V fresh 5；VIEW=5 ./bot.sh K|V W 1；CX=187 CZ=187 python3 ring81.py forced | pearl2 30 | portal2 700 | trip；python3 simradius81.py 40
+#   ./run81.sh nether 30 600 -71,129,57,-57,132,71 6（豬布林）；ONLY=K python3 farm81.py nether 30 600；./sumctr81.sh K/counters.out V/agent.out；BIOME_AT=-32,66,32 ./run81.sh nbiome 10 700 0,0,0,0,0,0 6（SEED=78）
+#   python3 gateway81.py 20 -40；python3 maps81.py pack、python3 maps81.py；python3 jungle81.py
+#   負向檢查：~/kt wp81-gaps bash tools/wp81/neg81.sh
 # wp78：第九次遊玩（晚期內容；VM；Kiln 25589、vanilla 25595；見 docs/playthrough-wp78.md）
 #   bash tools/wp78/push_tools.sh；bash wp78_start.sh / wp78_vanilla.sh（KILN_SEED=78 / VSEED=78）、switch.sh K|V split|both、actor.sh K|V，然後
 #   並排：bash par.sh p78_fort.py | p78_bastion.py | p78_wither.py | p78_bow.py [type] | p78_city_scout.py | p78_warden2.py 813 -49 -571 | p78_desert.py -1672 -2292 | p78_trap.py 5 | p78_ship.py | p78_buried.py | p78_portal.py N

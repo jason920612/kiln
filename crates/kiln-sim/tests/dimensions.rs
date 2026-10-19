@@ -226,3 +226,86 @@ fn tp_and_execute_in_cross_levels() {
     assert_eq!(loaded.len(), 3);
     assert!(loaded.iter().all(|&n| n > 0), "{loaded:?}");
 }
+
+/// wp81 (lock step against vanilla, `tools/wp81/ring81.py portal2`): a mob that arrived in a portal and stands still in it does not go back. Every tick inside
+/// a portal starts the cooldown over (`Entity.setAsInsidePortal`), so it can only leave after 300 ticks out of the portal. Kiln let the cooldown run out and
+/// sent the cow back and forth every 300 ticks.
+#[test]
+fn a_mob_standing_in_the_portal_it_arrived_in_does_not_go_back() {
+    let mut w = World::new("creative");
+    frame(&mut w, 11, -61, 12);
+    w.run("setblock 11 -60 12 minecraft:fire");
+    assert!(state::is(w.sim.block_at(12, -59, 12).unwrap(), d::NETHER_PORTAL));
+    w.run("summon minecraft:cow 11.5 -60 12.5 {NoAI:1b,PersistenceRequired:1b}");
+    let cows = |w: &World, level: &str| w.sim.entities_in(level).iter().filter(|(k, _)| *k == "minecraft:cow").count();
+    let mut arrived = None;
+    for _ in 0..20 {
+        w.ticks(1);
+        if let Some(&(_, pos)) = w.sim.entities_in(NETHER).iter().find(|(k, _)| *k == "minecraft:cow") {
+            arrived = Some(pos);
+            break;
+        }
+    }
+    let at = arrived.expect("the cow went through the portal");
+    // A player beside it keeps its chunks ticking.
+    w.run(&format!("execute in {NETHER} run tp Traveller {} {} {}", at[0] + 3.0, at[1] + 1.0, at[2] + 3.0));
+    for i in 0..700 {
+        w.ticks(1);
+        if i % 10 == 0 {
+            assert_eq!((cows(&w, NETHER), cows(&w, OVERWORLD)), (1, 0), "the cow is still in the portal it arrived in, tick {i}");
+        }
+    }
+}
+
+/// wp81 (lock step against vanilla, `tools/wp81/ring81.py portal`): the arrival of an entity places a portal ticket (`Entity.placePortalTicket`: radius 3, 300 ticks, so
+/// the chunks around it load and tick) and nothing else holds the nether chunks when the player is in the overworld: a baby cow that went through ages for 300 ticks there
+/// and then stops with its chunk (vanilla: 300 ticks of Age, then not found).
+#[test]
+fn a_mob_that_went_through_a_portal_ticks_for_300_ticks_with_nobody_near() {
+    let mut w = World::new("creative");
+    frame(&mut w, 11, -61, 12);
+    w.run("setblock 11 -60 12 minecraft:fire");
+    assert!(state::is(w.sim.block_at(12, -59, 12).unwrap(), d::NETHER_PORTAL));
+    w.run("summon minecraft:cow 11.5 -60 12.5 {Age:-24000,NoAI:1b,PersistenceRequired:1b}");
+    let age = |w: &World| {
+        w.sim
+            .entity_nbt()
+            .into_iter()
+            .find(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some("minecraft:cow"))
+            .and_then(|t| t.get("Age").and_then(kiln_proto::nbt::Tag::as_i64))
+    };
+    let mut seen = Vec::new();
+    for i in 0..400 {
+        w.ticks(1);
+        if i % 50 == 49 {
+            seen.push(age(&w));
+        }
+    }
+    let in_nether = w.sim.entities_in(NETHER).iter().any(|(k, _)| *k == "minecraft:cow");
+    let risen: Vec<Option<i64>> = seen.iter().map(|a| a.map(|a| a + 24000)).collect();
+    assert!(risen[2].is_some_and(|r| r >= 140), "after 150 ticks it has aged: {risen:?}");
+    assert!(risen.last().unwrap().is_none_or(|r| r <= 310), "and stops with the ticket after 300 (nothing keeps the chunk): {risen:?} (in the nether now: {in_nether})");
+}
+
+/// wp81 (lock step against vanilla, `tools/wp81/gateway81.py`): a mob standing in an end gateway goes to its exit, as a player does (vanilla: the cow of the lock step stood
+/// at (33.5, 74, 1071.5) a few seconds after, and the gateway block entity had its `exit_portal`). Kiln only took players through gateways.
+#[test]
+fn a_mob_in_an_end_gateway_goes_to_its_exit() {
+    let mut w = World::new("creative");
+    w.run(&format!("execute in {END} run tp Traveller 0 80 30"));
+    w.ticks(10);
+    w.run(&format!("execute in {END} run setblock 0 80 40 minecraft:end_gateway"));
+    w.run(&format!("execute in {END} run summon minecraft:cow 0.5 80 40.5 {{NoAI:1b,PersistenceRequired:1b}}"));
+    let mut at = None;
+    for _ in 0..60 {
+        w.ticks(1);
+        at = w.sim.entities_in(END).into_iter().find(|(k, _)| *k == "minecraft:cow").map(|(_, p)| p);
+        if at.is_some_and(|p| p[2] > 400.0) {
+            break;
+        }
+    }
+    let at = at.expect("the cow");
+    assert!(at[2] > 400.0, "it went through the gateway to the outer islands: {at:?}");
+    let be = w.sim.block_entity_data(END, 0, 80, 40).expect("the gateway's block entity");
+    assert!(be.get("exit_portal").is_some(), "which now knows its exit: {be:?}");
+}

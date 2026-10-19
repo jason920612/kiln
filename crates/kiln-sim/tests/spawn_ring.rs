@@ -1,6 +1,9 @@
-//! Natural spawning picks its chunks from the block-ticking ring (`ChunkMap.collectSpawningChunks`: `ChunkHolder.getTickingChunk()` of the chunks within 8 of a
-//! player): one chunk further than entities tick. With a simulation distance of 3 vanilla attempts the chunks up to 4 chunks from the player (measured with the
-//! `chunkAttempt` counters of the java agent on a simulation distance of 6: 15x15 chunks, not 13x13), none at 5. Needs the vanilla datapack; skips without it.
+//! Natural spawning picks its chunks from those whose status is block ticking or better (`ChunkMap.collectSpawningChunks`: `ChunkHolder.getTickingChunk()`, which
+//! follows the loading tickets, so within the *server's view distance* of a player, not its simulation distance), tries them when entities tick there
+//! (`ServerLevel.canSpawnEntitiesInChunk`: the view distance) and a player is within 128 blocks of the chunk's centre. wp79 took the ring one chunk beyond the simulation
+//! distance for it (13x13 -> 15x15); lock step on the nether roof with a simulation distance of 6 and a view distance of 8 (`tools/wp81/farm81.py nether`) showed vanilla trying
+//! 207.6 chunks a tick for a category with no cap, the whole circle of 128 blocks, Kiln 195.9 (the ring at 7). With a simulation distance of 3 and a view distance of 8 the chunks
+//! up to 8 chunks from the player are tried, none at 9. Needs the vanilla datapack; skips without it.
 
 use kiln_link::ToSim;
 use kiln_sim::testing::{Client, join};
@@ -22,7 +25,7 @@ fn datapack() -> Option<PathBuf> {
 }
 
 #[test]
-fn spawn_attempts_reach_one_chunk_beyond_the_simulation_distance() {
+fn spawn_attempts_reach_the_view_distance_not_the_simulation_distance() {
     let Some(pack) = datapack() else { return };
     let file = std::env::temp_dir().join(format!("kiln-spawn-ring-{}", std::process::id()));
     // SAFETY: nothing else in this test binary reads the environment concurrently.
@@ -57,7 +60,10 @@ fn spawn_attempts_reach_one_chunk_beyond_the_simulation_distance() {
     assert!(attempts(0, 0) > 0, "the player's own chunk: {:?}", counters.keys().filter(|k| k.starts_with("chunkAttempt")).collect::<Vec<_>>());
     let ring = |d: i32| attempts(d, 0) + attempts(0, d) + attempts(-d, 0) + attempts(0, -d);
     assert!(attempts(3, 0) > 0 && attempts(0, -3) > 0, "within the simulation distance");
-    assert!(attempts(4, 0) > 0 && attempts(0, 4) > 0 && attempts(-4, 0) > 0 && attempts(0, -4) > 0, "one chunk beyond it: {:?}", (0..=6).map(|d| (d, attempts(d, 0), attempts(0, d), attempts(-d, 0), attempts(0, -d))).collect::<Vec<_>>());
-    assert_eq!(ring(5) + ring(6), 0, "two beyond it");
+    let around = |d: i32| (d, attempts(d, 0), attempts(0, d), attempts(-d, 0), attempts(0, -d));
+    for d in [4, 5, 6] {
+        assert!(attempts(d, 0) > 0 && attempts(0, d) > 0 && attempts(-d, 0) > 0 && attempts(0, -d) > 0, "beyond the simulation distance, within the view distance: {:?}", around(d));
+    }
+    assert_eq!(ring(9), 0, "beyond the view distance: {:?}", around(9));
     let _ = std::fs::remove_file(file);
 }

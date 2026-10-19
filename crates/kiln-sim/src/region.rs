@@ -53,8 +53,8 @@ pub(crate) struct Env {
     pub frozen: bool,
     /// The level's world border, for players outside it.
     pub border: crate::world_state::BorderBox,
-    /// Force-loaded chunks of the level, which tick without players near.
-    pub forced: std::sync::Arc<Vec<ChunkPos>>,
+    /// The level's chunk tickets that tick without a player near (centre, radius): `/forceload`, ender pearls, portals, the dragon fight's arena.
+    pub tickets: std::sync::Arc<Vec<(ChunkPos, i32)>>,
 }
 
 /// What a region leaves for the next serial phase.
@@ -739,15 +739,8 @@ impl RegionWork<'_> {
             self.tick_block_entities(env, ticking_now);
             return;
         }
-        // `TicketType.DRAGON`: the fight's arena ticks while its boss bar has players.
-        let with_arena;
-        let ticking = match env.blocks.dragon_fight.as_ref().filter(|f| f.active) {
-            Some(f) => {
-                with_arena = ticking_now.with_arena(f.arena_center, f.arena_radius);
-                &with_arena
-            }
-            None => ticking_now,
-        };
+        // (`TicketType.DRAGON`'s arena is among the tickets `ticking_now` has.)
+        let ticking = ticking_now;
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         {
@@ -1044,11 +1037,13 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
 }
 
 /// Chunks that tick: those within the simulation distance of the region's players (entities, random ticks) or one chunk further (scheduled ticks, block
-/// entities, the chunks natural spawning picks from), and the level's force-loaded chunks.
+/// entities, the chunks natural spawning picks from), and those the level's other tickets reach.
 fn ticking_chunks(players: &[&mut Player], env: &Env) -> Ticking {
-    let mut t = Ticking::around(players.iter().map(|p| p.center), env.blocks.simulation_distance, env.max_view);
-    for &c in env.forced.iter() {
-        t.add_chunk(c);
+    // (A spectator holds no tickets, unless `spectators_generate_chunks`: `ChunkMap.skipPlayer`.)
+    let holders = players.iter().filter(|p| p.game_mode != 3 || env.spectators_generate_chunks).map(|p| p.center);
+    let mut t = Ticking::around(holders, env.blocks.simulation_distance, env.max_view);
+    for &(c, radius) in env.tickets.iter() {
+        t.add_ticket(c, radius);
     }
     t
 }
@@ -2014,10 +2009,19 @@ fn send_chunks(p: &mut Player, missing: Vec<ChunkPos>, cells: &mut CellSet<Cell>
     p.unacked_batches += 1;
 }
 
-/// How far from a player chunks are kept loaded: the server's view distance (the `PLAYER_LOADING` tickets are at level 31 there), and one chunk further
-/// when the simulation distance reaches that far (the simulation tickets make that ring block-ticking: scheduled ticks and block entities run in it).
+/// How many chunks beyond the server's view distance a player's loading ticket still loads: its level is 31 at distance `V` and one more per
+/// chunk, and level 33 is a full chunk (`ChunkLevel.byStatus(FULL)`). The ring at `V + 1` ticks blocks when the simulation distance reaches it (see
+/// [`crate::blocks::Ticking`]); both rings and the one at `V + 2` are loaded for fluids, pistons, explosions and entities to reach into.
+const LOADED_BEYOND_VIEW: i32 = 2;
+
+/// How far from a player chunks are kept loaded.
 fn load_radius(env: &Env) -> i32 {
-    env.max_view.max((env.blocks.simulation_distance + 1).min(env.max_view + 1))
+    env.max_view + LOADED_BEYOND_VIEW
+}
+
+/// How far from a player a chunk is still wanted loaded (the radius and a chunk of margin before it unloads).
+pub(crate) fn load_reach(view: i32) -> i32 {
+    view + LOADED_BEYOND_VIEW + 1
 }
 
 /// Rank of the requests for chunks only loaded (not sent): after every player's own needs.

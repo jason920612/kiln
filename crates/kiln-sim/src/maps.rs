@@ -524,7 +524,7 @@ impl MapData {
 
     /// The saved form (`MapItemSavedData.CODEC`).
     pub(crate) fn to_nbt(&self) -> Tag {
-        let banners = self
+        let banners: Vec<Tag> = self
             .banners
             .values()
             .map(|b| {
@@ -535,7 +535,7 @@ impl MapData {
                 Tag::Compound(f)
             })
             .collect();
-        let frames = self
+        let frames: Vec<Tag> = self
             .frames
             .values()
             .map(|f| {
@@ -546,18 +546,32 @@ impl MapData {
                 ])
             })
             .collect();
-        Tag::Compound(vec![
+        // (`MapItemSavedData.CODEC`: the optional fields are left out when they hold their default, `tools/wp81/maps81.py` compared the files.)
+        let mut fields = vec![
             ("dimension".to_owned(), Tag::String(self.dimension.clone())),
             ("xCenter".to_owned(), Tag::Int(self.center[0])),
             ("zCenter".to_owned(), Tag::Int(self.center[1])),
-            ("scale".to_owned(), Tag::Byte(self.scale)),
-            ("colors".to_owned(), Tag::ByteArray(self.colors.iter().map(|&c| c as i8).collect())),
-            ("trackingPosition".to_owned(), Tag::Byte(self.tracking_position as i8)),
-            ("unlimitedTracking".to_owned(), Tag::Byte(self.unlimited_tracking as i8)),
-            ("locked".to_owned(), Tag::Byte(self.locked as i8)),
-            ("banners".to_owned(), Tag::List(banners)),
-            ("frames".to_owned(), Tag::List(frames)),
-        ])
+        ];
+        if self.scale != 0 {
+            fields.push(("scale".to_owned(), Tag::Byte(self.scale)));
+        }
+        fields.push(("colors".to_owned(), Tag::ByteArray(self.colors.iter().map(|&c| c as i8).collect())));
+        if !self.tracking_position {
+            fields.push(("trackingPosition".to_owned(), Tag::Byte(0)));
+        }
+        if self.unlimited_tracking {
+            fields.push(("unlimitedTracking".to_owned(), Tag::Byte(1)));
+        }
+        if self.locked {
+            fields.push(("locked".to_owned(), Tag::Byte(1)));
+        }
+        if !banners.is_empty() {
+            fields.push(("banners".to_owned(), Tag::List(banners)));
+        }
+        if !frames.is_empty() {
+            fields.push(("frames".to_owned(), Tag::List(frames)));
+        }
+        Tag::Compound(fields)
     }
 
     pub(crate) fn from_nbt(t: &Tag) -> Option<MapData> {

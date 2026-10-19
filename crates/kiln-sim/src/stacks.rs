@@ -227,6 +227,7 @@ impl Sim {
         self.forget_entities(gone);
         self.load_area(to, kiln_blocks::BlockPos::new(pos[0].floor() as i32, pos[1].floor() as i32, pos[2].floor() as i32), 1);
         if let Some(until) = cooldown {
+            self.place_portal_ticket(to, pos);
             for u in uuids {
                 self.dims[to].portal_cooldowns.insert(u, until);
             }

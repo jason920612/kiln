@@ -88,7 +88,7 @@ impl Sim {
 
 impl Player {
     /// `Entity.canUsePortal(false)`: alive, and not a passenger (what it rides goes, with it).
-    fn can_use_portal(&self) -> bool {
+    pub(crate) fn can_use_portal(&self) -> bool {
         !self.dead && self.health > 0.0 && !self.disconnected && self.vehicle.is_none()
     }
 
@@ -341,6 +341,12 @@ impl Sim {
         chunk.get((p.x & 15) as usize, p.y, (p.z & 15) as usize)
     }
 
+    /// `Entity.placePortalTicket` (`TeleportTransition.PLACE_PORTAL_TICKET`, which the nether and end portals and the end gateways use): a portal ticket at the
+    /// chunk the entity arrived in keeps it and the chunks around it loaded and ticking for 300 ticks (see [`crate::tickets`]), whoever is near.
+    pub(crate) fn place_portal_ticket(&mut self, dim: DimId, at: [f64; 3]) {
+        self.world.timed[dim].add(crate::tickets::Kind::Portal, ChunkPos::of_block(at[0].floor() as i32, at[2].floor() as i32));
+    }
+
     /// Loads the chunks around a block (`r` blocks each way) and puts them in regions, so
     /// block work there can run.
     pub(crate) fn load_area(&mut self, dim: DimId, center: BlockPos, r: i32) {
@@ -386,6 +392,7 @@ impl Sim {
                 }
                 if let Some((pos, rot)) = self.nether_destination(t.conn, from, to, BlockPos::new(t.entry[0], t.entry[1], t.entry[2])) {
                     self.change_dimension(t.conn, to, pos, rot);
+                    self.place_portal_ticket(to, pos);
                     self.portal_sound(t.conn);
                 }
             }
@@ -396,6 +403,7 @@ impl Sim {
                     let (dim, pos) = self.respawn_position(t.conn);
                     let rot = self.spawn_rot;
                     self.change_dimension(t.conn, dim, pos, rot);
+                    self.place_portal_ticket(dim, pos);
                 } else {
                     let [x, y, z] = END_SPAWN_POINT;
                     self.end_platform(BlockPos::new(x, y - 1, z));
@@ -403,6 +411,7 @@ impl Sim {
                     // A player lands one block lower than other entities.
                     let pos = [x as f64 + 0.5, y as f64 - 1.0, z as f64 + 0.5];
                     self.change_dimension(t.conn, END_ID, pos, [90.0, pitch]);
+                    self.place_portal_ticket(END_ID, pos);
                 }
                 self.portal_sound(t.conn);
             }
@@ -411,6 +420,7 @@ impl Sim {
                 if let Some(pos) = self.gateway_destination(from, entry) {
                     let rot = self.players[&t.conn].rot;
                     self.change_dimension(t.conn, from, pos, rot);
+                    self.place_portal_ticket(from, pos);
                 } else if let Some(p) = self.players.get_mut(&t.conn) {
                     // `TheEndGatewayBlock.entityInside` does not start a trip while the gateway cools down: the
                     // player stays inside without a portal process and goes as soon as it has cooled (not after
@@ -435,6 +445,7 @@ impl Sim {
         const ENTITY_PORTAL_COOLDOWN: i64 = 300;
         let now = self.game_time;
         let mut trips = Vec::new();
+        let mut standing: Vec<(DimId, u128)> = Vec::new();
         for (dim, d) in self.dims.iter_mut().enumerate() {
             d.portal_cooldowns.retain(|_, until| *until > now);
             for r in d.regions.iter() {
@@ -444,7 +455,6 @@ impl Sim {
                     only.is_none_or(|(ids, first_new)| e.id >= first_new || ids.binary_search(&(dim, e.id)).is_ok())
                         && !e.removed
                         && e.kind.name != "minecraft:ender_dragon"
-                        && !d.portal_cooldowns.contains_key(&e.uuid.as_u128())
                         // `canUsePortal(false)`: a passenger does not (its vehicle does, with it).
                         && e.phys.as_deref().is_none_or(|p| p.vehicle.is_none())
                         && !e.phys.as_deref().is_some_and(kiln_entity::mob::kinds::creaking::is_heart_bound)
@@ -461,14 +471,34 @@ impl Sim {
                                     PortalKind::Nether
                                 } else if first == block::END_PORTAL {
                                     PortalKind::End
+                                } else if first == block::END_GATEWAY {
+                                    // (`EndGatewayBlock.entityInside`: an entity that can use portals, while the gateway is not cooling down.)
+                                    PortalKind::Gateway
                                 } else {
                                     continue;
                                 };
-                                trips.push((dim, e.id, kind, BlockPos::new(x, y, z)));
+                                // `Entity.setAsInsidePortal`: an entity standing in a portal while its cooldown runs starts the cooldown over (it arrived
+                                // in the portal of the other level and does not go back until it has been out of the portal for the whole cooldown).
+                                if d.portal_cooldowns.contains_key(&e.uuid.as_u128()) || phys.portal_cooldown > 0 {
+                                    standing.push((dim, e.uuid.as_u128()));
+                                } else {
+                                    trips.push((dim, e.id, kind, BlockPos::new(x, y, z)));
+                                }
                                 break 'find;
                             }
                         }
                     }
+                }
+            }
+        }
+        for (dim, uuid) in standing {
+            self.dims[dim].portal_cooldowns.insert(uuid, now + ENTITY_PORTAL_COOLDOWN);
+            // (the entity's own count, which it saves and runs down: `Entity.setPortalCooldown`)
+            for r in self.dims[dim].regions.iter_mut() {
+                if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.uuid.as_u128() == uuid)
+                    && let Some(phys) = e.phys.as_deref_mut()
+                {
+                    phys.portal_cooldown = ENTITY_PORTAL_COOLDOWN as i32;
                 }
             }
         }
@@ -504,7 +534,23 @@ impl Sim {
                     self.end_platform(BlockPos::new(x, y - 1, z));
                     Some((END_ID, [x as f64 + 0.5, y as f64, z as f64 + 0.5], [90.0, rot[1]]))
                 }
-                PortalKind::Gateway => None,
+                // `EndGatewayBlock.getPortalDestination`: the gateway's exit, in the same level.
+                PortalKind::Gateway => {
+                    if let Some(at) = self.gateway_destination(from, entry) {
+                        let uuid = self.dims[from].regions.iter().flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id).map(|e| e.uuid.as_u128());
+                        self.teleport_entity(from, id, from, at, None);
+                        self.place_portal_ticket(from, at);
+                        if let Some(uuid) = uuid {
+                            self.dims[from].portal_cooldowns.insert(uuid, now + ENTITY_PORTAL_COOLDOWN);
+                            for r in self.dims[from].regions.iter_mut() {
+                                if let Some(phys) = r.part_mut().0.list.iter_mut().find(|e| e.uuid.as_u128() == uuid).and_then(|e| e.phys.as_deref_mut()) {
+                                    phys.portal_cooldown = ENTITY_PORTAL_COOLDOWN as i32;
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
             };
             let Some((to, pos, rot)) = dest else { continue };
             // A vehicle takes its riders along (`Entity.teleport`: passengers are teleported
@@ -530,9 +576,12 @@ impl Sim {
             phys.set_pos(v);
             phys.set_old_pos_and_rot();
             phys.delta = kiln_entity::math::Vec3::ZERO;
+            // (`Entity.teleportCrossDimension`... the arrival waits out the dimension changing delay: saved as `PortalCooldown`)
+            phys.portal_cooldown = ENTITY_PORTAL_COOLDOWN as i32;
             (phys.y_rot, phys.x_rot) = (rot[0], rot[1]);
             // `placePortalTicket`: the arrival chunks load.
             self.load_area(to, floor_pos(pos), 1);
+            self.place_portal_ticket(to, pos);
             self.dims[to].portal_cooldowns.insert(e.uuid.as_u128(), now + ENTITY_PORTAL_COOLDOWN);
             self.dims[to].spawns.push(crate::entities::Spawn { kind: e.kind, pos, vel: [0.0; 3], body: crate::entities::Body::Loaded(phys) });
             info!("{} went from {} to {} at {pos:?}", e.kind.name, DIMENSIONS[from].0, DIMENSIONS[to].0);
@@ -556,7 +605,7 @@ pub(crate) fn portal_candidates(entities: &crate::entities::Entities, cells: &ki
 fn portal_candidates_in(list: &[crate::entities::Entity], cells: &kiln_region::CellSet<kiln_world::Cell>, min_y: i32) -> Vec<i32> {
     let is_portal = |s: u16| {
         let first = kiln_data::blocks_types::block_of(s).first;
-        first == block::NETHER_PORTAL || first == block::END_PORTAL
+        first == block::NETHER_PORTAL || first == block::END_PORTAL || first == block::END_GATEWAY
     };
     let mut may_have: crate::FastMap<(i32, i32, i32), bool> = Default::default();
     let mut out = Vec::new();
@@ -1007,17 +1056,18 @@ impl Sim {
         let len = ((entry.x as f64).powi(2) + (entry.z as f64).powi(2)).sqrt();
         let dir = if len < 1.0e-4 { [0.0, 0.0] } else { [entry.x as f64 / len, entry.z as f64 / len] };
         let mut exit = [dir[0] * 1024.0, dir[1] * 1024.0];
+        // (`for (int i = 16; !isChunkEmpty(…) && i-- > 0; …)`: up to sixteen steps, the old count is tested.)
         let mut left = 16;
         while !self.chunk_empty(exit) && {
             left -= 1;
-            left > 0
+            left >= 0
         } {
             exit = [exit[0] - dir[0] * 16.0, exit[1] - dir[1] * 16.0];
         }
         let mut left = 16;
         while self.chunk_empty(exit) && {
             left -= 1;
-            left > 0
+            left >= 0
         } {
             exit = [exit[0] + dir[0] * 16.0, exit[1] + dir[1] * 16.0];
         }

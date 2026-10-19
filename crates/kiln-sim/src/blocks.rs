@@ -53,6 +53,10 @@ pub(crate) struct RegionBlocks {
     pub raid_events: Vec<kiln_entity::level::RaidEvent>,
     /// Texts of display entities that wait to be resolved: (entity uuid, text).
     pub text_requests: Vec<(u128, kiln_proto::nbt::Tag)>,
+    /// The chunks ender pearls of players placed their tickets at this tick (`TicketType.ENDER_PEARL`), for the level's ticket list.
+    pub pearl_tickets: Vec<ChunkPos>,
+    /// Pearls that landed whose owner is not in the region (another region of the level, or another level): (owner's network id, where the pearl was).
+    pub pearl_landings: Vec<(i32, [f64; 3])>,
     /// Hives whose nearby bees take a player as their target (`BeehiveBlock.angerNearbyBees`),
     /// for the region, which has the entities.
     pub bee_anger: Vec<BlockPos>,
@@ -92,6 +96,8 @@ impl Default for RegionBlocks {
             containers: Default::default(),
             raid_events: Vec::new(),
             text_requests: Vec::new(),
+            pearl_tickets: Vec::new(),
+            pearl_landings: Vec::new(),
             bee_anger: Vec::new(),
             piglin_anger: Vec::new(),
             bell_events: Vec::new(),
@@ -239,6 +245,8 @@ impl RegionPart for RegionBlocks {
         into.containers.merge(std::mem::take(&mut from.containers));
         into.raid_events.append(&mut from.raid_events);
         into.text_requests.append(&mut from.text_requests);
+        into.pearl_tickets.append(&mut from.pearl_tickets);
+        into.pearl_landings.append(&mut from.pearl_landings);
         into.bee_anger.append(&mut from.bee_anger);
         into.piglin_anger.append(&mut from.piglin_anger);
         into.bell_events.append(&mut from.bell_events);
@@ -291,6 +299,8 @@ impl RegionPart for RegionBlocks {
         }
         parts[0].raid_events = std::mem::take(&mut self.raid_events);
         parts[0].text_requests = std::mem::take(&mut self.text_requests);
+        parts[0].pearl_tickets = std::mem::take(&mut self.pearl_tickets);
+        parts[0].pearl_landings = std::mem::take(&mut self.pearl_landings);
         parts[0].bee_anger = std::mem::take(&mut self.bee_anger);
         parts[0].piglin_anger = std::mem::take(&mut self.piglin_anger);
         parts[0].bell_events = std::mem::take(&mut self.bell_events);
@@ -989,11 +999,20 @@ type Layer = crate::FastMap<CellPos, u64>;
 ///   spawned by `NaturalSpawner` may walk into those chunks (`ServerLevel.canSpawnEntitiesInChunk`).
 ///
 /// The first two are capped by the loading tickets as well (the chunk must be at its status): `S` by `V`, `S + 1` by `V + 1`.
+///
+/// A chunk's *status* (`ChunkHolder.getTickingChunk`, `execute if loaded`, which chunks natural spawning picks from and gives an `InhabitedTime`) follows the loading
+/// tickets alone, whatever the simulation distance is: entity ticking within `V` (the "visible" layer), block ticking within `V + 1` (`loading_block`). Lock step
+/// (`tools/wp81/farm81.py nether` with `S = 6`, `V = 8`): vanilla tries 207.6 chunks a tick for a category with no cap, all within 128 blocks of the player up to
+/// the ring at 8, Kiln 196 (the ring at 7, `S + 1`).
 #[derive(Clone)]
 pub(crate) struct Ticking {
     entity: Layer,
     block: Layer,
     visible: Layer,
+    loading_block: Layer,
+    /// Random ticks and thunder (`ChunkMap.forEachBlockTickingChunk`: the simulation tracker's entity-ticking chunks that have the block-ticking status, one more
+    /// than entities tick when the simulation distance is beyond the view distance).
+    random: Layer,
 }
 
 fn layer_around(centers: &[ChunkPos], r: i32) -> Layer {
@@ -1029,31 +1048,22 @@ impl Ticking {
             entity: layer_around(&centers, simulation.min(view)),
             block: layer_around(&centers, (simulation + 1).min(view + 1)),
             visible: layer_around(&centers, view),
+            loading_block: layer_around(&centers, view + 1),
+            random: layer_around(&centers, simulation.min(view + 1)),
         }
     }
 
-    /// Adds one chunk (a force-loaded one: its tickets are at level 31 for everything).
-    pub fn add_chunk(&mut self, c: ChunkPos) {
-        let bit = c.z.rem_euclid(CELL_CHUNKS) * CELL_CHUNKS + c.x.rem_euclid(CELL_CHUNKS);
-        for layer in [&mut self.entity, &mut self.block, &mut self.visible] {
-            *layer.entry(c.cell()).or_default() |= 1 << bit;
-        }
-    }
-
-    /// Chunks within `r` of `center` tick too (the dragon fight's arena, `TicketType.DRAGON`).
-    pub fn add(&mut self, center: ChunkPos, r: i32) {
-        for (layer, r) in [(&mut self.entity, r), (&mut self.block, r + 1), (&mut self.visible, r)] {
+    /// A ticket of radius `radius` at `center` (`addTicketWithRadius`: level `33 - radius` at the chunk, one more per chunk further): level 31 or less
+    /// ticks entities (and is entity-visible), level 32 ticks blocks, 33 only loads (see [`crate::tickets`]).
+    pub fn add_ticket(&mut self, center: ChunkPos, radius: i32) {
+        for (layer, r) in [(&mut self.entity, radius - 2), (&mut self.block, radius - 1), (&mut self.visible, radius - 2), (&mut self.loading_block, radius - 1), (&mut self.random, radius - 2)] {
+            if r < 0 {
+                continue;
+            }
             for (cell, mask) in layer_around(&[center], r) {
                 *layer.entry(cell).or_default() |= mask;
             }
         }
-    }
-
-    /// These chunks and those within `r` of `center` (the dragon fight's arena).
-    pub fn with_arena(&self, center: ChunkPos, r: i32) -> Ticking {
-        let mut t = self.clone();
-        t.add(center, r);
-        t
     }
 
     /// Whether entities and random ticks run in `c`.
@@ -1069,6 +1079,16 @@ impl Ticking {
     /// Whether `c` is entity-visible ticking (a spawned pack may stand in it).
     pub fn contains_visible(&self, c: ChunkPos) -> bool {
         layer_has(&self.visible, c)
+    }
+
+    /// Whether random ticks (and thunder) run in `c`.
+    pub fn contains_random(&self, c: ChunkPos) -> bool {
+        layer_has(&self.random, c)
+    }
+
+    /// Whether `c`'s status is block ticking or better (`ChunkHolder.getTickingChunk`): within `V + 1` of a player.
+    pub fn contains_loading_block(&self, c: ChunkPos) -> bool {
+        layer_has(&self.loading_block, c)
     }
 }
 
@@ -1116,7 +1136,7 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
         level.cells.for_each_cell(&mut |pos, cell| {
             chunks.extend(
                 cell.chunks(pos)
-                    .filter(|(c, chunk)| ticking.contains(*c) && (precipitation || chunk.sections.iter().any(|s| s.is_randomly_ticking())))
+                    .filter(|(c, chunk)| ticking.contains_random(*c) && (precipitation || chunk.sections.iter().any(|s| s.is_randomly_ticking())))
                     .map(|(c, _)| c),
             );
         });
@@ -2176,6 +2196,30 @@ mod tests {
         assert_eq!(ran, 3);
     }
 
+    /// `/forceload` and the pearl's ticket (radius 2: level 31 at the chunk): the chunk ticks entities, the ring around it blocks, the next ring only loads.
+    /// A portal's (radius 3) and the dragon's (radius 9) reach one and seven chunks for entities.
+    #[test]
+    fn a_ticket_ticks_entities_in_its_chunk_and_blocks_one_ring_further() {
+        let mut t = Ticking::around(std::iter::empty(), 6, 8);
+        t.add_ticket(ChunkPos::new(10, 10), 2);
+        for (dx, want_entity, want_block) in [(0, true, true), (1, false, true), (2, false, false)] {
+            let c = ChunkPos::new(10 + dx, 10);
+            assert_eq!((t.contains(c), t.contains_block(c), t.contains_visible(c)), (want_entity, want_block, want_entity), "forced, distance {dx}");
+        }
+        let mut t = Ticking::around(std::iter::empty(), 6, 8);
+        t.add_ticket(ChunkPos::new(0, 0), 3);
+        for (dx, want_entity, want_block) in [(1, true, true), (2, false, true), (3, false, false)] {
+            let c = ChunkPos::new(0, -dx);
+            assert_eq!((t.contains(c), t.contains_block(c)), (want_entity, want_block), "portal, distance {dx}");
+        }
+        let mut t = Ticking::around(std::iter::empty(), 6, 8);
+        t.add_ticket(ChunkPos::new(0, 0), 9);
+        for (dx, want_entity, want_block) in [(7, true, true), (8, false, true), (9, false, false)] {
+            let c = ChunkPos::new(dx, 3);
+            assert_eq!((t.contains(c), t.contains_block(c)), (want_entity, want_block), "dragon, distance {dx}");
+        }
+    }
+
     #[test]
     fn ticking_chunks_are_within_the_distance_of_a_player() {
         let t = Ticking::around([ChunkPos::new(0, 0), ChunkPos::new(0, 0), ChunkPos::new(-20, 5)].into_iter(), 2, 8);
@@ -2194,10 +2238,18 @@ mod tests {
             let c = ChunkPos::new(x, 0);
             assert_eq!((t.contains(c), t.contains_block(c), t.contains_visible(c)), (want_entity, want_block, want_visible), "distance {x}");
         }
+        // The status (`getTickingChunk`, the chunks natural spawning tries) follows the view distance alone.
+        for (x, want) in [(8, true), (9, true), (10, false)] {
+            assert_eq!(t.contains_loading_block(ChunkPos::new(x, 0)), want, "status, distance {x}");
+        }
         let capped = Ticking::around([ChunkPos::new(0, 0)].into_iter(), 12, 8);
         for (x, want_entity, want_block) in [(8, true, true), (9, false, true), (10, false, false)] {
             let c = ChunkPos::new(x, 0);
             assert_eq!((capped.contains(c), capped.contains_block(c)), (want_entity, want_block), "capped, distance {x}");
+        }
+        // Random ticks need the block-ticking status too: one chunk further than entities when the simulation distance reaches beyond the view distance.
+        for (x, want) in [(8, true), (9, true), (10, false)] {
+            assert_eq!(capped.contains_random(ChunkPos::new(x, 0)), want, "random ticks, distance {x}");
         }
     }
 }

@@ -265,3 +265,31 @@ fn a_player_killed_by_a_wither_leaves_a_wither_rose() {
     let grew = (-1..=1).any(|dx| (-1..=1).any(|dz| (-1..=2).any(|dy| w.name([spot[0] + dx, spot[1] + dy, spot[2] + dz]) == "minecraft:wither_rose")));
     assert!(grew || items > 0, "a rose block or a dropped flower where the player died");
 }
+
+fn wither_health(w: &World) -> f32 {
+    w.mobs("minecraft:wither").first().expect("a wither").2
+}
+
+/// wp81: the half-health shield of a wither keys on the direct entity being an arrow (`getDirectEntity() instanceof AbstractArrow`), not on the
+/// damage type: `/damage … minecraft:arrow` without a projectile hurts it (wp78 lock-step: 5.76 and 7.744 taken), and the same damage caused by
+/// an arrow entity does not.
+#[test]
+fn a_powered_wither_takes_arrow_type_damage_without_an_arrow_entity() {
+    let mut w = World::new();
+    let p = w.client.pos;
+    w.run(&format!("summon minecraft:wither {} {} {} {{NoAI:1b,Invul:0,Health:100f}}", p[0] + 5.0, p[1] + 3.0, p[2]));
+    w.ticks(2);
+    let before = wither_health(&w);
+    assert!(before <= 150.0, "below half health ({before})");
+    w.run("damage @e[type=minecraft:wither,limit=1] 8 minecraft:arrow");
+    w.ticks(2);
+    let hurt = wither_health(&w);
+    assert!(hurt < before - 7.0, "arrow-type damage with no projectile hurts: {before} -> {hurt}");
+    // With an arrow as the direct entity it is shrugged off.
+    w.run(&format!("summon minecraft:arrow {} {} {} {{NoGravity:1b,Motion:[0.0,0.0,0.0]}}", p[0], p[1] + 3.0, p[2] + 3.0));
+    w.ticks(1);
+    w.run("damage @e[type=minecraft:wither,limit=1] 8 minecraft:arrow by @e[type=minecraft:arrow,limit=1]");
+    w.ticks(2);
+    let after = wither_health(&w);
+    assert!(after >= hurt, "no damage from an arrow entity: {hurt} -> {after}");
+}

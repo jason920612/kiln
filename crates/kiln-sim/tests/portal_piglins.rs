@@ -43,7 +43,8 @@ fn piglins(difficulty: &str, spawn_monsters: bool, ticks: usize) -> Vec<Tag> {
 fn a_portal_block_lets_zombified_piglins_out_in_the_overworld() {
     let hard = piglins("hard", true, 600);
     assert!(!hard.is_empty(), "no zombified piglin from the portal in 600 ticks of 4096 random ticks");
-    let cooldown = hard[0].get("PortalCooldown").and_then(Tag::as_i64).unwrap_or(0);
+    // (The newest: the oldest ones have been out of the portal for a while, and the cooldown runs down only there.)
+    let cooldown = hard.last().expect("one").get("PortalCooldown").and_then(Tag::as_i64).unwrap_or(0);
     assert!((1..=300).contains(&cooldown), "portal cooldown {cooldown}");
     // Peaceful and without monster spawning there are none.
     assert!(piglins("peaceful", true, 600).is_empty(), "none on peaceful");

@@ -70,6 +70,7 @@ mod xp;
 mod container;
 mod datapacks;
 mod tags;
+mod tickets;
 mod zip_pack;
 pub mod lobby;
 mod diag;
@@ -1561,6 +1562,10 @@ pub struct Sim {
     save_run: Option<Vec<(DimId, ChunkPos)>>,
     /// The maps (`data/minecraft/maps`), shared with the players that use empty maps.
     maps: maps::SharedMaps,
+    /// The overworld's structure search for `exploration_map` loot functions (explorer and treasure maps), kept over data pack reloads.
+    map_explorer: Option<kiln_loot::ExplorerHandle>,
+    /// Ender pearls of players who joined, waiting for their chunk to load to take their place in it (`ServerPlayer.loadAndSpawnEnderPearls`).
+    pearls_returning: Vec<persist::ReturningPearl>,
 }
 
 /// Tick time a world save spends per tick copying chunks for the storage threads.
@@ -1760,6 +1765,7 @@ impl Sim {
             .first()
             .and_then(Option::clone)
             .map(|p| kiln_loot::ExplorerHandle(std::sync::Arc::new(maps::Explorer::new(maps.clone(), p))));
+        let map_explorer = explorer.clone();
         let loot = load_loot(datapack, explorer);
         let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
         let mut sim = Sim {
@@ -1804,6 +1810,8 @@ impl Sim {
             held_packets: Vec::new(),
             save_run: None,
             maps,
+            pearls_returning: Vec::new(),
+            map_explorer,
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -1988,6 +1996,8 @@ impl Sim {
                 diag::add(name, d);
             }
         }
+        // The tickets the players' ender pearls placed while the entities ticked.
+        self.collect_pearl_tickets();
         // The command blocks whose tick came run their commands (they may change anything).
         self.run_command_blocks();
         self.run_structure_triggers();
@@ -2674,8 +2684,19 @@ impl Sim {
             blocks: self.block_env(dim),
             frozen: !self.world.tick_rate.runs_normally(),
             border: self.world.borders[dim].bounds(),
-            forced: std::sync::Arc::new(self.world.forced[dim].iter().map(|&[x, z]| ChunkPos::new(x, z)).collect()),
+            tickets: std::sync::Arc::new(self.level_tickets(dim)),
         }
+    }
+
+    /// The level's chunk tickets other than the players' (centre, radius): `/forceload`'s (`TicketType.FORCED`), the portals' and the ender pearls'
+    /// (timed), and the dragon fight's arena while its boss bar has players (`TicketType.DRAGON`).
+    fn level_tickets(&self, dim: DimId) -> Vec<(ChunkPos, i32)> {
+        let mut out: Vec<(ChunkPos, i32)> = self.world.forced[dim].iter().map(|&[x, z]| (ChunkPos::new(x, z), tickets::FORCED_RADIUS)).collect();
+        out.extend(self.world.timed[dim].rings());
+        if dim == END_ID && self.dragon_fight.active() {
+            out.push((self.dragon_fight.arena_center(), tickets::DRAGON_RADIUS));
+        }
+        out
     }
 
     fn block_env(&self, dim: DimId) -> blocks::BlockEnv {
@@ -3084,30 +3105,29 @@ impl Sim {
         }
         let own_chunks_all = own_chunks.clone();
         for dim in 0..self.dims.len() {
+            // `TicketStorage.purgeStaleTickets`: the timed tickets count down before the level ticks (`ServerChunkCache.tick(…, tickChunks)` purges when the
+            // level runs normally; a frozen game's idle ticks leave them alone, its `/tick step` ticks count).
+            if !self.world.timed[dim].is_empty() && self.world.tick_rate.runs_normally() {
+                let d = &self.dims[dim];
+                self.world.timed[dim].purge(|c| d.is_loaded(c));
+            }
             // (Sorted and without repeats; a set only when chunks are to unload.)
             let mut keep: Vec<ChunkPos> = std::mem::take(&mut own_chunks[dim]);
-            // Force-loaded chunks (`/forceload`) stay, and load like a player's own chunk.
-            keep.extend(self.world.forced[dim].iter().map(|&[x, z]| ChunkPos::new(x, z)));
-            // The dragon fight's arena stays while its boss bar has players (`TicketType.DRAGON`),
-            // and the rest of it loads a few chunks a tick.
-            if dim == END_ID && self.dragon_fight.active() {
-                keep.extend(self.dragon_fight.arena());
-                let mut n = 0;
-                for pos in self.dragon_fight.arena() {
-                    if n == 4 {
-                        break;
-                    }
-                    let d = &mut self.dims[dim];
-                    if !d.is_loaded(pos) && d.request(pos) {
-                        n += 1;
-                    }
-                }
-            }
+            // The chunks the other tickets are at (`/forceload`, ender pearls, portals, the dragon fight's arena) load like a player's own chunk, and
+            // the rings around them (down to level 33) load and stay too.
+            let tickets = self.level_tickets(dim);
+            keep.extend(tickets.iter().map(|&(c, _)| c));
             keep.sort_unstable();
             keep.dedup();
+            let mut rings: Vec<ChunkPos> = Vec::new();
+            for &(c, r) in &tickets {
+                rings.extend(tickets::ring_chunks(c, r));
+            }
+            rings.sort_unstable();
+            rings.dedup();
             let dt = Instant::now();
             let unloads = std::mem::take(&mut self.dims[dim].unloads);
-            let unloaded = if unloads.is_empty() { Vec::new() } else { self.dims[dim].unload(unloads, &keep.iter().copied().collect()) };
+            let unloaded = if unloads.is_empty() { Vec::new() } else { self.dims[dim].unload(unloads, &keep.iter().chain(&rings).copied().collect()) };
             let dt = diag::lap_slow("ch.unload_chunks", dt);
             if !unloaded.is_empty() {
                 debug!("unloaded {} chunks of {}", unloaded.len(), self.dims[dim].key);
@@ -3138,6 +3158,16 @@ impl Sim {
                 d.request_urgent(pos);
             }
             let dt = diag::lap_slow("ch.own", dt);
+            // ... the rings around the other tickets' chunks, nearest to a ticket first, after everything the players wait for.
+            // (A few times a second is soon enough, and a big forceload has hundreds of rings.)
+            let mut ring_wanted: Vec<ChunkPos> = Vec::new();
+            if self.game_time % 4 == 0 {
+                for &(c, r) in &tickets {
+                    let mut missing: Vec<ChunkPos> = tickets::ring_chunks(c, r).filter(|&p| !d.is_loaded(p)).collect();
+                    missing.sort_by_key(|p| (p.x - c.x).pow(2) + (p.z - c.z).pow(2));
+                    ring_wanted.extend(missing);
+                }
+            }
             // Then the requests, players interleaved (everyone's nearest chunk first), in an
             // order that does not depend on how regions split them.
             let mut wanted = std::mem::take(&mut d.requests);
@@ -3146,18 +3176,18 @@ impl Sim {
             // the queue before a thread takes them, as vanilla drops generation work whose
             // ticket went (the chunks players wait for stay).
             if self.game_time % 20 == 0 && d.generation.is_some() {
-                let reach = self.config.view_distance as i32 + 1;
+                let reach = region::load_reach(self.config.view_distance as i32);
                 let viewers = &own_chunks_all[dim];
                 let pool = d.generation.as_mut().unwrap();
                 for p in pool.queued() {
-                    let seen = viewers.iter().any(|v| (v.x - p.x).abs() <= reach && (v.z - p.z).abs() <= reach);
+                    let seen = viewers.iter().any(|v| (v.x - p.x).abs() <= reach && (v.z - p.z).abs() <= reach) || rings.binary_search(&p).is_ok();
                     if !seen && !d.urgent.contains(&p) {
                         pool.cancel(p);
                     }
                 }
             }
             let mut loads = 0;
-            for pos in region::merge_requests(wanted.into_iter().map(|(_, _, c)| c)) {
+            for pos in region::merge_requests(wanted.into_iter().map(|(_, _, c)| c).chain(ring_wanted)) {
                 if d.is_loaded(pos) {
                     continue;
                 }
@@ -3168,6 +3198,45 @@ impl Sim {
             }
             diag::lap_slow("ch.requests", dt);
         }
+    }
+
+    /// `ServerPlayer.placeEnderPearlTicket`: the chunks the players' pearls asked a ticket for (they renew the one already there).
+    fn collect_pearl_tickets(&mut self) {
+        let mut landings = Vec::new();
+        for (dim, d) in self.dims.iter_mut().enumerate() {
+            for region in d.regions.iter_mut() {
+                let part = &mut region.part_mut().1;
+                for c in std::mem::take(&mut part.pearl_tickets) {
+                    self.world.timed[dim].add(tickets::Kind::EnderPearl, c);
+                }
+                landings.extend(std::mem::take(&mut part.pearl_landings).into_iter().map(|(owner, at)| (dim, owner, at)));
+            }
+        }
+        for (dim, owner, at) in landings {
+            self.pearl_lands_for(owner, dim, at);
+        }
+    }
+
+    /// `ThrownEnderpearl.onHit` for an owner who is not in the pearl's region: the player goes to where the pearl was, in the pearl's level (a player
+    /// of another level changes level), takes 5 damage (`ender_pearl`) and hears the teleport.
+    fn pearl_lands_for(&mut self, owner: i32, dim: DimId, at: [f64; 3]) {
+        let Some((&conn, p)) = self.players.iter().find(|(_, p)| p.entity_id == owner && !p.dead && !p.disconnected) else { return };
+        if p.dim != dim && !p.can_use_portal() {
+            return;
+        }
+        let (rot, now) = (p.rot, self.game_time);
+        self.change_dimension(conn, dim, at, rot);
+        let env = self.env(dim);
+        let (mut spawns, mut deaths) = (Vec::new(), Vec::new());
+        if let Some(p) = self.players.get_mut(&conn) {
+            p.fall_distance = 0.0;
+            let source = health::Source { cause: health::Cause::Other("minecraft:ender_pearl"), attacker: None, direct: None, weapon: None, position: None };
+            let mut ctx = health::DamageCtx { rules: env.blocks.damage, game_time: now, spawns: &mut spawns, deaths: &mut deaths, level_rng: None };
+            p.hurt(5.0, &source, &mut ctx);
+            p.sound_for_all("minecraft:entity.player.teleport", kiln_proto::packets::world_fx::SoundSource::Players, 1.0, 1.0);
+        }
+        self.dims[dim].spawns.extend(spawns);
+        self.announce_deaths(deaths);
     }
 
     /// Runs every level's regionizer; whether any topology changed.
@@ -3232,9 +3301,12 @@ impl Sim {
     /// depend on the regions (level by level), and puts each in the region owning its cell
     /// (spawns in unloaded chunks are dropped, as vanilla would not add them).
     fn materialize_spawns(&mut self) {
+        self.release_returning_pearls();
         let world_seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
         // What `finalizeSpawn` does to a new mob's equipment reads the datapack's providers.
         let _enchanting = enchant::install_enchanter(self.loot.as_ref());
+        // A thrown pearl that comes out of a saved compound (or a `/summon`) belongs to the online player its `Owner` UUID names (`EntityReference`).
+        let by_uuid: HashMap<u128, i32> = self.players.values().map(|p| (p.uuid.as_u128(), p.entity_id)).collect();
         for d in &mut self.dims {
             let mut later = Vec::new();
             // Entities built during a tick carry placeholder (negative) ids that other new
@@ -3242,7 +3314,15 @@ impl Sim {
             let mut placeholders: Vec<(i32, i32, ChunkPos)> = Vec::new();
             let mut batch = entities::canonical(std::mem::take(&mut d.spawns));
             batch.append(&mut d.serial_spawns);
-            for spawn in batch {
+            for mut spawn in batch {
+                if let entities::Body::Loaded(e) = &mut spawn.body
+                    && let kiln_entity::EntityKind::Throwable(t) = &mut e.kind
+                    && t.owner.is_none()
+                    && let Some(id) = e.extra.iter().find(|(k, _)| k == "Owner").and_then(|(_, v)| persist_uuid(v)).and_then(|u| by_uuid.get(&u))
+                {
+                    t.owner = Some(*id);
+                    t.owner_is_player = true;
+                }
                 let chunk = entities::chunk_of(spawn.pos);
                 // Into a region ticking away: once it is back.
                 if d.lent_at(chunk) {
@@ -3645,6 +3725,7 @@ impl Sim {
                 self.waypoints_remove_player(dim, conn, p.uuid);
             }
             self.save_player(&p);
+            self.remove_player_pearls(&p);
             self.player_stops_riding(&p);
             self.plugins_left(&p);
             self.announce_leave(&p, conn);
@@ -3871,6 +3952,7 @@ impl Sim {
         let mut recipe_book = recipe_book::RecipeBook::load(joining.saved.raw().get("recipeBook"));
         let shoulders = [shoulder::load(joining.saved.raw(), "ShoulderEntityLeft"), shoulder::load(joining.saved.raw(), "ShoulderEntityRight")];
         let returning_vehicle = persist::returning_vehicle(joining.saved.raw().get("RootVehicle"));
+        let saved_pearls: Vec<kiln_proto::nbt::Tag> = joining.saved.raw().get("ender_pearls").and_then(kiln_proto::nbt::Tag::as_list).map(<[_]>::to_vec).unwrap_or_default();
         recipe_book.retain_existing(&self.rules);
         let warden_tracker = sculk::shrieker::WardenSpawnTracker::load(joining.saved.raw().get("warden_spawn_tracker"));
         let (impulse_pos, explosion_impact) = (
@@ -4144,6 +4226,7 @@ impl Sim {
         }
         self.sleep_status[player.dim].dirty = true;
         self.players.insert(j.conn, player);
+        self.queue_player_pearls(entity_id, &saved_pearls);
         self.refresh_permissions();
         self.send_command_tree(j.conn);
         self.announce_join(j.conn);
@@ -4295,6 +4378,10 @@ fn load_loot(path: Option<&std::path::Path>, explorer: Option<kiln_loot::Explore
             None
         }
     }
+}
+
+fn persist_uuid(tag: &Tag) -> Option<u128> {
+    kiln_entity::persist::uuid_from_tag(tag)
 }
 
 fn player_chunk(pos: [f64; 3]) -> ChunkPos {

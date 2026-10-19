@@ -506,8 +506,13 @@ impl Sim {
                     Ok(rules) => self.rules = std::sync::Arc::new(rules),
                     Err(e) => warn!("recipes not reloaded: {e}"),
                 }
+                // (The explorer maps need the world's structure search, which the loaded data does not know: it stays.)
+                let explorer = self.map_explorer.clone();
                 match kiln_loot::LootData::load_lenient_packs(&refs) {
-                    Ok(loot) => self.loot = Some(std::sync::Arc::new(loot)),
+                    Ok(mut loot) => {
+                        loot.explorer = explorer;
+                        self.loot = Some(std::sync::Arc::new(loot));
+                    }
                     Err(e) => warn!("loot tables not reloaded: {e}"),
                 }
             }
