@@ -1995,8 +1995,8 @@ fn no_blocks_around(p: &Player, world: &CellSet<Cell>) -> bool {
 
 /// `getMaximumFlyingTicks`: 80 ticks of floating at normal gravity, more as it weakens, for ever without gravity.
 fn max_flying_ticks(p: &Player) -> i32 {
-    let gravity = if p.has_effect("minecraft:slow_falling") { 0.01 } else { 0.08 };
-    if gravity < 9.999999747378752E-6 { i32::MAX } else { (80.0 * (0.08 / gravity).max(1.0)).ceil() as i32 }
+    let gravity: f64 = if p.has_effect("minecraft:slow_falling") { 0.01 } else { 0.08 };
+    if gravity < 9.999999747378752E-6 { i32::MAX } else { (80.0_f64 * (0.08 / gravity).max(1.0)).ceil() as i32 }
 }
 
 /// Start of a connection's tick: block change acks (after the block updates they
