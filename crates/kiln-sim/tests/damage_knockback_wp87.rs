@@ -113,7 +113,7 @@ fn a_command_block_damage_is_unstepped_too() {
     let p = w.client.pos;
     let (x, y, z) = (p[0].floor() as i32 + 3, p[1].floor() as i32, p[2].floor() as i32);
     let _ = w.motions();
-    w.run(&format!("setblock {x} {y} {z} minecraft:command_block{{auto:1b,Command:\"damage Farmer 2 minecraft:mob_attack at {x} {y} {z}\"}}"));
+    w.run(&format!("setblock {x} {y} {z} minecraft:repeating_command_block{{auto:1b,Command:\"damage Farmer 2 minecraft:mob_attack at {x} {y} {z}\"}}"));
     let (_, v) = first_motion(&mut w, 10).expect("the command block hurt the player");
     assert_raw(v, "command block");
 }
