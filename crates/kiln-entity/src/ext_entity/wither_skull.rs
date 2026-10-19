@@ -131,6 +131,9 @@ fn heal(level: &mut dyn EntityLevel, id: i32, amount: f32) {
 }
 
 impl EntityExt for WitherSkull {
+    fn acceleration_power(&self) -> Option<f64> {
+        Some(self.acceleration_power)
+    }
     crate::entity_ext_boilerplate!();
 
     /// `AbstractHurtingProjectile.tick`.

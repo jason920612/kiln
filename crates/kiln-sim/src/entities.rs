@@ -4453,7 +4453,11 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
         let still = e.vel.iter().all(|&v| v == 0.0);
         if impulse || d > 1.0e-7 || (d > 0.0 && still) {
             e.sent_vel = e.vel;
-            packets.push(entity::set_entity_motion(e.id, e.vel));
+            // A hurting projectile (fireball, skull, wind charge) gets its acceleration power in a bundle with the motion (`sendChanges`).
+            match e.phys.as_deref().and_then(kiln_entity::ext_entity::acceleration_power) {
+                Some(power) => packets.extend([entity::bundle_delimiter(), entity::set_entity_motion(e.id, e.vel), entity::projectile_power(e.id, power), entity::bundle_delimiter()]),
+                None => packets.push(entity::set_entity_motion(e.id, e.vel)),
+            }
         }
     }
     if !packets.is_empty() {

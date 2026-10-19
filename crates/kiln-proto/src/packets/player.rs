@@ -37,6 +37,18 @@ pub fn player_combat_kill(player_id: i32, message: &crate::nbt::Tag) -> Bytes {
     b.freeze()
 }
 
+/// `ClientboundPlayerCombatEnterPacket`: the player took a hit from a living entity and is in combat (no fields).
+pub fn player_combat_enter() -> Bytes {
+    packet(ids::PLAYER_COMBAT_ENTER).freeze()
+}
+
+/// `ClientboundPlayerCombatEndPacket`: the combat tracker timed out; the length of the combat in ticks.
+pub fn player_combat_end(duration: i32) -> Bytes {
+    let mut b = packet(ids::PLAYER_COMBAT_END);
+    b.put_varint(duration);
+    b.freeze()
+}
+
 /// Health (0 or less shows the death screen), food 0..=20, saturation.
 pub fn set_health(health: f32, food: i32, saturation: f32) -> Bytes {
     let mut b = packet(ids::SET_HEALTH);

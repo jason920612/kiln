@@ -222,6 +222,9 @@ pub(crate) fn hurt(level: &mut dyn EntityLevel, id: i32, source: DamageSource, a
 }
 
 impl EntityExt for Fireball {
+    fn acceleration_power(&self) -> Option<f64> {
+        Some(self.acceleration_power)
+    }
     crate::entity_ext_boilerplate!();
 
     /// `AbstractHurtingProjectile.tick`.

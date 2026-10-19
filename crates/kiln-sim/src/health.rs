@@ -1,4 +1,22 @@
-//! Player health, damage, death and respawn (vanilla `ServerPlayer.hurtServer`,
+    /// `recheckStatus` (`now` is the mob's tick count): `Some(duration)` when a fight ended (`onLeaveCombat`: the player is told).
+    pub(crate) fn recheck(&mut self, now: i64, alive: bool) -> Option<i32> {
+        let limit = if self.in_combat { 300 } else { 100 };
+        if self.taking_damage && (!alive || now - self.last_damage_time > limit) {
+            let was = self.in_combat;
+            self.taking_damage = false;
+            self.in_combat = false;
+            self.combat_end = now;
+            self.entries.clear();
+            if was {
+                return Some((self.combat_end - self.combat_start) as i32);
+            }
+        }
+        None
+    }
+
+    /// `recordDamage`: `Some(left)` is the length of a fight the recheck before it ended, and `true` that this hit starts one (`onEnterCombat`).
+    fn record(&mut self, source: &Source, fall_distance: f32, now: i64, alive: bool) -> (Option<i32>, bool) {
+        let left = self.recheck(now, alive);//! Player health, damage, death and respawn (vanilla `ServerPlayer.hurtServer`,
 //! `Player.hurtServer`/`actuallyHurt`, `LivingEntity.hurtServer`, `CombatTracker`,
 //! `ServerPlayer.die`, `PlayerList.respawn`).
 //!
@@ -453,30 +471,44 @@ pub(crate) struct CombatEntry {
 pub(crate) struct CombatTracker {
     entries: Vec<CombatEntry>,
     last_damage_time: i64,
+    /// `combatStartTime` / `combatEndTime` (the mob's tick count): the length of the fight the leave packet carries.
+    combat_start: i64,
+    combat_end: i64,
     taking_damage: bool,
     in_combat: bool,
 }
 
 impl CombatTracker {
-    /// `recheckStatus`.
-    pub(crate) fn recheck(&mut self, now: i64, alive: bool) {
+    /// `recheckStatus` (`now` is the mob's tick count): `Some(duration)` when a fight ended (`onLeaveCombat`: the player is told).
+    pub(crate) fn recheck(&mut self, now: i64, alive: bool) -> Option<i32> {
         let limit = if self.in_combat { 300 } else { 100 };
         if self.taking_damage && (!alive || now - self.last_damage_time > limit) {
+            let was = self.in_combat;
             self.taking_damage = false;
             self.in_combat = false;
+            self.combat_end = now;
             self.entries.clear();
+            if was {
+                return Some((self.combat_end - self.combat_start) as i32);
+            }
         }
+        None
     }
 
-    fn record(&mut self, source: &Source, fall_distance: f32, now: i64, alive: bool) {
-        self.recheck(now, alive);
+    /// `recordDamage`: the length of a fight the recheck before it ended, if one did, and whether this hit starts a fight (`onEnterCombat`).
+    fn record(&mut self, source: &Source, fall_distance: f32, now: i64, alive: bool) -> (Option<i32>, bool) {
+        let left = self.recheck(now, alive);
         self.entries.push(CombatEntry { source: source.clone(), fall_distance });
         self.last_damage_time = now;
         self.taking_damage = true;
         // `shouldEnterCombat`: the attacker is a living entity.
-        if !self.in_combat && alive && source.attacker.is_some() {
+        let entered = !self.in_combat && alive && source.attacker.is_some();
+        if entered {
             self.in_combat = true;
+            self.combat_start = now;
+            self.combat_end = now;
         }
+        (left, entered)
     }
 
     /// `getMostSignificantFall`: the hit that led to the longest fall (over 5 blocks). Fall
@@ -771,7 +803,14 @@ impl Player {
             Cause::Fall(d) => d as f32,
             _ => self.fall_distance as f32,
         };
-        self.combat.record(source, fall, ctx.game_time, self.health > 0.0);
+        // (`recordDamage` is timed by the player's tick count; entering a fight tells the client.)
+        let (left, entered) = self.combat.record(source, fall, self.tick_count, self.health > 0.0);
+        if let Some(duration) = left {
+            self.send(packets::player::player_combat_end(duration));
+        }
+        if entered {
+            self.send(packets::player::player_combat_enter());
+        }
         self.health = (self.health - damage).clamp(0.0, self.max_health());
         if damage < 3.4028235e37 {
             self.award_stat(*crate::player_stats::stat::DAMAGE_TAKEN, (damage * 10.0).round() as i32);
@@ -920,13 +959,17 @@ impl Player {
         self.died = true;
         // `broadcastEntityEvent(DEATH)` reaches the player too.
         self.send(entity::entity_event(self.entity_id, 3));
+        // ... and the combat tracker is rechecked (`die`'s last step): a player who was in a fight leaves it (dead: `isAlive` is false).
+        if let Some(duration) = self.combat.recheck(self.tick_count, false) {
+            self.send(packets::player::player_combat_end(duration));
+        }
         let by_wither = credit.is_none() && self.last_mob_attacker.is_some_and(|(k, t)| k == "minecraft:wither" && ctx.game_time - t <= 100);
         Death { conn: self.conn, message, killer: credit, cause: 0, rose_at: by_wither.then_some((self.dim, self.pos)) }
     }
 
     /// Per-tick damage bookkeeping (`ServerPlayer.tick`'s cooldown, `LivingEntity.baseTick`'s
     /// kill credit expiry and combat tracker check).
-    pub(crate) fn tick_damage(&mut self, game_time: i64) {
+    pub(crate) fn tick_damage(&mut self) {
         if self.hurt_cooldown > 0 {
             self.hurt_cooldown -= 1;
         }
@@ -937,7 +980,12 @@ impl Player {
                 self.kill_credit = None;
             }
         }
-        self.combat.recheck(game_time, !self.dead && self.health > 0.0);
+        // `LivingEntity.tick`: every 20th tick (`tickCount` has just been raised in `commonTick`, which Kiln does right after this).
+        if (self.tick_count + 1) % 20 == 0
+            && let Some(duration) = self.combat.recheck(self.tick_count + 1, !self.dead && self.health > 0.0)
+        {
+            self.send(packets::player::player_combat_end(duration));
+        }
     }
 
     /// Sends Set Health when health, food or whether saturation is zero changed since the last

@@ -47,6 +47,10 @@ pub trait EntityExt: Any + Debug + Send + Sync {
     fn gravity(&self) -> f64 {
         0.0
     }
+    /// `AbstractHurtingProjectile.accelerationPower` (fireballs, skulls, wind charges): what the tracker sends with the motion (`ClientboundProjectilePowerPacket`).
+    fn acceleration_power(&self) -> Option<f64> {
+        None
+    }
     /// `addAdditionalSaveData`.
     fn save(&self, e: &Entity, o: &mut Output) {
         let _ = (e, o);
@@ -248,6 +252,14 @@ pub fn get<T: 'static>(e: &Entity) -> Option<&T> {
 pub fn get_mut<T: 'static>(e: &mut Entity) -> Option<&mut T> {
     match &mut e.kind {
         EntityKind::Ext(x) => x.as_any_mut().downcast_mut::<T>(),
+        _ => None,
+    }
+}
+
+/// `AbstractHurtingProjectile.accelerationPower` of `e`, when it is a hurting projectile.
+pub fn acceleration_power(e: &Entity) -> Option<f64> {
+    match &e.kind {
+        EntityKind::Ext(x) => x.acceleration_power(),
         _ => None,
     }
 }
