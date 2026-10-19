@@ -42,7 +42,7 @@ fn a_block_entity_drops_the_fields_it_does_not_know() {
     assert!(chest.get("Foo").is_none(), "{chest:?}");
     assert!(chest.get("Items").is_some());
     // What the type does keep beside its own fields: a decorated pot's sherds.
-    let pot = place(&mut sim, &mut client, "minecraft:decorated_pot{sherds:[\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}");
+    let pot = place(&mut sim, &mut client, "minecraft:decorated_pot{sherds:[\"minecraft:arms_up_pottery_sherd\",\"minecraft:brick\",\"minecraft:brick\",\"minecraft:brick\"]}");
     assert!(pot.get("sherds").is_some(), "{pot:?}");
 }
 
