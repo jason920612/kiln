@@ -64,6 +64,14 @@ fn main() -> Result<()> {
         }
     }
 
+    // The console prints in the vanilla language, which the jar of the user's own server has.
+    match kiln_server::jar::find_language(env) {
+        Some(json) => {
+            kiln_sim::set_console_language(&json);
+        }
+        None => warn!("no vanilla language file (en_us.json) found: the console shows translation keys. Put the vanilla server.jar in the working directory, or set KILN_JAR or KILN_LANG"),
+    }
+
     let level_name = options.world.clone().unwrap_or_else(|| props.level_name.clone());
     let world_dir = (!legacy).then(|| options.universe.clone().unwrap_or_else(|| ".".into()).join(&level_name));
     let defaults = launch::kiln_defaults(&props, &options, world_dir.as_deref());

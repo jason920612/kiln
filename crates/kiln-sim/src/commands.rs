@@ -24,11 +24,18 @@ pub(crate) const OVERWORLD: &str = "minecraft:overworld";
 /// Longest tab-completion request answered for players without command-block rights (vanilla).
 const MAX_SUGGESTION_LEN: usize = 256;
 
+static CONSOLE_LANG: OnceLock<Option<Language>> = OnceLock::new();
+
+/// Sets the language the console prints in (the text of vanilla's `en_us.json`); the first call wins, and it has to come
+/// before any message is printed. Without it `KILN_LANG` names the file.
+pub fn set_console_language(json: &str) -> bool {
+    CONSOLE_LANG.set(Language::from_json(json)).is_ok()
+}
+
 /// Console rendering of a message: in the language file named by `KILN_LANG` (vanilla's
 /// console prints its bundled `en_us`), else translation keys as `key[args]`.
 pub(crate) fn console_text(text: &Text) -> String {
-    static LANG: OnceLock<Option<Language>> = OnceLock::new();
-    let lang = LANG.get_or_init(|| {
+    let lang = CONSOLE_LANG.get_or_init(|| {
         let path = std::env::var_os("KILN_LANG")?;
         let lang = std::fs::read_to_string(&path).ok().and_then(|s| Language::from_json(&s));
         if lang.is_none() {

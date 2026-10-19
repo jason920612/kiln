@@ -102,6 +102,7 @@ mod generation;
 mod chunkstats;
 mod golem;
 mod independent;
+pub use commands::set_console_language;
 pub use generation::generation_totals;
 pub use independent::{InjectedDelay, ScheduleMode};
 mod hazards;

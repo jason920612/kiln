@@ -27,3 +27,4 @@ tracing-subscriber.workspace = true
 thiserror.workspace = true
 rand_core.workspace = true
 uuid.workspace = true
+flate2.workspace = true

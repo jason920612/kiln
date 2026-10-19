@@ -123,7 +123,9 @@ fn accept_loop(
                 info!("Thread {name} started");
                 let n = name.clone();
                 let _ = std::thread::Builder::new().name(name).spawn(move || {
-                    client_loop(stream, &pw, &run, &flag);
+                    client_loop(&stream, &pw, &run, &flag);
+                    // (The listener keeps a handle too; the connection closes now, not when that one goes.)
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
                     flag.store(false, Ordering::SeqCst);
                     info!("Thread {n} shutting down");
                 });
@@ -184,7 +186,7 @@ pub fn response_packets(id: i32, response: &str) -> Vec<Vec<u8>> {
     }
 }
 
-fn client_loop(mut stream: TcpStream, password: &str, runner: &Runner, alive: &AtomicBool) {
+fn client_loop(mut stream: &TcpStream, password: &str, runner: &Runner, alive: &AtomicBool) {
     let mut buf = [0u8; MAX_PACKET];
     let mut authed = false;
     while alive.load(Ordering::SeqCst) {
