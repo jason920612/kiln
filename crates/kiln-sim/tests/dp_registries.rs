@@ -550,3 +550,48 @@ fn damage_exhaustion_follows_the_type() {
     assert_eq!(sat, sat0 - 1.0, "four points of exhaustion cost a point of saturation");
     g.cleanup();
 }
+
+#[test]
+fn a_block_transformer_of_the_pack_decides_what_the_hoe_does() {
+    use kiln_blocks::state::state_string;
+    use support::Game;
+    let _x = kiln_data::live::exclusive();
+    let mut g = Game::new("hoe", &["kiln_wp83"], "Farmer");
+    let [x, y, z] = g.spot(2);
+    g.console(&format!("fill {x} {} {z} {} {} {z} minecraft:stone", y - 1, x + 3, y - 1));
+    g.console(&format!("setblock {x} {y} {z} minecraft:stone"));
+    g.console(&format!("setblock {} {y} {z} minecraft:gravel", x + 1));
+    g.console(&format!("setblock {} {y} {z} minecraft:grass_block", x + 2));
+    g.console(&format!("setblock {} {y} {z} minecraft:oak_log[axis=x]", x + 3));
+    g.console("give Farmer minecraft:diamond_hoe");
+    g.ticks(2);
+    let use_on = |g: &mut Game, pos: [i32; 3], face: i32, sequence: i32| {
+        let pkt = kiln_link::PlayIn::UseItemOn { hand: 0, pos, face, cursor: [0.5, 1.0, 0.5], inside: false, sequence };
+        assert!(g.sim.step([ToSim::Packet(1, pkt)]));
+    };
+    let block = |g: &Game, pos: [i32; 3]| state_string(g.sim.block_at(pos[0], pos[1], pos[2]).unwrap());
+    // The first transform: stone with air above becomes diamond; the item takes 3 damage.
+    use_on(&mut g, [x, y, z], 1, 1);
+    assert_eq!(block(&g, [x, y, z]), "minecraft:diamond_block");
+    assert_eq!(g.sim.item_damage(1, 36), Some(3));
+    // The second: gravel becomes sand and drops 3 flint out of the clicked face; no damage.
+    use_on(&mut g, [x + 1, y, z], 1, 2);
+    assert_eq!(block(&g, [x + 1, y, z]), "minecraft:sand");
+    assert_eq!(g.sim.item_damage(1, 36), Some(3));
+    g.ticks(3);
+    let flint: i32 = g.sim.item_stacks().iter().filter(|s| s.item_name() == "minecraft:flint").map(|s| s.count()).sum();
+    assert_eq!(flint, 3, "the pack's loot table");
+    // The pack's `hoe` replaces vanilla's rules: grass does not till; a rule's `copy_properties` keeps the axis.
+    use_on(&mut g, [x + 2, y, z], 1, 3);
+    assert_eq!(block(&g, [x + 2, y, z]), "minecraft:grass_block");
+    use_on(&mut g, [x + 3, y, z], 1, 4);
+    assert_eq!(block(&g, [x + 3, y, z]), "minecraft:crimson_stem[axis=x]");
+    // The axe is not in the pack: the built-in rules strip as before.
+    g.console("give Farmer minecraft:diamond_axe");
+    g.ticks(1);
+    g.console(&format!("setblock {} {y} {z} minecraft:oak_log", x + 4));
+    assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::SetCarriedItem { slot: 1 })]));
+    use_on(&mut g, [x + 4, y, z], 1, 5);
+    assert_eq!(block(&g, [x + 4, y, z]), "minecraft:stripped_oak_log[axis=y]");
+    g.cleanup();
+}
