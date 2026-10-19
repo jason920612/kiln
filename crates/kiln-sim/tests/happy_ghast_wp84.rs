@@ -163,7 +163,7 @@ fn a_leashed_happy_ghast_keeps_its_lead_out_to_16_blocks_not_12() {
     let g = w.ghast();
     assert!(g.get("leash").is_some(), "the lead holds at 14 blocks: {g:?}");
     // ... and it snaps past 16.
-    w.run("tp @e[type=happy_ghast,limit=1] ~ ~ ~4");
+    w.run("execute as @e[type=happy_ghast,limit=1] at @s run tp @s ~ ~ ~4");
     w.ticks(5);
     let g = w.ghast();
     assert!(g.get("leash").is_none(), "the lead snapped farther than 16 blocks: {g:?}");
