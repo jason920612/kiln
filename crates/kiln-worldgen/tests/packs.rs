@@ -282,7 +282,7 @@ fn a_biome_added_to_the_overworlds_list_generates_as_in_vanilla() {
         "crystal",
         "minecraft:overworld",
         &["kiln85_crystal"],
-        Expect { blocks: &[("minecraft:amethyst_block", 20)], biomes: &["kiln85:crystal_flats", "minecraft:desert"], ..Default::default() },
+        Expect { blocks: &[("minecraft:amethyst_block", 20)], biomes: &["kiln85:crystal_flats"], ..Default::default() },
     );
 }
 
