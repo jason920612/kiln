@@ -934,7 +934,7 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 傳送門票跨重啟 | 沒有差異(兩邊都存 `minecraft:portal` + `ticks_left`;Kiln 重開後 130 刻仍載入、330 刻後放掉)。`tickets.rs` |
 | 自然生怪的群組資料 | **修**:每個群共用 `SpawnGroupData`(動物群的幼體、殭屍群全嬰兒/全成年、蜘蛛效果、變種、熱帶魚群與領隊);`TropicalFish.isMaxGroupSizeReached`(單隻就結束這個群)。`mobs.rs` 單元測試 |
 | 探險家地圖第二次搜尋 | **修**:`skip_existing_chunks` = 結構起點 `references`(最多 1,存檔),第二次從同一處找下一個。`maps.rs` |
-| 沒做 | 殭屍豬人啟用刻比例(Kiln 約高 10%,需數小時並排長跑) |
+| 沒解開 | 殭屍豬人啟用刻比例(Kiln 約高 10%):40 輪 × 600 刻的並排顯示**所有 MONSTER 類別的怪物挑中次數都多 5~10%**(不是殭屍豬人專有),指向類別上限狀態或嘗試次數;`run82.sh`、`farm82.py`、`cmp82.py`、`agent72/` |
 
 ## 7. 重跑
 
