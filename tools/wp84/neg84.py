@@ -31,6 +31,11 @@ CASES = [
      "if target.sync_velocity && target.phantom_travels() && !target.sync_deferred {",
      "if false {",
      "-p kiln-sim --test player_knockback_wp84 a_zombie_hit_reaches_the_client_after_one_step_of_travel"),
+    ("pot: the comparator is not updated", "crates/kiln-sim/src/decorated_pot.rs",
+     "    kiln_blocks::update::update_neighbour_for_output_signal(level, pos, BlockId::of(s));
+    level.effect(Effect::Sound { pos, sound: \"minecraft:block.decorated_pot.insert\"",
+     "    level.effect(Effect::Sound { pos, sound: \"minecraft:block.decorated_pot.insert\"",
+     "-p kiln-sim --test pot_comparator"),
     ("knockback: the server body does not travel", "crates/kiln-sim/src/phantom.rs",
      "        if !self.phantom_travels() {\n            return;\n        }",
      "        if true {\n            return;\n        }",
