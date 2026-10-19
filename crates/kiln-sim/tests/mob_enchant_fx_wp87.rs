@@ -111,6 +111,7 @@ fn worn(kind: &str, slot: &str, item: &str, enchantment: &str) -> String {
 
 #[test]
 fn an_attribute_effect_of_worn_boots_holds_for_a_mob_while_they_are_worn() {
+    let _x = kiln_data::live::exclusive();
     let stride = enchantment(
         BOOTS_SLOT,
         r#""minecraft:location_changed": [{"effect": {"type": "minecraft:attribute", "amount": 1.0, "attribute": "minecraft:movement_efficiency", "id": "kiln87:stride", "operation": "add_value"}}]"#,
@@ -131,6 +132,7 @@ fn an_attribute_effect_of_worn_boots_holds_for_a_mob_while_they_are_worn() {
 
 #[test]
 fn a_location_effect_replaces_the_block_a_mob_stands_on() {
+    let _x = kiln_data::live::exclusive();
     let frost = enchantment(
         BOOTS_SLOT,
         r#""minecraft:location_changed": [{"effect": {"type": "minecraft:replace_block", "offset": [0, -1, 0], "block_state": {"Name": "minecraft:ice"}, "predicate": {"type": "minecraft:matching_blocks", "blocks": "minecraft:stone"}}, "requirements": {"type": "minecraft:entity_properties", "entity": "this", "predicate": {"minecraft:flags": {"is_on_ground": true}}}}]"#,
@@ -149,6 +151,7 @@ fn a_location_effect_replaces_the_block_a_mob_stands_on() {
 
 #[test]
 fn a_tick_effect_of_a_mob_asks_periodic_tick_of_its_age() {
+    let _x = kiln_data::live::exclusive();
     let pulse = enchantment(BOOTS_SLOT, &format!(r#""minecraft:tick": [{{"effect": {{"type": "minecraft:ignite", "duration": 3.0}}, "requirements": {}}}]"#, periodic(10)));
     let mut w = World::new("pulse", &[("pulse", pulse)]);
     let at = w.spot(3.0);
@@ -171,6 +174,7 @@ fn a_tick_effect_of_a_mob_asks_periodic_tick_of_its_age() {
 
 #[test]
 fn a_tick_explosion_pushes_what_is_near_and_tells_the_players() {
+    let _x = kiln_data::live::exclusive();
     let burst = enchantment(BOOTS_SLOT, &format!(r#""minecraft:tick": [{{"effect": {}, "requirements": {}}}]"#, explode(3.0), periodic(20)));
     let mut w = World::new("burst", &[("burst", burst)]);
     let at = w.spot(4.0);
@@ -192,6 +196,7 @@ fn a_tick_explosion_pushes_what_is_near_and_tells_the_players() {
 
 #[test]
 fn a_blow_of_a_mob_with_an_exploding_weapon_bursts_at_the_mob() {
+    let _x = kiln_data::live::exclusive();
     let thump = enchantment(
         SWORD_SLOT,
         &format!(
@@ -218,6 +223,7 @@ fn a_blow_of_a_mob_with_an_exploding_weapon_bursts_at_the_mob() {
 
 #[test]
 fn an_arrow_from_an_enchanted_bow_runs_its_block_effects() {
+    let _x = kiln_data::live::exclusive();
     let marker = enchantment(
         r#""slots": ["mainhand"], "supported_items": "minecraft:bow""#,
         r#""minecraft:hit_block": [{"effect": {"type": "minecraft:replace_block", "block_state": {"Name": "minecraft:gold_block"}}}]"#,
@@ -235,23 +241,3 @@ fn an_arrow_from_an_enchanted_bow_runs_its_block_effects() {
     assert_eq!(hit, kiln_blocks::state::parse_state("minecraft:gold_block").unwrap(), "the block the arrow hit turned to gold");
 }
 
-#[test]
-fn dbg_equipment() {
-    let stride = enchantment(
-        BOOTS_SLOT,
-        r#""minecraft:location_changed": [{"effect": {"type": "minecraft:attribute", "amount": 1.0, "attribute": "minecraft:movement_efficiency", "id": "kiln87:stride", "operation": "add_value"}}]"#,
-    );
-    let mut w = World::new("dbg", &[("stride", stride)]);
-    let at = w.spot(3.0);
-    let nbt = format!("{{NoAI:1b,PersistenceRequired:1b,{}}}", worn("husk", "feet", "golden_boots", "stride"));
-    let id = w.summon("husk", at, &nbt);
-    eprintln!("DBG after summon {:?}", w.sim.mob_attribute(id, "minecraft:movement_efficiency"));
-    for _ in 0..4 {
-        w.ticks(1);
-        eprintln!("DBG tick {:?}", w.sim.mob_attribute(id, "minecraft:movement_efficiency"));
-    }
-    for t in w.sim.entity_nbt() {
-        eprintln!("{t:?}");
-    }
-    eprintln!("state {:?}", w.sim.mob_state(id));
-}

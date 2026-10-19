@@ -152,7 +152,6 @@ pub fn tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
 
 /// `LivingEntity.baseTick`: the block position changed since the last tick.
 pub fn block_changed(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-    eprintln!("DBG block_changed");
     let here = BlockPos::containing(e.x(), e.y(), e.z());
     let fx = m.fx.get_or_insert_with(Default::default);
     if fx.last_pos == Some(here) {
@@ -180,7 +179,6 @@ fn changed_location(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
 /// `EnchantmentHelper.runLocationChangedEffects(level, stack, entity, slot)`.
 fn location_slot(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, index: usize, slot: EquipmentSlot) {
     let enchants = enchantments(&m.equipment[index]);
-    eprintln!("DBG location_slot {index} {enchants:?}");
     if enchants.is_empty() {
         return;
     }
@@ -220,7 +218,6 @@ fn location_slot(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, i
     });
     m.brain_random = rng;
     m.fx = Some(fx);
-    eprintln!("DBG ran {} due {}", ran.is_some(), due.len());
     if ran.is_none() {
         return;
     }
@@ -292,7 +289,6 @@ fn carry_out_one(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, e
     match effect {
         // `EnchantmentAttributeEffect.onChangedBlock`: a modifier while active (`location_changed` only).
         EntityEffect::Attribute(a) => {
-            eprintln!("DBG attribute fresh {} attr {:?} has {:?}", d.fresh, attr_of(a.attribute), attr_of(a.attribute).map(|x| m.attrs.get(x).is_some()));
             if d.fresh
                 && let Some(attr) = attr_of(a.attribute)
                 && m.attrs.get(attr).is_some()
@@ -300,7 +296,6 @@ fn carry_out_one(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, e
                 let slot_name = SLOTS.iter().find(|(_, i)| *i == d.key.slot).map_or("mainhand", |(s, _)| s.name());
                 let (id, amount) = a.modifier(d.level, slot_name);
                 m.attrs.set_transient_modifier(attr, &id, amount, op_of(a.operation));
-                eprintln!("DBG set {id} {amount} -> value {}", m.attrs.value(attr));
                 if let Some(fx) = m.fx.as_mut() {
                     fx.mods.retain(|(_, at, i)| !(*at == attr && *i == id));
                     fx.mods.push((d.key, attr, id));
