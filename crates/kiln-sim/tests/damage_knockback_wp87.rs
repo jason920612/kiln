@@ -72,11 +72,12 @@ impl World {
 }
 
 
-/// The first motion packet of the player within `ticks` ticks, with the tick it came in.
+/// The first motion packet of the player since the last look, within `ticks` ticks, with the tick it came in (0: already there).
 fn first_motion(w: &mut World, ticks: usize) -> Option<(usize, [f64; 3])> {
-    let _ = w.motions();
     for t in 0..ticks {
-        w.ticks(1);
+        if t > 0 {
+            w.ticks(1);
+        }
         if let Some(p) = w.motions().first() {
             return Some((t, World::velocity(p)));
         }
@@ -111,6 +112,7 @@ fn a_command_block_damage_is_unstepped_too() {
     let mut w = World::new();
     let p = w.client.pos;
     let (x, y, z) = (p[0].floor() as i32 + 3, p[1].floor() as i32, p[2].floor() as i32);
+    let _ = w.motions();
     w.run(&format!("setblock {x} {y} {z} minecraft:command_block{{auto:1b,Command:\"damage Farmer 2 minecraft:mob_attack at {x} {y} {z}\"}}"));
     let (_, v) = first_motion(&mut w, 10).expect("the command block hurt the player");
     assert_raw(v, "command block");
@@ -122,6 +124,7 @@ fn a_hit_of_the_entities_turn_still_waits_for_the_step() {
     let mut w = World::new();
     let p = w.client.pos;
     w.run(&format!("summon minecraft:zombie {} {} {} {{PersistenceRequired:1b}}", p[0] + 1.2, p[1], p[2]));
+    let _ = w.motions();
     let (_, v) = first_motion(&mut w, 200).expect("the zombie hit");
     assert!((horizontal(v) - 0.2184).abs() < 3e-3, "stepped horizontal {:.4}", horizontal(v));
 }
