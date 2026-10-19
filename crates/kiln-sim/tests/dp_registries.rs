@@ -473,8 +473,9 @@ fn a_shovel_mines_stone_when_the_pack_tags_it_mineable_with_a_shovel() {
         assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::PlayerAction { action: 0, pos: [x, y, z], face: 1, sequence })]));
     };
     dig(&mut g, 1);
-    // 8 (diamond) / 1.5 (hardness) / 30 per tick: broken within ten ticks; by hand or without the tag it takes 100+.
-    g.ticks(12);
+    // 8 (diamond) / 1.5 (hardness) / 30 per tick, a fifth of it for a player in the air (this void world has no ground): broken
+    // within 30 ticks; by hand or without the tag (1 / 1.5 / 100 per tick) it takes 150 or 750.
+    g.ticks(35);
     assert_eq!(kiln_blocks::state::state_string(g.sim.block_at(x, y, z).unwrap()), "minecraft:air", "the shovel broke the stone");
     g.ticks(3);
     let items: Vec<String> = g.sim.entity_nbt().iter().filter_map(|t| t.get("Item")?.get("id")?.as_str().map(str::to_owned)).collect();
