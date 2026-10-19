@@ -17,7 +17,7 @@
 //! `stopLocationBasedEffects`, `EnchantmentLocationBasedEffect`.
 
 use crate::Player;
-use crate::advancements::criteria::{WorldProbe, location_matches};
+use kiln_loot::probe::{WorldFacts, WorldProbe};
 use crate::blocks::RegionLevel;
 use crate::health::DamageCtx;
 use crate::hazards::BlockAt;
@@ -25,14 +25,10 @@ use kiln_blocks::{Effect, Level};
 use kiln_blocks::BlockPos;
 use kiln_item::component::{AttributeOperation, EquipmentSlot};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
-use kiln_loot::LootContext;
-use kiln_loot::context::EntityTarget;
 use kiln_loot::effects::{Conditional, EQUIPMENT_ORDER, EntityEffect};
 use kiln_loot::fx::{Action, Subject};
 use kiln_loot::json::Json;
-use kiln_loot::predicate::EntityPredicate;
-use kiln_loot::predicate::world::LocationPredicate;
-use kiln_loot::view::EntityView;
+use kiln_loot::view::{EntityView, FxContext};
 
 /// What the effects see of the world around the entity.
 pub(crate) struct FxWorld<'a> {
@@ -71,54 +67,9 @@ pub(crate) struct LevelJob {
     pub action: Action,
 }
 
-/// `Enchantment.entityContext` / `locationContext` / `blockHitContext`: `this_entity` with the
-/// enchantment's level, and the facts a requirement can ask of the level around it.
-pub(crate) struct FxContext<'a> {
-    pub level: i32,
-    pub this: &'a EntityView,
-    /// `enchantment_active_check` (location-based effects only).
-    pub active: Option<bool>,
-    pub origin: [f64; 3],
-    /// `block_state` (a `hit_block` context).
-    pub block_state: Option<u16>,
-    pub world: &'a FxWorld<'a>,
-}
-
-impl LootContext for FxContext<'_> {
-    fn has_entity(&self, target: EntityTarget) -> bool {
-        target == EntityTarget::This
-    }
-
-    fn origin(&self) -> Option<[f64; 3]> {
-        Some(self.origin)
-    }
-
-    fn block_state(&self) -> Option<u16> {
-        self.block_state
-    }
-
-    fn enchantment_level(&self) -> Option<i32> {
-        Some(self.level)
-    }
-
-    fn enchantment_active(&self) -> Option<bool> {
-        self.active
-    }
-
-    fn is_raining(&self) -> bool {
-        self.world.raining
-    }
-
-    fn is_thundering(&self) -> bool {
-        self.world.thundering
-    }
-
-    fn entity_matches(&self, target: EntityTarget, predicate: &EntityPredicate) -> bool {
-        target == EntityTarget::This && self.this.matches_with(predicate, &|l, pos| self.location_matches(l, pos))
-    }
-
-    fn location_matches(&self, predicate: &LocationPredicate, pos: [f64; 3]) -> bool {
-        location_matches(predicate, pos, self.world.dim, Some(self.world.probe))
+impl FxWorld<'_> {
+    fn facts(&self) -> WorldFacts<'_> {
+        WorldFacts { probe: self.probe, dim: self.dim, raining: self.raining, thundering: self.thundering }
     }
 }
 
@@ -165,7 +116,7 @@ impl Player {
                 }
                 let view = view.get_or_insert_with(|| self.fx_view(w)).clone();
                 for ce in &e.effects.tick {
-                    let fx = FxContext { level, this: &view, active: None, origin: self.pos, block_state: None, world: w };
+                    let fx = FxContext::entity(level, &view, self.pos, Some(w.facts()));
                     if ce.matches(&loot, &fx, &mut self.level_rng) {
                         self.run_entity_effect(&ce.effect, level, slot, w, ctx);
                     }
@@ -210,7 +161,7 @@ impl Player {
             for (index, ce) in e.effects.location_changed.iter().enumerate() {
                 let key = ActiveEffect { slot, enchantment: id, index };
                 let was_active = self.loc_active.contains(&key);
-                let fx = FxContext { level, this: &view, active: Some(was_active), origin: self.pos, block_state: None, world: w };
+                let fx = FxContext { active: Some(was_active), ..FxContext::entity(level, &view, self.pos, Some(w.facts())) };
                 if ce.matches(&loot, &fx, &mut self.level_rng) {
                     if !was_active {
                         self.loc_active.push(key);

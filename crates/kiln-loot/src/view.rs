@@ -405,3 +405,102 @@ fn collect_post_attack(effect: &EntityEffect, level: i32, rng: &mut dyn RandomSo
         _ => {}
     }
 }
+
+/// The context of an enchantment effect that is not a plain hit (`Enchantment.entityContext`,
+/// `locationContext`, `blockHitContext`, and `damageContext` of a hit with the level around):
+/// `this_entity` with the enchantment's level at `origin`, and whichever of the damage source's
+/// entities, the hit block's state and the active flag the trigger has.
+pub struct FxContext<'a> {
+    pub level: i32,
+    pub this: &'a EntityView,
+    /// A damage context's attacker and direct attacker, and the source's damage type.
+    pub attacker: Option<&'a EntityView>,
+    pub direct: Option<&'a EntityView>,
+    pub damage_type: Option<i32>,
+    /// A hit-block context's block state.
+    pub block_state: Option<u16>,
+    pub origin: [f64; 3],
+    /// A location-based effect's `enchantment_active_check`.
+    pub active: Option<bool>,
+    pub world: Option<crate::probe::WorldFacts<'a>>,
+}
+
+impl<'a> FxContext<'a> {
+    /// `Enchantment.entityContext(level, entity, origin)`.
+    pub fn entity(level: i32, this: &'a EntityView, origin: [f64; 3], world: Option<crate::probe::WorldFacts<'a>>) -> FxContext<'a> {
+        FxContext { level, this, attacker: None, direct: None, damage_type: None, block_state: None, origin, active: None, world }
+    }
+
+    fn view(&self, target: EntityTarget) -> Option<&EntityView> {
+        match target {
+            EntityTarget::This => Some(self.this),
+            EntityTarget::Attacker => self.attacker,
+            EntityTarget::DirectAttacker => self.direct.or(self.attacker),
+            _ => None,
+        }
+    }
+}
+
+impl LootContext for FxContext<'_> {
+    fn has_entity(&self, target: EntityTarget) -> bool {
+        self.view(target).is_some()
+    }
+
+    fn origin(&self) -> Option<[f64; 3]> {
+        Some(self.origin)
+    }
+
+    fn block_state(&self) -> Option<u16> {
+        self.block_state
+    }
+
+    fn has_damage_source(&self) -> bool {
+        self.damage_type.is_some()
+    }
+
+    fn enchantment_level(&self) -> Option<i32> {
+        Some(self.level)
+    }
+
+    fn enchantment_active(&self) -> Option<bool> {
+        self.active
+    }
+
+    fn is_raining(&self) -> bool {
+        self.world.is_some_and(|w| w.raining)
+    }
+
+    fn is_thundering(&self) -> bool {
+        self.world.is_some_and(|w| w.thundering)
+    }
+
+    fn entity_matches(&self, target: EntityTarget, predicate: &EntityPredicate) -> bool {
+        self.view(target).is_some_and(|v| v.matches_with(predicate, &|l, pos| self.location_matches(l, pos)))
+    }
+
+    fn location_matches(&self, predicate: &crate::predicate::world::LocationPredicate, pos: [f64; 3]) -> bool {
+        match &self.world {
+            Some(w) => crate::probe::location_matches(predicate, pos, w.dim, Some(w.probe)),
+            None => false,
+        }
+    }
+
+    fn damage_source_matches(&self, p: &DamageSourcePredicate) -> bool {
+        let Some(damage_type) = self.damage_type else { return false };
+        if !p.tags.iter().all(|t| damage_type_in_tag(damage_type, t.tag.as_str()) == t.expected) {
+            return false;
+        }
+        if let Some(d) = &p.direct_entity
+            && !self.direct.or(self.attacker).is_some_and(|e| e.matches(d))
+        {
+            return false;
+        }
+        if let Some(s) = &p.source_entity
+            && !self.attacker.is_some_and(|e| e.matches(s))
+        {
+            return false;
+        }
+        // `isDirect`: no separate direct entity (a melee blow).
+        p.is_direct.is_none_or(|want| want == self.direct.is_none())
+    }
+}

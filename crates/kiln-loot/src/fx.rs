@@ -29,7 +29,7 @@ pub struct Subject {
 }
 
 /// One thing an effect does, with every number decided.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Action {
     /// `Entity.igniteForSeconds`.
     Ignite { seconds: f32 },

@@ -1012,6 +1012,37 @@ impl LootData {
     }
 }
 
+impl LootData {
+    /// `EnchantmentHelper.onHitBlock` / `onProjectileSpawned`: every enchantment of the weapon (any slot, `runIterationOnItem`)
+    /// with the `effects` list that holds, in `entityContext` / `blockHitContext` per level.
+    fn item_entity_effects<'a, C: LootContext>(
+        &'a self,
+        weapon: &ItemStack,
+        rng: &mut dyn RandomSource,
+        ctx: impl Fn(i32) -> C,
+        effects: impl Fn(&'a Effects) -> &'a [Conditional<EntityEffect>],
+        mut f: impl FnMut(&'a EntityEffect, i32),
+    ) {
+        self.for_each_enchantment(weapon, |e, level| {
+            for c in effects(&e.effects) {
+                if c.matches(self, &ctx(level), rng) {
+                    f(&c.effect, level);
+                }
+            }
+        });
+    }
+
+    /// `Enchantment.onHitBlock` over the weapon: the `hit_block` effects that hold.
+    pub fn hit_block_effects<'a, C: LootContext>(&'a self, weapon: &ItemStack, rng: &mut dyn RandomSource, ctx: impl Fn(i32) -> C, f: impl FnMut(&'a EntityEffect, i32)) {
+        self.item_entity_effects(weapon, rng, ctx, |e| e.hit_block.as_slice(), f);
+    }
+
+    /// `Enchantment.onProjectileSpawned` over the weapon: the `projectile_spawned` effects that hold.
+    pub fn projectile_spawned_effects<'a, C: LootContext>(&'a self, weapon: &ItemStack, rng: &mut dyn RandomSource, ctx: impl Fn(i32) -> C, f: impl FnMut(&'a EntityEffect, i32)) {
+        self.item_entity_effects(weapon, rng, ctx, |e| e.projectile_spawned.as_slice(), f);
+    }
+}
+
 /// `Enchantment.itemContext`: the `tool` and `enchantment_level` parameters.
 pub struct ItemContext<'a> {
     pub tool: &'a ItemStack,

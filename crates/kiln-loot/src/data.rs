@@ -169,6 +169,7 @@ impl WorldDefs {
         let mut files = Vec::new();
         for dir in WorldDefs::DIRS {
             for (id, path) in list_pack_files(packs, dir)? {
+                let text = std::fs::read_to_string(&path).map_err(io(&path))?;
                 files.push((dir, id, text));
             }
         }

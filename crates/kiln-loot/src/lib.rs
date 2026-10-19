@@ -29,6 +29,7 @@ pub mod json;
 pub mod number;
 pub mod parse;
 pub mod predicate;
+pub mod probe;
 pub mod provider;
 pub mod random;
 pub mod slot;
