@@ -153,3 +153,11 @@ pub fn level_events(log: &[Bytes]) -> Vec<(i32, i32)> {
         })
         .collect()
 }
+
+/// Whether this machine has the vanilla data (`KILN_DATAPACK`, or `work/generated` next to the checkout): the loot tables and the like.
+pub fn vanilla_data() -> bool {
+    let root = std::env::var_os("KILN_DATAPACK")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../work/generated"));
+    root.join("data/minecraft/loot_table").is_dir()
+}

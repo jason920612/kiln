@@ -483,7 +483,10 @@ fn a_shovel_mines_stone_when_the_pack_tags_it_mineable_with_a_shovel() {
     assert_eq!(kiln_blocks::state::state_string(g.sim.block_at(x, y, z).unwrap()), "minecraft:air", "the shovel broke the stone");
     g.ticks(3);
     let items: Vec<String> = g.sim.entity_nbt().iter().filter_map(|t| t.get("Item")?.get("id")?.as_str().map(str::to_owned)).collect();
-    assert_eq!(items, ["minecraft:cobblestone"], "and it was the right tool for the drops");
+    // (The drops come from vanilla's loot tables: only where this machine has the vanilla data.)
+    if support::vanilla_data() {
+        assert_eq!(items, ["minecraft:cobblestone"], "and it was the right tool for the drops");
+    }
     g.cleanup();
 }
 
