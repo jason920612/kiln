@@ -1028,6 +1028,28 @@ fn section_key(e: &kiln_entity::Entity) -> (i32, i64) {
 }
 
 impl EntityLevel for SimLevel<'_, '_, '_> {
+    fn equipment_drop_chance(&mut self, attacker: Option<i32>, _victim: i32, chance: f32) -> f32 {
+        use kiln_loot::effects::Target;
+        let Some(id) = attacker else { return chance };
+        let Some(loot) = self.level.env().loot.clone() else { return chance };
+        let Some(p) = self.players.iter().find(|p| p.entity_id == id) else { return chance };
+        // (`damageContext(level, victim, source)`: the requirements of the vanilla effect only look at the attacker.)
+        let attacker = p.as_attacker();
+        let view = attacker.view.clone();
+        let source = crate::health::Source { cause: crate::health::Cause::PlayerAttack, attacker: Some(attacker), direct: None, weapon: None, position: None };
+        let mut rng = LegacyRandom::new(i64::from(id));
+        let mut value = chance;
+        loot.for_each_equipped_enchantment(&p.equipment(), |e, level, _slot, _stack| {
+            let ctx = crate::enchant::DamageContext { level, this: &view, source: &source };
+            for t in &e.effects.equipment_drops {
+                if t.enchanted == Target::Attacker && t.matches(&loot, &ctx, &mut rng) {
+                    value = t.effect.process(level, &mut rng, value);
+                }
+            }
+        });
+        value
+    }
+
     fn find_nearest_map_structure(&self, tag: &str, pos: BlockPos, radius: i32) -> Option<BlockPos> {
         let explorer = self.level.env().loot.as_deref()?.explorer.as_ref()?;
         let names = crate::world_state::worldgen_tag("worldgen/structure", tag)?;

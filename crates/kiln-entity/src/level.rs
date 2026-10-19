@@ -604,6 +604,13 @@ pub trait EntityLevel {
     /// The level's shared random source (`Level.random`).
     fn random(&mut self) -> &mut LegacyRandom;
 
+    /// `EnchantmentHelper.processEquipmentDropChance(level, attacker, source, chance)`: the chance that a mob killed by entity `attacker` drops a piece
+    /// of its equipment, with the `equipment_drops` effects of the attacker's enchanted equipment applied (looting: +1% a level for a player).
+    fn equipment_drop_chance(&mut self, attacker: Option<i32>, victim: i32, chance: f32) -> f32 {
+        let _ = (attacker, victim);
+        chance
+    }
+
     /// The random for what vanilla's mob AI draws from `level.getRandom()` (behaviour durations,
     /// ...). `None`: each mob uses its own stream (`MobData::brain_random`), so the outcome does not
     /// depend on which entities share a region; a test replaying vanilla's single shared
