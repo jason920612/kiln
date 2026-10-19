@@ -1,0 +1,17 @@
+{
+  "type": "kiln85:cavern_type",
+  "generator": {
+    "type": "minecraft:noise",
+    "settings": "minecraft:nether",
+    "biome_source": {
+      "type": "minecraft:checkerboard",
+      "scale": 2,
+      "biomes": [
+        "minecraft:crimson_forest",
+        "minecraft:warped_forest",
+        "minecraft:basalt_deltas",
+        "minecraft:nether_wastes"
+      ]
+    }
+  }
+}

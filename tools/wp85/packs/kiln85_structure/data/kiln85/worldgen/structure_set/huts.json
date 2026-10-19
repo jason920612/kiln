@@ -1,0 +1,14 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 85085,
+    "separation": 2,
+    "spacing": 6
+  },
+  "structures": [
+    {
+      "structure": "kiln85:hut",
+      "weight": 1
+    }
+  ]
+}

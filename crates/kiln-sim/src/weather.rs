@@ -572,10 +572,9 @@ impl Sim {
             Some(c) => c.to_owned(),
             None => {
                 let dim = crate::dim_id(kiln_command::host::Source::dimension(self)).unwrap_or(OVERWORLD_ID);
-                match dim {
-                    OVERWORLD_ID => CLOCKS[0].to_owned(),
-                    crate::END_ID => CLOCKS[1].to_owned(),
-                    _ => return Err(CommandError::new(tr!("commands.time.no_default_clock", crate::dim_key(dim)))),
+                match crate::dim_type(dim).default_clock {
+                    Some(clock) => clock.to_owned(),
+                    None => return Err(CommandError::new(tr!("commands.time.no_default_clock", crate::dim_key(dim)))),
                 }
             }
         };

@@ -950,6 +950,8 @@ struct Dim {
     kind: &'static kiln_data::DimensionType,
     /// The level's sea level (`ChunkGenerator.getSeaLevel`).
     sea_level: i32,
+    /// `ServerLevel.isFlat`: a superflat generator.
+    flat: bool,
     provider: ChunkProvider,
     regions: Regions<Cell, (entities::Entities, blocks::RegionBlocks)>,
     regionizer: Regionizer,
@@ -1049,6 +1051,7 @@ impl Dim {
         world: Option<&std::path::Path>,
         native: Option<std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>>,
         sea_level: i32,
+        flat: bool,
     ) -> Dim {
         let kind = kiln_data::levels::level_type(key).expect("the dimension type of a level");
         let generation = provider.fork_generator().map(|g| generation::GenPool::new(g.as_ref(), provider.dimension, threads));
@@ -1081,6 +1084,7 @@ impl Dim {
             key,
             kind,
             sea_level,
+            flat,
             provider,
             regions: Regions::new(),
             regionizer: Regionizer::new(policy),
@@ -1737,6 +1741,7 @@ impl Sim {
         // Each level's generation pipeline, for `/locate` and `/place`.
         let mut pipelines: Vec<Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>>> = Vec::new();
         let mut sea_levels: Vec<i32> = Vec::new();
+        let mut flats: Vec<bool> = Vec::new();
         let providers: Vec<ChunkProvider> = (0..crate::dim_count())
             .map(|id| {
                 let key = dim_key(id);
@@ -1746,6 +1751,7 @@ impl Sim {
                 let generator = made(id);
                 pipelines.push(generator.pipeline());
                 sea_levels.push(generator.sea_level(id));
+                flats.push(matches!(generator, Made::Flat(_)));
                 match &config.world {
                     Some(dir) => {
                         let source: Box<dyn kiln_world::ChunkSource> = if format == Some(kiln_storage::WorldFormat::Native) {
@@ -1818,7 +1824,7 @@ impl Sim {
             .enumerate()
             .map(|(id, provider)| {
                 let native = native_stores.get_mut(id).and_then(Option::take);
-                Dim::new(dim_key(id), provider, policy, threads, game_time, config.world.as_deref(), native, sea_levels[id])
+                Dim::new(dim_key(id), provider, policy, threads, game_time, config.world.as_deref(), native, sea_levels[id], flats[id])
             })
             .collect();
         info!(
@@ -4323,7 +4329,7 @@ impl Sim {
 
     /// `ServerLevel.isFlat` (a superflat generator): Kiln's test worlds' overworld.
     fn is_flat(&self, dim: DimId) -> bool {
-        dim == OVERWORLD_ID && self.config.world.is_none() && self.config.noise.is_none()
+        self.dims[dim].flat || (dim == OVERWORLD_ID && self.config.world.is_none() && self.config.noise.is_none())
     }
 
     /// `ServerPlayer.createCommonSpawnInfo` for the level `dim`.

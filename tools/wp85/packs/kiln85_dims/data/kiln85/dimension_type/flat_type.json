@@ -1,0 +1,22 @@
+{
+  "ambient_light": 0.1,
+  "attributes": {
+    "minecraft:gameplay/bed_rule": {
+      "can_set_spawn": "always",
+      "can_sleep": "always"
+    },
+    "minecraft:gameplay/respawn_anchor_works": true
+  },
+  "coordinate_scale": 2.0,
+  "default_clock": "minecraft:overworld",
+  "has_ceiling": false,
+  "has_ender_dragon_fight": false,
+  "has_skylight": true,
+  "height": 64,
+  "infiniburn": "#minecraft:infiniburn_overworld",
+  "logical_height": 64,
+  "min_y": -16,
+  "monster_spawn_block_light_limit": 0,
+  "monster_spawn_light_level": 7,
+  "timelines": "#minecraft:in_overworld"
+}
