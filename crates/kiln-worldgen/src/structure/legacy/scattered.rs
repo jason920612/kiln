@@ -644,7 +644,7 @@ impl Piece for TemplePiece {
         b.place_block(r, with(st("minecraft:redstone_wire"), &[("east", "side"), ("west", "side")]), 4, -3, 1, cb);
         b.place_block(r, st("minecraft:mossy_cobblestone"), 3, -3, 1, cb);
         if !self.flags[2].load(Ordering::Relaxed) {
-            let placed = b.create_dispenser(r, cb, random, 3, -2, 1, Dir::North, "minecraft:dispensers/jungle_temple");
+            let placed = b.create_dispenser(r, cb, random, 3, -2, 1, Dir::North, "minecraft:chests/jungle_temple_dispenser");
             self.flags[2].store(placed, Ordering::Relaxed);
         }
         b.place_block(r, with(st("minecraft:vine"), &[("south", "true")]), 3, -2, 2, cb);
@@ -659,7 +659,7 @@ impl Piece for TemplePiece {
         b.place_block(r, st("minecraft:mossy_cobblestone"), 9, -3, 4, cb);
         b.place_block(r, v12, 9, -2, 4, cb);
         if !self.flags[3].load(Ordering::Relaxed) {
-            let placed = b.create_dispenser(r, cb, random, 9, -2, 3, Dir::West, "minecraft:dispensers/jungle_temple");
+            let placed = b.create_dispenser(r, cb, random, 9, -2, 3, Dir::West, "minecraft:chests/jungle_temple_dispenser");
             self.flags[3].store(placed, Ordering::Relaxed);
         }
         b.place_block(r, with(st("minecraft:vine"), &[("east", "true")]), 8, -1, 3, cb);

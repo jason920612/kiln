@@ -30,6 +30,7 @@ mod commands;
 mod consume;
 mod buckets;
 mod beehive;
+mod interact_loot;
 mod brush;
 mod command_block;
 mod vault;

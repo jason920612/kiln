@@ -348,7 +348,7 @@ fn shears(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing
     let s = level.block(target);
     if logic::is_instance(s, C::BeehiveBlock) && state::get_int(s, "honey_level") >= 5 {
         level.effect(Effect::Sound { pos: target, sound: "minecraft:block.beehive.shear", volume: 1.0, pitch: 1.0 });
-        crate::beehive::drop_honeycombs(level, target);
+        crate::beehive::drop_honeycombs(level, target, s, &stack);
         crate::beehive::release_after_harvest(level, target, s);
         level.effect(Effect::GameEvent { pos: target, event: "minecraft:shear" });
         hurt(level, &mut stack, rng);

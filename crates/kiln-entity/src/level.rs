@@ -373,9 +373,14 @@ pub enum Event {
     },
     /// `dropFromGiftLootTable` (a chicken's egg).
     GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
+    /// `dropFromGiftLootTable` with `BehaviorUtils.throwItem` as the consumer (a hero-of-the-village gift): each item is thrown from the entity's
+    /// eyes towards `to`.
+    GiftThrow { entity: i32, table: &'static str, to: Vec3 },
     /// A splash potion (`minecraft:` potion id) reached player `target` at `scale` of its full
     /// strength (`ThrownSplashPotion.onHitAsPotion`); `owner` threw it.
     PotionSplash { target: i32, potion: &'static str, scale: f64, owner: Option<i32> },
+    /// Stacks a loot table already rolled for an entity dropping at `pos` (`spawnAtLocation`): a charged creeper's head for the mob it killed.
+    ItemDrops { entity: i32, pos: Vec3, stacks: Vec<kiln_item::ItemStack> },
     /// `dropFromShearingLootTable` (a sheep's wool).
     ShearLoot { entity: i32, table: String, pos: Vec3 },
     /// A criteria trigger for player `player` (entity id).
@@ -966,6 +971,19 @@ pub trait EntityLevel {
     /// the slots as they are.
     fn fill_container_loot(&mut self, items: &mut [kiln_item::ItemStack], table: &str, seed: i64, origin: Vec3, player: Option<i32>) {
         let _ = (items, table, seed, origin, player);
+    }
+
+    /// `Creeper.killedEntity`: `victim` (dying of `source`, a charged creeper's blast) drops what `charged_creeper/root` rolls for it; whether
+    /// the table gave anything (a creeper drops only one head).
+    fn charged_creeper_loot(&mut self, victim: &crate::Entity, source: &crate::mob::DamageSource) -> bool {
+        let _ = (victim, source);
+        false
+    }
+
+    /// `Mob.equip(EquipmentTable)`: what the equipment loot table `table` (`LootContextParamSets.EQUIPMENT`: `mob` and where it stands) rolls.
+    fn equipment_loot(&mut self, mob: &crate::Entity, table: &str) -> Vec<kiln_item::ItemStack> {
+        let _ = (mob, table);
+        Vec::new()
     }
 
     /// `BlockState.getDrops` of `state` for a loot context at `origin` with `tool` and `entity` as
