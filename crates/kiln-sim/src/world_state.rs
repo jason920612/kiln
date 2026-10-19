@@ -601,7 +601,7 @@ pub(crate) struct WorldState {
 }
 
 /// One default value per level.
-fn per_level<T: Default>() -> Vec<T> {
+pub(crate) fn per_level<T: Default>() -> Vec<T> {
     (0..crate::dim_count()).map(|_| T::default()).collect()
 }
 

@@ -1573,9 +1573,9 @@ pub struct Sim {
     /// Rate, fraction and pause of the overworld and End clocks.
     clock_runs: [weather::ClockRun; 2],
     /// Each level's sleeping players (`ServerLevel.sleepStatus`).
-    sleep_status: [sleep::SleepStatus; 3],
+    sleep_status: Vec<sleep::SleepStatus>,
     /// Each level's locator bar waypoints (`ServerWaypointManager`).
-    waypoints: [waypoints::WaypointManager; 3],
+    waypoints: Vec<waypoints::WaypointManager>,
     /// Advancements of the enabled data packs.
     advancements: std::sync::Arc<advancements::Advancements>,
     plugins: Option<plugins::SimPlugins>,
@@ -1874,8 +1874,8 @@ impl Sim {
             climates: weather::Climates::load(&roots).map(std::sync::Arc::new),
             zoom_seed: kiln_worldgen::generator::obfuscate_seed(seed),
             clock_runs: Default::default(),
-            sleep_status: Default::default(),
-            waypoints: Default::default(),
+            sleep_status: world_state::per_level(),
+            waypoints: world_state::per_level(),
             advancements: Default::default(),
             plugins: None,
             independent: Default::default(),
