@@ -4316,7 +4316,7 @@ impl Sim {
         lap(&mut self.stats, "g.effects");
         self.tick_waypoints();
         lap(&mut self.stats, "g.waypoints");
-        self.tick_raids();
+        self.tick_raids(normal);
         self.resolve_display_texts();
         self.tick_dragon_fight();
         lap(&mut self.stats, "g.raids_dragon");

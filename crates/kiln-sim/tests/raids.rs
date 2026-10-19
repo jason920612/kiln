@@ -381,3 +381,26 @@ fn a_wave_spawns_where_entities_tick() {
         assert!((cx - pcx).abs().max((cz - pcz).abs()) <= 4, "{kind} {id} at {pos:?} stands outside the simulation distance of the player at {:?}", w.pos());
     }
 }
+
+/// `ServerLevel.tick` ticks the raids only while the level runs normally: a frozen game (`/tick freeze`) keeps the countdown to the first wave where it
+/// stands. Kiln's raids kept ticking on the frozen game's idle ticks, so a lock-step comparison (frozen, `tick step`) saw the next wave 170 ticks early.
+#[test]
+fn a_frozen_game_does_not_run_the_raid_countdown() {
+    let mut w = World::new();
+    w.village();
+    w.ticks(40);
+    w.console("gamemode survival Hunter");
+    w.console("effect give Hunter minecraft:bad_omen 100 1");
+    w.ticks(2);
+    w.ticks(600);
+    w.console("gamemode creative Hunter");
+    assert_eq!(w.sim.raids("minecraft:overworld").len(), 1, "the raid has started");
+    w.console("tick freeze");
+    w.ticks(400);
+    let raids = w.sim.raids("minecraft:overworld");
+    assert_eq!(raids[0].2, 0, "no wave while the game stands still: {raids:?}");
+    w.console("tick unfreeze");
+    w.ticks(305);
+    let raids = w.sim.raids("minecraft:overworld");
+    assert_eq!(raids[0].2, 1, "the countdown went on from where it was: {raids:?}");
+}

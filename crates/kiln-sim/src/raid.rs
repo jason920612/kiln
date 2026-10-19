@@ -435,7 +435,10 @@ fn has_chunk_at(d: &Dim, x: i32, z: i32) -> bool {
 
 impl Sim {
     /// The raids of every level, then the overworld's patrol spawner.
-    pub(crate) fn tick_raids(&mut self) {
+    ///
+    /// `normal`: the game is not frozen. `ServerLevel.tick` ticks the raids, and the custom spawners, only while the level runs normally (`/tick freeze` keeps a raid's
+    /// countdown and the wave where they are); what the players and the raiders did while it stood still is taken in all the same.
+    pub(crate) fn tick_raids(&mut self, normal: bool) {
         let raids_rule = self.rule_bool("minecraft:raids");
         for dim in 0..self.dims.len() {
             // Raider news from the regions.
@@ -489,6 +492,10 @@ impl Sim {
                 }
             }
             self.raid_omen_triggers(dim);
+            if !normal {
+                self.dims[dim].raids.refresh_views();
+                continue;
+            }
             let d = &mut self.dims[dim];
             d.raids.tick += 1;
             let ids: Vec<i32> = d.raids.raids.keys().copied().collect();
@@ -507,6 +514,9 @@ impl Sim {
             self.dims[dim].raids.refresh_views();
         }
         // (`ServerLevel.customSpawners`: phantoms, patrols, cats, village sieges, the wandering trader.)
+        if !normal {
+            return;
+        }
         self.tick_patrols();
         self.tick_cat_spawner();
         self.tick_village_siege();

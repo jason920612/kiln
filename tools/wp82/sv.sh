@@ -51,6 +51,7 @@ view-distance=$view
 enforce-secure-profile=false
 white-list=false
 enforce-whitelist=false
+allow-flight=true
 PROPS
   W=$HOME/kiln/work
   if [ -n "$AGENT" ]; then
