@@ -328,3 +328,26 @@ fn a_packs_enchantment_with_the_binding_marker_cannot_be_taken_off() {
     let components = format!("{worn:?}");
     assert!(components.contains("kz:hex"), "the bound helmet stayed: {components}");
 }
+
+#[test]
+fn reload_rereads_the_tags_but_keeps_the_enchantments_the_world_loaded() {
+    let Some(mut w) = World::new("reload", &["kz_effects", "ice_tags"]) else { return };
+    w.platform(6);
+    let [x, y, z] = w.ground;
+    // On disk the pack now says diamond (not gold) for kz:stomp, and the tag lets silk touch stop the melt (not kz:warm).
+    let packs = w.dir.join("datapacks");
+    let stomp = packs.join("kz_effects/data/kz/enchantment/stomp.json");
+    let text = std::fs::read_to_string(&stomp).unwrap();
+    std::fs::write(&stomp, text.replace("minecraft:gold_block", "minecraft:diamond_block")).unwrap();
+    std::fs::write(packs.join("ice_tags/data/minecraft/tags/enchantment/prevents_ice_melting.json"), r#"{"replace": true, "values": ["minecraft:silk_touch"]}"#).unwrap();
+    w.run("reload");
+    w.ticks(3);
+    // Vanilla loads the enchantment registry once with the world: `/reload` does not change what kz:stomp does ...
+    w.go(0, 0);
+    w.equip("armor.feet", "minecraft:diamond_boots[enchantments={\"kz:stomp\":1}]");
+    w.ticks(3);
+    assert_eq!(w.name([x, y, z]), "minecraft:gold_block", "the definition of the world");
+    // ... but the tags are read again.
+    assert_eq!(break_ice(&mut w, "minecraft:iron_pickaxe[enchantments={\"minecraft:silk_touch\":1}]", 2), "minecraft:air", "silk touch is in the tag now");
+    assert_eq!(break_ice(&mut w, "minecraft:iron_pickaxe[enchantments={\"kz:warm\":1}]", 3), "minecraft:water", "kz:warm no longer");
+}
