@@ -249,6 +249,15 @@ fn check(name: &str, dimension: &str, packs: &[&str], expect: Expect) {
     for &id in expect.starts {
         assert!(dump.targets.iter().any(|t| t.starts.iter().any(|(s, _)| s == id)), "{name}: no {id} start in vanilla's chunks");
     }
+    if std::env::var_os("KILN_PACK_BIOMES").is_some() {
+        let mut counts: std::collections::BTreeMap<&str, usize> = Default::default();
+        for t in &dump.targets {
+            for b in &t.biomes {
+                *counts.entry(b).or_default() += 1;
+            }
+        }
+        eprintln!("  biome cells: {counts:?}");
+    }
     let structures: usize = dump.targets.iter().map(|t| t.starts.len()).sum();
     eprintln!(
         "{name} ({dimension}): {} chunks, {structures} structure starts in them; {bad_chunks} chunks differ: {block_diffs} blocks, {biome_diffs} biome cells, {start_diffs} structure start lists",
