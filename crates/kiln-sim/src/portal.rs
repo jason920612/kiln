@@ -1104,6 +1104,24 @@ impl Sim {
                 }
             }
         }
+        if dist == 16 && allow_bedrock {
+            let mut tops = String::new();
+            for dx in -dist..=dist {
+                for dz in -dist..=dist {
+                    let mut y = max_y;
+                    while y > d.min_y {
+                        let p = BlockPos::new(around.x + dx, y, around.z + dz);
+                        let s = self.block_loading(dim, p);
+                        if kiln_data::block_props::full_collision(s) {
+                            break;
+                        }
+                        y -= 1;
+                    }
+                    tops.push_str(&format!("{},{}={} ", around.x + dx, around.z + dz, y));
+                }
+            }
+            info!("WP82 tallest around {around:?}: result {tallest:?}; tops {tops}");
+        }
         tallest.unwrap_or(around)
     }
 
