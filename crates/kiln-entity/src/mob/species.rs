@@ -44,7 +44,8 @@ pub fn pre_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             m.dead = true;
             let pos = e.position();
             let interaction = if level.mob_griefing() { crate::explosion::Interaction::Mob } else { crate::explosion::Interaction::Keep };
-            crate::explosion::explode(level, Some(e.id), pos, power, false, interaction);
+            let charged = *powered;
+            super::creeper_blast(e, charged, || crate::explosion::explode(level, Some(e.id), pos, power, false, interaction));
             e.discard();
         }
     }

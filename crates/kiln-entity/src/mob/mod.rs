@@ -3244,6 +3244,10 @@ pub(crate) struct Killer {
     pub(crate) random: kiln_javamath::random::LegacyRandom,
     pub(crate) silent: bool,
     pub(crate) block: BlockPos,
+    /// `Creeper.isPowered()` of a creeper whose blast is killing: its victims may drop a head (`Creeper.killedEntity`).
+    pub(crate) charged_creeper: bool,
+    /// `Creeper.droppedSkulls`: one head per creeper.
+    pub(crate) dropped_skulls: bool,
 }
 
 thread_local! {
@@ -3257,7 +3261,7 @@ pub fn hurt_living_by(level: &mut dyn EntityLevel, e: &mut Entity, m: &MobData, 
         return hurt_living(level, t, source, damage);
     }
     let previous = KILLER.with(|k| {
-        k.borrow_mut().replace(Killer { id: e.id, zombie: true, random: e.random.clone(), silent: e.silent, block: e.block_position() })
+        k.borrow_mut().replace(Killer { id: e.id, zombie: true, random: e.random.clone(), silent: e.silent, block: e.block_position(), charged_creeper: false, dropped_skulls: false })
     });
     let hurt = hurt_living(level, t, source, damage);
     KILLER.with(|k| {
@@ -3276,8 +3280,27 @@ fn killer_notified(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
     let Some(attacker) = source.attacker else { return true };
     let Some(mut killer) = KILLER.with(|k| k.borrow_mut().take_if(|k| k.id == attacker)) else { return true };
     let proceed = if killer.zombie { kinds::zombie::killed_entity(&mut killer, e, m, level, source) } else { true };
+    // `Creeper.killedEntity`: a charged creeper's victim drops what `charged_creeper/root` rolls for it (a head), once per creeper (the flag is
+    // set when the table gave something; the simulation answers [`EntityLevel::charged_creeper_loot`]).
+    if killer.charged_creeper && !killer.dropped_skulls && level.mob_drops() {
+        killer.dropped_skulls = level.charged_creeper_loot(e, &source);
+    }
     KILLER.with(|k| *k.borrow_mut() = Some(killer));
     proceed
+}
+
+/// Runs `blast` (a creeper's explosion) with the creeper `e` as the killer of the mobs it kills, `charged` or not: a charged one's victims may
+/// drop a head ([`killer_notified`]).
+pub(crate) fn creeper_blast<R>(e: &Entity, charged: bool, blast: impl FnOnce() -> R) -> R {
+    if !charged {
+        return blast();
+    }
+    let previous = KILLER.with(|k| {
+        k.borrow_mut().replace(Killer { id: e.id, zombie: false, random: e.random.clone(), silent: e.silent, block: e.block_position(), charged_creeper: true, dropped_skulls: false })
+    });
+    let r = blast();
+    KILLER.with(|k| *k.borrow_mut() = previous);
+    r
 }
 
 /// The shared `Mob.doHurtTarget`: the attack damage through the weapon's enchantments

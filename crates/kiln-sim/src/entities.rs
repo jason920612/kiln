@@ -1464,6 +1464,15 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         }
     }
 
+    fn charged_creeper_loot(&mut self, victim: &kiln_entity::Entity, source: &kiln_entity::mob::DamageSource) -> bool {
+        let stacks = charged_creeper_stacks(self.level.env(), victim, source);
+        let any = !stacks.is_empty();
+        if any {
+            self.emit(Event::ItemDrops { entity: victim.id, pos: victim.position(), stacks });
+        }
+        any
+    }
+
     fn block_loot(&mut self, state: u16, origin: Vec3, tool: &kiln_item::ItemStack, entity: i32) -> Vec<kiln_item::ItemStack> {
         block_loot_in(self.level.env(), state, origin, tool, entity)
     }
@@ -3442,7 +3451,7 @@ fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
         .into_iter()
         .map(|ev| {
             let key = match &ev {
-                Event::DeathLoot { entity, .. } | Event::GiftLoot { entity, .. } | Event::ShearLoot { entity, .. } => (0, *entity as u32 as u64),
+                Event::DeathLoot { entity, .. } | Event::GiftLoot { entity, .. } | Event::ShearLoot { entity, .. } | Event::ItemDrops { entity, .. } => (0, *entity as u32 as u64),
                 Event::EntityEvent { entity, .. } | Event::MobHurt { entity, .. } => (1, *entity as u32 as u64),
                 Event::Sound { pos, .. } => (2, pos_key(*pos)),
                 Event::EntitySound { entity, .. } => (6, *entity as u32 as u64),
@@ -3730,6 +3739,12 @@ fn carry_out(
             }
         }
         Event::GiftLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, table, pos, n, 0.0),
+        Event::ItemDrops { entity: id, pos, stacks } => {
+            for (k, stack) in stacks.into_iter().enumerate() {
+                let h = crate::mobs::loot_seed(env.seed, env.game_time, id, (n as u64) << 8 | k as u64 | 0x6368_0000) as u64;
+                spawns.push(crate::mobs::drop_item(stack, arr(pos), h));
+            }
+        }
         Event::ShearLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, &table, pos, n, 1.0),
         // `ThrownEnderpearl.onHit`: its player goes to where the pearl was at the start of the
         // tick, takes 5 `ender_pearl` damage and hears the teleport.
@@ -3859,6 +3874,28 @@ fn carry_out(
 }
 
 /// A gift or shearing loot table dropped at `pos` (`y_off` above it).
+/// What `charged_creeper/root` rolls for `victim` killed by a charged creeper's blast (`Creeper.killedEntity`: `this_entity` is the victim, the damage
+/// source the blast, no player credit).
+pub(crate) fn charged_creeper_stacks(env: &blocks::BlockEnv, victim: &kiln_entity::Entity, source: &kiln_entity::mob::DamageSource) -> Vec<kiln_item::ItemStack> {
+    let Some(loot) = env.loot.clone() else { return Vec::new() };
+    let m = kiln_entity::mob::data(victim);
+    let ctx = crate::mobs::DeathContext {
+        type_name: victim.type_name,
+        origin: arr(victim.position()),
+        on_fire: victim.is_on_fire(),
+        baby: m.is_some_and(|m| m.baby()),
+        killed_by_player: false,
+        damage_type: source.kind.type_name(),
+        weapon: None,
+        raider: None,
+        attacker: Some(crate::mobs::AttackerView { type_name: "minecraft:creeper", components: Vec::new() }),
+        components: m.map(kiln_entity::mob::variant_components).unwrap_or_default(),
+        specific: crate::mobs::TypeSpecific::of(m),
+        extra: crate::mobs::DeathExtra { loot: Some(loot.clone()), rules: Some(env.menus.clone()), vehicle_type: None },
+    };
+    crate::mobs::roll(&loot, "minecraft:charged_creeper/root", &ctx, crate::mobs::loot_seed(env.seed, env.game_time, victim.id, 0x6368_6172))
+}
+
 fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, id: i32, table: &str, pos: Vec3, n: usize, y_off: f64) {
     let Some(loot) = env.loot.clone() else { return };
     let phys = list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| list[i].phys.as_deref());

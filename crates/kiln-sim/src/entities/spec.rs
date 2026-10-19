@@ -465,6 +465,15 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
         crate::container::fill_from_table(items, &loot, table, seed, arr(origin), at, false, env.game_time, env.seed);
     }
 
+    fn charged_creeper_loot(&mut self, victim: &kiln_entity::Entity, source: &kiln_entity::mob::DamageSource) -> bool {
+        let stacks = super::charged_creeper_stacks(self.base.level.env(), victim, source);
+        let any = !stacks.is_empty();
+        if any {
+            self.emit(Event::ItemDrops { entity: victim.id, pos: victim.position(), stacks });
+        }
+        any
+    }
+
     fn block_loot(&mut self, state: u16, origin: Vec3, tool: &kiln_item::ItemStack, entity: i32) -> Vec<kiln_item::ItemStack> {
         block_loot_in(self.base.level.env(), state, origin, tool, entity)
     }

@@ -212,3 +212,32 @@ fn hoeing_rooted_dirt_rolls_till_rooted_dirt() {
     assert_eq!(items.get("minecraft:emerald"), Some(&3), "{items:?}");
     assert!(!items.contains_key("minecraft:hanging_roots"), "{items:?}");
 }
+
+/// The blast of a creeper in a pen of two zombies (day is kept out with the night); `charged` or not.
+fn creeper_blast(w: &mut World, charged: bool) {
+    let [x, y, z] = w.at(0, 1, 0);
+    w.run("gamemode creative User");
+    w.run("time set 18000");
+    for dz in 0..2 {
+        w.run(&format!("summon minecraft:zombie {} {y} {} {{NoAI:1b,Health:1f}}", x + 4, z + dz));
+    }
+    w.run(&format!("summon minecraft:creeper {} {y} {} {{powered:{}b,ignited:1b,Fuse:2}}", x + 5, z, charged as i32));
+    w.ticks(6);
+}
+
+#[test]
+fn a_charged_creeper_s_victim_drops_what_charged_creeper_root_rolls_once() {
+    // Whatever dies in the blast drops a diamond if the creeper is charged, and only the first of its victims does.
+    let t = table("entity", &[pool(&[item("diamond", 1)])]);
+    let mut w = World::new("charged", &[("charged_creeper/root", &t)]);
+    creeper_blast(&mut w, true);
+    assert_eq!(w.items().get("minecraft:diamond"), Some(&1), "one head for the creeper: {:?}", w.items());
+}
+
+#[test]
+fn an_uncharged_creeper_s_victims_drop_no_head() {
+    let t = table("entity", &[pool(&[item("diamond", 1)])]);
+    let mut w = World::new("uncharged", &[("charged_creeper/root", &t)]);
+    creeper_blast(&mut w, false);
+    assert!(!w.items().contains_key("minecraft:diamond"), "{:?}", w.items());
+}
