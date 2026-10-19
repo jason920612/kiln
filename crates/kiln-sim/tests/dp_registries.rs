@@ -539,6 +539,7 @@ fn damage_exhaustion_follows_the_type() {
         }
     };
     // `kiln83:mild` exhausts nothing; `kiln83:acid` 0.7 a hit: six hits are 4.2, past the 4 that takes a point of saturation.
+    g.console("gamerule minecraft:natural_health_regeneration false");
     let (food0, sat0) = g.sim.food(1).unwrap();
     hurt(&mut g, "kiln83:mild", 6);
     assert_eq!(g.sim.food(1), Some((food0, sat0)));
