@@ -228,3 +228,35 @@ fn animals_spawn_with_the_variants_of_the_pack() {
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn damage_types_of_the_pack_scale_and_name_the_death() {
+    use kiln_sim::testing::Client;
+    let _x = kiln_data::live::exclusive();
+    let (mut sim, dir, _) = start("damage");
+    let (msg, stats) = join(1, "Dmg", 2);
+    *stats.log.lock().unwrap() = Some(Vec::new());
+    assert!(sim.step([msg, ToSim::Console("gamemode survival Dmg".into()), ToSim::Console("difficulty hard".into())]));
+    let mut client = Client::new(1, stats.clone());
+    for _ in 0..5 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    let hit = |sim: &mut Sim, command: &str| {
+        assert!(sim.step([ToSim::Console(command.into())]));
+        sim.health(1).expect("player").0
+    };
+    // `scaling`: always scales with the difficulty (hard: x1.5), never does not.
+    assert_eq!(hit(&mut sim, "damage Dmg 4 kiln83:acid"), 20.0 - 6.0);
+    assert!(sim.step([ToSim::Console("effect give Dmg minecraft:instant_health 1 5".into())]));
+    assert_eq!(hit(&mut sim, "damage Dmg 4 kiln83:mild"), 20.0 - 4.0);
+    // The message of the pack's `message_id`.
+    stats.log.lock().unwrap().as_mut().unwrap().clear();
+    assert!(sim.step([ToSim::Console("damage Dmg 100 kiln83:acid".into())]));
+    let log = stats.log.lock().unwrap().clone().unwrap();
+    let key = b"death.attack.kiln83Acid";
+    assert!(log.iter().any(|p| p.windows(key.len()).any(|w| w == key)), "the death message names kiln83Acid");
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}
