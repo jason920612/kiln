@@ -1,0 +1,28 @@
+{
+  "description": {"text": "Stomp"},
+  "supported_items": "minecraft:diamond_boots",
+  "primary_items": "minecraft:diamond_boots",
+  "weight": 5,
+  "max_level": 2,
+  "min_cost": {"base": 5, "per_level_above_first": 10},
+  "max_cost": {"base": 40, "per_level_above_first": 10},
+  "anvil_cost": 2,
+  "slots": ["feet"],
+  "effects": {
+    "minecraft:location_changed": [
+      {
+        "effect": {
+          "type": "minecraft:replace_block",
+          "offset": [0, -1, 0],
+          "block_state": {"id": "minecraft:gold_block"},
+          "predicate": {"type": "minecraft:matching_blocks", "blocks": "minecraft:dirt"}
+        },
+        "requirements": {
+          "type": "minecraft:entity_properties",
+          "entity": "this",
+          "predicate": {"minecraft:flags": {"is_on_ground": true}}
+        }
+      }
+    ]
+  }
+}

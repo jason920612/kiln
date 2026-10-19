@@ -48,13 +48,11 @@ pub(crate) struct DamageRules {
     pub difficulty: u8,
     /// `minecraft:keep_inventory`.
     pub keep_inventory: bool,
-    /// The enchantments with `prevent_equipment_drop` (see `kiln_inventory::Rules`).
-    pub vanishing: Option<&'static [i32]>,
 }
 
 impl Default for DamageRules {
     fn default() -> Self {
-        DamageRules { pvp: true, fall: true, fire: true, freeze: true, drowning: true, difficulty: 2, keep_inventory: false, vanishing: None }
+        DamageRules { pvp: true, fall: true, fire: true, freeze: true, drowning: true, difficulty: 2, keep_inventory: false }
     }
 }
 
@@ -935,12 +933,12 @@ impl Player {
         let keep = ctx.rules.keep_inventory;
         if !keep && self.game_mode != 3 {
             for i in 0..self.inv.items.len() {
-                if kiln_inventory::rules::prevents_equipment_drop(ctx.rules.vanishing, &self.inv.items[i]) {
+                if kiln_inventory::rules::prevents_equipment_drop(&self.inv.items[i]) {
                     self.inv.items[i] = kiln_item::ItemStack::empty();
                 }
             }
             for i in 0..self.inv.equipment.len() {
-                if kiln_inventory::rules::prevents_equipment_drop(ctx.rules.vanishing, &self.inv.equipment[i]) {
+                if kiln_inventory::rules::prevents_equipment_drop(&self.inv.equipment[i]) {
                     self.inv.equipment[i] = kiln_item::ItemStack::empty();
                 }
             }

@@ -260,16 +260,6 @@ pub(crate) fn weapon_value(p: &Player, weapon: &ItemStack, tool: &ItemStack, c: 
     v
 }
 
-/// Whether the weapon has an enchantment with `projectile_spawned` effects (flame).
-fn sets_projectiles_on_fire(p: &Player, weapon: &ItemStack) -> bool {
-    let Some(loot) = p.loot.clone() else { return false };
-    let mut fire = false;
-    loot.for_each_enchantment(weapon, |e, _| {
-        fire |= e.effects.other.iter().any(|id| id.as_str() == "minecraft:projectile_spawned");
-    });
-    fire
-}
-
 /// `ProjectileWeaponItem.draw`: the projectiles one shot fires, taken from the ammunition in
 /// `slot` (`None`: a creative player's free arrow). The first uses ammunition as
 /// `useAmmo` says (infinity and creative players keep it, marked intangible); multishot's
@@ -370,7 +360,6 @@ pub(crate) fn shoot(
     let start = ((n - 1) % 2) as f32 * step / 2.0;
     let mut sign = 1.0f32;
     let mut shot = 0;
-    let fire = sets_projectiles_on_fire(p, weapon);
     for (j, ammo) in projectiles.into_iter().enumerate() {
         if ammo.is_empty() {
             continue;
@@ -380,10 +369,8 @@ pub(crate) fn shoot(
         let seed = projectile_seed(level, p, (spawns.len() + j) as u64);
         let mut e = create_arrow(p, weapon, &ammo, crit, seed);
         aim(&mut e, p, j, angle);
-        // `applyOnProjectileSpawned`: flame sets the arrow alight.
-        if fire && matches!(e.kind, kiln_entity::EntityKind::Arrow(_)) {
-            e.ignite_for_seconds(100.0);
-        }
+        // `applyOnProjectileSpawned`: the `projectile_spawned` effects (flame sets the arrow alight).
+        crate::enchant_fx::projectile_spawned(p, level, &mut e, &ammo, weapon, spawns);
         push_spawn(spawns, e);
         shot += 1;
         p.hurt_and_break(if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand }, 1, None);

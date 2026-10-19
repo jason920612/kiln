@@ -140,8 +140,8 @@ fn can_replace_current_item(m: &MobData, candidate: &ItemStack, current: &ItemSt
     }
     let value = |s: &ItemStack, attr| kinds::piglin::approximate_attribute(m, s, attr, slot);
     if is_armor(slot) {
-        // `compareArmor`: a curse of binding keeps what is worn.
-        let binding = kiln_item::registry::ENCHANTMENT.id("minecraft:binding_curse").is_some_and(|id| current.get(kiln_item::keys::ENCHANTMENTS).is_some_and(|e| e.level(id) > 0));
+        // `compareArmor`: an enchantment with `prevent_armor_change` (binding) keeps what is worn.
+        let binding = kiln_item::enchant_flags::has(current, kiln_item::enchant_flags::Marker::PreventArmorChange);
         if binding {
             return false;
         }

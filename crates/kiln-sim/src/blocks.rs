@@ -1527,10 +1527,8 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                     let components = out.removed_components.iter().rev().find(|(p, _)| *p == pos).map(|(_, c)| c.clone());
                     // `InfestedBlock.spawnAfterBreak`: a silverfish comes out unless the tool has
                     // silk touch (`#prevents_infested_spawns`).
-                    let silk = tool.as_ref().and_then(|t| t.get(kiln_item::keys::ENCHANTMENTS)).is_some_and(|e| {
-                        kiln_item::registry::ENCHANTMENT.id("minecraft:silk_touch").is_some_and(|id| e.level(id) > 0)
-                    });
-                    if !silk && kiln_entity::mob::kinds::silverfish::is_infested(state) {
+                    let prevented = tool.as_ref().is_some_and(|t| t.has_enchantment_tag("minecraft:prevents_infested_spawns"));
+                    if !prevented && kiln_entity::mob::kinds::silverfish::is_infested(state) {
                         let at = [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5];
                         spawns.push(crate::mobs::spawn(kiln_entity::mob::MobKind::Silverfish, at, Some(0.0), None));
                     }

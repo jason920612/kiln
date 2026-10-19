@@ -2779,8 +2779,6 @@ pub(crate) struct MobStab {
     /// The `causeExtraKnockback` strengths in order (0 skips one).
     pub knockbacks: [f32; 2],
     pub dismount: bool,
-    /// Fire aspect: seconds the entity burns when hurt.
-    pub fire_seconds: f32,
 }
 
 /// What a stab did to the entity.
@@ -2921,9 +2919,6 @@ pub(crate) fn stab_mob(
         {
             kiln_entity::ride::remove_passenger(vp, stab.target);
         }
-    }
-    if hurt && stab.fire_seconds > 0.0 && is_mob {
-        phys.ignite_for_seconds(stab.fire_seconds);
     }
     let victim = kiln_entity::level::Seen::of(&phys);
     let health_after = kiln_entity::mob::data(&phys).map(|m| m.health);

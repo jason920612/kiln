@@ -38,24 +38,21 @@ pub struct Trident {
     pub loyalty: u8,
     /// The thrown item (`pickupItemStack`), when a player threw it.
     pub item: Option<kiln_item::ItemStack>,
-    /// Channeling: a hit in a thunderstorm under the open sky calls lightning.
-    pub channeling: bool,
     /// Damage the weapon's enchantments add to the 8 (without target conditions).
     pub bonus_damage: f32,
     /// `clientSideReturnTridentTickCount`.
     pub returning: i32,
 }
 
-/// A trident a player threw: its item, loyalty, channeling and extra damage.
+/// A trident a player threw: its item, loyalty and extra damage.
 #[allow(clippy::too_many_arguments)]
-pub fn thrown_by_player(pos: Vec3, owner: i32, item: kiln_item::ItemStack, loyalty: u8, channeling: bool, bonus_damage: f32, creative: bool, seed: i64) -> Entity {
+pub fn thrown_by_player(pos: Vec3, owner: i32, item: kiln_item::ItemStack, loyalty: u8, bonus_damage: f32, creative: bool, seed: i64) -> Entity {
     let data = Trident {
         owner: Some(owner),
         pickup: !creative,
         creative_only: creative,
         loyalty,
         item: Some(item),
-        channeling,
         bonus_damage,
         ..Default::default()
     };
@@ -86,9 +83,8 @@ pub fn load(r: &mut Input) -> Option<Box<dyn EntityExt>> {
     let pickup_mode = r.byte_or("pickup", 0);
     let dealt_damage = r.bool_or("DealtDamage", false);
     let item = r.get("item").and_then(|t| kiln_item::ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty());
-    let enchanted = |name: &str| item.as_ref().is_some_and(|s| enchantment_level(s, name) > 0);
-    let loyalty = item.as_ref().map_or(0, |s| enchantment_level(s, "minecraft:loyalty").clamp(0, 127) as u8);
-    let channeling = enchanted("minecraft:channeling");
+    // `ThrownTrident`'s loyalty: the item's `trident_return_acceleration` effects.
+    let loyalty = item.as_ref().and_then(|s| crate::enchanting::with_loot(|loot| loot.trident_return_acceleration(s))).unwrap_or(0).clamp(0, 127) as u8;
     Some(Box::new(Trident {
         owner: None,
         left_owner,
@@ -104,16 +100,9 @@ pub fn load(r: &mut Input) -> Option<Box<dyn EntityExt>> {
         creative_only: pickup_mode == 2,
         loyalty,
         item,
-        channeling,
         bonus_damage: 0.0,
         returning: 0,
     }))
-}
-
-/// The level of enchantment `name` on a stack (loaded tridents keep loyalty and channeling).
-fn enchantment_level(s: &kiln_item::ItemStack, name: &str) -> i32 {
-    let Some(id) = kiln_item::registry::ENCHANTMENT.id(name) else { return 0 };
-    s.get(kiln_item::keys::ENCHANTMENTS).map_or(0, |e| e.level(id))
 }
 
 const GRAVITY: f64 = 0.05;
@@ -284,18 +273,6 @@ impl EntityExt for Trident {
 }
 
 impl Trident {
-    /// Channeling's lightning at `at`: a thundering level and open sky there (approximation:
-    /// full sky light for `canSeeSky`); the bolt credits the thrower.
-    fn call_lightning(&self, level: &mut dyn EntityLevel, at: Vec3) {
-        let Some(owner) = self.owner.filter(|_| self.channeling) else { return };
-        if !level.is_thundering() || level.sky_light(BlockPos::containing(at.x, at.y, at.z)) < 15 {
-            return;
-        }
-        let (id, seed) = (level.next_entity_id(), level.fresh_seed());
-        let bolt = crate::ext_entity::lightning::channeled(id, 0, at, owner, seed);
-        level.add_entity(bolt);
-    }
-
     fn check_left_owner(&mut self, e: &Entity, level: &dyn EntityLevel) {
         if self.left_owner || self.left_owner_checked {
             return;
@@ -395,9 +372,9 @@ impl Trident {
             level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: e.type_name, owner: self.owner, hit: Hit::Entity { id, location } });
             false
         };
-        // Channeling (`post_attack`: `summon_entity` in a thunderstorm under the open sky).
-        if hurt {
-            self.call_lightning(level, target.0);
+        // The weapon's `post_attack` effects (channeling: lightning in a thunderstorm under the open sky).
+        if hurt && let Some(w) = self.item.clone() {
+            crate::enchanting::run_projectile_post_attack(e, level, &w, self.owner, id, crate::mob::weapon::damage_type_id(DamageKind::Trident));
         }
         // `projectileReceivesSideEffectsOnHit`, then `deflect(REVERSE)` from the trident's random
         // (an enderman that teleported away is not touched: the trident flies on).
@@ -410,9 +387,12 @@ impl Trident {
     /// `AbstractArrow.onHitBlock`: sticks in the block, backed off 0.05 against the motion.
     fn hit_block(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, pos: BlockPos, face: Direction, location: Vec3) {
         self.last_state = Some(level.block(pos));
-        // Channeling's `hit_block`: a lightning rod calls the bolt.
-        if crate::blocks::block_name(level.block(pos)) == "minecraft:lightning_rod" {
-            self.call_lightning(level, Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 1.0, pos.z as f64 + 0.5));
+        // `ThrownTrident.hitBlockEnchantmentEffects`: the weapon's `hit_block` effects at the block's bottom centre (channeling).
+        if let Some(w) = self.item.clone() {
+            let state = level.block(pos);
+            let clamp = |v: f64, at: i32| v.clamp((at as f32 + 1.0e-5f32) as f64, at as f64 + 1.0 - 9.999999747378752E-6);
+            let at = [clamp(location.x, pos.x), clamp(location.y, pos.y), clamp(location.z, pos.z)];
+            crate::enchanting::run_projectile_effects(crate::enchanting::ProjectileTrigger::HitBlock, e, level, &w, self.owner, at, Some(state));
         }
         level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: e.type_name, owner: self.owner, hit: Hit::Block { pos, face, location } });
         let d = e.delta;

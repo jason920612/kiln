@@ -53,6 +53,9 @@ pub(crate) struct Packs {
     pub timers: TimerQueue,
     /// `#minecraft:load` runs on the next tick (`ServerFunctionManager.postReload`).
     pub load_pending: bool,
+    /// The registry entries read when the world loaded (`enchantment`, `enchantment_provider`, ...):
+    /// `/reload` keeps them, as vanilla keeps its registries.
+    pub world_defs: Option<std::sync::Arc<kiln_loot::data::WorldDefs>>,
     /// The enabled/disabled lists changed since `level.dat` was written.
     pub dirty: bool,
 }
@@ -96,6 +99,7 @@ impl Packs {
             library: FunctionLibrary::default(),
             timers: TimerQueue::default(),
             load_pending: true,
+            world_defs: None,
             dirty: false,
         };
         packs.discover();
@@ -459,6 +463,10 @@ impl Sim {
         // The tags first: recipes and loot tables resolve theirs while they load.
         if !only_vanilla {
             self.load_tags();
+        } else {
+            // The registry entries the world starts with are vanilla's (`/reload` keeps them).
+            self.commands.packs.world_defs = self.loot.as_ref().map(|l| l.world.clone());
+            self.install_enchant_markers();
         }
         self.load_packs(!only_vanilla);
     }
@@ -517,6 +525,17 @@ impl Sim {
         tags
     }
 
+    /// The enchantments with the marker components (the curses), for the code that holds no loot data.
+    fn install_enchant_markers(&self) {
+        match self.loot.as_deref() {
+            Some(loot) => {
+                let (armor, drop) = loot.marker_enchantments();
+                kiln_item::enchant_flags::install(armor, drop);
+            }
+            None => kiln_item::enchant_flags::reset(),
+        }
+    }
+
     /// Loads functions and function tags, and with `data`, recipes and loot tables, from the
     /// enabled packs.
     fn load_packs(&mut self, data: bool) {
@@ -533,9 +552,13 @@ impl Sim {
                 }
                 // (The explorer maps need the world's structure search, which the loaded data does not know: it stays.)
                 let explorer = self.map_explorer.clone();
-                match kiln_loot::LootData::load_lenient_packs(&refs) {
+                // (`enchantment`, `enchantment_provider`, `jukebox_song`, `trade_set` and `villager_trade` are
+                // registries: loaded with the world, the first time, and kept by `/reload`.)
+                let frozen = self.commands.packs.world_defs.clone();
+                match kiln_loot::LootData::load_lenient_packs_with(&refs, frozen.as_deref()) {
                     Ok(mut loot) => {
                         loot.explorer = explorer;
+                        self.commands.packs.world_defs = Some(loot.world.clone());
                         self.loot = Some(std::sync::Arc::new(loot));
                     }
                     Err(e) => warn!("loot tables not reloaded: {e}"),
@@ -545,6 +568,7 @@ impl Sim {
             for p in self.players.values_mut() {
                 p.loot = self.loot.clone();
             }
+            self.install_enchant_markers();
         }
         self.commands.packs.library = self.load_functions(&roots);
         self.commands.gametests.defs = crate::gametest::Defs::load(&roots);
@@ -669,6 +693,37 @@ impl Sim {
         self.commands.stack = saved;
         self.commands.source = previous;
         self.flush_scoreboard();
+    }
+
+    /// `RunFunction.apply` for the `run_function` effects the players' enchantments asked for this tick: each function runs as the
+    /// player, at the effect's position and the player's rotation, silent, at permission level 2. A function that does not
+    /// exist is logged.
+    pub(crate) fn run_enchantment_functions(&mut self) {
+        let mut jobs = Vec::new();
+        for (&conn, p) in self.players.iter_mut().filter(|(_, p)| !p.function_requests.is_empty()) {
+            for (name, at) in std::mem::take(&mut p.function_requests) {
+                jobs.push((conn, name, at));
+            }
+        }
+        for (conn, name, at) in jobs {
+            let Some(f) = Identifier::parse(&name).and_then(|id| self.commands.packs.library.get(&id)) else {
+                error!("Enchantment run_function effect failed for non-existent function {name}");
+                continue;
+            };
+            let Some(p) = self.players.get(&conn) else { continue };
+            let mut stack = SourceStack::of_entity(crate::commands::PlayerRef::of(conn, p, &self.commands.scoreboard));
+            stack.position = at;
+            stack.rotation = p.rot;
+            let dispatcher = self.commands.dispatcher.clone();
+            let previous = std::mem::replace(&mut self.commands.source, crate::commands::CommandSource::Console);
+            let saved = std::mem::replace(&mut self.commands.stack, stack.clone());
+            if let Err(e) = self.editing(|s| kiln_command::vanilla::run_as_server(&dispatcher, s, &f, stack)) {
+                warn!("Failed to execute function {}: {}", f.id, e.to_plain());
+            }
+            self.commands.stack = saved;
+            self.commands.source = previous;
+            self.flush_scoreboard();
+        }
     }
 
     /// Writes the scheduled functions if they changed.

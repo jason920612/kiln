@@ -63,6 +63,10 @@ impl kiln_entity::enchanting::Enchanter for LootEnchanter {
     fn post_attack(&self, hit: &kiln_entity::enchanting::Hit, random: &mut dyn kiln_javamath::random::RandomSource) -> Vec<kiln_entity::enchanting::MobPostAttack> {
         self.0.mob_post_attack(hit.weapon, hit.attacker, hit.victim, hit.damage_type, random)
     }
+
+    fn loot(&self) -> Option<&kiln_loot::LootData> {
+        Some(&self.0)
+    }
 }
 
 /// Lets the mobs this thread runs enchant their spawn equipment from `loot`'s providers until
@@ -94,6 +98,9 @@ impl Player {
             in_water: false,
             fall_distance: self.fall_distance,
             player: Some(PlayerFacts { game_mode: self.game_mode, food: self.food, saturation: self.saturation, level: self.xp_level }),
+            movement: self.move_delta,
+            movement_block: None,
+            on_pos: None,
         }
     }
 
@@ -292,7 +299,8 @@ fn apply_entity_effect(
                 p.add_effect(crate::effects::Effect::simple(id, duration, amplifier));
             }
         }
-        EntityEffect::Other(_) | EntityEffect::Explode { .. } | EntityEffect::ApplyExhaustion(_) | EntityEffect::ApplyImpulse { .. } | EntityEffect::PlaySound { .. } => {}
+        // (The rest is for attacks of other kinds, or not carried out by a hit: see `crate::enchant_fx`.)
+        _ => {}
     }
 }
 

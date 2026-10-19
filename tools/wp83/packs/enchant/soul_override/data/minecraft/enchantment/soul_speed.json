@@ -1,0 +1,28 @@
+{
+  "description": {"translate": "enchantment.minecraft.soul_speed"},
+  "supported_items": "#minecraft:enchantable/foot_armor",
+  "weight": 1,
+  "max_level": 3,
+  "min_cost": {"base": 10, "per_level_above_first": 10},
+  "max_cost": {"base": 25, "per_level_above_first": 10},
+  "anvil_cost": 8,
+  "slots": ["feet"],
+  "effects": {
+    "minecraft:location_changed": [
+      {
+        "effect": {
+          "type": "minecraft:attribute",
+          "id": "minecraft:enchantment.soul_speed",
+          "attribute": "minecraft:movement_speed",
+          "operation": "add_value",
+          "amount": {"type": "minecraft:linear", "base": 0.5, "per_level_above_first": 0.25}
+        },
+        "requirements": {
+          "type": "minecraft:entity_properties",
+          "entity": "this",
+          "predicate": {"minecraft:movement_affected_by": {"block": {"blocks": "#minecraft:soul_speed_blocks"}}}
+        }
+      }
+    ]
+  }
+}

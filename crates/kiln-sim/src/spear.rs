@@ -427,9 +427,6 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         } else {
             [0.0, 0.0]
         };
-        let fire = weapon
-            .get(keys::ENCHANTMENTS)
-            .map_or(0, |e| e.level(kiln_item::registry::ENCHANTMENT.id("minecraft:fire_aspect").unwrap_or(-1)));
         let p = &*self.players[a];
         let stab = crate::entities::MobStab {
             target: id,
@@ -441,7 +438,6 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
             damage: s.damage,
             knockbacks: strengths,
             dismount: s.dismount,
-            fire_seconds: if s.damage { 4.0 * fire as f32 } else { 0.0 },
         };
         let Some(out) = crate::entities::stab_mob(self.entities, self.level, self.players, self.spawns, self.deaths, &stab) else { return false };
         // The attacker slows down for each knockback (`Player.causeExtraKnockback`).
@@ -499,8 +495,23 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
                 }
             }
         }
-        if hurt && let Victim::Player(t) = victim {
-            self.with_ctx(|players, ctx| crate::combat::post_attack(players, a, t, source, ctx));
+        // The post-attack enchantment effects of a hurt victim (fire aspect's `ignite`, ...).
+        if hurt {
+            match victim {
+                Victim::Player(t) => self.with_ctx(|players, ctx| crate::combat::post_attack(players, a, t, source, ctx)),
+                Victim::Entity(id) => {
+                    let mut blow = crate::melee::Work {
+                        entities: &mut *self.entities,
+                        level: &mut *self.level,
+                        players: &mut *self.players,
+                        spawns: &mut *self.spawns,
+                        deaths: &mut *self.deaths,
+                        rng: self.rng.take(),
+                    };
+                    blow.post_attack_entity(a, id, source);
+                    self.rng = blow.rng.take();
+                }
+            }
         }
         // `damageStatsAndHearts`.
         let health_now = match victim {
@@ -567,7 +578,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
             EntityEffect::ApplyExhaustion(amount) => self.players[a].exhaust(amount.calculate(level)),
             EntityEffect::ApplyImpulse { direction, coordinate_scale, magnitude } => {
                 let p = &mut *self.players[a];
-                let look = look_rotate(p.rot, *direction);
+                let look = kiln_loot::fx::look_rotate(p.rot, *direction);
                 let m = magnitude.calculate(level) as f64;
                 let impulse = [look[0] * coordinate_scale[0] * m, look[1] * coordinate_scale[1] * m, look[2] * coordinate_scale[2] * m];
                 p.vel = [p.vel[0] + impulse[0], p.vel[1] + impulse[1], p.vel[2] + impulse[2]];
@@ -584,51 +595,27 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
                 let (at, game_time) = (p.pos, self.level.env.game_time);
                 play_sound(self.players, at, sounds[index].as_str(), SoundSource::Players, v, pi, None, game_time);
             }
-            _ => {}
+            // Any other effect (ignite, particles, a summoned entity, blocks, a function ...): resolved against the wielder like the
+            // `tick` and `location_changed` ones, and done to it (`Player::apply_fx`).
+            other => {
+                let mut actions = Vec::new();
+                {
+                    let p = &mut *self.players[a];
+                    let subject = p.fx_subject();
+                    let mut entity_rng = std::mem::replace(&mut p.entity_rng, LegacyRandom::new(0));
+                    let mut level_rng = self.rng.take().unwrap_or_else(|| LegacyRandom::new(0));
+                    kiln_loot::fx::resolve(other, level, p.pos, &subject, &mut entity_rng, &mut level_rng, &mut actions);
+                    self.rng = Some(level_rng);
+                    p.entity_rng = entity_rng;
+                }
+                self.with_ctx(|players, ctx| {
+                    for action in actions {
+                        players[a].apply_fx(action, EquipmentSlot::MainHand, ctx);
+                    }
+                });
+            }
         }
     }
-}
-
-/// `Entity.getLookQuaternion().transform(direction)`: `direction` turned by the player's
-/// rotation (yaw about y, then pitch about x), in the floats `Quaternionf` works in.
-fn look_rotate(rot: [f32; 2], direction: [f64; 3]) -> [f64; 3] {
-    // `Quaternionf.rotationYXZ(-yRot * (PI / 180), xRot * (PI / 180), 0)`.
-    let (ay, ax) = (-rot[0] * 0.017453292, rot[1] * 0.017453292);
-    let sx = kiln_javamath::trig::sin((ax * 0.5) as f64) as f32;
-    let cx = cos_from_sin(sx, ax * 0.5);
-    let sy = kiln_javamath::trig::sin((ay * 0.5) as f64) as f32;
-    let cy = cos_from_sin(sy, ay * 0.5);
-    let (x, y, z, w) = (cy * sx, sy * cx, -sy * sx, cy * cx);
-    // `Quaternionf.transform(x, y, z, dest)` in `double`s from the float components.
-    let (qx, qy, qz, qw) = (x as f64, y as f64, z as f64, w as f64);
-    let (d, e) = (direction, 2.0);
-    let _ = e;
-    let w2 = qw * qw;
-    let x2 = qx * qx;
-    let y2 = qy * qy;
-    let z2 = qz * qz;
-    let zw = qz * qw;
-    let xy = qx * qy;
-    let xz = qx * qz;
-    let yw = qy * qw;
-    let yz = qy * qz;
-    let xw = qx * qw;
-    let (dx, dy, dz) = (d[0], d[1], d[2]);
-    [
-        (w2 + x2 - z2 - y2) * dx + (-zw + xy - zw + xy) * dy + (yw + xz + xz + yw) * dz,
-        (xy + zw + zw + xy) * dx + (y2 - z2 + w2 - x2) * dy + (yz + yz - xw - xw) * dz,
-        (xz - yw + xz - yw) * dx + (yz + yz + xw + xw) * dy + (z2 - y2 - x2 + w2) * dz,
-    ]
-}
-
-/// `Math.cosFromSin(sin, angle)` of JOML (the non-fast variant): the cosine from the sine,
-/// signed by where the angle falls.
-fn cos_from_sin(sin: f32, angle: f32) -> f32 {
-    let cos = (1.0f32 - sin * sin).sqrt();
-    let a = angle + std::f32::consts::FRAC_PI_2;
-    let b = a - ((a / std::f32::consts::TAU) as i32) as f32 * std::f32::consts::TAU;
-    let b = if b < 0.0 { std::f32::consts::TAU + b } else { b };
-    if b >= std::f32::consts::PI { -cos } else { cos }
 }
 
 /// `Enchantment.entityContext`: the wielder as `this_entity`, at its position, with the
