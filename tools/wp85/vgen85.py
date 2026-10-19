@@ -17,7 +17,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SV = os.path.join(HERE, "sv85.sh")
 
 
+def port_free():
+    out = subprocess.run(["ss", "-ltn"], capture_output=True, text=True).stdout
+    return ":25596 " not in out
+
+
 def main():
+    if not port_free():
+        raise SystemExit("port 25596 is taken (a server of an earlier run? stop it by its pid in ~/wp85/*/server.pid)")
     case_name = sys.argv[1]
     suffix = sys.argv[2] if len(sys.argv) > 2 else ""
     case = next(c for c in json.load(open(os.path.join(HERE, "cases.json"))) if c["name"] == case_name)
@@ -34,6 +41,8 @@ def main():
             at = data.find(text, since)
             if at >= 0:
                 return at + len(text)
+            if data.find("An unexpected error occurred", since) >= 0 or data.find("Stopping server", since) >= 0:
+                raise SystemExit(f"the server failed while waiting for {text!r}; see {log}")
             time.sleep(0.5)
         raise SystemExit(f"timeout waiting for {text!r}; see {log}")
 
@@ -44,6 +53,14 @@ def main():
     def mark():
         return len(open(log, encoding="utf-8", errors="replace").read())
 
+    try:
+        generate(case, d, log, wait_for, send, mark)
+    finally:
+        subprocess.run(["bash", SV, "V", "stop"], env=env)
+    print("done", d)
+
+
+def generate(case, d, log, wait_for, send, mark):
     wait_for("Done (")
     for dim, x1, z1, x2, z2, *_ in case["areas"]:
         cx1, cz1, cx2, cz2 = x1 >> 4, z1 >> 4, x2 >> 4, z2 >> 4
@@ -56,8 +73,6 @@ def main():
     at = mark()
     send("save-all flush")
     wait_for("Saved the game", since=at)
-    subprocess.run(["bash", SV, "V", "stop"], env=env, check=True)
-    print("done", d)
 
 
 if __name__ == "__main__":

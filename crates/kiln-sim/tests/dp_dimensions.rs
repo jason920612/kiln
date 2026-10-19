@@ -194,17 +194,17 @@ fn a_superflat_dimension_lays_its_layers_in_its_own_height() {
     w.run(&format!("execute in {FLAT} run forceload add 0 0 15 15"));
     let at = |w: &World, y| w.sim.block_in(FLAT, 8, y, 8);
     use kiln_data::blocks::default_state as d;
-    // From the type's min_y -16: bedrock, three stone, two dirt, grass, one water, then air up to the 64 blocks of height.
+    // From the type's min_y -16: bedrock, two stone, one water (a layer vanilla fills in after the others, as it is not opaque), two dirt, grass,
+    // then air up to the 64 blocks of height.
     assert_eq!(at(&w, -17), Some(d::VOID_AIR), "below the level's height");
     assert_eq!(at(&w, -16), Some(d::BEDROCK));
-    for y in -15..=-13 {
-        assert_eq!(at(&w, y), Some(d::STONE), "y {y}");
-    }
+    assert_eq!(at(&w, -15), Some(d::STONE));
+    assert_eq!(at(&w, -14), Some(d::STONE));
+    assert_eq!(at(&w, -13), Some(d::WATER));
     assert_eq!(at(&w, -12), Some(d::DIRT));
     assert_eq!(at(&w, -11), Some(d::DIRT));
     assert_eq!(at(&w, -10), Some(d::GRASS_BLOCK));
-    assert_eq!(at(&w, -9), Some(d::WATER));
-    assert_eq!(at(&w, -8), Some(d::AIR));
+    assert_eq!(at(&w, -9), Some(d::AIR));
     assert_eq!(at(&w, 47), Some(d::AIR));
     assert_eq!(at(&w, 48), Some(d::VOID_AIR), "above the level's height");
     assert_eq!(w.sim.biome_in(FLAT, 8, -16, 8), kiln_data::synced_id("minecraft:worldgen/biome", "minecraft:plains").map(|b| b as u16));

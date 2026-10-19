@@ -333,10 +333,10 @@ def dims():
                 "structure_overrides": [],
                 "layers": [
                     {"block": "minecraft:bedrock", "height": 1},
-                    {"block": "minecraft:stone", "height": 3},
+                    {"block": "minecraft:stone", "height": 2},
+                    {"block": "minecraft:water", "height": 1},
                     {"block": "minecraft:dirt", "height": 2},
                     {"block": "minecraft:grass_block", "height": 1},
-                    {"block": "minecraft:short_grass", "height": 1},
                 ],
             },
         },
