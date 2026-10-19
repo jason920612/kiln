@@ -33,9 +33,9 @@ def show(tag, pkts):
 steps = [
     ("chat hello", lambda: a.chat("hello world")),
     ("chat second", lambda: a.chat("second")),
-    ("cmd say", lambda: a.command("say hi there")),
-    ("cmd me", lambda: a.command("me waves")),
-    ("cmd msg", lambda: a.command("msg Bob secret")),
+    ("cmd say", lambda: a.command_signed("say hi there")),
+    ("cmd me", lambda: a.command_signed("me waves")),
+    ("cmd msg", lambda: a.command_signed("msg Bob secret")),
     ("cmd tellraw", lambda: a.command('tellraw @a "raw"')),
 ]
 for name, fn in steps:

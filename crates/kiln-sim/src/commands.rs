@@ -4,7 +4,7 @@
 //! the source: `CommandSource` says who is executing (a player or the console) while a command
 //! runs.
 
-use crate::{Player, Sim, players::chat_disguised};
+use crate::{Player, Sim};
 use bytes::Bytes;
 use kiln_command::selector::{Aabb, SelectorTarget, SelectorWorld};
 use kiln_command::{

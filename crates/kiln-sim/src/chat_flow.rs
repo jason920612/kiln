@@ -16,7 +16,6 @@ use tracing::{error, info, warn};
 
 /// `ChatVisiblity`: the packets a player with this chat setting does not get.
 pub(crate) const CHAT_FULL: u8 = 0;
-pub(crate) const CHAT_COMMANDS_ONLY: u8 = 1;
 pub(crate) const CHAT_HIDDEN: u8 = 2;
 
 pub(crate) fn now_ms() -> i64 {

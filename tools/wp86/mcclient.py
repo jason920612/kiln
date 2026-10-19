@@ -241,6 +241,12 @@ class Client:
     def command(self, text):
         self.send_raw(SB_CHAT_COMMAND, mcstring(text))
 
+    def command_signed(self, text, timestamp_ms=None, salt=0):
+        # what a client without a chat session sends for a command with message arguments: no signatures
+        ts = int(time.time() * 1000) if timestamp_ms is None else timestamp_ms
+        body = mcstring(text) + struct.pack(">qq", ts, salt) + varint(0) + varint(0) + bytes(3) + bytes(1)
+        self.send_raw(SB_CHAT_COMMAND_SIGNED, body)
+
     def close(self):
         try:
             self.sock.close()
