@@ -362,7 +362,7 @@ impl Entity {
         self.air_drag_override.unwrap_or(0.98)
     }
 
-    fn is_living(&self) -> bool {
+    pub(crate) fn is_living(&self) -> bool {
         matches!(self.kind, EntityKind::Player(_) | EntityKind::Mob(_) | EntityKind::MobTicking { .. })
     }
 
