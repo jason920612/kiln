@@ -28,6 +28,7 @@ mod melee;
 mod command_data;
 mod commands;
 mod chat;
+mod settings;
 mod chat_flow;
 mod consume;
 mod buckets;
@@ -227,8 +228,9 @@ pub struct MobState {
 /// pauses an empty server: tests and tools run worlds without players.
 #[derive(Debug, Clone)]
 pub struct ServerSettings {
-    /// `gamemode`: the default game mode, 0 survival .. 3 spectator.
-    pub default_game_mode: u8,
+    /// `gamemode`: the default game mode, 0 survival .. 3 spectator (`None`: the world's own, creative in a new one,
+    /// as before Kiln had a `server.properties`).
+    pub default_game_mode: Option<u8>,
     /// `force-gamemode`: every join sets the default game mode.
     pub force_gamemode: bool,
     /// `hardcore`: a new world is hardcore.
@@ -265,7 +267,7 @@ pub struct ServerSettings {
 impl Default for ServerSettings {
     fn default() -> Self {
         Self {
-            default_game_mode: 0,
+            default_game_mode: None,
             force_gamemode: false,
             hardcore: false,
             spawn_protection: 16,
@@ -1688,6 +1690,10 @@ pub struct Sim {
     /// Packets of players in [`WAITING`] that need their region's blocks (clicks on blocks and
     /// entities, container clicks, ...), applied once they are placed.
     held_packets: Vec<(ConnId, PlayIn)>,
+    /// Ticks in a row without players (`MinecraftServer.emptyTicks`), for `pause-when-empty-seconds`.
+    empty_ticks: i64,
+    /// A paused tick met the shutdown message.
+    stopped: bool,
     /// A world save going on over several ticks: the chunks still to copy, by level.
     save_run: Option<Vec<(DimId, ChunkPos)>>,
     /// The maps (`data/minecraft/maps`), shared with the players that use empty maps.
@@ -1979,6 +1985,8 @@ impl Sim {
             siege: Default::default(),
             world: world_state::WorldState { pipelines, feature_hosts, ..Default::default() },
             held_packets: Vec::new(),
+            empty_ticks: 0,
+            stopped: false,
             save_run: None,
             maps,
             pearls_returning: Vec::new(),
@@ -1989,6 +1997,7 @@ impl Sim {
         sim.commands.bossbars.seed(now.as_nanos() as u64);
         sim.commands.seed = seed;
         sim.load_admin_state();
+        sim.apply_server_settings();
         sim.load_scoreboard();
         sim.load_stopwatches();
         sim.load_weather();
@@ -2008,6 +2017,11 @@ impl Sim {
     /// Runs one tick: applies the connection events received since the last tick, then
     /// simulates and flushes every connection. Returns `false` once the simulation stopped.
     pub fn step(&mut self, inbox: impl IntoIterator<Item = ToSim>) -> bool {
+        let mut inbox: Vec<ToSim> = inbox.into_iter().collect();
+        // A world without players stops after `pause-when-empty-seconds`.
+        if self.paused_tick(&mut inbox) {
+            return !std::mem::take(&mut self.stopped);
+        }
         let start = Instant::now();
         let mut mark = start;
         let mut lap = |stats: &mut stats::TickStats, name| {

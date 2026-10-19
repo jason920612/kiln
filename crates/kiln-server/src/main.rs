@@ -140,7 +140,7 @@ fn main() -> Result<()> {
     sim_config.broadcast_console_to_ops = props.broadcast_console_to_ops;
     sim_config.broadcast_rcon_to_ops = props.broadcast_rcon_to_ops;
     sim_config.server = kiln_sim::ServerSettings {
-        default_game_mode: props.gamemode,
+        default_game_mode: (!legacy).then_some(props.gamemode),
         force_gamemode: props.force_gamemode,
         hardcore: props.hardcore,
         spawn_protection: props.spawn_protection,

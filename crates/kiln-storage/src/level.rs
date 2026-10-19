@@ -186,6 +186,12 @@ impl LevelStore {
         self.data().and_then(|d| d.get("difficulty_settings")?.get("hardcore")?.as_i64()) == Some(1)
     }
 
+    /// Marks the world hardcore (`LevelSettings`' `hardcore` of a new world), written with the next save.
+    pub fn set_hardcore(&mut self, hardcore: bool) {
+        let root = self.level.get_or_insert_with(|| Tag::Compound(Vec::new()));
+        put(child(child(root, "Data"), "difficulty_settings"), "hardcore", Tag::Byte(i8::from(hardcore)));
+    }
+
     /// The world seed (`world_gen_settings.dat`), if the world has one.
     pub fn seed(&self) -> Option<i64> {
         self.world_gen.as_ref()?.get("data")?.get("seed")?.as_i64()
