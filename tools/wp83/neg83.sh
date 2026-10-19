@@ -47,6 +47,8 @@ negsed "item defaults follow the registries" "$DP the_default_components" crates
 negsed "lenient tags (a bad tag does not stop the others)" "-p kiln-sim --lib tags::tests::later_packs" crates/kiln-loot/src/tags.rs 's|        errors.push(format!("{}/{}: missing references {}", key.0, key.1, missing.join(",")));|        errors.push(format!("{}/{}: missing references {}", key.0, key.1, missing.join(",")));\n        return Some(out);|'
 negsed "live tables replace the static ones" "-p kiln-data --lib installed_tags" crates/kiln-data/src/live.rs 's|^    publish(Tables::new(old.synced, tags, old.data.clone(), old.synced_custom, custom), false);|    let _ = (tags, custom);|'
 negsed "the vanilla tables are the default" "-p kiln-data --lib static_tables" crates/kiln-data/src/live.rs 's|    assert_eq!(synced().len(), registries::SYNCHRONIZED.len());|    assert_eq!(synced().len(), 0);|'
+negsed "entries the codec rejects are left out" "-p kiln-sim --lib registry_data::tests::entries_the_codec" $S/registry_data.rs 's|let missing: Vec<\&str> = required(registry).iter().copied().filter(\|k\| json.get(k).is_none()).collect();|let missing: Vec<\&str> = Vec::new();|'
+negsed "a later pack overrides an earlier one" "-p kiln-sim --test dp_two_packs" $S/registry_data.rs 's|                from_packs.insert(name, text);|                from_packs.entry(name).or_insert(text);|'
 # vanilla's own answer: the Java check must fail when the numbering is wrong
 if [ -z "$only" ] || [[ "numbering against vanilla" == *$only* ]]; then
   sed -i 's|split(a).cmp(&split(b))|split(a).1.cmp(\&split(b).1).then(split(a).0.cmp(\&split(b).0))|' $S/registry_data.rs
