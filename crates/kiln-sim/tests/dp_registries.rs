@@ -329,3 +329,23 @@ fn a_goat_horn_of_an_instrument_of_the_pack_plays_for_its_duration() {
     assert_eq!(cooldown(&mut g).into_iter().filter(|t| *t > 0).collect::<Vec<_>>(), [140]);
     g.cleanup();
 }
+
+#[test]
+fn trims_of_the_pack_are_smithed_and_numbered_by_the_registry() {
+    use kiln_item::{Holder, ItemStack, keys};
+    let _x = kiln_data::live::exclusive();
+    let (sim, dir, _) = start("trims");
+    let root = dir.join("datapacks/kiln_wp83");
+    let rules = kiln_inventory::Rules::load_packs(&[root.as_path()]).expect("the pack's recipes load: the trim pattern is a registry entry");
+    let (template, base, addition) = (ItemStack::of("minecraft:stick", 1).unwrap(), ItemStack::of("minecraft:iron_chestplate", 1).unwrap(), ItemStack::of("minecraft:amethyst_shard", 1).unwrap());
+    let i = rules.recipes.find_smithing(&template, &base, &addition).expect("the pack's smithing_trim recipe");
+    let out = rules.recipes.assemble_smithing(i, &base, &addition);
+    let trim = out.get(keys::TRIM).expect("a trim");
+    let wave = kiln_data::synced_id("minecraft:trim_pattern", "kiln83:wave").unwrap();
+    assert_eq!(trim.pattern, Holder::Reference(wave));
+    assert!(matches!(trim.material, Holder::Reference(m) if kiln_item::registry::TRIM_MATERIAL.name(m) == Some("minecraft:amethyst")));
+    // The pack's own trim material and pattern work in components too.
+    assert!(kiln_data::synced_id("minecraft:trim_material", "kiln83:coal_blue").is_some());
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}
