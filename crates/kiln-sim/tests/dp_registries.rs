@@ -583,7 +583,7 @@ fn a_block_transformer_of_the_pack_decides_what_the_hoe_does() {
     assert_eq!(g.sim.item_damage(1, 36), Some(3));
     g.ticks(3);
     let flint: i32 = g.sim.item_stacks().iter().filter(|s| s.item_name() == "minecraft:flint").map(|s| s.count()).sum();
-    assert_eq!(flint, 3, "the pack's loot table");
+    assert_eq!(flint, 3, "the pack's loot table: {:?}", g.sim.item_stacks().iter().map(|s| (s.item_name(), s.count())).collect::<Vec<_>>());
     // The pack's `hoe` replaces vanilla's rules: grass does not till; a rule's `copy_properties` keeps the axis.
     use_on(&mut g, [x + 2, y, z], 1, 3);
     assert_eq!(block(&g, [x + 2, y, z]), "minecraft:grass_block");

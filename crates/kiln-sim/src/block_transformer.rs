@@ -14,7 +14,6 @@ use crate::blocks::RegionLevel;
 use crate::entities::Spawn;
 use kiln_blocks::{BlockPos, Direction, Effect, Level, flags, state};
 use kiln_data::live::Cached;
-use kiln_item::ItemStack;
 use kiln_loot::Json;
 use std::collections::HashMap;
 use tracing::warn;
