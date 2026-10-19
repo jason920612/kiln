@@ -430,6 +430,7 @@ impl Component {
     /// server has now: a data pack's new entry shifts the ids sorted after it, and the ids of a synchronized registry
     /// (jukebox songs, trim materials and patterns, instruments, painting variants, banner patterns) are what clients read.
     pub(crate) fn renumber(&mut self) {
+        use crate::holder::{Holder, HolderSet};
         fn holder<T>(h: &mut Holder<T>, registry: &str) {
             if let Holder::Reference(id) = h
                 && let Some(now) = kiln_data::live::from_vanilla_id(registry, *id)
