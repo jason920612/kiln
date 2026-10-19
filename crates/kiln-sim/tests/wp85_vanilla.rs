@@ -132,6 +132,8 @@ fn compare(sim: &Sim, world: &Path, dimension: &str, (x1, z1, x2, z2): (i32, i32
 }
 
 fn run(name: &str) {
+    // The levels and registries are process-wide: one case at a time.
+    let _x = kiln_data::live::exclusive();
     let Some(datapack) = vanilla_data() else {
         eprintln!("skipped {name}: no vanilla data (KILN_DATAPACK or `cargo xtask data`)");
         return;
@@ -186,6 +188,7 @@ fn run(name: &str) {
         }
     }
     drop(sim);
+    kiln_data::levels::reset();
     let _ = std::fs::remove_dir_all(&dir);
     assert!(problems.is_empty(), "{name}: {problems:?}");
 }
