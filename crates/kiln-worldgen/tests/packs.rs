@@ -195,12 +195,12 @@ fn check(name: &str, dimension: &str, packs: &[&str]) {
         if ours != t.starts {
             start_diffs += 1;
             chunk_bad = true;
-            if first.len() < 12 {
+            {
                 let ids = |l: &[(String, kiln_proto::nbt::Tag)]| l.iter().map(|(i, _)| i.clone()).collect::<Vec<_>>();
                 let detail = ours.iter().zip(&t.starts).find(|(a, b)| a != b).map(|(a, b)| format!("
     kiln    {:?}
     vanilla {:?}", a.1, b.1)).unwrap_or_default();
-                first.push(format!("chunk {},{} structure starts: kiln {:?} vanilla {:?}{detail}", t.x, t.z, ids(&ours), ids(&t.starts)));
+                first.insert(0, format!("chunk {},{} structure starts: kiln {:?} vanilla {:?}{detail}", t.x, t.z, ids(&ours), ids(&t.starts)));
             }
         }
         bad_chunks += usize::from(chunk_bad);
