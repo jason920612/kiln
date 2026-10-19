@@ -114,7 +114,7 @@ impl PlayerRef {
             name: Named::Player(p.name.clone(), scoreboard.player_display_name(&p.name)),
             pos: p.pos,
             rot: p.rot,
-            dim: crate::DIMENSIONS[p.dim].0,
+            dim: crate::dim_key(p.dim),
             mode: game_mode(p.game_mode),
             team: scoreboard.team_of(&p.name).map(|t| t.name.clone()),
             entity: None,
@@ -149,7 +149,7 @@ impl PlayerRef {
             name: Named::Entity(display),
             pos: e.pos,
             rot,
-            dim: crate::DIMENSIONS[dim].0,
+            dim: crate::dim_key(dim),
             mode: GameMode::Survival,
             entity: Some(e.id),
             kind: e.kind.name,
@@ -550,7 +550,7 @@ impl Sim {
             // the way the block does, without an entity, at permission level 2.
             CommandSource::Block { dim, pos } => {
                 let name = crate::command_block::name_of(self, dim, pos);
-                let mut stack = SourceStack::new(name, crate::DIMENSIONS[dim].0, [pos[0] as f64 + 0.5, pos[1] as f64 + 0.5, pos[2] as f64 + 0.5]);
+                let mut stack = SourceStack::new(name, crate::dim_key(dim), [pos[0] as f64 + 0.5, pos[1] as f64 + 0.5, pos[2] as f64 + 0.5]);
                 stack.rotation = [crate::command_block::facing_yaw(self, dim, pos), 0.0];
                 stack.max_permission = 2;
                 stack
@@ -716,7 +716,7 @@ impl SelectorWorld for Sim {
         let sb = &self.commands.scoreboard;
         let near = |p: [f64; 3]| area.is_none_or(|a| (0..3).all(|k| p[k] > a.min[k] - 16.0 && p[k] < a.max[k] + 16.0));
         for (i, d) in self.dims.iter().enumerate() {
-            if dimension.is_some_and(|dim| dim != crate::DIMENSIONS[i].0) {
+            if dimension.is_some_and(|dim| dim != crate::dim_key(i)) {
                 continue;
             }
             let mut list: Vec<PlayerRef> = d
@@ -1382,7 +1382,7 @@ impl Host for Sim {
             let anchor = r.anchor();
             lines.push(Text::literal(format!(
                 "{} #{}: anchor cell {},{} (block {},{}), {} cells, {} chunks, {} players",
-                crate::DIMENSIONS[dim].0,
+                crate::dim_key(dim),
                 r.id().0,
                 anchor.x,
                 anchor.z,

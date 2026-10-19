@@ -211,14 +211,14 @@ impl Sim {
     /// `wandering_trader.dat` of the overworld.
     pub(crate) fn load_trader(&mut self) {
         let Some(dir) = self.storage.as_ref().map(|s| s.dir.clone()) else { return };
-        if let Some(data) = kiln_storage::saved_data::read(&dir.join(crate::dimension_dir(crate::DIMENSIONS[OVERWORLD_ID].0)), "wandering_trader") {
+        if let Some(data) = kiln_storage::saved_data::read(&dir.join(crate::dimension_dir(crate::dim_key(OVERWORLD_ID))), "wandering_trader") {
             self.trader = TraderSpawner::from_nbt(&data);
         }
     }
 
     pub(crate) fn save_trader(&mut self) {
         let Some(dir) = self.storage.as_ref().map(|s| s.dir.clone()) else { return };
-        if let Err(e) = kiln_storage::saved_data::write(&dir.join(crate::dimension_dir(crate::DIMENSIONS[OVERWORLD_ID].0)), "wandering_trader", self.trader.to_nbt()) {
+        if let Err(e) = kiln_storage::saved_data::write(&dir.join(crate::dimension_dir(crate::dim_key(OVERWORLD_ID))), "wandering_trader", self.trader.to_nbt()) {
             tracing::warn!("failed to save the wandering trader data: {e}");
         }
     }

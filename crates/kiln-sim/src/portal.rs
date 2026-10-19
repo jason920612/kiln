@@ -11,7 +11,7 @@
 //! square that exist (loaded, or saved), which finds the same portals vanilla's POI records
 //! would (portals only exist in chunks that were generated and saved).
 
-use crate::{DIMENSIONS, DimId, END_ID, NETHER_ID, OVERWORLD_ID, Player, Sim, player_chunk};
+use crate::{DimId, END_ID, NETHER_ID, OVERWORLD_ID, Player, Sim, dim_key, player_chunk};
 use kiln_blocks::BlockPos;
 use kiln_blocks::behaviour::portal as shape;
 use kiln_blocks::pos::{Axis, Direction};
@@ -642,7 +642,7 @@ impl Sim {
             self.place_portal_ticket(to, pos);
             self.dims[to].portal_cooldowns.insert(e.uuid.as_u128(), now + ENTITY_PORTAL_COOLDOWN);
             self.dims[to].spawns.push(crate::entities::Spawn { kind: e.kind, pos, vel: [0.0; 3], body: crate::entities::Body::Loaded(phys) });
-            info!("{} went from {} to {} at {pos:?}", e.kind.name, DIMENSIONS[from].0, DIMENSIONS[to].0);
+            info!("{} went from {} to {} at {pos:?}", e.kind.name, dim_key(from), dim_key(to));
         }
     }
 
@@ -1019,7 +1019,7 @@ impl Sim {
                 self.set_level_block(dim, closest.offset(w * sx, h, w * sz), portal, kiln_blocks::flags::CLIENTS | kiln_blocks::flags::KNOWN_SHAPE);
             }
         }
-        info!("built a nether portal in {} at {closest:?}", DIMENSIONS[dim].0);
+        info!("built a nether portal in {} at {closest:?}", dim_key(dim));
         Some(Rectangle { min: closest, size1: 2, size2: 3 })
     }
 
@@ -1261,7 +1261,7 @@ impl Sim {
         p.sync_experience();
         let mut spawns = Vec::new();
         p.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
-        info!("{} went from {} to {} at {pos:?}", p.name, DIMENSIONS[from].0, DIMENSIONS[dim].0);
+        info!("{} went from {} to {} at {pos:?}", p.name, dim_key(from), dim_key(dim));
         // `triggerDimensionChangeTriggers`: back from the nether, how far that took the player.
         if from == crate::NETHER_ID && dim == crate::OVERWORLD_ID
             && let Some(start) = p.entered_nether
@@ -1271,7 +1271,7 @@ impl Sim {
         if dim != crate::NETHER_ID {
             p.entered_nether = None;
         }
-        p.changed_dimension(DIMENSIONS[from].0, DIMENSIONS[dim].0);
+        p.changed_dimension(dim_key(from), dim_key(dim));
         self.dims[dim].spawns.extend(spawns);
         self.place_player(conn);
         self.plugin_spawned(conn, crate::plugins::SpawnReason::LevelChange);

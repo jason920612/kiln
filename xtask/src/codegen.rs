@@ -122,7 +122,7 @@ fn gen_dimension_types(input: &Input) -> Result<String> {
         .collect();
     names.sort();
     let mut s = String::from(HEADER);
-    s.push_str("use crate::DimensionType;
+    s.push_str("use crate::{BedWhen, DimensionType};
 
 ");
     s.push_str("pub const DIMENSION_TYPES: &[DimensionType] = &[
@@ -150,6 +150,17 @@ fn gen_dimension_types(input: &Input) -> Result<String> {
         writeln!(s, "        bed_sets_spawn: {},", bed["can_set_spawn"].as_str().is_none_or(|r| r != "never"))?;
         writeln!(s, "        bed_explodes: {},", bed["destroy_on_use"].as_bool().unwrap_or(false))?;
         writeln!(s, "        monster_spawn_block_light_limit: {},", v["monster_spawn_block_light_limit"].as_i64().unwrap_or(0))?;
+        let when = |k: &str| match bed[k].as_str().unwrap_or("always") {
+            "never" => "Never",
+            "when_dark" => "WhenDark",
+            _ => "Always",
+        };
+        writeln!(s, "        bed_can_sleep: BedWhen::{},", when("can_sleep"))?;
+        writeln!(s, "        bed_can_set_spawn: BedWhen::{},", when("can_set_spawn"))?;
+        writeln!(s, "        bed_error: {:?},", bed["error_message"]["translate"].as_str())?;
+        writeln!(s, "        piglins_zombify: {},", attr("minecraft:gameplay/piglins_zombify").as_bool().unwrap_or(true))?;
+        writeln!(s, "        can_start_raid: {},", attr("minecraft:gameplay/can_start_raid").as_bool().unwrap_or(true))?;
+        writeln!(s, "        nether_portal_spawns_piglin: {},", attr("minecraft:gameplay/nether_portal_spawns_piglin").as_bool().unwrap_or(false))?;
         writeln!(s, "    }},")?;
     }
     s.push_str("];

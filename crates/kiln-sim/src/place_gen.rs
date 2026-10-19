@@ -92,7 +92,7 @@ impl Sim {
         let log = region.take_log();
         let chunks = region.into_chunks();
         let w = 2 * radius + 1;
-        let dimension = crate::DIMENSIONS[dim].0;
+        let dimension = crate::dim_key(dim);
         let mut seen: HashSet<(i32, i32, i32)> = HashSet::new();
         for (pos, old) in log {
             if !seen.insert((pos.x, pos.y, pos.z)) {
@@ -156,7 +156,7 @@ impl Sim {
         let Some(start) = world.structures.generate_anywhere(&world.generator, &mut gs.structures, st, cx, cz) else { return Err(failed()) };
         let Some(b) = kiln_worldgen::structure::pieces_bbox(&start.pieces) else { return Err(failed()) };
         let (min, max) = ((b.min_x >> 4, b.min_z >> 4), (b.max_x >> 4, b.max_z >> 4));
-        let dimension = crate::DIMENSIONS[dim].0;
+        let dimension = crate::dim_key(dim);
         for z in min.1..=max.1 {
             for x in min.0..=max.0 {
                 if !Host::is_chunk_loaded(self, dimension, x, z) {

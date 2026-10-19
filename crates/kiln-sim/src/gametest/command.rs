@@ -15,12 +15,12 @@ fn command_failed() -> CommandError {
 
 fn tp_command(dim: DimId, pos: Pos, rot: Option<(i32, i32)>) -> String {
     let (yaw, pitch) = rot.unwrap_or((0, 0));
-    format!("/execute in {} run tp @s {} {} {} {yaw} {pitch}", DIMENSIONS[dim].0, pos[0], pos[1], pos[2])
+    format!("/execute in {} run tp @s {} {} {} {yaw} {pitch}", dim_key(dim), pos[0], pos[1], pos[2])
 }
 
 /// A dimension's path (`overworld`), as `test.run.coordinates` names it.
 fn dimension_path(dim: DimId) -> &'static str {
-    let key = DIMENSIONS[dim].0;
+    let key = dim_key(dim);
     key.split_once(':').map_or(key, |(_, p)| p)
 }
 
@@ -209,7 +209,7 @@ impl Sim {
             let layout = self.layout_of(pos, &data);
             self.clear_space(dim, layout.test_bounds());
             self.remove_barriers(dim, &layout, data.test.as_ref().and_then(|t| self.commands.gametests.defs.tests.get(t)).is_some_and(|d| d.sky_access));
-            Host::destroy_block(self, DIMENSIONS[dim].0, pos, false);
+            Host::destroy_block(self, dim_key(dim), pos, false);
             cleared += 1;
         }
         if cleared == 0 {
@@ -284,7 +284,7 @@ impl Sim {
         }
         let dim = self.source_dim();
         let block = self.test_position_around(dim);
-        let dimension = DIMENSIONS[dim].0;
+        let dimension = dim_key(dim);
         let layout = Layout { block, size, rotation: 0, padding: 0 };
         self.clear_space(dim, layout.structure_bounds());
         self.dims[dim].load_chunk(kiln_world::ChunkPos::of_block(block[0], block[2]));
@@ -340,7 +340,7 @@ impl Sim {
                 2 => 180,
                 _ => -90,
             };
-            let command = format!("/execute in {} run tp @s {} {} {} {yaw} 0", DIMENSIONS[dim].0, stand[0], stand[1], stand[2]);
+            let command = format!("/execute in {} run tp @s {} {} {} {yaw} 0", dim_key(dim), stand[0], stand[1], stand[2]);
             let distance = if dim == source_dim {
                 let (ex, ez) = ((pos[0] - at[0]) as f32, (pos[2] - at[2]) as f32);
                 ((ex * ex + ez * ez).sqrt().floor() as i32).to_string()
@@ -373,7 +373,7 @@ impl Sim {
         for i in 0..=100 {
             let t = f64::from(i) * 0.1;
             let p = [0, 1, 2].map(|k| (eye[k] + look[k] * t).floor() as i32);
-            let state = Host::block_state(self, DIMENSIONS[dim].0, p);
+            let state = Host::block_state(self, dim_key(dim), p);
             if state != kiln_data::blocks::default_state::AIR && state != kiln_data::blocks::default_state::VOID_AIR {
                 hit = Some(p);
                 break;

@@ -10,7 +10,7 @@ impl crate::Sim {
         for conn in conns {
             let Some(p) = self.players.get(&conn) else { continue };
             let dim = p.dim;
-            let here = crate::DIMENSIONS[dim].0;
+            let here = crate::dim_key(dim);
             // (slot in the main inventory or equipment, target) of the tracked compasses pointing into this level.
             let mut check: Vec<(bool, usize, [i32; 3])> = Vec::new();
             let all = p.inv.items.iter().enumerate().map(|(i, s)| (false, i, s)).chain(p.inv.equipment.iter().enumerate().map(|(i, s)| (true, i, s)));

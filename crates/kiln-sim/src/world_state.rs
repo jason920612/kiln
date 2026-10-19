@@ -7,7 +7,7 @@
 //! the level ticks normally), players outside it take `outside_border` damage in their base
 //! tick, and clients hear about every change through the border packets.
 
-use crate::{DIMENSIONS, Sim};
+use crate::{Sim, dim_key};
 use bytes::Bytes;
 use kiln_command::host::{BorderChange, BorderInfo, TickRateInfo, TickRateAction};
 use kiln_command::{Text, tr};
@@ -631,12 +631,12 @@ const RANDOM_SEQUENCES: &str = "random_sequences";
 impl Sim {
     fn level_dir(&self, dim: crate::DimId) -> Option<std::path::PathBuf> {
         let storage = self.storage.as_ref()?;
-        Some(storage.dir.join(crate::dimension_dir(DIMENSIONS[dim].0)))
+        Some(storage.dir.join(crate::dimension_dir(dim_key(dim))))
     }
 
     /// Loads the borders, forced chunks and random sequences of a saved world.
     pub(crate) fn load_world_state(&mut self) {
-        for dim in 0..DIMENSIONS.len() {
+        for dim in 0..crate::dim_count() {
             let Some(dir) = self.level_dir(dim) else { continue };
             if let Some(data) = kiln_storage::saved_data::read(&dir, WORLD_BORDER) {
                 self.world.borders[dim] = Border::from_nbt(&data);
@@ -660,7 +660,7 @@ impl Sim {
     }
 
     pub(crate) fn save_world_state(&mut self) {
-        for dim in 0..DIMENSIONS.len() {
+        for dim in 0..crate::dim_count() {
             let Some(dir) = self.level_dir(dim) else { continue };
             if self.world.borders[dim].dirty {
                 if let Err(e) = kiln_storage::saved_data::write(&dir, WORLD_BORDER, self.world.borders[dim].to_nbt()) {
@@ -982,7 +982,7 @@ impl Sim {
         match self.world.pipelines.get(dim).cloned().flatten() {
             None => {
                 // A flat world's fixed biome source.
-                let biome = DIMENSIONS[dim].1;
+                let biome = crate::dim_biome(dim);
                 if !matches(biome) {
                     return None;
                 }
@@ -1174,48 +1174,126 @@ mod locate_tests {
 
 // ---- data pack registries the world commands look up --------------------------------------
 
-/// Ids of the vanilla data pack's `data/minecraft/<kind>/*.json` (e.g. `worldgen/structure`),
-/// sorted; read once.
+/// The pack roots world generation and the world commands read: vanilla's data first, then the packs that were enabled
+/// when the world loaded (a later pack's files replace an earlier one's).
+static WORLDGEN_ROOTS: std::sync::RwLock<Vec<std::path::PathBuf>> = std::sync::RwLock::new(Vec::new());
+
+pub(crate) fn set_worldgen_roots(roots: Vec<std::path::PathBuf>) {
+    *WORLDGEN_ROOTS.write().unwrap_or_else(|e| e.into_inner()) = roots;
+}
+
+/// The roots set by the world loading, else vanilla's data.
+pub(crate) fn worldgen_roots() -> Vec<std::path::PathBuf> {
+    let roots = WORLDGEN_ROOTS.read().unwrap_or_else(|e| e.into_inner()).clone();
+    if roots.is_empty() { vec![crate::datapack_dir(None)] } else { roots }
+}
+
+// ---- data pack registries the world commands look up --------------------------------------
+
+/// Ids of the packs' `data/<namespace>/<kind>/**.json` (e.g. `worldgen/structure`: the vanilla data and the
+/// enabled packs'), sorted; read once per set of roots.
 pub(crate) fn worldgen_ids(kind: &'static str) -> &'static Vec<String> {
-    static IDS: std::sync::Mutex<BTreeMap<&'static str, &'static Vec<String>>> = std::sync::Mutex::new(BTreeMap::new());
+    type Key = (Vec<std::path::PathBuf>, &'static str);
+    static IDS: std::sync::Mutex<BTreeMap<Key, &'static Vec<String>>> = std::sync::Mutex::new(BTreeMap::new());
+    let roots = worldgen_roots();
     let mut map = IDS.lock().expect("ids lock");
-    map.entry(kind).or_insert_with(|| {
-        let dir = crate::datapack_dir(None).join("data/minecraft").join(kind);
+    map.entry((roots.clone(), kind)).or_insert_with(|| {
         let mut ids: Vec<String> = Vec::new();
-        collect_json(&dir, "", &mut ids);
+        for root in &roots {
+            let Ok(namespaces) = std::fs::read_dir(root.join("data")) else { continue };
+            for ns in namespaces.flatten() {
+                let name = ns.file_name().to_string_lossy().into_owned();
+                collect_json(&ns.path().join(kind), &name, "", &mut ids);
+            }
+        }
         ids.sort();
+        ids.dedup();
         Box::leak(Box::new(ids))
     })
 }
 
-fn collect_json(dir: &std::path::Path, prefix: &str, out: &mut Vec<String>) {
+/// The entries `data/<namespace>/<kind>/**.json` over the pack `roots` (a later root's file replacing an earlier one's with the
+/// same id), as `(id, json)` sorted by id; a file that is not JSON is left out.
+pub(crate) fn stacked_json(roots: &[std::path::PathBuf], kind: &str) -> Vec<(String, serde_json::Value)> {
+    let mut merged: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    for root in roots {
+        let Ok(namespaces) = std::fs::read_dir(root.join("data")) else { continue };
+        for ns in namespaces.flatten() {
+            let name = ns.file_name().to_string_lossy().into_owned();
+            let mut ids = Vec::new();
+            collect_json(&ns.path().join(kind), &name, "", &mut ids);
+            for id in ids {
+                let rel = id.split_once(':').map_or(id.as_str(), |(_, p)| p);
+                let Ok(text) = std::fs::read_to_string(ns.path().join(kind).join(format!("{rel}.json"))) else { continue };
+                if let Ok(json) = serde_json::from_str(text.trim_start_matches('\u{feff}')) {
+                    merged.insert(id, json);
+                }
+            }
+        }
+    }
+    merged.into_iter().collect()
+}
+
+fn collect_json(dir: &std::path::Path, namespace: &str, prefix: &str, out: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         let path = e.path();
         if path.is_dir() {
-            collect_json(&path, &format!("{prefix}{name}/"), out);
+            collect_json(&path, namespace, &format!("{prefix}{name}/"), out);
         } else if let Some(stem) = name.strip_suffix(".json") {
-            out.push(format!("minecraft:{prefix}{stem}"));
+            out.push(format!("{namespace}:{prefix}{stem}"));
         }
     }
 }
 
-/// The entries of tag `tag` of `kind` (nested tags expanded), or `None` without such a tag.
+/// The entries of tag `tag` of `kind` (nested tags expanded), or `None` without such a tag. The packs' files add to each
+/// other's entries and a `replace` drops the earlier ones (`TagLoader`).
 pub(crate) fn worldgen_tag(kind: &str, tag: &str) -> Option<Vec<String>> {
+    tag_entries(&worldgen_roots(), kind, tag, 0)
+}
+
+fn tag_entries(roots: &[std::path::PathBuf], kind: &str, tag: &str, depth: usize) -> Option<Vec<String>> {
+    if depth > 32 {
+        return None;
+    }
     let (ns, path) = tag.split_once(':').unwrap_or(("minecraft", tag));
-    let file = crate::datapack_dir(None).join(format!("data/{ns}/tags/{kind}/{path}.json"));
-    let text = std::fs::read_to_string(file).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let mut out = Vec::new();
-    for v in json.get("values")?.as_array()? {
-        let id = match v {
+    let mut values: Vec<serde_json::Value> = Vec::new();
+    let mut found = false;
+    for root in roots {
+        let Ok(text) = std::fs::read_to_string(root.join(format!("data/{ns}/tags/{kind}/{path}.json"))) else { continue };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')) else { continue };
+        found = true;
+        if json.get("replace").and_then(serde_json::Value::as_bool) == Some(true) {
+            values.clear();
+        }
+        if let Some(list) = json.get("values").and_then(serde_json::Value::as_array) {
+            values.extend(list.iter().cloned());
+        }
+    }
+    if !found {
+        return None;
+    }
+    let mut out: Vec<String> = Vec::new();
+    for v in values {
+        let id = match &v {
             serde_json::Value::String(s) => s.clone(),
             other => other.get("id")?.as_str()?.to_owned(),
         };
         match id.strip_prefix('#') {
-            Some(inner) => out.extend(worldgen_tag(kind, inner).unwrap_or_default()),
-            None => out.push(if id.contains(':') { id } else { format!("minecraft:{id}") }),
+            Some(inner) => {
+                for e in tag_entries(roots, kind, inner, depth + 1).unwrap_or_default() {
+                    if !out.contains(&e) {
+                        out.push(e);
+                    }
+                }
+            }
+            None => {
+                let id = if id.contains(':') { id } else { format!("minecraft:{id}") };
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
         }
     }
     Some(out)
@@ -1223,11 +1301,21 @@ pub(crate) fn worldgen_tag(kind: &str, tag: &str) -> Option<Vec<String>> {
 
 // ---- place --------------------------------------------------------------------------------
 
-/// `StructureTemplateManager` over the vanilla data (the pack's `data/*/structure`, then the
-/// server jar).
-fn templates() -> &'static kiln_worldgen::structure::template::TemplateManager {
-    static M: std::sync::OnceLock<kiln_worldgen::structure::template::TemplateManager> = std::sync::OnceLock::new();
-    M.get_or_init(|| kiln_worldgen::structure::template::TemplateManager::near(&crate::datapack_dir(None)))
+/// `StructureTemplateManager` over the vanilla data with the packs over it (the packs' `data/*/structure`, then the server
+/// jar).
+fn templates() -> std::sync::Arc<kiln_worldgen::structure::template::TemplateManager> {
+    type Manager = std::sync::Arc<kiln_worldgen::structure::template::TemplateManager>;
+    static M: std::sync::Mutex<Option<(Vec<std::path::PathBuf>, Manager)>> = std::sync::Mutex::new(None);
+    let roots = worldgen_roots();
+    let mut slot = M.lock().unwrap_or_else(|e| e.into_inner());
+    match &*slot {
+        Some((r, m)) if *r == roots => m.clone(),
+        _ => {
+            let m = std::sync::Arc::new(kiln_worldgen::structure::template::TemplateManager::near_stack(&roots));
+            *slot = Some((roots, m.clone()));
+            m
+        }
+    }
 }
 
 impl Sim {
@@ -1255,7 +1343,7 @@ impl Sim {
         if template.palettes.is_empty() && template.size == [0, 0, 0] {
             return Err(kiln_command::CommandError::new(tr!("commands.place.template.invalid", id)));
         }
-        let dimension = DIMENSIONS[dim].0;
+        let dimension = dim_key(dim);
         let [sx, sy, sz] = template.size;
         let far = [pos[0] + sx, pos[1] + sy, pos[2] + sz];
         for cx in (pos[0] >> 4).min(far[0] >> 4)..=(pos[0] >> 4).max(far[0] >> 4) {

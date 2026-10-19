@@ -1557,7 +1557,7 @@ impl Sim {
             }
         };
         let dim_id = crate::dim_id(dim).unwrap_or(crate::OVERWORLD_ID);
-        let dim_key = crate::DIMENSIONS[dim_id].0;
+        let dim_key = crate::dim_key(dim_id);
         let run = |subject: Option<&crate::advancements::criteria::Subject<'_>>| {
             let ctx = PredicateContext {
                 this: subject,

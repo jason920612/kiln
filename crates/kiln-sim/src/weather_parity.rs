@@ -148,7 +148,7 @@ fn precipitation(v: &Value, sea_level: i32, zoom_seed: i64, report: &mut impl Fn
     let name = v["name"].as_str().unwrap();
     let (x0, z0) = (v["x0"].as_i64().unwrap() as i32, v["z0"].as_i64().unwrap() as i32);
     let biome = v["biome"].as_str().unwrap().to_owned();
-    let climates = Climates::load(&datapack()).expect("datapack biomes");
+    let climates = Climates::load(&[datapack()]).expect("datapack biomes");
     let index: usize = name.trim_start_matches("precipitation").parse().unwrap();
     let filled = (index + 1).min(4);
     let mut level = TestLevel::void();

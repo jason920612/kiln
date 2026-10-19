@@ -233,7 +233,7 @@ impl Sim {
             }
         }
         self.dims[to].spawns.push(spawn);
-        info!("a stack of {} entities went from {} to {} at {pos:?}", stack.entities.len(), crate::DIMENSIONS[from].0, crate::DIMENSIONS[to].0);
+        info!("a stack of {} entities went from {} to {} at {pos:?}", stack.entities.len(), crate::dim_key(from), crate::dim_key(to));
         // The riders get off here and are sat down on what arrives.
         for (conn, attach) in sitting {
             let Some(p) = self.players.get_mut(&conn) else { continue };

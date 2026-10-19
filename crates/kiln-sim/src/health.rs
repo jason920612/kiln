@@ -750,7 +750,7 @@ impl Player {
         let killer = attacker_view.as_ref().map(|v| crate::advancements::criteria::Subject {
             type_id: v.type_id,
             pos: v.pos,
-            dim: crate::DIMENSIONS[self.dim].0,
+            dim: crate::dim_key(self.dim),
             on_ground: v.on_ground,
             on_fire: v.on_fire,
             sneaking: v.sneaking,

@@ -11,7 +11,7 @@
 
 use crate::blocks::{self, BlockOut, RegionLevel};
 use crate::entities::{self, Spawn};
-use crate::{DIMENSIONS, END_ID, Player, Sim, health};
+use crate::{END_ID, Player, Sim, dim_key, health};
 use kiln_blocks::BlockPos;
 use kiln_data::blocks::default_state as block;
 use kiln_entity::level::{DragonFightEvent, DragonFightView};
@@ -252,14 +252,14 @@ impl Sim {
     /// The End's fight from its saved data (a new one without).
     pub(crate) fn load_dragon_fight(&mut self) {
         let seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
-        let dir = self.storage.as_ref().map(|s| s.dir.join(crate::dimension_dir(DIMENSIONS[END_ID].0)));
+        let dir = self.storage.as_ref().map(|s| s.dir.join(crate::dimension_dir(dim_key(END_ID))));
         let data = dir.as_ref().and_then(|d| kiln_storage::saved_data::read(d, FIGHT_DATA));
         self.dragon_fight = DragonFight::load(data.as_ref(), seed);
     }
 
     pub(crate) fn save_dragon_fight(&self) {
         let Some(storage) = &self.storage else { return };
-        let dir = storage.dir.join(crate::dimension_dir(DIMENSIONS[END_ID].0));
+        let dir = storage.dir.join(crate::dimension_dir(dim_key(END_ID)));
         if let Err(e) = kiln_storage::saved_data::write(&dir, FIGHT_DATA, self.dragon_fight.to_nbt()) {
             tracing::warn!("saving the dragon fight failed: {e}");
         }
@@ -820,7 +820,7 @@ impl Sim {
             let criterion = kiln_entity::level::Criterion::SummonedEntity { entity: seen };
             for c in self.dragon_fight.boss.players.clone() {
                 if let Some(p) = self.players.get_mut(&c) {
-                    p.entity_criterion(DIMENSIONS[END_ID].0, &criterion);
+                    p.entity_criterion(dim_key(END_ID), &criterion);
                 }
             }
         }

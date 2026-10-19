@@ -2942,7 +2942,7 @@ pub(crate) fn stab_mob(
         p.last_hurt_mob = Some((stab.target, level.env.game_time));
         // `PlayerHurtEntityTrigger` (dealt before armor and effects, taken after).
         let taken = health_before.zip(health_after).map_or(stab.amount, |(b, a)| b - a);
-        let subject = crate::advancements::triggers::seen_subject(&victim, crate::DIMENSIONS[level.env.dim].0);
+        let subject = crate::advancements::triggers::seen_subject(&victim, crate::dim_key(level.env.dim));
         p.player_hurt_entity(&subject, stab.amount, taken, stab.kind.type_name(), true);
     }
     for (n, event) in keyed(events) {
@@ -3270,14 +3270,14 @@ pub(crate) fn interact_mob(
     // `PlayerInteractTrigger`: the item as it was when the interaction used it.
     if let Some(seen) = seen.as_ref() {
         let used = if out.held == kiln_entity::mob::interact::HeldChange::None { kiln_item::ItemStack::empty() } else { stack.clone() };
-        let subject = crate::advancements::triggers::seen_subject(seen, crate::DIMENSIONS[level.env.dim].0);
+        let subject = crate::advancements::triggers::seen_subject(seen, crate::dim_key(level.env.dim));
         p.fire_conds("minecraft:player_interacted_with_entity", None, |c, ok, loot| {
             c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, &used)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
         });
     }
     // `Mob.shearItem`: `PlayerShearedEquipmentTrigger` with the piece that came off.
     if let (Some(seen), Some(worn)) = (&seen, &out.sheared) {
-        let subject = crate::advancements::triggers::seen_subject(seen, crate::DIMENSIONS[level.env.dim].0);
+        let subject = crate::advancements::triggers::seen_subject(seen, crate::dim_key(level.env.dim));
         p.fire_conds("minecraft:player_sheared_equipment", None, |c, ok, loot| {
             c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, worn)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
         });
@@ -3740,7 +3740,7 @@ fn carry_out(
         Event::Killed { entity, entity_type, credit, kind, attacker, direct, equipment } => {
             if let Some(p) = credit.and_then(|k| players.iter_mut().find(|p| p.entity_id == k)) {
                 p.killed_entity(entity_type);
-                let dim = crate::DIMENSIONS[env.dim].0;
+                let dim = crate::dim_key(env.dim);
                 if let Some(e) = list.binary_search_by_key(&entity, |e| e.id).ok().and_then(|i| list[i].phys.as_deref()) {
                     let mut subject = crate::advancements::triggers::mob_subject(e, dim);
                     // `minecraft:equipment` as the mob wore it when it died (a captain's banner).
@@ -3823,7 +3823,7 @@ fn carry_out(
         }
         Event::Criterion { player, criterion } => {
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == player) {
-                p.entity_criterion(crate::DIMENSIONS[env.dim].0, &criterion);
+                p.entity_criterion(crate::dim_key(env.dim), &criterion);
             }
         }
         Event::DragonFight(ev) => {
@@ -4141,7 +4141,7 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
         players[i].award_stat(crate::player_stats::Stat::item(crate::player_stats::PICKED_UP, picked), taken);
         // `ServerPlayer.onItemPickup`: the thrower is told to the `thrown_item_picked_up_by_player` trigger.
         if let Some((_, owner)) = item.thrower.and_then(|t| owners.iter().find(|(u, _)| *u == t)) {
-            let subject = crate::advancements::triggers::seen_subject(owner, crate::DIMENSIONS[players[i].dim].0);
+            let subject = crate::advancements::triggers::seen_subject(owner, crate::dim_key(players[i].dim));
             let left = item.stack.clone();
             players[i].fire_conds("minecraft:thrown_item_picked_up_by_player", None, |c, ok, loot| {
                 c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, &left)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))

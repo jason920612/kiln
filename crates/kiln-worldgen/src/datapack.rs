@@ -244,6 +244,11 @@ fn stacked_tags(roots: &[PathBuf], dir: &str) -> Result<HashMap<String, Vec<Stri
     Ok(out)
 }
 
+/// The `dimension/*.json` stems of the pack roots (a later root's replacing an earlier one's), sorted by id.
+pub fn pack_dimensions(roots: &[PathBuf]) -> Result<Vec<(String, Json)>, Error> {
+    stacked_entries(roots, "dimension")
+}
+
 /// `data/*` of one pack root, sorted.
 fn namespaces(root: &Path) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = fs::read_dir(root.join("data"))

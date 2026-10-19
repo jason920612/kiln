@@ -980,7 +980,7 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     let fx = crate::enchant_fx::FxWorld {
         block: &block,
         probe: &fx_probe,
-        dim: crate::DIMENSIONS[env.dim].0,
+        dim: crate::dim_key(env.dim),
         raining: env.blocks.weather.weather.raining,
         thundering: env.blocks.weather.weather.thundering,
     };

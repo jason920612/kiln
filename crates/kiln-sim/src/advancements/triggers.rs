@@ -113,7 +113,7 @@ impl Player {
         Subject {
             type_id: kiln_item::registry::ENTITY_TYPE.id("minecraft:player").unwrap_or(-1),
             pos: self.pos,
-            dim: crate::DIMENSIONS[self.dim].0,
+            dim: crate::dim_key(self.dim),
             on_ground: self.on_ground,
             on_fire: self.fire_ticks > 0,
             sneaking: self.sneaking,
@@ -522,7 +522,7 @@ impl Player {
     /// `DistanceTrigger.trigger` (`fall_from_height`, `nether_travel`, `ride_entity_in_lava`):
     /// `start_position` tested where the trip began, `distance` from there to here.
     pub(crate) fn distance_trigger(&mut self, trigger: &str, start: [f64; 3]) {
-        let (pos, dim) = (self.pos, crate::DIMENSIONS[self.dim].0);
+        let (pos, dim) = (self.pos, crate::dim_key(self.dim));
         self.fire_conds(trigger, None, |c, _, _| {
             c.location("start_position").is_none_or(|l| criteria::location_matches(l, start, dim, None)) && c.distance("distance", start, pos)
         });
@@ -531,7 +531,7 @@ impl Player {
     /// `FallAfterExplosionTrigger.trigger`: a fall that began below where `cause` blew the player up; `start_position` and `distance`
     /// are the blast's place and the way down from it.
     pub(crate) fn fall_after_explosion(&mut self, impact: [f64; 3], cause: Option<&kiln_entity::level::Seen>) {
-        let (pos, dim) = (self.pos, crate::DIMENSIONS[self.dim].0);
+        let (pos, dim) = (self.pos, crate::dim_key(self.dim));
         let subject = cause.map(|s| seen_subject(s, dim));
         self.fire_conds("minecraft:fall_after_explosion", None, |c, ok, _| {
             c.location("start_position").is_none_or(|l| criteria::location_matches(l, impact, dim, None))

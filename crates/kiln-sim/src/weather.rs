@@ -258,15 +258,14 @@ pub(crate) struct Climates {
 }
 
 impl Climates {
-    pub fn load(dir: &std::path::Path) -> Option<Self> {
-        let biome_dir = dir.join("data/minecraft/worldgen/biome");
+    pub fn load(roots: &[std::path::PathBuf]) -> Option<Self> {
+        let biomes = crate::world_state::stacked_json(roots, "worldgen/biome");
+        if biomes.is_empty() {
+            return None;
+        }
         let mut c = Climates::default();
-        for entry in std::fs::read_dir(&biome_dir).ok()? {
-            let path = entry.ok()?.path();
-            let Some(name) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-            let Some(id) = kiln_data::synced_id("minecraft:worldgen/biome", &format!("minecraft:{name}")) else { continue };
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        for (name, json) in biomes {
+            let Some(id) = kiln_data::synced_id("minecraft:worldgen/biome", &name) else { continue };
             let temperature = json.get("temperature").and_then(|v| v.as_f64()).unwrap_or(0.8) as f32;
             let frozen = json.get("temperature_modifier").and_then(|v| v.as_str()) == Some("frozen");
             let precipitation = json.get("has_precipitation").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -575,7 +574,7 @@ impl Sim {
                 match dim {
                     OVERWORLD_ID => CLOCKS[0].to_owned(),
                     crate::END_ID => CLOCKS[1].to_owned(),
-                    _ => return Err(CommandError::new(tr!("commands.time.no_default_clock", crate::DIMENSIONS[dim].0))),
+                    _ => return Err(CommandError::new(tr!("commands.time.no_default_clock", crate::dim_key(dim)))),
                 }
             }
         };

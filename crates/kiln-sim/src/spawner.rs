@@ -59,16 +59,15 @@ pub(crate) struct SpawnTable {
 const N: usize = Category::SPAWNING.len();
 
 impl SpawnTable {
-    /// Reads `worldgen/biome/*.json` of the datapack at `dir`.
-    pub fn load(dir: &std::path::Path) -> Option<SpawnTable> {
-        let biome_dir = dir.join("data/minecraft/worldgen/biome");
-        let mut t = SpawnTable { structures: crate::structure_spawns::StructureSpawns::load(dir), ..SpawnTable::default() };
-        for entry in std::fs::read_dir(&biome_dir).ok()? {
-            let path = entry.ok()?.path();
-            let Some(name) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-            let Some(id) = kiln_data::synced_id("minecraft:worldgen/biome", &format!("minecraft:{name}")) else { continue };
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+    /// Reads `worldgen/biome/*.json` of the data packs `roots` (vanilla's first).
+    pub fn load(roots: &[std::path::PathBuf]) -> Option<SpawnTable> {
+        let biomes = crate::world_state::stacked_json(roots, "worldgen/biome");
+        if biomes.is_empty() {
+            return None;
+        }
+        let mut t = SpawnTable { structures: crate::structure_spawns::StructureSpawns::load(roots), ..SpawnTable::default() };
+        for (name, json) in biomes {
+            let Some(id) = kiln_data::synced_id("minecraft:worldgen/biome", &name) else { continue };
             let spawns = &json["attributes"]["minecraft:gameplay/natural_mob_spawns"]["argument"]["spawns_by_category"];
             let list = |cat: &str| -> Vec<SpawnerData> { parse_spawner_list(&spawns[cat]) };
             let id = id as usize;
@@ -1259,7 +1258,7 @@ pub(crate) fn check_spawn_rules(level: &RegionLevel, pos: KBlockPos, kind: MobKi
 fn light_magic(level: &RegionLevel, pos: KBlockPos) -> f32 {
     let f = level.raw_brightness(pos, level.env.mobs.sky_darken) as f32 / 15.0;
     let g = f / (4.0 - 3.0 * f);
-    let ambient = kiln_data::dimension_type(crate::DIMENSIONS[level.env.dim].0).map_or(0.0, |d| d.ambient_light);
+    let ambient = kiln_data::dimension_type(crate::dim_key(level.env.dim)).map_or(0.0, |d| d.ambient_light);
     g + ambient * (1.0 - g)
 }
 

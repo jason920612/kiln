@@ -229,7 +229,7 @@ impl Sim {
             }
             EffectKind::Teleport { who, level, pos, rot } => {
                 let Some(c) = conn(who) else { return false };
-                let Some(&(dimension, _)) = crate::DIMENSIONS.get(*level as usize) else { return false };
+                let Some(dimension) = kiln_data::levels::levels().get(*level as usize).map(|l| l.key) else { return false };
                 let Some(p) = self.players.get(&c) else { return false };
                 let target = crate::commands::PlayerRef::of(c, p, &self.commands.scoreboard);
                 let to = Teleport {
@@ -488,7 +488,7 @@ impl Sim {
 
     /// Sets the blocks of a cell-bound edit with the flags of a player placing blocks.
     fn set_plugin_blocks(&mut self, dim: usize, changes: &[BlockChange], states: &mut HashMap<String, Option<BlockInput>>) -> bool {
-        let Some(&(key, _)) = crate::DIMENSIONS.get(dim) else { return false };
+        let Some(key) = kiln_data::levels::levels().get(dim).map(|l| l.key) else { return false };
         let mut all = true;
         for c in changes {
             let input = states

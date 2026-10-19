@@ -122,7 +122,7 @@ pub(crate) fn apply_events(
                 if let Ok(k) = entities.list.binary_search_by_key(&target, |e| e.id)
                     && let Some(phys) = entities.list[k].phys.as_deref()
                 {
-                    let subject = crate::advancements::triggers::mob_subject(phys, crate::DIMENSIONS[level.env.dim].0);
+                    let subject = crate::advancements::triggers::mob_subject(phys, crate::dim_key(level.env.dim));
                     players[i].traded(&subject, &kiln_item::ItemStack::empty());
                 }
                 let r = entities::with_entity(entities, level, players, target, spawns, deaths, salt, |e, lvl| {

@@ -93,7 +93,7 @@ pub(crate) fn use_empty_map(p: &mut Player, off_hand: bool, dim: crate::DimId, s
         p.pending_sounds.push(pkt);
     }
     let (x, z) = (p.pos[0].floor() as i32, p.pos[2].floor() as i32);
-    let map = create(&p.maps, x, z, 0, true, false, crate::DIMENSIONS[dim].0);
+    let map = create(&p.maps, x, z, 0, true, false, crate::dim_key(dim));
     let i = p.hand_index(off_hand);
     if p.inv.item(i).is_empty() {
         // `heldItemTransformedTo`.
@@ -127,7 +127,7 @@ pub(crate) fn use_on_banner<B: Blocks>(p: &Player, off_hand: bool, blocks: &B, m
 
 /// Whether the level has a ceiling (`DimensionType.hasCeiling`): the Nether's maps are drawn differently.
 pub(crate) fn has_ceiling(dim: crate::DimId) -> bool {
-    kiln_data::dimension_type(crate::DIMENSIONS[dim].0).is_some_and(|d| d.has_ceiling)
+    kiln_data::dimension_type(crate::dim_key(dim)).is_some_and(|d| d.has_ceiling)
 }
 
 /// Filled-map ids in the stack list (all slots of the inventory).

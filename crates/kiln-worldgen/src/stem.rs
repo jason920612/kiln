@@ -133,6 +133,19 @@ impl Datapack {
     }
 }
 
+/// A stem read without the data pack: superflat generators parse, a noise generator has nothing to run on
+/// (it is left to the default terrain).
+pub fn parse_stem_without_pack(json: &Json) -> Result<Stem, Error> {
+    let dimension_type = qualify(field(json, "type")?.as_str().ok_or_else(|| Error::Invalid("the dimension type must be an id".into()))?);
+    let generator = field(json, "generator")?;
+    let kind = qualify(field(generator, "type")?.as_str().ok_or_else(|| Error::Invalid("bad generator type".into()))?);
+    let generator = match kind.as_str() {
+        "minecraft:flat" => StemGenerator::Flat(parse_flat(field(generator, "settings")?)?),
+        _ => StemGenerator::Debug,
+    };
+    Ok(Stem { dimension_type, generator })
+}
+
 /// `FlatLevelGeneratorSettings.CODEC`.
 fn parse_flat(json: &Json) -> Result<FlatSettings, Error> {
     let mut layers = Vec::new();
@@ -145,7 +158,8 @@ fn parse_flat(json: &Json) -> Result<FlatSettings, Error> {
     if layers.len() > 384 {
         return Err(Error::Invalid(format!("flat layers are {} high, at most 384", layers.len())));
     }
-    let flag = |k: &str| json.get(k).is_some_and(|v| matches!(v, Json::Bool(true)));
+    // (Saved stems come from NBT, where a boolean is a byte.)
+    let flag = |k: &str| json.get(k).is_some_and(|v| matches!(v, Json::Bool(true)) || matches!(v, Json::Number(n) if n == "1"));
     let biome = json.get("biome").and_then(Json::as_str).map_or_else(|| "minecraft:plains".to_owned(), qualify);
     Ok(FlatSettings { biome, layers, features: flag("features"), lakes: flag("lakes") })
 }

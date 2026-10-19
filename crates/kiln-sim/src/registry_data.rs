@@ -73,6 +73,13 @@ pub(crate) fn load(roots: &[PathBuf]) -> Loaded {
                             error!("Failed to load {registry}/{name}: missing required fields {}", missing.join(", "));
                             continue;
                         }
+                        if registry == "minecraft:dimension_type" {
+                            let checked = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string()).and_then(|v| crate::dimensions::dimension_type_from_json(&name, &v));
+                            if let Err(e) = checked {
+                                error!("Failed to load {registry}/{name}: {e}");
+                                continue;
+                            }
+                        }
                     }
                 }
                 from_packs.insert(name, text);
@@ -131,6 +138,7 @@ fn required(registry: &str) -> &'static [&'static str] {
         "minecraft:cat_variant" | "minecraft:pig_variant" | "minecraft:cow_variant" | "minecraft:chicken_variant" => &["asset_id", "baby_asset_id", "spawn_conditions"],
         "minecraft:frog_variant" | "minecraft:zombie_nautilus_variant" => &["asset_id", "spawn_conditions"],
         "minecraft:chat_type" => &["chat", "narration"],
+        "minecraft:dimension_type" => &["has_skylight", "has_ceiling", "has_ender_dragon_fight", "coordinate_scale", "min_y", "height", "logical_height", "infiniburn", "ambient_light"],
         "minecraft:dialog" => &["type"],
         _ => &[],
     }

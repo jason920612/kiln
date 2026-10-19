@@ -182,7 +182,7 @@ impl Packs {
     }
 
     /// The enabled packs other than the vanilla data, in load order: what changes the registries.
-    fn extra_roots(&self) -> Vec<PathBuf> {
+    pub(crate) fn extra_roots(&self) -> Vec<PathBuf> {
         self.selected.iter().filter(|id| *id != "vanilla").filter_map(|id| self.find(id)?.root.clone()).collect()
     }
 

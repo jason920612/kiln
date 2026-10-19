@@ -24,7 +24,7 @@
 //!   after G, in a deterministic order.
 
 use crate::region::Env;
-use crate::{DIMENSIONS, Player, Sim};
+use crate::{Player, Sim};
 use kiln_command::arguments::ArgumentType;
 use kiln_command::dispatcher::{argument, literal};
 use kiln_link::{ConnId, PlayIn};
@@ -171,7 +171,7 @@ fn registries() -> Arc<Registries> {
     static REG: kiln_data::live::Cached<Arc<Registries>> = kiln_data::live::Cached::new();
     REG.get(|| {
         let list = |r: &str| kiln_data::builtin_entries(r).unwrap_or(&[]).iter().map(|s| s.to_string()).collect();
-        let levels = DIMENSIONS.iter().map(|(k, _)| (*k).to_owned()).collect();
+        let levels = kiln_data::levels::levels().iter().map(|l| l.key.to_owned()).collect();
         // Damage types by their network id (the order of the synchronized registry).
         let damage_types = kiln_data::live::synced()
             .iter()
