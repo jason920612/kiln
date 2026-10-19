@@ -8,7 +8,6 @@
 
 use crate::math::{BlockPos, Direction, Vec3};
 use kiln_proto::nbt::Tag;
-use std::sync::OnceLock;
 
 /// `GameEvent.DEFAULT_NOTIFICATION_RADIUS`.
 pub const DEFAULT_RADIUS: i32 = 16;

@@ -73,7 +73,6 @@ fn frogs_spawnable_on(state: u16) -> bool {
 
 /// The state's membership in the block tags this module reads (a table of flags per state).
 fn block_flag(state: u16, which: usize) -> bool {
-    use std::sync::OnceLock;
     static T: kiln_data::live::Cached<Vec<u8>> = kiln_data::live::Cached::new();
     T.get(|| {
         let tags = ["minecraft:frog_prefer_jump_to", "minecraft:frogs_spawnable_on"];

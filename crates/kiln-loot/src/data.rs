@@ -239,9 +239,7 @@ impl LootData {
     pub fn load_lenient_packs(packs: &[&Path]) -> Result<LootData, LoadError> {
         let known = |registry: &str, id: &Identifier| {
             if tags::has_id_table(registry) {
-                kiln_data::builtin_entries(registry)
-                    .or_else(|| kiln_data::live::synced().iter().find(|(r, _)| *r == registry).map(|(_, e)| *e))
-                    .is_some_and(|entries| entries.contains(&id.as_str()))
+                kiln_data::builtin_id(registry, id.as_str()).is_some() || kiln_data::live::synced_id(registry, id.as_str()).is_some()
             } else {
                 true
             }
@@ -372,6 +370,10 @@ impl LootData {
             }
         }
         data.errors = errors;
+        for e in std::mem::take(&mut data.tags.errors) {
+            let (element, error) = e.split_once(": ").unwrap_or((&e, ""));
+            data.errors.push(FileError { element: format!("tags/{element}"), error: error.to_owned() });
+        }
         data.trades = crate::trade::Trades::load(packs, &data);
         for e in std::mem::take(&mut data.trades.errors) {
             let (element, error) = e.split_once(": ").unwrap_or((&e, ""));

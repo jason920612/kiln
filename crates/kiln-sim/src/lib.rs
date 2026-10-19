@@ -71,6 +71,7 @@ mod xp;
 mod container;
 mod datapacks;
 mod tags;
+mod registry_data;
 mod tickets;
 mod zip_pack;
 pub mod lobby;
@@ -1634,6 +1635,12 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
 
 impl Sim {
     pub fn new(config: SimConfig) -> Sim {
+        // The data packs decide the registries (ids of biomes, damage types, variants...) before
+        // anything numbers by them: the worlds' generators, chunk sources and the players' packets.
+        let storage = config.world.as_deref().map(persist::Storage::open);
+        let vanilla_pack = datapack_dir(config.noise.as_ref().map(|n| n.datapack.as_path()));
+        let packs = datapacks::Packs::open(config.world.as_deref(), storage.as_ref(), vanilla_pack.clone());
+        packs.install_registries(&config.data_sync);
         let biome_count = kiln_data::live::synced()
             .iter()
             .find(|(r, _)| *r == "minecraft:worldgen/biome")
@@ -1731,7 +1738,7 @@ impl Sim {
         let spawn = spawn.expect("overworld spawn");
         let policy = if config.unified_regions { RegionPolicy::unified() } else { RegionPolicy::default() };
         let threads = config.noise.as_ref().map_or(1, |n| n.threads);
-        let mut storage = config.world.as_deref().map(persist::Storage::open);
+        let mut storage = storage;
         let level = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.state());
         // The seed: the generator's, else the save's (`world_gen_settings.dat`); a world that
         // generates with a seed and has none saved gets it written, so vanilla loads the same.
@@ -1758,7 +1765,7 @@ impl Sim {
             if config.unified_regions { "unified" } else { "split" }
         );
         let datapack = config.noise.as_ref().map(|n| n.datapack.as_path());
-        let vanilla_pack = datapack_dir(datapack);
+
         let rules = std::sync::Arc::new(load_rules(datapack));
         let maps = maps::MapStore::shared(storage.as_ref().map(|s| s.dir.clone()));
         // Treasure and explorer maps look for structures in the overworld.
@@ -1826,7 +1833,7 @@ impl Sim {
         sim.load_raids();
         sim.load_trader();
         sim.load_dragon_fight();
-        sim.init_packs(vanilla_pack);
+        sim.init_packs(packs);
         sim.load_plugins();
         // Tables built on first use, built now rather than in the middle of a tick (the path
         // types of every block state: 13 ms the first time a mob looks for a path).

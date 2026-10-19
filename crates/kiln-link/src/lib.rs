@@ -75,22 +75,40 @@ pub struct Property {
 }
 
 /// What the configuration phase sends that the simulation's data packs decide: the world's
-/// feature flags (`Update Enabled Features`) and the tags of the enabled packs (`Update
-/// Tags`). The simulation writes it when the packs load; logins read it.
+/// feature flags (`Update Enabled Features`), the data of the registries the packs define or
+/// override (`Registry Data`) and the tags of the enabled packs (`Update Tags`). The simulation
+/// writes it when the packs load; logins read it.
 #[derive(Debug)]
 pub struct DataSync {
     features: std::sync::RwLock<Vec<String>>,
     /// A configuration `Update Tags` packet; `None` sends the built-in vanilla tags.
     config_tags: std::sync::RwLock<Option<Bytes>>,
+    /// The `Registry Data` packets of every synchronized registry; `None` sends the vanilla
+    /// entries by name only.
+    registry_packets: std::sync::RwLock<Option<std::sync::Arc<Vec<Bytes>>>>,
 }
 
 impl Default for DataSync {
     fn default() -> Self {
-        Self { features: std::sync::RwLock::new(vec!["minecraft:vanilla".to_owned()]), config_tags: Default::default() }
+        Self {
+            features: std::sync::RwLock::new(vec!["minecraft:vanilla".to_owned()]),
+            config_tags: Default::default(),
+            registry_packets: Default::default(),
+        }
     }
 }
 
 impl DataSync {
+    pub fn registry_packets(&self) -> Option<std::sync::Arc<Vec<Bytes>>> {
+        self.registry_packets.read().ok().and_then(|p| p.clone())
+    }
+
+    pub fn set_registry_packets(&self, packets: Option<std::sync::Arc<Vec<Bytes>>>) {
+        if let Ok(mut p) = self.registry_packets.write() {
+            *p = packets;
+        }
+    }
+
     pub fn features(&self) -> Vec<String> {
         self.features.read().map(|f| f.clone()).unwrap_or_default()
     }

@@ -158,6 +158,38 @@ impl Packs {
         packs
     }
 
+    /// The packs of a world: its saved lists (or the initial ones) over what exists in the world's
+    /// `datapacks` directory (or `KILN_DATAPACKS`).
+    pub fn open(world: Option<&Path>, storage: Option<&crate::persist::Storage>, vanilla: PathBuf) -> Self {
+        let dir = match world {
+            Some(world) => Some(world.join("datapacks")),
+            None => std::env::var_os("KILN_DATAPACKS").map(PathBuf::from),
+        };
+        let level = storage.map(|s| &s.level);
+        let config = match level.and_then(|l| l.data_packs()) {
+            Some((enabled, disabled)) => {
+                // Worlds without saved features have vanilla's defaults.
+                let features = level.and_then(|l| l.enabled_features()).unwrap_or_else(|| vec![VANILLA_FEATURE.into()]);
+                PackConfig { enabled, disabled, features: Some(features) }
+            }
+            None => PackConfig::initial(),
+        };
+        Packs::new(dir, vanilla, config)
+    }
+
+    /// The enabled packs other than the vanilla data, in load order: what changes the registries.
+    fn extra_roots(&self) -> Vec<PathBuf> {
+        self.selected.iter().filter(|id| *id != "vanilla").filter_map(|id| self.find(id)?.root.clone()).collect()
+    }
+
+    /// `WorldLoader`: builds the synchronized registries from the enabled packs, once when the
+    /// world loads (`/reload` does not change them), and gives logins the `Registry Data` for them.
+    pub(crate) fn install_registries(&self, sync: &kiln_link::DataSync) {
+        let loaded = crate::registry_data::load(&self.extra_roots());
+        kiln_data::live::install_synced(loaded.names, loaded.data);
+        sync.set_registry_packets((!loaded.packets.is_empty()).then(|| std::sync::Arc::new(loaded.packets)));
+    }
+
     fn find(&self, id: &str) -> Option<&Pack> {
         self.available.iter().find(|p| p.info.id == id)
     }
@@ -417,30 +449,18 @@ fn resolve_tag(
 
 impl Sim {
     /// Sets up the packs from the world (or `KILN_DATAPACKS`) and loads what they provide.
-    pub(crate) fn init_packs(&mut self, vanilla: PathBuf) {
-        let dir = match &self.config.world {
-            Some(world) => Some(world.join("datapacks")),
-            None => std::env::var_os("KILN_DATAPACKS").map(PathBuf::from),
-        };
-        let level = self.storage.as_ref().map(|s| &s.level);
-        let config = match level.and_then(|l| l.data_packs()) {
-            Some((enabled, disabled)) => {
-                // Worlds without saved features have vanilla's defaults.
-                let features = level.and_then(|l| l.enabled_features()).unwrap_or_else(|| vec![VANILLA_FEATURE.into()]);
-                PackConfig { enabled, disabled, features: Some(features) }
-            }
-            None => PackConfig::initial(),
-        };
-        self.commands.packs = Packs::new(dir, vanilla, config);
+    pub(crate) fn init_packs(&mut self, packs: Packs) {
+        self.commands.packs = packs;
         self.config.data_sync.set_features(self.commands.packs.features.clone());
         if let Some(data) = self.storage.as_ref().and_then(|s| kiln_storage::saved_data::read(&s.dir, "scheduled_events")) {
             self.commands.packs.timers.load_nbt(&data);
         }
         let only_vanilla = self.commands.packs.selected == ["vanilla"];
-        self.load_packs(!only_vanilla);
+        // The tags first: recipes and loot tables resolve theirs while they load.
         if !only_vanilla {
             self.load_tags();
         }
+        self.load_packs(!only_vanilla);
     }
 
     /// `/reload` and `/datapack enable|disable`: the new pack list, then everything the packs
@@ -458,10 +478,10 @@ impl Sim {
         }
         packs.update_disabled();
         packs.dirty = true;
-        self.load_packs(true);
         // `PlayerList.reloadResources`: the tags to everyone, then each player's recipes and
-        // recipe book.
+        // recipe book. (The tags first: recipes and loot tables resolve theirs while they load.)
         let tags = self.load_tags();
+        self.load_packs(true);
         let tags = kiln_proto::packets::update_tags_owned(kiln_data::packets::play::clientbound::UPDATE_TAGS, &tags);
         let recipes = kiln_inventory::recipe::sync::update_recipes(&self.rules.recipes);
         let rules = self.rules.clone();
@@ -474,19 +494,24 @@ impl Sim {
         }
     }
 
-    /// The enabled packs' tags for the network; logins get them from now on.
+    /// The enabled packs' tags: the game logic reads them from now on (`kiln_data::live`) and logins
+    /// send them.
     fn load_tags(&mut self) -> crate::tags::NetworkTags {
         use crate::tags::TagSource;
         let roots = self.commands.packs.tag_roots();
         let sources: Vec<TagSource> = roots
             .iter()
             .filter_map(|(builtin, root)| match (builtin, root) {
-                (true, _) => Some(TagSource::BuiltIn),
+                (true, _) => Some(TagSource::Builtin),
                 (false, Some(r)) => Some(TagSource::Dir(r)),
                 (false, None) => None,
             })
             .collect();
-        let tags = crate::tags::load(&sources);
+        let (tags, errors) = crate::tags::load(&sources);
+        for e in errors {
+            error!("Couldn't load tag {e}");
+        }
+        kiln_data::live::install_tags(tags.clone());
         let config = kiln_proto::packets::update_tags_owned(kiln_data::packets::configuration::clientbound::UPDATE_TAGS, &tags);
         self.config.data_sync.set_config_tags(Some(config));
         tags

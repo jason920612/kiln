@@ -14,7 +14,6 @@ use crate::persist::{Input, Output};
 use kiln_javamath::random::RandomSource;
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets::entity::{DataValue, EntityData};
-use std::sync::OnceLock;
 
 pub struct Enderman;
 

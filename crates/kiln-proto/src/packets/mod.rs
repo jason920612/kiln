@@ -121,6 +121,25 @@ pub fn registry_data(registry: &str, entries: &[&str]) -> Bytes {
     b.freeze()
 }
 
+/// Registry Data with the data of the entries the client cannot take from a pack it knows
+/// (`RegistrySynchronization.PackedRegistryEntry`: the id, then the NBT if present).
+pub fn registry_data_entries(registry: &str, entries: &[(&str, Option<&Tag>)]) -> Bytes {
+    let mut b = packet(ids::configuration::clientbound::REGISTRY_DATA);
+    b.put_string(registry);
+    b.put_varint(entries.len() as i32);
+    for (name, data) in entries {
+        b.put_string(name);
+        match data {
+            Some(tag) => {
+                b.put_bool(true);
+                tag.write_network(&mut b);
+            }
+            None => b.put_bool(false),
+        }
+    }
+    b.freeze()
+}
+
 pub fn update_tags(id: i32, tags: &[(&str, &[(&str, &[i32])])]) -> Bytes {
     let mut b = packet(id);
     b.put_varint(tags.len() as i32);
