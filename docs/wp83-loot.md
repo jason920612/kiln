@@ -61,3 +61,9 @@
 - `crates/kiln-sim/tests/loot_calls.rs`(10 個測試,用 `datapacks/p83` 寫入自己的小表並 `reload` + `datapack enable`):南瓜(剪刀作為 tool)、甜莓(成熟與否由 `block_state` 決定,1 階不採)、洞穴藤與藤頭、蜂窩、鋤根土、充能苦力怕(一隻一顆、未充能不掉)、生怪磚的裝備(`slot_drop_chances` 也跟)、村民禮物、剪羊(tool = 剪刀)。
 - `crates/kiln-sim/tests/loot_table_names.rs`:所有原始碼裡寫的 loot table id 都存在於 vanilla 資料(抓到 `dispensers/jungle_temple`)。
 - `tools/wp83/neg83_loot.sh`:每個修正拿掉,對應測試必須失敗(結果見下)。
+
+### 結果(VM,`CARGO_BUILD_JOBS=3 RUST_TEST_THREADS=4`)
+
+- `cargo check --workspace --all-targets`:沒有警告。
+- `cargo test --release -p kiln-sim -p kiln-entity -p kiln-worldgen --no-fail-fast`(`KILN_DATAPACK=/home/test/kiln/work/generated`)與 `-p kiln-sim`(不設 `KILN_DATAPACK`,loot 測試略過):全部通過,含 `determinism.rs`(6 個)、`crowd_golden.rs`(4 個)、`cat_gift.rs`。
+- `tools/wp83/neg83_loot.sh`:9 項「修正拿掉測試就失敗」全部如預期(南瓜、甜莓、洞穴藤、鋤根土、蜂巢、充能苦力怕、生怪磚裝備、剪毛的 `tool`、叢林神廟發射器的表 id);**沒有**對應負向檢查的:村民禮物測試(`a_villager_throws_the_hero_gift_its_table_rolls`)—— 那張表以前就有 roll,這個測試只守住「datapack 改表會生效」,丟向英雄的速度與起點沒有斷言。
