@@ -151,8 +151,10 @@ fn check(name: &str, dimension: &str, packs: &[&str]) {
     let mut gs = GenScratch::default();
     let (mut block_diffs, mut biome_diffs, mut start_diffs, mut bad_chunks) = (0usize, 0usize, 0usize, 0usize);
     let mut first = Vec::new();
-    for t in &dump.targets {
-        let p = pipeline.full(&mut gs, t.x, t.z);
+    // All the chunks first: a structure start records what its pieces did while they were placed (a spider corridor's `hps`), so its
+    // saved form is read once every target is done, as in the dump.
+    let chunks: Vec<_> = dump.targets.iter().map(|t| pipeline.full(&mut gs, t.x, t.z)).collect();
+    for (t, p) in dump.targets.iter().zip(&chunks) {
         let generator = &pipeline.world().generator;
         let mut chunk_bad = false;
         assert_eq!(p.blocks.len(), t.blocks.len(), "{name}: the chunks' heights differ");
