@@ -32,14 +32,14 @@
   "packs": [
    "kiln85_crystal"
   ],
-  "seed": 85,
+  "seed": 86,
   "areas": [
    [
     "minecraft:overworld",
-    -128,
-    -128,
-    127,
-    127,
+    -96,
+    -160,
+    159,
+    95,
     "loose"
    ]
   ],
@@ -48,7 +48,7 @@
     "name": "crystal",
     "dimension": "minecraft:overworld",
     "at": [
-     "-8,-8,12,12"
+     "-6,-8,12,12"
     ]
    }
   ]

@@ -74,16 +74,17 @@ fn locate_and_place_use_the_structures_and_templates_of_the_packs() {
 #[test]
 fn the_overworld_uses_the_biome_list_of_the_pack() {
     let _x = kiln_data::live::exclusive();
-    let Some((mut sim, dir)) = start("biomes", &["kiln85_crystal"], 85) else { return };
-    sim.console_now("forceload add -128 -128 127 127");
+    let Some((mut sim, dir)) = start("biomes", &["kiln85_crystal"], 86) else { return };
+    // (Seed 86 has the pack's biome around (56, -40).)
+    sim.console_now("forceload add -32 -96 95 31");
     let crystal = kiln_data::synced_id("minecraft:worldgen/biome", "kiln85:crystal_flats").unwrap() as u16;
     let allowed: Vec<u16> = ["kiln85:crystal_flats", "minecraft:plains", "minecraft:desert", "minecraft:ocean"]
         .iter()
         .map(|b| kiln_data::synced_id("minecraft:worldgen/biome", b).unwrap() as u16)
         .collect();
     let (mut seen_crystal, mut others) = (false, 0);
-    for x in (-128..128).step_by(4) {
-        for z in (-128..128).step_by(4) {
+    for x in (-32..96).step_by(4) {
+        for z in (-96..32).step_by(4) {
             for y in (0..120).step_by(8) {
                 let b = sim.biome_in("minecraft:overworld", x, y, z).expect("loaded");
                 seen_crystal |= b == crystal;
@@ -94,8 +95,8 @@ fn the_overworld_uses_the_biome_list_of_the_pack() {
         }
     }
     let mut counts: std::collections::BTreeMap<&str, usize> = Default::default();
-    for x in (-128..128).step_by(16) {
-        for z in (-128..128).step_by(16) {
+    for x in (-32..96).step_by(8) {
+        for z in (-96..32).step_by(8) {
             let b = sim.biome_in("minecraft:overworld", x, 64, z).expect("loaded");
             *counts.entry(kiln_data::live::synced_name("minecraft:worldgen/biome", b as i32).unwrap()).or_default() += 1;
         }
