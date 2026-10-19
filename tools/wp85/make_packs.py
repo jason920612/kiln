@@ -22,7 +22,7 @@ def write(pack, path, data):
     if isinstance(data, (bytes, bytearray)):
         p.write_bytes(data)
     else:
-        p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        p.write_bytes((json.dumps(data, indent=2) + chr(10)).encode("utf-8"))
 
 
 def mcmeta(pack, text):
