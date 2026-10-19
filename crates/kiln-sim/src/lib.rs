@@ -687,6 +687,8 @@ struct Player {
     vel: [f64; 3],
     /// A velocity packet for the knockback waits one tick (see `players::encode_movement`).
     sync_deferred: bool,
+    /// The parity harnesses replay vanilla's recorded hit with no player tick of its own: such a player's velocity is not travelled.
+    untravelled: bool,
     /// `syncVelocity`: a hit this tick; the velocity goes to the client and its viewers.
     sync_velocity: bool,
     /// `Entity.needsSync` after a `push` (a riptide): the tracking players, not the pushed
@@ -4156,6 +4158,7 @@ impl Sim {
             equipment_sent: vec![kiln_item::ItemStack::empty(); combat::SLOTS.len()],
             vel: [0.0; 3],
             sync_deferred: false,
+            untravelled: false,
             sync_velocity: false,
             push_sync: false,
             shoulders,

@@ -85,6 +85,7 @@ pub(crate) fn setup(sim: &mut Sim, conn: u64, side: &Value, base: [f64; 3]) {
     p.last_hurt = f32_of(&side["last_hurt"]);
     p.known_movement = vec_of(&side["known_movement"]);
     p.vel = [0.0; 3];
+    p.untravelled = true;
     p.food = 17;
     p.saturation = 0.0;
     p.exhaustion = 0.0;
@@ -434,6 +435,7 @@ fn run_lift(v: &Value) -> Vec<String> {
         p.on_ground = v["on_ground"].as_bool().unwrap();
         p.set_shift_key(v["sneak"].as_bool().unwrap());
         p.vel = [0.0; 3];
+        p.untravelled = true;
         p.fall_distance = 0.0;
         p.loot = vanilla_loot();
         p.inv = kiln_inventory::PlayerInventory::new();
@@ -506,6 +508,7 @@ fn run_touch(v: &Value) -> Vec<String> {
         p.rot = [0.0, 0.0];
         p.on_ground = true;
         p.vel = [0.4, 0.1, -0.3];
+        p.untravelled = true;
         p.loot = vanilla_loot();
         p.inv = kiln_inventory::PlayerInventory::new();
         let trident = kiln_item::ItemStack::of("minecraft:trident", 1).unwrap();

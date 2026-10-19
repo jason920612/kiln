@@ -218,7 +218,7 @@ impl Player {
     /// Whether the server's body of this player travels (`LivingEntity.travel` with no input): not a spectator, a flyer, a glider,
     /// a rider, a sleeper or a dead player.
     pub(crate) fn phantom_travels(&self) -> bool {
-        !(self.game_mode == 3 || self.flying || self.fall_flying || self.vehicle.is_some() || self.dead || self.sleep.pos.is_some())
+        !(self.untravelled || self.game_mode == 3 || self.flying || self.fall_flying || self.vehicle.is_some() || self.dead || self.sleep.pos.is_some())
     }
 
     /// `LivingEntity.travel` for the server's body of this player (see the module docs). The
