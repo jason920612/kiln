@@ -117,6 +117,13 @@ impl World {
         self.ticks(4);
     }
 
+    /// Walks the player one step to the middle of the block above `ground` + (dx, dz): the client reports the new position.
+    fn step_to(&mut self, dx: i32, dz: i32) {
+        let [x, y, z] = self.ground;
+        self.client.pos = [(x + dx) as f64 + 0.5, (y + 1) as f64, (z + dz) as f64 + 0.5];
+        self.ticks(3);
+    }
+
     fn equip(&mut self, slot: &str, item: &str) {
         self.run(&format!("item replace entity Keeper {slot} with {item}"));
     }
@@ -176,6 +183,7 @@ fn a_packs_hit_block_effect_summons_lightning_where_an_arrow_lands() {
     let mut bolts = 0;
     for _ in 0..10 {
         w.ticks(1);
+        eprintln!("DEBUG strike entities: {:?}", w.sim.entities());
         bolts = bolts.max(w.sim.entity_ids_of("minecraft:lightning_bolt").len());
     }
     assert_eq!(bolts, 1, "the hit_block effect of kz:strike summoned a lightning bolt");
@@ -225,8 +233,8 @@ fn redefining_soul_speed_changes_its_modifier_and_it_stops_off_soul_blocks() {
     assert_eq!(soul.1, 0.5, "the pack's amount, not vanilla's 0.0405");
     // The pack's definition has no second modifier (vanilla's adds movement efficiency).
     assert!(w.sim.attribute_modifiers(1, "minecraft:movement_efficiency").unwrap().iter().all(|m| m.0 != "minecraft:enchantment.soul_speed/feet"));
-    // Off the soul sand the requirement fails: the modifier goes.
-    w.go(2, 0);
+    // Off the soul sand (a step to the next block) the requirement fails: the modifier goes.
+    w.step_to(1, 0);
     let mods = w.sim.attribute_modifiers(1, "minecraft:movement_speed").unwrap();
     assert!(mods.iter().all(|m| m.0 != "minecraft:enchantment.soul_speed/feet"), "{mods:?}");
 }
@@ -262,7 +270,12 @@ fn break_ice(w: &mut World, tool: &str, dx: i32) -> &'static str {
     w.equip("weapon.mainhand", tool);
     w.ticks(2);
     assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 0, pos: ice, face: 1, sequence: 10 + dx })]));
-    w.ticks(30);
+    for t in 0..30 {
+        w.ticks(1);
+        if t % 5 == 0 {
+            eprintln!("DEBUG ice t={t}: {} player {:?} held {:?}", w.name(ice), w.client.pos, w.sim.inventory(1).map(|i| i.iter().flatten().count()));
+        }
+    }
     w.name(ice)
 }
 
@@ -311,8 +324,9 @@ fn a_packs_enchantment_with_the_binding_marker_cannot_be_taken_off() {
     assert!(w.sim.step([ToSim::Packet(1, PlayIn::UseItem { hand: kiln_proto::packets::serverbound::Hand::Main, sequence: 1, yaw: 0.0, pitch: 0.0 })]));
     w.ticks(2);
     let head = w.sim.saved_player_nbt(1).unwrap();
-    let Some(Tag::List(items)) = head.get("Inventory") else { panic!("no inventory in {head:?}") };
-    let worn = items.iter().map(|i| i.unwrap_list_element()).find(|i| matches!(i.get("Slot"), Some(Tag::Byte(103)))).expect("a helmet is worn");
+    let items = ();
+    let _ = items;
+    let worn = head.get("equipment").and_then(|e| e.get("head")).expect("a helmet is worn");
     let components = format!("{worn:?}");
     assert!(components.contains("kz:hex"), "the bound helmet stayed: {components}");
 }

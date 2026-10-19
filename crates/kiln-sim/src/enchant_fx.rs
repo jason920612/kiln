@@ -102,6 +102,9 @@ impl Player {
     /// the equipment, with the enchantments of each slot in the stored order.
     pub(crate) fn tick_enchant_effects(&mut self, w: &FxWorld, ctx: &mut DamageCtx<'_>) {
         let Some(loot) = self.loot.clone() else { return };
+        if self.tick_count % 20 == 0 {
+            eprintln!("DEBUG tick effects: boots {:?}", self.slot_enchantments(EquipmentSlot::Feet));
+        }
         let mut view: Option<EntityView> = None;
         for slot in EQUIPMENT_ORDER {
             for (id, level) in self.slot_enchantments(slot) {
@@ -305,7 +308,10 @@ pub(crate) fn run_level_jobs(level: &mut RegionLevel, p: &mut Player, difficulty
         match job.action {
             Action::Level { effect, level: lvl, at } => run_level_effect(level, p, &effect, lvl, at),
             Action::Summon { entity, at, join_team: _ } => summon(level, p, &entity, at, difficulty, spawns),
-            Action::Function { function, at } => p.function_requests.push((function.as_str().to_owned(), at)),
+            Action::Function { function, at } => {
+                eprintln!("DEBUG fx function {function} at {at:?}");
+                p.function_requests.push((function.as_str().to_owned(), at))
+            }
             _ => {}
         }
     }
