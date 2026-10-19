@@ -275,7 +275,7 @@ fn a_disc_of_a_song_of_the_pack_plays_for_its_length_and_the_comparator_reads_it
     let song = kiln_data::synced_id("minecraft:jukebox_song", "kiln83:tune").unwrap();
     g.console(&format!("fill {x} {} {z} {} {} {z} minecraft:stone", y - 1, x + 2, y - 1));
     g.console(&format!("setblock {x} {y} {z} minecraft:jukebox"));
-    g.console(&format!("setblock {} {y} {z} minecraft:comparator[facing=east]", x + 1));
+    g.console(&format!("setblock {} {y} {z} minecraft:comparator[facing=west]", x + 1));
     g.console(&format!("setblock {} {y} {z} minecraft:redstone_wire", x + 2));
     g.console(r#"give Dj minecraft:stick[minecraft:jukebox_playable="kiln83:tune"]"#);
     g.ticks(2);
@@ -287,7 +287,7 @@ fn a_disc_of_a_song_of_the_pack_plays_for_its_length_and_the_comparator_reads_it
     g.ticks(10);
     // The comparator reads the song's `comparator_output` (7).
     let wire = kiln_blocks::state::state_string(g.sim.block_at(x + 2, y, z).expect("loaded"));
-    eprintln!("WIRE {wire}");
+    assert!(wire.contains("power=7"), "{wire}");
     // 12.5 seconds = 250 ticks and a second more.
     g.ticks(230);
     assert!(g.sim.block_entity_nbt(x, y, z).unwrap().get("ticks_since_song_started").is_some(), "still playing after 240 ticks");
