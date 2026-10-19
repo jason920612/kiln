@@ -250,6 +250,11 @@ fn damage_types_of_the_pack_scale_and_name_the_death() {
     // `scaling`: always scales with the difficulty (hard: x1.5), never does not.
     assert_eq!(hit(&mut sim, "damage Dmg 4 kiln83:acid"), 20.0 - 6.0);
     assert!(sim.step([ToSim::Console("effect give Dmg minecraft:instant_health 1 5".into())]));
+    for _ in 0..25 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
     assert_eq!(hit(&mut sim, "damage Dmg 4 kiln83:mild"), 20.0 - 4.0);
     // The message of the pack's `message_id`.
     stats.log.lock().unwrap().as_mut().unwrap().clear();
