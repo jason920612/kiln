@@ -1030,11 +1030,9 @@ fn section_key(e: &kiln_entity::Entity) -> (i32, i64) {
 impl EntityLevel for SimLevel<'_, '_, '_> {
     fn equipment_drop_chance(&mut self, attacker: Option<i32>, _victim: i32, chance: f32) -> f32 {
         use kiln_loot::effects::Target;
-        eprintln!("DEBUG equipment_drop_chance attacker {attacker:?} chance {chance}");
         let Some(id) = attacker else { return chance };
-        let Some(loot) = self.level.env().loot.clone() else { eprintln!("DEBUG no loot"); return chance };
-        let Some(p) = self.players.iter().find(|p| p.entity_id == id) else { eprintln!("DEBUG no player {id}: {:?}", self.players.iter().map(|p| p.entity_id).collect::<Vec<_>>()); return chance };
-        eprintln!("DEBUG held {:?} enchants {:?}", p.inv.selected_item().item_name(), p.inv.selected_item().get(kiln_item::keys::ENCHANTMENTS).map(|e| e.0.clone()));
+        let Some(loot) = self.level.env().loot.clone() else { return chance };
+        let Some(p) = self.players.iter().find(|p| p.entity_id == id) else { return chance };
         // (`damageContext(level, victim, source)`: the requirements of the vanilla effect only look at the attacker.)
         let attacker = p.as_attacker();
         let view = attacker.view.clone();

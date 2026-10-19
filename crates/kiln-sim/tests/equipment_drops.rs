@@ -68,7 +68,8 @@ impl World {
                 x + 2
             ));
             self.ticks(2);
-            let id = *self.sim.entity_ids_of("minecraft:zombie").first().unwrap_or_else(|| panic!("no zombie: {:?}", self.sim.entities()));
+            // (A zombie killed in the turn before lingers while it dies: the newest is the target.)
+            let id = *self.sim.entity_ids_of("minecraft:zombie").last().unwrap_or_else(|| panic!("no zombie: {:?}", self.sim.entities()));
             assert!(self.sim.step([ToSim::Packet(1, PlayIn::Attack { entity_id: id })]));
             self.ticks(3);
             swords += self.sim.item_stacks().iter().filter(|s| s.item_name() == "minecraft:iron_sword").count();
@@ -96,7 +97,6 @@ fn an_enchantment_with_equipment_drops_raises_the_chance_a_killed_mob_drops_its_
     w.sim.console_now("clear User");
     w.sim.console_now("give User minecraft:diamond_sword[enchantments={\"kiln85:plunder\":1}]");
     w.ticks(2);
-    eprintln!("DEBUG slot36 {:?}", w.sim.inventory(1).map(|i| i[36]));
     let plunder = w.kills(12);
     assert_eq!(plunder, 12, "the effect adds 1.0 to the chance (a plain sword dropped {plain})");
 }
