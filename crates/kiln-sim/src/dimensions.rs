@@ -13,22 +13,6 @@ use kiln_worldgen::json::Json;
 use std::path::PathBuf;
 use tracing::{error, warn};
 
-/// The vanilla three, as `world_preset/normal` lists them.
-const DEFAULT_STEMS: [(&str, &str); 3] = [
-    (
-        "minecraft:overworld",
-        r#"{"type":"minecraft:overworld","generator":{"type":"minecraft:noise","biome_source":{"type":"minecraft:multi_noise","preset":"minecraft:overworld"},"settings":"minecraft:overworld"}}"#,
-    ),
-    (
-        "minecraft:the_nether",
-        r#"{"type":"minecraft:the_nether","generator":{"type":"minecraft:noise","biome_source":{"type":"minecraft:multi_noise","preset":"minecraft:nether"},"settings":"minecraft:nether"}}"#,
-    ),
-    (
-        "minecraft:the_end",
-        r#"{"type":"minecraft:the_end","generator":{"type":"minecraft:noise","biome_source":{"type":"minecraft:the_end"},"settings":"minecraft:end"}}"#,
-    ),
-];
-
 /// A level stem as the world is built from it.
 pub(crate) struct LevelStem {
     pub key: String,
@@ -67,8 +51,8 @@ pub(crate) fn stems(saved: &[(String, Tag)], roots: &[PathBuf]) -> Vec<LevelStem
         Err(e) => error!("cannot read the dimensions of the data packs: {e}"),
     }
     let mut out = Vec::new();
-    for (key, text) in DEFAULT_STEMS {
-        let json = map.remove(key).unwrap_or_else(|| Json::parse(text).expect("default stem"));
+    for key in ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"] {
+        let json = map.remove(key).unwrap_or_else(|| kiln_worldgen::stem::vanilla_stem(key).expect("default stem"));
         out.push(LevelStem { key: key.to_owned(), json });
     }
     out.extend(map.into_iter().map(|(key, json)| LevelStem { key, json }));

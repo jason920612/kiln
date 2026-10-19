@@ -19,6 +19,40 @@ use kiln_world::section::Section;
 use kiln_world::{ChunkGenerator, ChunkPos, Dimension};
 use std::sync::Arc;
 
+/// The vanilla three, as `world_preset/normal` lists them.
+const DEFAULT_STEMS: [(&str, &str); 3] = [
+    (
+        "minecraft:overworld",
+        r#"{"type":"minecraft:overworld","generator":{"type":"minecraft:noise","biome_source":{"type":"minecraft:multi_noise","preset":"minecraft:overworld"},"settings":"minecraft:overworld"}}"#,
+    ),
+    (
+        "minecraft:the_nether",
+        r#"{"type":"minecraft:the_nether","generator":{"type":"minecraft:noise","biome_source":{"type":"minecraft:multi_noise","preset":"minecraft:nether"},"settings":"minecraft:nether"}}"#,
+    ),
+    (
+        "minecraft:the_end",
+        r#"{"type":"minecraft:the_end","generator":{"type":"minecraft:noise","biome_source":{"type":"minecraft:the_end"},"settings":"minecraft:end"}}"#,
+    ),
+];
+
+/// The level stem of one of the three vanilla dimensions when nothing else defines it (`world_preset/normal`).
+pub fn vanilla_stem(key: &str) -> Option<Json> {
+    let (_, text) = DEFAULT_STEMS.iter().find(|(k, _)| *k == key)?;
+    Some(Json::parse(text).expect("default stem"))
+}
+
+/// The level stems a data pack stack defines: the vanilla three unless a pack's `dimension/` file replaces one, and the packs' own.
+pub fn stems_of(pack: &Datapack) -> Vec<(String, Json)> {
+    let mut out: Vec<(String, Json)> = DEFAULT_STEMS.iter().map(|(k, _)| ((*k).to_owned(), vanilla_stem(k).unwrap())).collect();
+    for (key, json) in &pack.dimensions {
+        match out.iter_mut().find(|(k, _)| k == key) {
+            Some(slot) => slot.1 = json.clone(),
+            None => out.push((key.clone(), json.clone())),
+        }
+    }
+    out
+}
+
 /// A parsed `LevelStem`.
 #[derive(Clone, Debug)]
 pub struct Stem {
