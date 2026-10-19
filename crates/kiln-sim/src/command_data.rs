@@ -1529,11 +1529,7 @@ impl kiln_loot::LootContext for PredicateContext<'_> {
         self.thundering
     }
     fn clock_total_ticks(&self, clock: &kiln_item::Identifier) -> i64 {
-        match clock.as_str() {
-            "minecraft:overworld" => self.sim.day_time,
-            "minecraft:the_end" => self.sim.end_time,
-            _ => 0,
-        }
+        self.sim.clock_total_of(clock.as_str()).unwrap_or(0)
     }
     fn storage(&self, id: &kiln_item::Identifier) -> Option<Tag> {
         let id = id.to_string();

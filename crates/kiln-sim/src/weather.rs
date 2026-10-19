@@ -228,7 +228,11 @@ fn sky_light_factor(day_time: i64) -> f32 {
 /// 0.3125 by the rain level less the thunder level, thunder toward 4 with alpha 0.52734375
 /// by the thunder level.
 pub(crate) fn sky_light_level(day_time: i64, weather: &LevelWeather) -> f32 {
-    let mut v = 15.0 * sky_light_factor(day_time);
+    weather_layer(15.0 * sky_light_factor(day_time), weather)
+}
+
+/// `WeatherAttributes`: the `sky_light_level` `v` of the timelines changed by the rain and the thunder of the level.
+pub(crate) fn weather_layer(mut v: f32, weather: &LevelWeather) -> f32 {
     let thunder = weather.thunder_level();
     let rain = weather.rain_level() - thunder;
     if rain > 0.0 {
@@ -508,47 +512,27 @@ impl ClockRun {
     }
 }
 
-/// Clocks Kiln runs, by `minecraft:world_clock` id.
-const CLOCKS: [&str; 2] = ["minecraft:overworld", "minecraft:the_end"];
-
-/// The time markers of a clock (from its timelines): (id, ticks within the 24000-tick day).
-pub(crate) fn time_markers(clock: &str) -> &'static [(&'static str, i64)] {
-    if clock == CLOCKS[0] {
-        &[
-            ("minecraft:day", 1000),
-            ("minecraft:midnight", 18000),
-            ("minecraft:night", 13000),
-            ("minecraft:noon", 6000),
-            ("minecraft:roll_village_siege", 18000),
-            ("minecraft:wake_up_from_sleep", 0),
-        ]
-    } else {
-        &[]
-    }
-}
-
-/// The timelines of a clock and their periods (`None`: not periodic).
-pub(crate) fn timelines(clock: &str) -> &'static [(&'static str, Option<i64>)] {
-    if clock == CLOCKS[0] {
-        &[
-            ("minecraft:day", Some(24000)),
-            ("minecraft:early_game", None),
-            ("minecraft:moon", Some(192000)),
-            ("minecraft:villager_schedule", Some(24000)),
-        ]
-    } else {
-        &[]
-    }
-}
-
-/// `ClockTimeMarker.occursAt` and `resolveTimeToMoveTo` for a marker of the 24000-tick day.
+/// `ClockTimeMarker.occursAt` and `resolveTimeToMoveTo` for a marker `ticks` into a timeline of `period` ticks (24000 for the day).
 pub(crate) fn marker_move(total: i64, ticks: i64) -> Option<i64> {
-    const PERIOD: i64 = 24000;
-    if total % PERIOD == ticks {
+    marker_move_in(total, ticks, 24000)
+}
+
+/// [`marker_move`] for a timeline that repeats every `period` ticks.
+pub(crate) fn marker_move_in(total: i64, ticks: i64, period: i64) -> Option<i64> {
+    if total.rem_euclid(period) == ticks {
         return None;
     }
-    let d = ticks - total % PERIOD;
-    Some(total + if d > 0 { d } else { PERIOD + d })
+    let d = ticks - total.rem_euclid(period);
+    Some(total + if d > 0 { d } else { period + d })
+}
+
+/// A world clock besides the overworld's (`ServerClockManager.ServerClockInstance`): the registry entry, its network id and its state.
+#[derive(Clone, Debug)]
+pub(crate) struct ClockSlot {
+    pub name: &'static str,
+    pub net_id: i32,
+    pub total: i64,
+    pub run: ClockRun,
 }
 
 /// `TimeCommand.wrapTime`.
@@ -562,11 +546,41 @@ impl Sim {
         if !self.rule_bool("minecraft:advance_time") {
             return;
         }
-        self.day_time += self.clock_runs[0].tick();
-        self.end_time += self.clock_runs[1].tick();
+        self.day_time += self.overworld_run.tick();
+        for c in &mut self.other_clocks {
+            c.total += c.run.tick();
+        }
     }
 
-    fn clock_index(&self, clock: Option<&str>) -> Result<usize, kiln_command::CommandError> {
+    /// The world clocks (`minecraft:world_clock` entries): the overworld's, then the others in registry order.
+    pub(crate) fn clock_names(&self) -> Vec<&'static str> {
+        std::iter::once("minecraft:overworld").chain(self.other_clocks.iter().map(|c| c.name)).collect()
+    }
+
+    /// The total ticks of clock `name`.
+    pub(crate) fn clock_total_of(&self, name: &str) -> Option<i64> {
+        if name == "minecraft:overworld" {
+            return Some(self.day_time);
+        }
+        self.other_clocks.iter().find(|c| c.name == name).map(|c| c.total)
+    }
+
+    fn clock_total(&mut self, name: &str) -> &mut i64 {
+        if name == "minecraft:overworld" {
+            return &mut self.day_time;
+        }
+        &mut self.other_clocks.iter_mut().find(|c| c.name == name).expect("a known clock").total
+    }
+
+    fn clock_run(&mut self, name: &str) -> &mut ClockRun {
+        if name == "minecraft:overworld" {
+            return &mut self.overworld_run;
+        }
+        &mut self.other_clocks.iter_mut().find(|c| c.name == name).expect("a known clock").run
+    }
+
+    /// The clock `/time` means: the named one, else the default clock of the source's level.
+    fn clock_named(&self, clock: Option<&str>) -> Result<&'static str, kiln_command::CommandError> {
         use kiln_command::{CommandError, tr};
         let id = match clock {
             Some(c) => c.to_owned(),
@@ -578,11 +592,46 @@ impl Sim {
                 }
             }
         };
-        CLOCKS.iter().position(|c| *c == id).ok_or_else(|| CommandError::new(tr!("commands.time.no_default_clock", id)))
+        self.clock_names().into_iter().find(|c| *c == id).ok_or_else(|| CommandError::new(tr!("commands.time.no_default_clock", id)))
     }
 
-    fn clock_total(&mut self, i: usize) -> &mut i64 {
-        if i == 0 { &mut self.day_time } else { &mut self.end_time }
+    /// The boolean attribute `attribute` of level `dim`: its dimension type's timelines change `base` (the level's clocks drive them).
+    pub(crate) fn timeline_bool(&self, dim: crate::DimId, attribute: &str, base: bool) -> bool {
+        let total = |clock: &str| self.clock_total_of(clock).unwrap_or(0);
+        self.timelines.bool_attr(crate::dim_type(dim).timelines, attribute, base, &total)
+    }
+
+    /// The float attribute `attribute` of level `dim`.
+    pub(crate) fn timeline_float(&self, dim: crate::DimId, attribute: &str, base: f32) -> f32 {
+        let total = |clock: &str| self.clock_total_of(clock).unwrap_or(0);
+        self.timelines.float_attr(crate::dim_type(dim).timelines, attribute, base, &total)
+    }
+
+    /// `Level.updateSkyBrightness` for level `dim`: 15 less the `minecraft:gameplay/sky_light_level` its timelines make (0 when none of
+    /// them sets it: no day timeline modifies the sky light of the nether and the End), then the weather layer.
+    pub(crate) fn sky_darken_of(&self, dim: crate::DimId) -> i32 {
+        const SKY: &str = "minecraft:gameplay/sky_light_level";
+        if !self.timelines.has_track(crate::dim_type(dim).timelines, SKY) {
+            return 0;
+        }
+        let level = weather_layer(self.timeline_float(dim, SKY, 15.0), &self.level_weather[dim]);
+        (15.0 - level) as i32
+    }
+
+    /// The default clock of the level the command's source is in (the overworld's when it has none).
+    pub(crate) fn source_default_clock(&self) -> String {
+        let dim = crate::dim_id(kiln_command::host::Source::dimension(self)).unwrap_or(OVERWORLD_ID);
+        crate::dim_type(dim).default_clock.unwrap_or("minecraft:overworld").to_owned()
+    }
+
+    /// The time markers of a clock (from its timelines): `(id, period of its timeline, ticks, shown in commands)`.
+    pub(crate) fn time_markers_of(&self, clock: &str) -> Vec<(String, Option<i64>, i64, bool)> {
+        self.timelines.markers_of(clock)
+    }
+
+    /// The timelines of a clock and their periods (`None`: not periodic), in the order of the registry.
+    pub(crate) fn timelines_of(&self, clock: &str) -> Vec<(String, Option<i64>)> {
+        self.timelines.of_clock(clock).map(|(id, t)| (id.to_owned(), t.period)).collect()
     }
 
     /// `/time` (`TimeCommand`) on a clock (the source level's default clock when `None`).
@@ -593,47 +642,46 @@ impl Sim {
             self.send_success(tr!("commands.time.query.gametime", t), false);
             return Ok(wrap_time(t));
         }
-        let i = self.clock_index(clock)?;
-        let name = CLOCKS[i];
+        let name = self.clock_named(clock)?;
         let result = match action {
             A::QueryGameTime => unreachable!(),
             A::Set(t) => {
-                if *self.clock_total(i) == *t as i64 {
+                if *self.clock_total(name) == *t as i64 {
                     return Err(CommandError::new(tr!("commands.time.set.already_at_time", name, *t)));
                 }
-                *self.clock_total(i) = *t as i64;
+                *self.clock_total(name) = *t as i64;
                 self.send_success(tr!("commands.time.set.absolute", name, *t), true);
                 *t
             }
             A::Add(t) => {
-                *self.clock_total(i) += *t as i64;
-                let total = *self.clock_total(i);
+                *self.clock_total(name) += *t as i64;
+                let total = *self.clock_total(name);
                 self.send_success(tr!("commands.time.set.absolute", name, total), true);
                 wrap_time(total)
             }
             A::SetMarker(m) => {
-                let Some(&(_, ticks)) = time_markers(name).iter().find(|(id, _)| *id == m.as_str()) else {
+                let Some((_, period, ticks, _)) = self.time_markers_of(name).into_iter().find(|(id, ..)| id == m.as_str()) else {
                     return Err(CommandError::new(tr!("commands.time.no_time_marker_found", name, m.as_str())));
                 };
-                let total = *self.clock_total(i);
-                let Some(to) = marker_move(total, ticks) else {
+                let total = *self.clock_total(name);
+                let Some(to) = marker_move_in(total, ticks, period.unwrap_or(24000)) else {
                     return Err(CommandError::new(tr!("commands.time.set.already_at_time_marker", name, m.as_str())));
                 };
-                *self.clock_total(i) = to;
-                self.clock_runs[i].partial = 0.0;
+                *self.clock_total(name) = to;
+                self.clock_run(name).partial = 0.0;
                 self.send_success(tr!("commands.time.set.time_marker", name, m.as_str()), true);
                 wrap_time(to)
             }
             A::QueryTime => {
-                let total = *self.clock_total(i);
+                let total = *self.clock_total(name);
                 self.send_success(tr!("commands.time.query.absolute", name, total), false);
                 wrap_time(total)
             }
             A::QueryTimeline { timeline, repetitions } => {
-                let Some(&(_, period)) = timelines(name).iter().find(|(id, _)| *id == timeline.as_str()) else {
+                let Some((_, period)) = self.timelines_of(name).into_iter().find(|(id, _)| id == timeline.as_str()) else {
                     return Err(CommandError::new(tr!("commands.time.wrong_timeline_for_clock", timeline.as_str(), name)));
                 };
-                let total = *self.clock_total(i);
+                let total = *self.clock_total(name);
                 let (key, v) = match (repetitions, period) {
                     (false, Some(p)) => ("commands.time.query.timeline", total.rem_euclid(p)),
                     (false, None) => ("commands.time.query.timeline", total),
@@ -645,19 +693,19 @@ impl Sim {
             }
             A::Pause | A::Resume => {
                 let pause = matches!(action, A::Pause);
-                if self.clock_runs[i].paused == pause {
+                if self.clock_run(name).paused == pause {
                     let key = if pause { "commands.time.pause.already_paused" } else { "commands.time.pause.already_running" };
                     return Err(CommandError::new(tr!(key, name)));
                 }
-                self.clock_runs[i].paused = pause;
+                self.clock_run(name).paused = pause;
                 self.send_success(tr!(if pause { "commands.time.pause" } else { "commands.time.resume" }, name), true);
                 1
             }
             A::Rate(r) => {
-                if self.clock_runs[i].rate == *r {
+                if self.clock_run(name).rate == *r {
                     return Err(CommandError::new(tr!("commands.time.rate.already_same", name, *r)));
                 }
-                self.clock_runs[i].rate = *r;
+                self.clock_run(name).rate = *r;
                 self.send_success(tr!("commands.time.rate", name, *r), true);
                 1
             }
@@ -671,13 +719,31 @@ impl Sim {
     /// clocks do not run (rate 0) while paused or with `minecraft:advance_time` off.
     pub(crate) fn time_packet(&self) -> Bytes {
         let advance = self.rule_bool("minecraft:advance_time");
-        let state = |i: usize, clock: i32, time: i64| {
-            let run = &self.clock_runs[i];
-            packets::ClockState { clock, time, fraction: run.partial, rate: if run.paused || !advance { 0.0 } else { run.rate } }
-        };
-        let mut clocks = [state(0, self.overworld_clock, self.day_time), state(1, self.end_clock, self.end_time)];
+        let state = |clock: i32, time: i64, run: &ClockRun| packets::ClockState { clock, time, fraction: run.partial, rate: if run.paused || !advance { 0.0 } else { run.rate } };
+        let mut clocks = vec![state(self.overworld_clock, self.day_time, &self.overworld_run)];
+        clocks.extend(self.other_clocks.iter().map(|c| state(c.net_id, c.total, &c.run)));
         clocks.sort_by_key(|c| c.clock);
         packets::set_time(self.game_time, &clocks)
+    }
+
+    /// The clocks of the registry besides the overworld's, at the state the world saved them in (a new world starts them at 0).
+    pub(crate) fn load_clocks(saved: &[(String, kiln_storage::ClockSave)]) -> Vec<ClockSlot> {
+        kiln_data::live::synced_entries("minecraft:world_clock")
+            .unwrap_or_default()
+            .iter()
+            .filter(|n| **n != "minecraft:overworld")
+            .map(|&name| {
+                let net_id = kiln_data::synced_id("minecraft:world_clock", name).unwrap_or(0);
+                let saved = saved.iter().find(|(n, _)| n == name).map(|(_, s)| *s);
+                let run = saved.map_or_else(ClockRun::default, |s| ClockRun { partial: s.partial, rate: s.rate, paused: s.paused });
+                ClockSlot { name, net_id, total: saved.map_or(0, |s| s.total), run }
+            })
+            .collect()
+    }
+
+    /// The clocks other than the overworld's for the level data.
+    pub(crate) fn saved_clocks(&self) -> Vec<(String, kiln_storage::ClockSave)> {
+        self.other_clocks.iter().map(|c| (c.name.to_owned(), kiln_storage::ClockSave { total: c.total, partial: c.run.partial, rate: c.run.rate, paused: c.run.paused })).collect()
     }
 }
 

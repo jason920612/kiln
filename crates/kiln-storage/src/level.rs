@@ -58,6 +58,16 @@ pub struct WorldSpawn {
     pub pitch: f32,
 }
 
+/// What a world clock keeps in `world_clocks.dat` besides its name (`ClockState`): total ticks, the fraction of a tick the rate left
+/// over, the rate and whether it is paused.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClockSave {
+    pub total: i64,
+    pub partial: f32,
+    pub rate: f32,
+    pub paused: bool,
+}
+
 /// The level state Kiln owns.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LevelState {
@@ -74,6 +84,9 @@ pub struct LevelState {
     /// `Data.difficulty_settings`: the difficulty (0 peaceful .. 3 hard) and whether it is
     /// locked; `None` keeps the saved settings (and leaves a new world's to vanilla's default).
     pub difficulty: Option<(u8, bool)>,
+    /// The clocks Kiln runs besides the overworld's (`day_time`), by `minecraft:world_clock` id: written as they are. A clock of the
+    /// file that is not among them is advanced by the ticks since the last save, as vanilla's would have been.
+    pub clocks: Vec<(String, ClockSave)>,
 }
 
 /// A saved game rule: booleans are bytes in `game_rules.dat`, integers ints.
@@ -133,6 +146,23 @@ impl LevelStore {
         store
     }
 
+    /// The clocks of `world_clocks.dat` other than the overworld's, as saved.
+    pub fn clocks(&self) -> Vec<(String, ClockSave)> {
+        let Some(Tag::Compound(entries)) = self.clocks.as_ref().and_then(|c| c.get("data")) else { return Vec::new() };
+        entries
+            .iter()
+            .filter(|(name, _)| name != OVERWORLD_CLOCK)
+            .map(|(name, c)| {
+                let float = |key: &str, default: f32| match c.get(key) {
+                    Some(Tag::Float(v)) => *v,
+                    _ => default,
+                };
+                let paused = c.get("paused").and_then(Tag::as_i64) == Some(1);
+                (name.clone(), ClockSave { total: c.get("total_ticks").and_then(Tag::as_i64).unwrap_or(0), partial: float("partial_tick", 0.0), rate: float("rate", 1.0), paused })
+            })
+            .collect()
+    }
+
     /// Whether the world has a `level.dat`.
     pub fn exists(&self) -> bool {
         self.level.is_some()
@@ -170,6 +200,7 @@ impl LevelStore {
             data_packs: self.data_packs(),
             enabled_features: self.enabled_features(),
             difficulty: self.difficulty(),
+            clocks: Vec::new(),
         }
     }
 
@@ -289,7 +320,7 @@ impl LevelStore {
 
         let mut clocks = self.clocks.clone().unwrap_or_else(|| Tag::Compound(Vec::new()));
         let elapsed = state.game_time - self.clocks_game_time;
-        update_clocks(child(&mut clocks, "data"), state.day_time, elapsed);
+        update_clocks(child(&mut clocks, "data"), state.day_time, elapsed, &state.clocks);
         put(&mut clocks, "DataVersion", Tag::Int(DATA_VERSION as i32));
         write_nbt_file(&self.dir.join("data/minecraft/world_clocks.dat"), &clocks, None)?;
         self.clocks = Some(clocks);
@@ -346,12 +377,12 @@ fn update_level(data: &mut Tag, state: &LevelState) {
     put(data, "WasModded", Tag::Byte(1));
 }
 
-/// Sets the overworld clock and advances the others (Kiln runs only the overworld's) by the
-/// ticks since the last save, as vanilla's `ServerClockInstance.tick` would have.
-fn update_clocks(clocks: &mut Tag, day_time: i64, elapsed: i64) {
+/// Sets the overworld clock and the clocks Kiln runs (`running`), and advances the others by the ticks since the last save, as
+/// vanilla's `ServerClockInstance.tick` would have.
+fn update_clocks(clocks: &mut Tag, day_time: i64, elapsed: i64, running: &[(String, ClockSave)]) {
     let Tag::Compound(entries) = clocks else { return };
     for (name, clock) in entries.iter_mut() {
-        if name == OVERWORLD_CLOCK || elapsed <= 0 || clock.get("paused").and_then(Tag::as_i64) == Some(1) {
+        if name == OVERWORLD_CLOCK || running.iter().any(|(n, _)| n == name) || elapsed <= 0 || clock.get("paused").and_then(Tag::as_i64) == Some(1) {
             continue;
         }
         let rate = match clock.get("rate") {
@@ -371,6 +402,22 @@ fn update_clocks(clocks: &mut Tag, day_time: i64, elapsed: i64) {
         }
     }
     put(child(clocks, OVERWORLD_CLOCK), "total_ticks", Tag::Long(day_time));
+    for (name, run) in running {
+        let clock = child(clocks, name);
+        put(clock, "total_ticks", Tag::Long(run.total));
+        if let Tag::Compound(fields) = clock {
+            fields.retain(|(k, _)| !matches!(k.as_str(), "partial_tick" | "rate" | "paused"));
+        }
+        if run.partial != 0.0 {
+            put(clock, "partial_tick", Tag::Float(run.partial));
+        }
+        if run.rate != 1.0 {
+            put(clock, "rate", Tag::Float(run.rate));
+        }
+        if run.paused {
+            put(clock, "paused", Tag::Byte(1));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -396,6 +443,7 @@ mod tests {
             data_packs: Some((vec!["vanilla".into(), "file/p".into()], vec!["trade_rebalance".into()])),
             enabled_features: Some(vec!["minecraft:vanilla".into(), "minecraft:minecart_improvements".into()]),
             difficulty: Some((3, true)),
+            clocks: Vec::new(),
         };
         store.save(&state).unwrap();
         let back = LevelStore::open(&dir);

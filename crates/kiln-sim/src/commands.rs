@@ -1241,11 +1241,13 @@ impl Host for Sim {
     }
 
     fn time_markers(&self, clock: Option<&Identifier>) -> Vec<String> {
-        crate::weather::time_markers(clock.map_or(OVERWORLD, Identifier::as_str)).iter().map(|(m, _)| (*m).to_owned()).collect()
+        let clock = clock.map_or_else(|| self.source_default_clock(), |c| c.as_str().to_owned());
+        self.time_markers_of(&clock).into_iter().map(|(m, ..)| m).collect()
     }
 
     fn timelines(&self, clock: Option<&Identifier>) -> Vec<String> {
-        crate::weather::timelines(clock.map_or(OVERWORLD, Identifier::as_str)).iter().map(|(t, _)| (*t).to_owned()).collect()
+        let clock = clock.map_or_else(|| self.source_default_clock(), |c| c.as_str().to_owned());
+        self.timelines_of(&clock).into_iter().map(|(t, _)| t).collect()
     }
 
     fn game_rule(&self, rule: &str) -> GameRuleValue {

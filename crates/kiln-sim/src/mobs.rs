@@ -18,6 +18,12 @@ pub(crate) struct MobRules {
     pub monsters_burn: bool,
     /// The `minecraft:gameplay/creaking_active` value (the overworld's night).
     pub creaking_active: bool,
+    /// The `minecraft:gameplay/eyeblossom_open` value; none when no timeline of the level has the track.
+    pub eyeblossom_open: Option<bool>,
+    /// The timelines' `minecraft:gameplay/bees_stay_in_hive` (the weather layer adds its own).
+    pub bees_stay_in_hive: bool,
+    /// The `minecraft:gameplay/turtle_egg_hatch_chance` value.
+    pub turtle_egg_hatch_chance: f32,
     pub griefing: bool,
     pub drops: bool,
     /// `minecraft:entity_drops` (vehicles and other non-mob entities drop their items).
@@ -56,6 +62,9 @@ impl Default for MobRules {
             sky_darken: 0,
             monsters_burn: true,
             creaking_active: false,
+            eyeblossom_open: None,
+            bees_stay_in_hive: false,
+            turtle_egg_hatch_chance: 0.002,
             griefing: true,
             drops: true,
             entity_drops: true,
@@ -76,17 +85,6 @@ impl Default for MobRules {
             spectators_generate_chunks: true,
         }
     }
-}
-
-/// The `minecraft:gameplay/monsters_burn` timeline: off from 12542 to 23460.
-pub(crate) fn monsters_burn(day_time: i64) -> bool {
-    let t = day_time.rem_euclid(24000);
-    !(12542..23460).contains(&t)
-}
-
-/// The `minecraft:gameplay/creaking_active` timeline: on from 12600 to 23401.
-pub(crate) fn creaking_active(day_time: i64) -> bool {
-    (12600..23401).contains(&day_time.rem_euclid(24000))
 }
 
 /// Entity data of a mob for its viewers.

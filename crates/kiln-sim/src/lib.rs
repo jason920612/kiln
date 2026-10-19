@@ -135,6 +135,7 @@ mod village;
 mod display_text;
 mod waypoints;
 mod weather;
+mod timelines;
 mod world_state;
 mod wither;
 pub mod testing;
@@ -1565,9 +1566,12 @@ pub struct Sim {
     /// The overworld clock (time of day).
     day_time: i64,
     overworld_clock: i32,
-    /// The End's clock (`minecraft:the_end`, the End's `default_clock`).
-    end_time: i64,
-    end_clock: i32,
+    /// The state of the overworld clock besides its total.
+    overworld_run: weather::ClockRun,
+    /// The other world clocks (`minecraft:the_end`, the End's `default_clock`, and the data packs' own).
+    other_clocks: Vec<weather::ClockSlot>,
+    /// The timelines of the world: what follows the clocks, the markers of the clocks.
+    timelines: std::sync::Arc<timelines::Timelines>,
     /// The End's dragon fight (`EnderDragonFight`).
     dragon_fight: dragon_fight::DragonFight,
     commands: commands::CommandState,
@@ -1581,8 +1585,6 @@ pub struct Sim {
     climates: Option<std::sync::Arc<weather::Climates>>,
     /// `BiomeManager`'s obfuscated world seed.
     zoom_seed: i64,
-    /// Rate, fraction and pause of the overworld and End clocks.
-    clock_runs: [weather::ClockRun; 2],
     /// Each level's sleeping players (`ServerLevel.sleepStatus`).
     sleep_status: Vec<sleep::SleepStatus>,
     /// Each level's locator bar waypoints (`ServerWaypointManager`).
@@ -1819,6 +1821,7 @@ impl Sim {
         let threads = config.noise.as_ref().map_or(1, |n| n.threads);
         let mut storage = storage;
         let level = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.state());
+        let saved_clocks = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.clocks()).unwrap_or_default();
         // The seed: the generator's, else the save's (`world_gen_settings.dat`); a world that
         // generates with a seed and has none saved gets it written, so vanilla loads the same.
         let seed = match (&config.noise, storage.as_mut()) {
@@ -1875,8 +1878,9 @@ impl Sim {
             game_time,
             day_time: level.as_ref().map_or(1000, |l| l.day_time),
             overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
-            end_time: 0,
-            end_clock: kiln_data::synced_id("minecraft:world_clock", "minecraft:the_end").expect("end clock"),
+            overworld_run: Default::default(),
+            other_clocks: Sim::load_clocks(&saved_clocks),
+            timelines: timelines::Timelines::load(&roots),
             dragon_fight: dragon_fight::DragonFight::load(None, seed),
             commands: commands::CommandState::new(ops_from_env()),
             weather: Default::default(),
@@ -1884,7 +1888,6 @@ impl Sim {
             weather_random: kiln_javamath::random::LegacyRandom::new(seed ^ 0x7765_6174_6865_72),
             climates: weather::Climates::load(&roots).map(std::sync::Arc::new),
             zoom_seed: kiln_worldgen::generator::obfuscate_seed(seed),
-            clock_runs: Default::default(),
             sleep_status: world_state::per_level(),
             waypoints: world_state::per_level(),
             advancements: Default::default(),
@@ -2237,6 +2240,21 @@ impl Sim {
     /// The overworld clock (time of day).
     pub fn day_time(&self) -> i64 {
         self.day_time
+    }
+
+    /// A boolean environment attribute of the level `dimension` as its dimension type's timelines make it, for tests and tools.
+    pub fn timeline_bool_in(&self, dimension: &str, attribute: &str) -> Option<bool> {
+        Some(self.timeline_bool(dim_id(dimension)?, attribute, false))
+    }
+
+    /// `Level.skyDarken` of the level `dimension` (for tests and tools).
+    pub fn sky_darken_in(&self, dimension: &str) -> Option<i32> {
+        Some(self.sky_darken_of(dim_id(dimension)?))
+    }
+
+    /// The total ticks of a world clock (`minecraft:world_clock` entry), for tests and tools.
+    pub fn clock_ticks(&self, clock: &str) -> Option<i64> {
+        self.clock_total_of(clock)
     }
 
     /// The overworld's weather: (raining, thundering, rain level, thunder level) with the
@@ -2874,9 +2892,12 @@ impl Sim {
             damage: self.damage_rules(),
             mobs: mobs::MobRules {
                 day_time: self.day_time,
-                sky_darken: weather::sky_darken(dim, self.day_time, &self.level_weather[dim]),
-                monsters_burn: mobs::monsters_burn(self.day_time),
-                creaking_active: dim_type(dim).has_timeline("minecraft:day") && mobs::creaking_active(self.day_time),
+                sky_darken: self.sky_darken_of(dim),
+                monsters_burn: self.timeline_bool(dim, "minecraft:gameplay/monsters_burn", false),
+                creaking_active: self.timeline_bool(dim, "minecraft:gameplay/creaking_active", false),
+                eyeblossom_open: self.timelines.has_track(dim_type(dim).timelines, "minecraft:gameplay/eyeblossom_open").then(|| self.timeline_bool(dim, "minecraft:gameplay/eyeblossom_open", false)),
+                bees_stay_in_hive: self.timeline_bool(dim, "minecraft:gameplay/bees_stay_in_hive", false),
+                turtle_egg_hatch_chance: self.timeline_float(dim, "minecraft:gameplay/turtle_egg_hatch_chance", 0.002),
                 griefing: self.rule_bool("minecraft:mob_griefing"),
                 drops: self.rule_bool("minecraft:mob_drops"),
                 entity_drops: self.rule_bool("minecraft:entity_drops"),

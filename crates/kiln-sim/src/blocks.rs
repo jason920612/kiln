@@ -885,14 +885,13 @@ impl Level for RegionLevel<'_> {
 
     /// `gameplay/eyeblossom_open`: the overworld's timeline, open from 12600 to 23401.
     fn eyeblossom_open(&self, _pos: BlockPos) -> Option<bool> {
-        crate::dim_type(self.env.dim).has_timeline("minecraft:day").then(|| (12600..23401).contains(&self.env.mobs.day_time.rem_euclid(24000)))
+        self.env.mobs.eyeblossom_open
     }
 
     /// `gameplay/turtle_egg_hatch_chance`: certain for 843 ticks around dawn in the overworld,
     /// otherwise the default 1/500.
     fn turtle_egg_hatch_chance(&self, _pos: BlockPos) -> f32 {
-        let dawn = crate::dim_type(self.env.dim).has_timeline("minecraft:day") && (21062..21905).contains(&self.env.mobs.day_time.rem_euclid(24000));
-        if dawn { 1.0 } else { 0.002 }
+        self.env.mobs.turtle_egg_hatch_chance
     }
 
     fn is_raining_at(&self, pos: BlockPos) -> bool {

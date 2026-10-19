@@ -40,6 +40,7 @@ fn level_state(difficulty: Option<(u8, bool)>) -> LevelState {
         data_packs: None,
         enabled_features: None,
         difficulty,
+        clocks: Vec::new(),
     }
 }
 

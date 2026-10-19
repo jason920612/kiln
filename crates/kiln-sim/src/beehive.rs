@@ -192,7 +192,7 @@ pub(crate) fn is_smokey_pos(level: &RegionLevel, pos: BlockPos) -> bool {
 /// The `minecraft:gameplay/bees_stay_in_hive` attribute: the overworld from tick 12542 to 23460
 /// of its day, and while there is any rain or thunder (the weather layers set it).
 pub(crate) fn bees_stay_in_hive(env: &crate::blocks::BlockEnv) -> bool {
-    crate::dim_type(env.dim).has_timeline("minecraft:day") && ((12542..23460).contains(&env.mobs.day_time.rem_euclid(24000)) || env.weather.weather.weather_layer)
+    env.mobs.bees_stay_in_hive || env.weather.weather.weather_layer
 }
 
 /// What bees see of the hive at `pos`.
