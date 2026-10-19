@@ -21,6 +21,7 @@ case "$1" in
     if [ -z "$KEEP" ]; then rm -rf world logs server.properties eula.txt banned-*.json ops.json whitelist.json usercache.json server-icon.png; fi
     [ -d libraries ] || cp -r ~/wp86/v0/libraries ~/wp86/v0/versions .
     echo "eula=true" > eula.txt
+    [ -n "$ICON" ] && cp "$ICON" server-icon.png
     [ -n "$2" ] && cp "$2" server.properties
     rm -f console; mkfifo console
     setsid sleep 100000000 > console 2>/dev/null < /dev/null &

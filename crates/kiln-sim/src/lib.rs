@@ -634,6 +634,8 @@ struct Player {
     brush_ticks: Option<i32>,
     /// The operator permission level (`/op`), kept by the server for the regions' sake (game master blocks).
     permission: u8,
+    /// Whether the player is in the operators list (`PlayerList.isOp`, which spawn protection asks).
+    is_op: bool,
     /// The level the client was last told (`EntityEvent.PERMISSION_LEVEL_*`); `None` until the first notice.
     permission_sent: Option<u8>,
     /// The plugin instances of the region the player is in, when some plugin hears of player
@@ -2928,6 +2930,9 @@ impl Sim {
             frozen: !self.world.tick_rate.runs_normally(),
             border: self.world.borders[dim].bounds(),
             tickets: std::sync::Arc::new(self.level_tickets(dim)),
+            // `DedicatedServer.isUnderSpawnProtection`: in the spawn's level, once somebody is an operator.
+            spawn_protection: (dim == OVERWORLD_ID && self.config.server.spawn_protection > 0 && !self.commands.ops.is_empty())
+                .then_some((self.config.server.spawn_protection, self.spawn)),
         }
     }
 
@@ -4286,6 +4291,7 @@ impl Sim {
             kinetic_ticks: None,
             brush_ticks: None,
             permission: 0,
+            is_op: false,
             permission_sent: None,
             plugin_gate: None,
             recent_stabs: Vec::new(),

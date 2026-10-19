@@ -55,6 +55,28 @@ pub(crate) struct Env {
     pub border: crate::world_state::BorderBox,
     /// The level's chunk tickets that tick without a player near (centre, radius): `/forceload`, ender pearls, portals, the dragon fight's arena.
     pub tickets: std::sync::Arc<Vec<(ChunkPos, i32)>>,
+    /// `spawn-protection`: the radius around the world spawn (centre given) in which only operators change blocks;
+    /// `None` when there is none in this level (or no operator exists, as in vanilla).
+    pub spawn_protection: Option<(i32, [i32; 3])>,
+}
+
+impl Env {
+    /// `MinecraftServer.isUnderSpawnProtection`.
+    pub(crate) fn under_spawn_protection(&self, p: &Player, pos: [i32; 3]) -> bool {
+        match self.spawn_protection {
+            Some((radius, spawn)) if !p.is_op => (pos[0] - spawn[0]).abs().max((pos[2] - spawn[2]).abs()) <= radius,
+            _ => false,
+        }
+    }
+}
+
+/// `ServerPlayer.sendSpawnProtectionMessage`: a red line over the hotbar.
+fn spawn_protection_message(p: &mut Player, pos: [i32; 3]) {
+    let at = format!("{}, {}, {}", pos[0], pos[1], pos[2]);
+    p.send(kiln_proto::packets::system_chat(
+        kiln_command::text::Text::translate("build.spawn_protection", vec![kiln_command::text::Arg::Str(at)]).color("red").to_nbt(),
+        true,
+    ));
 }
 
 /// What a region leaves for the next serial phase.
@@ -1382,8 +1404,12 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 }
                 digging::START_DESTROY_BLOCK | digging::CHANGE_DESTROY_DIRECTION | digging::STOP_DESTROY_BLOCK | digging::ABORT_DESTROY_BLOCK => {
                     let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                    // `handleBlockBreakAction`: near the world spawn only operators start breaking a block.
+                    if action == digging::START_DESTROY_BLOCK && env.under_spawn_protection(p, pos) {
+                        spawn_protection_message(p, pos);
+                        p.resend_block(&level, pos);
                     // `Level.mayInteract`: nothing outside the world border breaks.
-                    if env.border.contains(pos[0] as f64, pos[2] as f64) {
+                    } else if env.border.contains(pos[0] as f64, pos[2] as f64) {
                         digging::player_action(p, &mut level, action, pos, face);
                     } else {
                         p.resend_block(&level, pos);
@@ -1443,7 +1469,12 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
         }
         PlayIn::UseItemOn { hand, pos, face, cursor, sequence, .. } => {
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
-            let may_interact = env.border.contains(pos[0] as f64, pos[2] as f64);
+            // `handleUseItemOn`: near the world spawn only operators use items on blocks.
+            let protected = env.under_spawn_protection(p, pos);
+            if protected {
+                spawn_protection_message(p, pos);
+            }
+            let may_interact = env.border.contains(pos[0] as f64, pos[2] as f64) && !protected;
             use_item_on(p, &mut level, hand, pos, face, cursor, may_interact, fx.spawns);
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }

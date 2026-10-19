@@ -2183,6 +2183,7 @@ impl Sim {
         for (c, level) in levels {
             if let Some(p) = self.players.get_mut(&c) {
                 p.permission = level;
+                p.is_op = self.commands.is_op(&p.name);
                 // `PlayerList.sendPlayerPermissionLevel`: on join and whenever the level changes.
                 if p.permission_sent != Some(level) {
                     p.permission_sent = Some(level);
