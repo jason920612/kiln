@@ -505,3 +505,23 @@ fn sound_variants_of_the_pack_bring_their_sounds() {
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn the_default_components_of_items_follow_the_registries_numbering() {
+    use kiln_item::{Holder, ItemStack, keys};
+    let _x = kiln_data::live::exclusive();
+    let (sim, dir, _) = start("defaults");
+    // The pack's song and trim material sort among the vanilla ones and shift the ids after them; the tables the items'
+    // defaults come from hold vanilla's ids.
+    let tune = kiln_data::synced_id("minecraft:jukebox_song", "kiln83:tune").unwrap();
+    let wait = kiln_data::synced_id("minecraft:jukebox_song", "minecraft:wait").unwrap();
+    assert!(tune < wait);
+    let disc = ItemStack::of("minecraft:music_disc_wait", 1).unwrap();
+    let Some(Holder::Reference(id)) = disc.get(keys::JUKEBOX_PLAYABLE).map(|p| p.0.clone()) else { panic!("a disc plays a song") };
+    assert_eq!(kiln_item::registry::JUKEBOX_SONG.name(id), Some("minecraft:wait"), "the disc's song is the one vanilla's numbering names");
+    let ingot = ItemStack::of("minecraft:iron_ingot", 1).unwrap();
+    let Some(Holder::Reference(m)) = ingot.get(keys::PROVIDES_TRIM_MATERIAL).map(|p| p.0.clone()) else { panic!("an ingot provides a trim material") };
+    assert_eq!(kiln_item::registry::TRIM_MATERIAL.name(m), Some("minecraft:iron"));
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}

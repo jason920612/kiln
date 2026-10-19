@@ -424,3 +424,35 @@ mod tests {
         assert!(missing.is_empty(), "component types without a variant: {missing:?}");
     }
 }
+
+impl Component {
+    /// A component read from a table of the vanilla registries' ids (the item defaults) with the ids of the registries the
+    /// server has now: a data pack's new entry shifts the ids sorted after it, and the ids of a synchronized registry
+    /// (jukebox songs, trim materials and patterns, instruments, painting variants, banner patterns) are what clients read.
+    pub(crate) fn renumber(&mut self) {
+        fn holder<T>(h: &mut Holder<T>, registry: &str) {
+            if let Holder::Reference(id) = h
+                && let Some(now) = kiln_data::live::from_vanilla_id(registry, *id)
+            {
+                *id = now;
+            }
+        }
+        match self {
+            Component::JukeboxPlayable(JukeboxPlayable(h)) => holder(h, "minecraft:jukebox_song"),
+            Component::Instrument(InstrumentComponent(h)) => holder(h, "minecraft:instrument"),
+            Component::ProvidesTrimMaterial(ProvidesTrimMaterial(h)) => holder(h, "minecraft:trim_material"),
+            Component::Trim(t) => {
+                holder(&mut t.material, "minecraft:trim_material");
+                holder(&mut t.pattern, "minecraft:trim_pattern");
+            }
+            Component::PaintingVariant(PaintingVariant(h)) => holder(h, "minecraft:painting_variant"),
+            Component::BannerPatterns(BannerPatternLayers(layers)) => layers.iter_mut().for_each(|l| holder(&mut l.pattern, "minecraft:banner_pattern")),
+            Component::ProvidesBannerPatterns(ProvidesBannerPatterns(HolderSet::Direct(ids))) => {
+                for id in ids {
+                    *id = kiln_data::live::from_vanilla_id("minecraft:banner_pattern", *id).unwrap_or(*id);
+                }
+            }
+            _ => {}
+        }
+    }
+}

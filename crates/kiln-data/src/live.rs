@@ -59,6 +59,7 @@ impl Tables {
 
 static TABLES: AtomicPtr<Tables> = AtomicPtr::new(std::ptr::null_mut());
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+static REGISTRY_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn tables() -> &'static Tables {
     let p = TABLES.load(Ordering::Acquire);
@@ -74,14 +75,22 @@ fn tables() -> &'static Tables {
     }
 }
 
-fn publish(t: Tables) {
+fn publish(t: Tables, registries_changed: bool) {
     TABLES.store(Box::leak(Box::new(t)), Ordering::Release);
     GENERATION.fetch_add(1, Ordering::AcqRel);
+    if registries_changed {
+        REGISTRY_GENERATION.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 /// Counts every change of the tables; caches of derived data compare it (see [`Cached`]).
 pub fn generation() -> u64 {
     GENERATION.load(Ordering::Acquire)
+}
+
+/// Counts the changes of the registries (not of the tags): `/reload` does not move it.
+pub fn registry_generation() -> u64 {
+    REGISTRY_GENERATION.load(Ordering::Acquire)
 }
 
 /// Serializes tests that install tables (the tables are process-wide).
@@ -229,7 +238,7 @@ pub fn install_synced(registries: Vec<(String, Vec<String>)>, data: Vec<((String
         return false;
     }
     let table: Synced = Box::leak(table.into_boxed_slice());
-    publish(Tables::new(table, registries::TAGS, data, custom, false));
+    publish(Tables::new(table, registries::TAGS, data, custom, false), true);
     true
 }
 
@@ -247,7 +256,7 @@ pub fn install_tags(tags: Vec<(String, Vec<(String, Vec<i32>)>)>) -> bool {
     }
     let custom = !same_tags(registries::TAGS, &table);
     let tags: Tags = Box::leak(table.into_boxed_slice());
-    publish(Tables::new(old.synced, tags, old.data.clone(), old.synced_custom, custom));
+    publish(Tables::new(old.synced, tags, old.data.clone(), old.synced_custom, custom), false);
     true
 }
 
@@ -258,23 +267,25 @@ fn same_tags(a: Tags, b: &[(&'static str, &'static [(&'static str, &'static [i32
 
 /// Back to the vanilla tables (tests).
 pub fn reset() {
-    publish(Tables::new(registries::SYNCHRONIZED, registries::TAGS, HashMap::new(), false, false));
+    publish(Tables::new(registries::SYNCHRONIZED, registries::TAGS, HashMap::new(), false, false), true);
 }
 
-/// A value derived from the tables, rebuilt when they change; reads are a load and a compare.
-pub struct Cached<T: 'static> {
+/// A value derived from the tables, rebuilt when they change; reads are a load and a compare. With
+/// `REGISTRIES` it follows only the registries ([`registry_generation`]): tables built from entry names and
+/// ids, not from tags.
+pub struct Cached<T: 'static, const REGISTRIES: bool = false> {
     generation: AtomicU64,
     value: AtomicPtr<T>,
     build: Mutex<()>,
 }
 
-impl<T: 'static> Cached<T> {
+impl<T: 'static, const REGISTRIES: bool> Cached<T, REGISTRIES> {
     pub const fn new() -> Self {
         Cached { generation: AtomicU64::new(u64::MAX), value: AtomicPtr::new(std::ptr::null_mut()), build: Mutex::new(()) }
     }
 
     pub fn get(&self, build: impl FnOnce() -> T) -> &'static T {
-        let now = generation();
+        let now = if REGISTRIES { registry_generation() } else { generation() };
         if self.generation.load(Ordering::Acquire) == now {
             let p = self.value.load(Ordering::Acquire);
             // SAFETY: leaked values are never freed or mutated; non-null once the generation matched.
@@ -292,7 +303,7 @@ impl<T: 'static> Cached<T> {
     }
 }
 
-impl<T: 'static> Default for Cached<T> {
+impl<T: 'static, const REGISTRIES: bool> Default for Cached<T, REGISTRIES> {
     fn default() -> Self {
         Self::new()
     }

@@ -70,7 +70,7 @@ impl Registry {
     /// Network id of `name` (a missing namespace means `minecraft`).
     pub fn id(self, name: &str) -> Option<i32> {
         type Index = Names<Names<i32>>;
-        static INDEX: kiln_data::live::Cached<Index> = kiln_data::live::Cached::new();
+        static INDEX: kiln_data::live::Cached<Index, true> = kiln_data::live::Cached::new();
         let all = INDEX.get(|| {
             let regs = kiln_data::registries::BUILTIN.iter().chain(kiln_data::live::synced());
             regs.map(|(r, entries)| (*r, entries.iter().enumerate().map(|(i, e)| (*e, i as i32)).collect())).collect()

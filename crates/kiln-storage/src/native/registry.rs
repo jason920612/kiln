@@ -9,7 +9,6 @@ use kiln_data::blocks_types::{block_by_name, block_of};
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
-use std::sync::OnceLock;
 
 pub struct Registry {
     pub data_version: i32,
@@ -96,8 +95,8 @@ impl Registry {
 
     /// This build's table.
     pub fn current() -> &'static Registry {
-        static CURRENT: OnceLock<Registry> = OnceLock::new();
-        CURRENT.get_or_init(|| {
+        static CURRENT: kiln_data::live::Cached<Registry, true> = kiln_data::live::Cached::new();
+        CURRENT.get(|| {
             let states = (0..STATE_COUNT as u16).map(state_string).collect();
             let biomes = crate::anvil::biome_names().iter().map(|s| (*s).to_owned()).collect();
             Registry::new(DATA_VERSION as i32, states, biomes)

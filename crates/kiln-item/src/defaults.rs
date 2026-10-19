@@ -3,7 +3,6 @@
 
 use crate::component::{Component, ComponentId};
 use kiln_proto::Reader;
-use std::sync::OnceLock;
 
 static TABLE: &[u8] = include_bytes!("gen/item_defaults.bin");
 
@@ -42,8 +41,8 @@ struct Defaults {
 }
 
 fn load() -> &'static Defaults {
-    static DEFAULTS: OnceLock<Defaults> = OnceLock::new();
-    DEFAULTS.get_or_init(|| {
+    static DEFAULTS: kiln_data::live::Cached<Defaults, true> = kiln_data::live::Cached::new();
+    DEFAULTS.get(|| {
         let u16_at = |p: usize| u16::from_le_bytes([TABLE[p], TABLE[p + 1]]);
         let u32_at = |p: usize| u32::from_le_bytes(TABLE[p..p + 4].try_into().unwrap()) as usize;
         assert_eq!(&TABLE[..4], b"KID1", "item_defaults.bin: bad magic");
@@ -57,7 +56,11 @@ fn load() -> &'static Defaults {
             let bytes = &TABLE[p + 6..p + 6 + len];
             p += 6 + len;
             let mut r = Reader::new(bytes);
-            let value = Component::read(ty, &mut r).ok().filter(|_| r.remaining() == 0);
+            // The table holds the ids of the vanilla registries; the ones the server has now may differ (a pack's entries shift the rest).
+            let value = Component::read(ty, &mut r).ok().filter(|_| r.remaining() == 0).map(|mut c| {
+                c.renumber();
+                c
+            });
             values.push((ty, value));
         }
         let mut maps = Vec::with_capacity(items);
