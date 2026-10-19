@@ -318,6 +318,14 @@ impl Sim {
         data.respawn = p.respawn;
         data.respawn_dimension = Some(crate::DIMENSIONS[p.respawn_dim].0.to_owned());
         let mut nbt = data.to_nbt(p.uuid);
+        // `Entity.saveWithoutId`: the delta movement (a standing player's is -0.0784).
+        if let Tag::Compound(fields) = &mut nbt {
+            let motion = Tag::List(p.vel.iter().map(|&v| Tag::Double(v)).collect());
+            match fields.iter_mut().find(|(k, _)| k == "Motion") {
+                Some((_, v)) => *v = motion,
+                None => fields.push(("Motion".into(), motion)),
+            }
+        }
         // `ServerPlayer.RespawnConfig`: the facing and whether the point is forced.
         if let (Some(pos), Tag::Compound(fields)) = (p.respawn, &mut nbt) {
             let mut r = vec![
