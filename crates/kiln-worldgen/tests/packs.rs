@@ -311,3 +311,30 @@ fn a_dimension_of_a_pack_generates_as_in_vanilla() {
 fn without_packs_the_same_window_matches_vanilla() {
     check("plain", "minecraft:overworld", &[], Expect { blocks: &[("minecraft:cactus", 1)], ..Default::default() });
 }
+
+/// wp83 noted the desert well as a feature Kiln does not generate. In 26.3 it is data (`desert_well` is an `overlay` of three `template`
+/// features with an `append_loot` processor), made of feature types Kiln has: every placed feature of every vanilla biome, the desert
+/// well among them, is implemented.
+#[test]
+fn every_placed_feature_of_vanilla_is_implemented_including_the_desert_well() {
+    let generated = work_dir().join("generated");
+    if !generated.join("reports/biome_parameters").is_dir() {
+        eprintln!("skipped: need {}", generated.display());
+        return;
+    }
+    let pack = Datapack::load(&generated).expect("load datapack");
+    for (name, world) in [
+        ("overworld", Worldgen::overworld(&pack, 0, true)),
+        ("nether", Worldgen::nether(&pack, 0, true)),
+        ("end", Worldgen::end(&pack, 0, true)),
+    ] {
+        let world = world.expect("worldgen");
+        let f = &world.decorator.features;
+        let unsupported: Vec<&str> = f.placed.iter().filter(|p| !f.is_supported(p.feature)).map(|p| p.name.as_str()).collect();
+        assert!(unsupported.is_empty(), "{name}: not implemented: {unsupported:?}");
+        if name == "overworld" {
+            let well = f.placed.iter().find(|p| p.name == "minecraft:desert_well").expect("the desert well is a placed feature of the desert");
+            assert!(f.is_supported(well.feature));
+        }
+    }
+}
