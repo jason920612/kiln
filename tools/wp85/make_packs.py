@@ -32,7 +32,7 @@ def mcmeta(pack, text):
 def simple_block(pack, name, block, count, step_note=""):
     write(pack, f"data/kiln85/worldgen/feature/{name}.json", {
         "type": "minecraft:simple_block",
-        "to_place": {"type": "minecraft:simple_state_provider", "state": block},
+        "to_place": block,
     })
     write(pack, f"data/kiln85/worldgen/placed_feature/{name}.json", {
         "feature": f"kiln85:{name}",
