@@ -440,11 +440,11 @@ fn the_enchanting_table_and_the_anvil_use_the_packs_enchantments() {
     assert_eq!(w.sim.open_menu(1).map(|m| m.0), Some("minecraft:anvil"));
     // Shift-click both swords in (inventory menu slots 3.. are the player's), then take the result.
     for slot in [30, 31] {
-        w.click(1, slot, kiln_inventory::ContainerInput::QuickMove);
+        w.click(2, slot, kiln_inventory::ContainerInput::QuickMove);
     }
     let (_, slots) = w.sim.open_menu(1).unwrap();
     assert!(slots[2].is_some(), "a result: {slots:?}");
-    w.click(1, 2, kiln_inventory::ContainerInput::QuickMove);
+    w.click(2, 2, kiln_inventory::ContainerInput::QuickMove);
     let merged: Vec<String> = w.enchanted().into_iter().filter(|(id, c)| id == "minecraft:diamond_sword" && c.contains("kz:aura")).map(|(_, c)| c).collect();
     assert!(merged.iter().any(|c| c.contains("Int(3)")), "kz:aura III: {merged:?}");
 }
