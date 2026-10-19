@@ -1464,6 +1464,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         }
     }
 
+    fn equipment_loot(&mut self, mob: &kiln_entity::Entity, table: &str) -> Vec<kiln_item::ItemStack> {
+        equipment_stacks(self.level.env(), mob, table)
+    }
+
     fn charged_creeper_loot(&mut self, victim: &kiln_entity::Entity, source: &kiln_entity::mob::DamageSource) -> bool {
         let stacks = charged_creeper_stacks(self.level.env(), victim, source);
         let any = !stacks.is_empty();
@@ -3874,6 +3878,27 @@ fn carry_out(
 }
 
 /// A gift or shearing loot table dropped at `pos` (`y_off` above it).
+/// `Mob.equip(EquipmentTable)`: what the equipment table `table` rolls for `mob` (`LootContextParamSets.EQUIPMENT`: the mob and its position).
+pub(crate) fn equipment_stacks(env: &blocks::BlockEnv, mob: &kiln_entity::Entity, table: &str) -> Vec<kiln_item::ItemStack> {
+    let Some(loot) = env.loot.clone() else { return Vec::new() };
+    let m = kiln_entity::mob::data(mob);
+    let ctx = crate::mobs::DeathContext {
+        type_name: mob.type_name,
+        origin: arr(mob.position()),
+        on_fire: false,
+        baby: m.is_some_and(|m| m.baby()),
+        killed_by_player: false,
+        damage_type: "minecraft:generic",
+        weapon: None,
+        raider: None,
+        attacker: None,
+        components: m.map(kiln_entity::mob::variant_components).unwrap_or_default(),
+        specific: crate::mobs::TypeSpecific::of(m),
+        extra: crate::mobs::DeathExtra { loot: Some(loot.clone()), rules: Some(env.menus.clone()), vehicle_type: None },
+    };
+    crate::mobs::roll(&loot, table, &ctx, crate::mobs::loot_seed(env.seed, env.game_time, mob.id, 0x6571_7569))
+}
+
 /// What `charged_creeper/root` rolls for `victim` killed by a charged creeper's blast (`Creeper.killedEntity`: `this_entity` is the victim, the damage
 /// source the blast, no player credit).
 pub(crate) fn charged_creeper_stacks(env: &blocks::BlockEnv, victim: &kiln_entity::Entity, source: &kiln_entity::mob::DamageSource) -> Vec<kiln_item::ItemStack> {

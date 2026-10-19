@@ -8,7 +8,7 @@
 //! an abstract [`EntityLevel`]. The block's `trial_spawner_state` and `ominous` properties are
 //! read from, and written to, the level.
 //!
-//! Gap: the `equipment` of a spawn data is kept but not rolled.
+//! A spawn data's `equipment` is rolled when its mob is made ([`mob::spawn_equipment`]).
 
 use crate::level::{EntityLevel, Event};
 use crate::math::{Aabb, BlockPos, Vec3};
@@ -1037,6 +1037,10 @@ fn spawn_mob(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut TrialBe, confi
         // `setPersistenceRequired`.
         if let Some(m) = mob::data_mut(&mut e) {
             m.persistence_required = true;
+        }
+        // `spawnData.getEquipment().ifPresent(mob::equip)`.
+        if let Some(equipment) = &data.equipment {
+            mob::spawn_equipment::equip_from_table(&mut e, level, equipment);
         }
     }
     let riders: Vec<mob::Companion> = riders

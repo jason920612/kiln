@@ -28,6 +28,7 @@ pub mod path;
 pub mod pickup;
 pub mod persist;
 pub mod random_pos;
+pub mod spawn_equipment;
 pub mod species;
 pub mod weapon;
 

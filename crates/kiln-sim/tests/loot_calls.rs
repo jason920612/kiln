@@ -241,3 +241,25 @@ fn an_uncharged_creeper_s_victims_drop_no_head() {
     creeper_blast(&mut w, false);
     assert!(!w.items().contains_key("minecraft:diamond"), "{:?}", w.items());
 }
+
+#[test]
+fn a_spawner_s_mobs_wear_what_the_equipment_table_rolls() {
+    // A sword (the main hand) and a helmet (the head, from its `equippable` component), always.
+    let t = table("equipment", &[pool(&[item("diamond_sword", 1)]), pool(&[item("iron_helmet", 1)])]);
+    let mut w = World::new("equip", &[("equipment/p83_gear", &t)]);
+    let [x, y, z] = w.at(3, 1, 0);
+    w.run("time set 18000");
+    w.run(&format!(
+        "setblock {x} {y} {z} minecraft:spawner{{Delay:1s,MinSpawnDelay:1s,MaxSpawnDelay:2s,SpawnCount:1s,MaxNearbyEntities:6s,SpawnRange:2s,RequiredPlayerRange:16s,SpawnData:{{entity:{{id:\"minecraft:zombie\"}},equipment:{{loot_table:\"minecraft:equipment/p83_gear\",slot_drop_chances:{{head:0.5f}}}}}}}}"
+    ));
+    w.ticks(60);
+    let zombies: Vec<_> = w.sim.entity_nbt().into_iter().filter(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some("minecraft:zombie")).collect();
+    assert!(!zombies.is_empty(), "the spawner made a zombie");
+    for z in &zombies {
+        let worn = |slot: &str| z.get("equipment").and_then(|e| e.get(slot)).and_then(|i| i.get("id")).and_then(kiln_proto::nbt::Tag::as_str).map(str::to_owned);
+        assert_eq!(worn("mainhand").as_deref(), Some("minecraft:diamond_sword"), "{z:?}");
+        assert_eq!(worn("head").as_deref(), Some("minecraft:iron_helmet"), "{z:?}");
+        let chance = z.get("drop_chances").and_then(|d| d.get("head")).and_then(kiln_proto::nbt::Tag::as_f64);
+        assert_eq!(chance, Some(0.5), "the head's drop chance follows the spawn data: {z:?}");
+    }
+}

@@ -977,6 +977,12 @@ pub trait EntityLevel {
         false
     }
 
+    /// `Mob.equip(EquipmentTable)`: what the equipment loot table `table` (`LootContextParamSets.EQUIPMENT`: `mob` and where it stands) rolls.
+    fn equipment_loot(&mut self, mob: &crate::Entity, table: &str) -> Vec<kiln_item::ItemStack> {
+        let _ = (mob, table);
+        Vec::new()
+    }
+
     /// `BlockState.getDrops` of `state` for a loot context at `origin` with `tool` and `entity` as
     /// `this_entity` (an enderman's carried block): the stacks its loot table rolls. Levels without
     /// loot data give the block's own item.
