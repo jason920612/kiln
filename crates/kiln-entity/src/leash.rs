@@ -344,8 +344,10 @@ pub fn tick_leash(e: &mut Entity, mut m: Option<&mut MobData>, level: &mut dyn E
     let Some(h) = level.entity(holder_id) else { return };
     let hp = h.position();
     let (h_bb_center, h_width, h_y_rot, h_height) = (h.bounding_box().center(), h.width, h.y_rot, h.height);
-    let h_no_ai = mob::data(h).is_some_and(|hm| hm.no_ai);
-    let h_move = level.known_movement(holder_id);
+    let h_data = mob::data(h);
+    // `getHolderMovement`: a mob without AI stands still as far as the lead can tell.
+    let h_move = if h_data.is_some_and(|hm| hm.no_ai) { Vec3::ZERO } else { level.known_movement(holder_id) };
+    let h_quad = h_data.is_some_and(|hm| hm.kind == MobKind::HappyGhast);
     let h_key = key_of(h);
     // The holder's identity as a save names it.
     if let Some(d) = e.leash.as_mut() {
@@ -369,7 +371,7 @@ pub fn tick_leash(e: &mut Entity, mut m: Option<&mut MobData>, level: &mut dyn E
             m.goals.set_control_flag(MOVE, false);
         }
     } else if dist > elastic_distance_of(e) - h_width as f64 - e.width as f64
-        && check_elastic_interactions(e, m.as_deref(), (hp, h_width, h_height, h_y_rot, h_no_ai, h_move), level)
+        && check_elastic_interactions(e, m.as_deref(), &Holder { pos: hp, width: h_width, height: h_height, y_rot: h_y_rot, movement: h_move, quad: h_quad })
     {
         on_elastic_leash_pull(e, &mut m, level);
     } else {
@@ -409,40 +411,77 @@ fn own_movement(e: &Entity, m: Option<&MobData>) -> Vec3 {
     e.delta
 }
 
-/// `Leashable.checkElasticInteractions` (no quad leash holders): the spring between the two
-/// attachment points pushes the entity toward its holder and twists it.
-fn check_elastic_interactions(
-    e: &mut Entity,
-    m: Option<&MobData>,
-    (hp, h_width, h_height, h_y_rot, h_no_ai, h_move): (Vec3, f32, f32, f32, bool, Vec3),
-    _level: &dyn EntityLevel,
-) -> bool {
-    let _ = h_no_ai;
+/// `Leashable.supportQuadLeash`: boats, the horses and camels (`AbstractHorse`; not the llamas) and the sniffer lead on four points.
+fn supports_quad_leash(e: &Entity, m: Option<&MobData>) -> bool {
+    if is_boat(e.type_name) {
+        return true;
+    }
+    matches!(
+        m.or_else(|| mob::data(e)).map(|m| m.kind),
+        Some(MobKind::Horse | MobKind::Donkey | MobKind::Mule | MobKind::SkeletonHorse | MobKind::ZombieHorse | MobKind::Camel | MobKind::CamelHusk | MobKind::Sniffer)
+    )
+}
+
+/// `Leashable.SHARED_QUAD_ATTACHMENT_POINTS`: the four upper corners of the box (a quad lead's springs, on both ends).
+const SHARED_QUAD_ATTACHMENT_POINTS: [Vec3; 4] = [
+    Vec3 { x: -0.5, y: 0.5, z: 0.5 },
+    Vec3 { x: -0.5, y: 0.5, z: -0.5 },
+    Vec3 { x: 0.5, y: 0.5, z: -0.5 },
+    Vec3 { x: 0.5, y: 0.5, z: 0.5 },
+];
+
+/// What the holder is to the lead: where, how big, which way it faces, and whether it holds a quad lead (`supportQuadLeashAsHolder`: the
+/// happy ghast) and how it moves (`Leashable.getHolderMovement`: nothing for a mob without AI).
+pub(crate) struct Holder {
+    pub pos: Vec3,
+    pub width: f32,
+    pub height: f32,
+    pub y_rot: f32,
+    pub movement: Vec3,
+    pub quad: bool,
+}
+
+/// `Leashable.checkElasticInteractions`: the springs between the attachment points (one for an ordinary lead, the four corners of both boxes
+/// when a holder that holds a quad lead leads an entity that is led on four points) push the entity toward its holder and twist it.
+fn check_elastic_interactions(e: &mut Entity, m: Option<&MobData>, holder: &Holder) -> bool {
     let elastic = elastic_distance_of(e);
     let movement = own_movement(e, m);
     let y_rad = e.y_rot * 0.017453292f32;
     let size = Vec3::new(e.width as f64, e.height as f64, e.width as f64);
-    let holder_rad = h_y_rot * 0.017453292f32;
-    let holder_size = Vec3::new(h_width as f64, h_height as f64, h_width as f64);
-    // `ENTITY_ATTACHMENT_POINT` and `LEASHER_ATTACHMENT_POINT`.
-    let entity_point = Vec3::new(0.0, 0.5, 0.5);
-    let leasher_point = Vec3::new(0.0, 0.5, 0.0);
-    let entity_offset = y_rot(entity_point.multiply_vec(size), -y_rad);
-    let entity_attach = e.position() + entity_offset;
-    let holder_offset = y_rot(leasher_point.multiply_vec(holder_size), -holder_rad);
-    let holder_attach = hp + holder_offset;
-    // `computeDampenedSpringInteraction`.
-    let dist = entity_attach.distance_to_sqr(holder_attach).sqrt();
-    if dist < elastic {
+    let holder_rad = holder.y_rot * 0.017453292f32;
+    let holder_size = Vec3::new(holder.width as f64, holder.height as f64, holder.width as f64);
+    let quad = holder.quad && supports_quad_leash(e, m);
+    // `ENTITY_ATTACHMENT_POINT` and `LEASHER_ATTACHMENT_POINT`, or the shared four.
+    let single_entity = [Vec3::new(0.0, 0.5, 0.5)];
+    let single_leasher = [Vec3::new(0.0, 0.5, 0.0)];
+    let (entity_points, leasher_points): (&[Vec3], &[Vec3]) = if quad { (&SHARED_QUAD_ATTACHMENT_POINTS, &SHARED_QUAD_ATTACHMENT_POINTS) } else { (&single_entity, &single_leasher) };
+    let (mut force_sum, mut torque_sum, mut springs) = (Vec3::ZERO, 0.0f64, 0);
+    for (entity_point, leasher_point) in entity_points.iter().zip(leasher_points) {
+        let entity_offset = y_rot(entity_point.multiply_vec(size), -y_rad);
+        let entity_attach = e.position() + entity_offset;
+        let holder_offset = y_rot(leasher_point.multiply_vec(holder_size), -holder_rad);
+        let holder_attach = holder.pos + holder_offset;
+        // `computeDampenedSpringInteraction`.
+        let dist = entity_attach.distance_to_sqr(holder_attach).sqrt();
+        if dist < elastic {
+            continue;
+        }
+        let mut force = (holder_attach - entity_attach).normalize().scale(dist - elastic);
+        let torque = entity_offset.z * force.x - entity_offset.x * force.z;
+        if movement.dot(force) >= 0.0 {
+            force = force.scale(0.30000001192092896);
+        }
+        // `Wrench.accumulate`: the sums, in order.
+        force_sum = Vec3::new(force_sum.x + force.x, force_sum.y + force.y, force_sum.z + force.z);
+        torque_sum += torque;
+        springs += 1;
+    }
+    if springs == 0 {
         return false;
     }
-    let mut force = (holder_attach - entity_attach).normalize().scale(dist - elastic);
-    let torque = entity_offset.z * force.x - entity_offset.x * force.z;
-    if movement.dot(force) >= 0.0 {
-        force = force.scale(0.30000001192092896);
-    }
-    // `Wrench.accumulate` of one wrench, scaled by 1.
-    let relative = h_move - e.delta;
+    let scale = if quad { 0.25 } else { 1.0 };
+    let (force, torque) = (force_sum.scale(scale), torque_sum * scale);
+    let relative = holder.movement - e.delta;
     let Some(data) = e.leash.as_mut() else { return false };
     data.angular_momentum += TORSIONAL_ELASTICITY * torque;
     let push = force.multiply_vec(AXIS_SPECIFIC_ELASTICITY) + relative.scale(STIFFNESS);

@@ -2631,6 +2631,16 @@ impl Sim {
         })
     }
 
+    /// A player's `fallDistance` (for tests and tools).
+    pub fn fall_distance(&self, conn: ConnId) -> Option<f64> {
+        self.players.get(&conn).map(|p| p.fall_distance)
+    }
+
+    /// The server's `deltaMovement` of a player (for tests and tools).
+    pub fn player_velocity(&self, conn: ConnId) -> Option<[f64; 3]> {
+        self.players.get(&conn).map(|p| p.vel)
+    }
+
     /// The ticks a player's riptide spin has left (for tests and tools).
     pub fn spin_ticks(&self, conn: ConnId) -> Option<i32> {
         Some(self.players.get(&conn)?.spin_ticks)
