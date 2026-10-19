@@ -75,15 +75,15 @@ fn locate_and_place_use_the_structures_and_templates_of_the_packs() {
 fn the_overworld_uses_the_biome_list_of_the_pack() {
     let _x = kiln_data::live::exclusive();
     let Some((mut sim, dir)) = start("biomes", &["kiln85_crystal"], 85) else { return };
-    sim.console_now("forceload add -64 -64 63 63");
+    sim.console_now("forceload add -128 -128 127 127");
     let crystal = kiln_data::synced_id("minecraft:worldgen/biome", "kiln85:crystal_flats").unwrap() as u16;
     let allowed: Vec<u16> = ["kiln85:crystal_flats", "minecraft:plains", "minecraft:desert", "minecraft:ocean"]
         .iter()
         .map(|b| kiln_data::synced_id("minecraft:worldgen/biome", b).unwrap() as u16)
         .collect();
     let (mut seen_crystal, mut others) = (false, 0);
-    for x in (-64..64).step_by(4) {
-        for z in (-64..64).step_by(4) {
+    for x in (-128..128).step_by(4) {
+        for z in (-128..128).step_by(4) {
             for y in (0..120).step_by(8) {
                 let b = sim.biome_in("minecraft:overworld", x, y, z).expect("loaded");
                 seen_crystal |= b == crystal;

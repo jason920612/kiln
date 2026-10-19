@@ -35,10 +35,6 @@ impl World {
         }
     }
 
-    fn run(&mut self, command: &str) {
-        assert!(self.sim.step([ToSim::Console(command.into())]));
-    }
-
     fn hold(&mut self, item: &str) {
         let id = kiln_data::builtin_id("minecraft:item", item).unwrap();
         let stack = ItemStack { item: id, count: 1, added: Vec::new(), removed: Vec::new() };
