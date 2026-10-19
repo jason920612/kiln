@@ -204,3 +204,9 @@ fn a_structure_from_a_pack_template_generates_as_in_vanilla() {
 fn a_dimension_of_a_pack_generates_as_in_vanilla() {
     check("dims_cavern", "kiln85:cavern", &["kiln85_dims"]);
 }
+
+/// The control: the same window as the structure test with no pack at all.
+#[test]
+fn without_packs_the_same_window_matches_vanilla() {
+    check("plain", "minecraft:overworld", &[]);
+}
