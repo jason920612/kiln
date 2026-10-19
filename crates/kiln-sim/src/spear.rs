@@ -567,7 +567,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
             EntityEffect::ApplyExhaustion(amount) => self.players[a].exhaust(amount.calculate(level)),
             EntityEffect::ApplyImpulse { direction, coordinate_scale, magnitude } => {
                 let p = &mut *self.players[a];
-                let look = look_rotate(p.rot, *direction);
+                let look = kiln_loot::fx::look_rotate(p.rot, *direction);
                 let m = magnitude.calculate(level) as f64;
                 let impulse = [look[0] * coordinate_scale[0] * m, look[1] * coordinate_scale[1] * m, look[2] * coordinate_scale[2] * m];
                 p.vel = [p.vel[0] + impulse[0], p.vel[1] + impulse[1], p.vel[2] + impulse[2]];
@@ -587,48 +587,6 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
             _ => {}
         }
     }
-}
-
-/// `Entity.getLookQuaternion().transform(direction)`: `direction` turned by the player's
-/// rotation (yaw about y, then pitch about x), in the floats `Quaternionf` works in.
-fn look_rotate(rot: [f32; 2], direction: [f64; 3]) -> [f64; 3] {
-    // `Quaternionf.rotationYXZ(-yRot * (PI / 180), xRot * (PI / 180), 0)`.
-    let (ay, ax) = (-rot[0] * 0.017453292, rot[1] * 0.017453292);
-    let sx = kiln_javamath::trig::sin((ax * 0.5) as f64) as f32;
-    let cx = cos_from_sin(sx, ax * 0.5);
-    let sy = kiln_javamath::trig::sin((ay * 0.5) as f64) as f32;
-    let cy = cos_from_sin(sy, ay * 0.5);
-    let (x, y, z, w) = (cy * sx, sy * cx, -sy * sx, cy * cx);
-    // `Quaternionf.transform(x, y, z, dest)` in `double`s from the float components.
-    let (qx, qy, qz, qw) = (x as f64, y as f64, z as f64, w as f64);
-    let (d, e) = (direction, 2.0);
-    let _ = e;
-    let w2 = qw * qw;
-    let x2 = qx * qx;
-    let y2 = qy * qy;
-    let z2 = qz * qz;
-    let zw = qz * qw;
-    let xy = qx * qy;
-    let xz = qx * qz;
-    let yw = qy * qw;
-    let yz = qy * qz;
-    let xw = qx * qw;
-    let (dx, dy, dz) = (d[0], d[1], d[2]);
-    [
-        (w2 + x2 - z2 - y2) * dx + (-zw + xy - zw + xy) * dy + (yw + xz + xz + yw) * dz,
-        (xy + zw + zw + xy) * dx + (y2 - z2 + w2 - x2) * dy + (yz + yz - xw - xw) * dz,
-        (xz - yw + xz - yw) * dx + (yz + yz + xw + xw) * dy + (z2 - y2 - x2 + w2) * dz,
-    ]
-}
-
-/// `Math.cosFromSin(sin, angle)` of JOML (the non-fast variant): the cosine from the sine,
-/// signed by where the angle falls.
-fn cos_from_sin(sin: f32, angle: f32) -> f32 {
-    let cos = (1.0f32 - sin * sin).sqrt();
-    let a = angle + std::f32::consts::FRAC_PI_2;
-    let b = a - ((a / std::f32::consts::TAU) as i32) as f32 * std::f32::consts::TAU;
-    let b = if b < 0.0 { std::f32::consts::TAU + b } else { b };
-    if b >= std::f32::consts::PI { -cos } else { cos }
 }
 
 /// `Enchantment.entityContext`: the wielder as `this_entity`, at its position, with the

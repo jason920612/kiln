@@ -52,9 +52,6 @@ pub(crate) enum BlockEdit {
     Destroy(BlockPos),
     /// `FarmBlock.turnToDirt` (a landing on farmland).
     Dirt(BlockPos),
-    /// Frost walker boots: `ReplaceDisk` of frosted ice around `pos`, centred on the block under the feet
-    /// (`origin`), `radius` blocks out.
-    FrostWalker { origin: BlockPos, radius: i32, pos: [f64; 3] },
 }
 
 impl Player {

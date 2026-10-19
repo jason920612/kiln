@@ -83,7 +83,7 @@ mod fall;
 mod phantom;
 mod pose;
 mod freeze;
-mod enchant_loc;
+mod enchant_fx;
 mod entities;
 mod entity_world;
 mod fishing;
@@ -629,11 +629,19 @@ struct Player {
     is_in_powder_snow: bool,
     frost_speed: Option<f64>,
     /// `LivingEntity.lastPos`: the block the location-changed enchantments last ran for; whether the
-    /// player landed this tick (`checkFallDamage` runs them too); the soul speed level whose modifiers
-    /// are on.
+    /// player landed this tick (`checkFallDamage` runs them too).
     loc_last_pos: Option<[i32; 3]>,
     loc_landed: bool,
-    soul_speed: Option<i32>,
+    /// `activeLocationDependentEnchantments`: the `location_changed` effects that are active, and the
+    /// attribute modifiers the active `attribute` effects added (see [`enchant_fx`]).
+    loc_active: Vec<enchant_fx::ActiveEffect>,
+    loc_modifiers: Vec<enchant_fx::LocationModifier>,
+    /// World effects the enchantments asked for this tick, run with the region's blocks; functions
+    /// they asked to run (name, position).
+    fx_jobs: Vec<enchant_fx::LevelJob>,
+    function_requests: Vec<(String, [f64; 3])>,
+    /// The move since the last tick (`Entity.getKnownMovement` for the `movement` predicate).
+    move_delta: [f64; 3],
     /// Block changes a player's own tick asks of its region (melted powder snow, trampled
     /// farmland).
     block_edits: Vec<fall::BlockEdit>,
@@ -4101,7 +4109,11 @@ impl Sim {
             frost_speed: None,
             loc_last_pos: None,
             loc_landed: false,
-            soul_speed: None,
+            loc_active: Vec::new(),
+            loc_modifiers: Vec::new(),
+            fx_jobs: Vec::new(),
+            function_requests: Vec::new(),
+            move_delta: [0.0; 3],
             block_edits: Vec::new(),
             flying,
             dead: joining.health <= 0.0,

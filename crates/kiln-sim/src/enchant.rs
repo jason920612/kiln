@@ -94,6 +94,9 @@ impl Player {
             in_water: false,
             fall_distance: self.fall_distance,
             player: Some(PlayerFacts { game_mode: self.game_mode, food: self.food, saturation: self.saturation, level: self.xp_level }),
+            movement: self.move_delta,
+            movement_block: None,
+            on_pos: None,
         }
     }
 
@@ -292,7 +295,8 @@ fn apply_entity_effect(
                 p.add_effect(crate::effects::Effect::simple(id, duration, amplifier));
             }
         }
-        EntityEffect::Other(_) | EntityEffect::Explode { .. } | EntityEffect::ApplyExhaustion(_) | EntityEffect::ApplyImpulse { .. } | EntityEffect::PlaySound { .. } => {}
+        // (The rest is for attacks of other kinds, or not carried out by a hit: see `crate::enchant_fx`.)
+        _ => {}
     }
 }
 

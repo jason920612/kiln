@@ -24,6 +24,7 @@ pub mod enchant;
 pub mod entry;
 pub mod eval;
 pub mod function;
+pub mod fx;
 pub mod json;
 pub mod number;
 pub mod parse;

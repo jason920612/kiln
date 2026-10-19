@@ -520,7 +520,7 @@ pub(crate) fn location_matches(l: &LocationPredicate, pos: [f64; 3], dim: &str, 
 
 /// `FluidPredicate.matches` on the fluid of block state `state`: `fluids` (ids or a tag) and
 /// the fluid state's properties (`level`, `falling`).
-fn fluid_matches(j: &Json, state: u16) -> bool {
+pub(crate) fn fluid_matches(j: &Json, state: u16) -> bool {
     use kiln_data::block_logic::FluidKind;
     let f = kiln_data::block_logic::fluid(state);
     let name = match (f.kind, f.source) {

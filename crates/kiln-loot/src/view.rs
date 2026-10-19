@@ -31,6 +31,12 @@ pub struct EntityView {
     pub fall_distance: f64,
     /// What `type_specific/player` asks of a player.
     pub player: Option<PlayerFacts>,
+    /// `Entity.getKnownMovement()`, blocks per tick (the `movement` predicate scales it to a second).
+    pub movement: [f64; 3],
+    /// `getBlockPosBelowThatAffectsMyMovement` (the `movement_affected_by` predicate).
+    pub movement_block: Option<[i32; 3]>,
+    /// `getOnPos` (the `stepping_on` predicate, true only on the ground).
+    pub on_pos: Option<[i32; 3]>,
 }
 
 /// A player's game mode and stats, for `type_specific/player` predicates.
@@ -68,6 +74,16 @@ fn bounds(v: &Json, value: f64) -> bool {
     }
 }
 
+/// `MinMaxBounds.Doubles.matchesSqr`: the bounds squared against a squared value.
+fn bounds_sqr(v: &Json, value_sqr: f64) -> bool {
+    match v {
+        Json::Obj(_) => {
+            v.get("min").and_then(|m| m.as_f64()).is_none_or(|m| value_sqr >= m * m) && v.get("max").and_then(|m| m.as_f64()).is_none_or(|m| value_sqr <= m * m)
+        }
+        other => other.as_f64().is_some_and(|x| x * x == value_sqr),
+    }
+}
+
 fn entries_match(v: &Json, facts: &[(&str, f64)]) -> bool {
     let Json::Obj(entries) = v else { return false };
     entries.iter().all(|(k, b)| facts.iter().find(|(name, _)| name == k).is_some_and(|(_, value)| bounds(b, *value)))
@@ -77,7 +93,17 @@ impl EntityView {
     /// `EntityPredicate.matches` for the parts Kiln can answer; anything about vehicles,
     /// passengers, targets, locations, effects or NBT does not match (players ride nothing).
     pub fn matches(&self, p: &EntityPredicate) -> bool {
+        self.matches_with(p, &|_, _| false)
+    }
+
+    /// [`EntityView::matches`] with `location` answering a `LocationPredicate` at a position (for the
+    /// `location`, `stepping_on` and `movement_affected_by` parts).
+    pub fn matches_with(&self, p: &EntityPredicate, location: &dyn Fn(&crate::predicate::world::LocationPredicate, [f64; 3]) -> bool) -> bool {
+        let center = |p: [i32; 3]| [p[0] as f64 + 0.5, p[1] as f64 + 0.5, p[2] as f64 + 0.5];
         p.parts.iter().all(|part| match part {
+            EntitySubPredicate::Location(l) => location(l, self.pos),
+            EntitySubPredicate::SteppingOn(l) => self.on_ground && self.on_pos.is_some_and(|at| location(l, center(at))),
+            EntitySubPredicate::MovementAffectedBy(l) => self.movement_block.is_some_and(|at| location(l, center(at))),
             EntitySubPredicate::EntityType(set) => set.contains(self.type_id),
             EntitySubPredicate::Flags(f) => {
                 let ok = |want: Option<bool>, have: bool| want.is_none_or(|w| w == have);
@@ -96,10 +122,20 @@ impl EntityView {
             EntitySubPredicate::Other(id, json) if id.as_str() == "minecraft:type_specific/player" => {
                 self.player.as_ref().is_some_and(|p| p.matches(json))
             }
-            // `MovementPredicate`: the fall distance (the speeds are not known here).
+            // `MovementPredicate.matches(entity)`: the known movement scaled to a second.
             EntitySubPredicate::Other(id, json) if id.as_str() == "minecraft:movement" => {
                 let Json::Obj(entries) = json else { return false };
-                entries.iter().all(|(key, v)| key == "fall_distance" && bounds(v, self.fall_distance))
+                let v = [self.movement[0] * 20.0, self.movement[1] * 20.0, self.movement[2] * 20.0];
+                entries.iter().all(|(key, b)| match key.as_str() {
+                    "x" => bounds(b, v[0]),
+                    "y" => bounds(b, v[1]),
+                    "z" => bounds(b, v[2]),
+                    "speed" => bounds_sqr(b, v[0] * v[0] + v[1] * v[1] + v[2] * v[2]),
+                    "horizontal_speed" => bounds_sqr(b, v[0] * v[0] + v[2] * v[2]),
+                    "vertical_speed" => bounds(b, v[1].abs()),
+                    "fall_distance" => bounds(b, self.fall_distance),
+                    _ => false,
+                })
             }
             _ => false,
         })
