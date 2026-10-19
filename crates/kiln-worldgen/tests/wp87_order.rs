@@ -216,7 +216,7 @@ fn vanilla_itself_changes_with_the_decoration_order() {
         let mut by_pair: std::collections::BTreeMap<(String, String), usize> = Default::default();
         let (mut chunks, mut blocks) = (0usize, 0usize);
         let mut near_spots = Vec::new();
-        let spots = [(-769, -35, 160), (-544, 55, 160)];
+        let spots = [(-769, -35, 160), (-536, 56, 168)];
         for (t, u) in base.targets.iter().zip(&other.targets) {
             assert_eq!((t.x, t.z), (u.x, u.z));
             let min_y = -64;
@@ -228,8 +228,8 @@ fn vanilla_itself_changes_with_the_decoration_order() {
                     *by_pair.entry((state_name(p), state_name(q))).or_default() += 1;
                     let (s, k) = (i >> 12, i & 4095);
                     let (x, y, z) = (t.x * 16 + (k & 15) as i32, min_y + (s * 16 + (k >> 8)) as i32, t.z * 16 + ((k >> 4) & 15) as i32);
-                    if spots.iter().any(|&(sx, sy, sz): &(i32, i32, i32)| (x - sx).abs() <= 24 && (y - sy).abs() <= 24 && (z - sz).abs() <= 24) && near_spots.len() < 12 {
-                        near_spots.push(format!("({x}, {y}, {z}): {} / {}", state_name(p), state_name(q)));
+                    if spots.iter().any(|&(sx, sy, sz): &(i32, i32, i32)| (x - sx).abs() <= 24 && (y - sy).abs() <= 24 && (z - sz).abs() <= 24) && near_spots.iter().filter(|l: &&String| l.starts_with(&format!("{}", spots.iter().position(|&(sx, sy, sz): &(i32, i32, i32)| (x - sx).abs() <= 24 && (y - sy).abs() <= 24 && (z - sz).abs() <= 24).unwrap_or(0)))).count() < 6 {
+                        near_spots.push(format!("{}({x}, {y}, {z}): {} / {}", spots.iter().position(|&(sx, sy, sz): &(i32, i32, i32)| (x - sx).abs() <= 24 && (y - sy).abs() <= 24 && (z - sz).abs() <= 24).unwrap_or(0), state_name(p), state_name(q)));
                     }
                 }
             }
@@ -243,8 +243,24 @@ fn vanilla_itself_changes_with_the_decoration_order() {
             eprintln!("    {n:6} {a} -> {b}");
         }
         for line in &near_spots {
-            eprintln!("    near the spots {line}");
+            eprintln!("    near the spots {}", &line[1..]);
         }
+    }
+    // The suspicious sand inside the warm ocean ruins (-544..-529, 49..64, 160..175), in each of the three orders.
+    let sand = kiln_data::blocks_types::block_by_name("minecraft:suspicious_sand").expect("suspicious sand");
+    for file in std::iter::once(&a).chain(&others) {
+        let d = read_dump(file);
+        let mut n = 0;
+        for t in &d.targets {
+            for (i, &b) in t.blocks.iter().enumerate() {
+                let (s, k) = (i >> 12, i & 4095);
+                let (x, y, z) = (t.x * 16 + (k & 15) as i32, -64 + (s * 16 + (k >> 8)) as i32, t.z * 16 + ((k >> 4) & 15) as i32);
+                if (sand.first..=sand.last).contains(&b) && (-544..=-529).contains(&x) && (49..=64).contains(&y) && (160..=175).contains(&z) {
+                    n += 1;
+                }
+            }
+        }
+        eprintln!("suspicious sand in the ruin, {}: {n}", file.file_name().unwrap().to_string_lossy());
     }
     eprintln!("(vanilla in three valid orders: {total_diffs} blocks differ between the first order and the others)");
 }
