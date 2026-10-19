@@ -323,6 +323,7 @@ fn a_goat_horn_of_an_instrument_of_the_pack_plays_for_its_duration() {
     assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::UseItem { hand: Hand::Main, sequence: 1, yaw: 0.0, pitch: 0.0 })]));
     assert_eq!(cooldown(&mut g), [70], "the pack's instrument plays 3.5 seconds");
     // A vanilla instrument is unchanged: 7 seconds (the second horn is the next hotbar slot).
+    g.ticks(150);
     assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::SetCarriedItem { slot: 1 })]));
     assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::UseItem { hand: Hand::Main, sequence: 2, yaw: 0.0, pitch: 0.0 })]));
     assert_eq!(cooldown(&mut g), [140]);
