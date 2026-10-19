@@ -98,8 +98,8 @@ fn the_allay_item_given_sound_is_not_sent_to_the_player_who_gave() {
 #[test]
 fn a_sheared_mooshroom_puffs_an_explosion_particle() {
     let mut w = World::new();
-    let before = w.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::LEVEL_PARTICLES).map_or(0, |a| a.0);
     let _ = w.click("minecraft:shears", "mooshroom");
-    let after = w.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::LEVEL_PARTICLES).map_or(0, |a| a.0);
-    assert!(after > before, "the explosion particle of the conversion: {before} -> {after}");
+    let packets = w.stats.log.lock().unwrap().clone().unwrap();
+    let puffs = packets.iter().filter(|p| kiln_proto::codec::Reader::new(p).varint().ok() == Some(kiln_data::packets::play::clientbound::LEVEL_PARTICLES)).count();
+    assert!(puffs >= 1, "the explosion particle of the conversion");
 }

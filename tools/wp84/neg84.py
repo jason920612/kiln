@@ -47,6 +47,11 @@ CASES = [
      "Event::EntitySoundExcept { except: who_id, entity: e.id,",
      "Event::EntitySound { entity: e.id,",
      "-p kiln-sim --test interact_wp84 the_allay_item_given_sound"),
+    ("matrix: no explosion particle for a sheared mooshroom", "crates/kiln-entity/src/mob/kinds/mooshroom.rs",
+     "                level.particle(\"minecraft:explosion\", Vec3::new(pos.x, pos.y + height * 0.5, pos.z));
+",
+     "",
+     "-p kiln-sim --test interact_wp84 a_sheared_mooshroom"),
     ("knockback: the server body does not travel", "crates/kiln-sim/src/phantom.rs",
      "        if !self.phantom_travels() {\n            return;\n        }",
      "        if true {\n            return;\n        }",
