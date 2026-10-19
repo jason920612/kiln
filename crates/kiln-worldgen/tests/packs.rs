@@ -127,8 +127,19 @@ fn state_name(s: u16) -> String {
     if props.is_empty() { b.name.to_string() } else { format!("{}[{}]", b.name, props.join(",")) }
 }
 
+/// What the vanilla dump must show, so that a test cannot pass for lack of the pack's effect: blocks, biomes and structure starts
+/// that only the packs make, and how many of each at least.
+#[derive(Default)]
+struct Expect<'a> {
+    blocks: &'a [(&'a str, usize)],
+    biomes: &'a [&'a str],
+    starts: &'a [&'a str],
+    /// Blocks that must not occur at all (what the packs take away).
+    absent: &'a [&'a str],
+}
+
 /// Generates the dump's chunks from the packs and compares.
-fn check(name: &str, dimension: &str, packs: &[&str]) {
+fn check(name: &str, dimension: &str, packs: &[&str], expect: Expect) {
     let work = work_dir();
     let generated = work.join("generated");
     let vectors = std::env::var_os("KILN_PACK_VECTORS").map(PathBuf::from).unwrap_or_else(|| work.join("wp85/vectors"));
@@ -221,6 +232,23 @@ fn check(name: &str, dimension: &str, packs: &[&str]) {
         }
         bad_chunks += usize::from(chunk_bad);
     }
+    // The dump itself shows the packs' effect.
+    let count = |block: &str| -> usize {
+        let b = kiln_data::blocks_types::block_by_name(block).unwrap_or_else(|| panic!("no block {block}"));
+        dump.targets.iter().map(|t| t.blocks.iter().filter(|&&s| (b.first..=b.last).contains(&s)).count()).sum()
+    };
+    for &(block, at_least) in expect.blocks {
+        assert!(count(block) >= at_least, "{name}: vanilla's chunks have {} {block}, expected at least {at_least}", count(block));
+    }
+    for &block in expect.absent {
+        assert_eq!(count(block), 0, "{name}: vanilla's chunks have {block}");
+    }
+    for &biome in expect.biomes {
+        assert!(dump.targets.iter().any(|t| t.biomes.iter().any(|b| b == biome)), "{name}: no {biome} in vanilla's chunks");
+    }
+    for &id in expect.starts {
+        assert!(dump.targets.iter().any(|t| t.starts.iter().any(|(s, _)| s == id)), "{name}: no {id} start in vanilla's chunks");
+    }
     let structures: usize = dump.targets.iter().map(|t| t.starts.len()).sum();
     eprintln!(
         "{name} ({dimension}): {} chunks, {structures} structure starts in them; {bad_chunks} chunks differ: {block_diffs} blocks, {biome_diffs} biome cells, {start_diffs} structure start lists",
@@ -234,31 +262,43 @@ fn check(name: &str, dimension: &str, packs: &[&str]) {
 
 #[test]
 fn a_replaced_biome_generates_as_in_vanilla() {
-    check("desert", "minecraft:overworld", &["kiln85_desert"]);
+    // The pack's desert: gold patches instead of the cacti, dead bushes and caves of vanilla's.
+    check("desert", "minecraft:overworld", &["kiln85_desert"], Expect { blocks: &[("minecraft:gold_block", 20), ("minecraft:sand", 1000)], absent: &["minecraft:cactus", "minecraft:dead_bush"], ..Default::default() });
 }
 
 #[test]
 fn a_biome_added_to_the_overworlds_list_generates_as_in_vanilla() {
-    check("crystal", "minecraft:overworld", &["kiln85_crystal"]);
+    // Only the biome list's biomes: the new one covers cold land, the others the rest.
+    check(
+        "crystal",
+        "minecraft:overworld",
+        &["kiln85_crystal"],
+        Expect { blocks: &[("minecraft:amethyst_block", 20)], biomes: &["kiln85:crystal_flats", "minecraft:plains", "minecraft:ocean"], ..Default::default() },
+    );
 }
 
 #[test]
 fn noise_settings_of_a_pack_generate_as_in_vanilla() {
-    check("hills", "minecraft:overworld", &["kiln85_hills"]);
+    check("hills", "minecraft:overworld", &["kiln85_hills"], Expect { blocks: &[("minecraft:stone", 100_000), ("minecraft:water", 1)], ..Default::default() });
 }
 
 #[test]
 fn a_structure_from_a_pack_template_generates_as_in_vanilla() {
-    check("huts", "minecraft:overworld", &["kiln85_structure"]);
+    check("huts", "minecraft:overworld", &["kiln85_structure"], Expect { blocks: &[("minecraft:oak_planks", 20), ("minecraft:mossy_cobblestone", 1)], starts: &["kiln85:hut"], ..Default::default() });
 }
 
 #[test]
 fn a_dimension_of_a_pack_generates_as_in_vanilla() {
-    check("dims_cavern", "kiln85:cavern", &["kiln85_dims"]);
+    check(
+        "dims_cavern",
+        "kiln85:cavern",
+        &["kiln85_dims"],
+        Expect { blocks: &[("minecraft:netherrack", 10_000), ("minecraft:lava", 1)], biomes: &["minecraft:crimson_forest", "minecraft:warped_forest", "minecraft:basalt_deltas", "minecraft:nether_wastes"], ..Default::default() },
+    );
 }
 
 /// The control: the same window as the structure test with no pack at all.
 #[test]
 fn without_packs_the_same_window_matches_vanilla() {
-    check("plain", "minecraft:overworld", &[]);
+    check("plain", "minecraft:overworld", &[], Expect { blocks: &[("minecraft:cactus", 1)], ..Default::default() });
 }
