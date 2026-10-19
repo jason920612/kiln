@@ -1131,6 +1131,7 @@ impl Sim {
         }
         let chunk = ChunkPos::new((exit[0] / 16.0).floor() as i32, (exit[1] / 16.0).floor() as i32);
         let found = self.valid_spawn_in_chunk(chunk);
+        info!("WP82 gateway exit search: tentative {exit:?} chunk {chunk:?} valid spawn {found:?}");
         let at = match found {
             Some(p) => p,
             None => {
