@@ -54,7 +54,16 @@ pub struct Style {
     pub underlined: Option<bool>,
     pub click: Option<ClickEvent>,
     pub hover: Option<Box<Text>>,
+    /// `HoverEvent.ShowEntity`: the entity's name, type and UUID (a player's display name carries one).
+    pub hover_entity: Option<Box<HoverEntity>>,
     pub insertion: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HoverEntity {
+    pub name: Option<Text>,
+    pub id: String,
+    pub uuid: uuid::Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -104,6 +113,11 @@ impl Text {
 
     pub fn hover(mut self, text: Text) -> Self {
         self.style.hover = Some(Box::new(text));
+        self
+    }
+
+    pub fn hover_entity(mut self, entity: HoverEntity) -> Self {
+        self.style.hover_entity = Some(Box::new(entity));
         self
     }
 
@@ -207,6 +221,17 @@ impl Text {
                     ("value".into(), hover.to_nbt()),
                 ]),
             ));
+        }
+        if let Some(e) = &s.hover_entity {
+            let mut hover = vec![("action".to_owned(), Tag::String("show_entity".into()))];
+            if let Some(name) = &e.name {
+                hover.push(("name".to_owned(), name.to_nbt()));
+            }
+            hover.push(("id".to_owned(), Tag::String(e.id.clone())));
+            let (hi, lo) = (e.uuid.as_u128() >> 64, e.uuid.as_u128() & u128::from(u64::MAX));
+            let ints = vec![(hi >> 32) as u32 as i32, hi as u32 as i32, (lo >> 32) as u32 as i32, lo as u32 as i32];
+            hover.push(("uuid".to_owned(), Tag::IntArray(ints)));
+            fields.push(("hover_event".into(), Tag::Compound(hover)));
         }
         if let Some(ins) = &s.insertion {
             fields.push(("insertion".into(), Tag::String(ins.clone())));

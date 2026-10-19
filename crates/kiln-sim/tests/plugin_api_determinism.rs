@@ -158,7 +158,7 @@ fn run(workers: usize, unified: bool, chaos: Option<u64>, fuel: u64) -> Outcome 
             95 => pkt(&mut inbox, 5, PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::PerformRespawn)),
             100 | 140 | 180 => {
                 for i in 0..PLAYERS {
-                    pkt(&mut inbox, i, PlayIn::Chat { message: format!("hello {tick} from P{i}") });
+                    pkt(&mut inbox, i, PlayIn::chat(format!("hello {tick} from P{i}")));
                 }
             }
             120 => cmd(&mut inbox, 0, "balance"),

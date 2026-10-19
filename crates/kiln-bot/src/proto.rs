@@ -409,7 +409,7 @@ mod tests {
         assert!(matches!(server_decode(&b), PlayIn::ChunkBatchReceived { chunks_per_tick: 64.0 }));
         assert!(matches!(server_decode(&built(player_loaded)), PlayIn::PlayerLoaded));
         let b = built(|b| chat(b, "hello", 1_700_000_000_000, 42));
-        assert!(matches!(server_decode(&b), PlayIn::Chat { message } if message == "hello"));
+        assert!(matches!(server_decode(&b), PlayIn::Chat { message, .. } if message == "hello"));
         let b = built(|b| client_information(b, ids::play::serverbound::CLIENT_INFORMATION, 5));
         assert!(matches!(server_decode(&b), PlayIn::ClientInformation(i) if i.view_distance == 5));
     }

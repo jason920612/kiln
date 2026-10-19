@@ -105,7 +105,7 @@ fn run_phased(
         // With plugins, everyone chats (PX, the formatter rewrites it) mid-way.
         if with_plugins && tick == 160 {
             for i in 0..PLAYERS {
-                inbox.push(ToSim::Packet(i as u64 + 1, PlayIn::Chat { message: format!("hello from P{i}") }));
+                inbox.push(ToSim::Packet(i as u64 + 1, PlayIn::chat(format!("hello from P{i}"))));
             }
         }
         if tick == 150 {

@@ -1078,6 +1078,9 @@ pub(crate) fn is_exclusive(pkt: &PlayIn) -> bool {
     matches!(
         pkt,
         PlayIn::ChatCommand { .. }
+            | PlayIn::ChatCommandSigned(_)
+            | PlayIn::ChatAck { .. }
+            | PlayIn::ChatSessionUpdate { .. }
             | PlayIn::CommandSuggestion { .. }
             | PlayIn::SetCommandBlock(_)
             | PlayIn::SetStructureBlock(_)

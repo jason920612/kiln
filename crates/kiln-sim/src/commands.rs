@@ -279,6 +279,8 @@ pub(crate) struct CommandState {
     pub gametests: crate::gametest::GameTests,
     /// Console lines kept for tests ([`Sim::capture_console`]).
     pub console_capture: Option<Vec<String>>,
+    /// The signed messages of the arguments of the command a player is running (`CommandSigningContext`).
+    pub signing: HashMap<String, crate::chat::Message>,
     /// What the running RCON command printed (`RconConsoleSource.buffer`, texts joined as they come).
     pub rcon_buffer: String,
     /// `fetchprofile` lookups on their way: who asked, and what for.
@@ -329,6 +331,7 @@ impl CommandState {
             gametests: Default::default(),
             console_capture: None,
             rcon_buffer: String::new(),
+            signing: HashMap::new(),
             profile_requests: HashMap::new(),
             next_profile_request: 1,
             profile_results: Vec::new(),
@@ -607,6 +610,31 @@ impl Sim {
         }
     }
 
+    /// The chat message a command's message argument stands for: the player's signed one if the
+    /// command came signed, else the server saying it (`PlayerChatMessage.system`).
+    fn command_message(&self, message: &ChatMessage) -> crate::chat::Message {
+        match self.commands.signing.values().next() {
+            Some(m) => m.clone(),
+            None => crate::chat::Message::system(&message.content.to_plain(), crate::chat_flow::now_ms()),
+        }
+    }
+
+    /// `PlayerList.broadcastChatMessage` for a command's chat type: the server log and every player.
+    fn broadcast_command_chat(&mut self, m: &crate::chat::Message, message: &ChatMessage) {
+        let trusted = m.signature.is_some() && !m.expired_server(crate::chat_flow::now_ms());
+        let line = console_text(&message.to_text());
+        if trusted {
+            info!("{line}");
+        } else {
+            info!("[Not Secure] {line}");
+        }
+        let mut conns: Vec<ConnId> = self.players.keys().copied().collect();
+        conns.sort_unstable();
+        for c in conns {
+            self.deliver_chat(c, m, message.kind, &message.sender, message.target.as_ref(), &message.content);
+        }
+    }
+
     /// System message to the current command source.
     /// A message to the console (and to the lines a test keeps).
     pub(crate) fn reply_console(&mut self, text: &Text) {
@@ -855,17 +883,21 @@ impl Host for Sim {
     }
 
     fn broadcast_chat(&mut self, message: ChatMessage) {
-        info!("{}", console_text(&message.to_text()));
-        self.broadcast(chat_disguised(&message));
+        let m = self.command_message(&message);
+        self.broadcast_command_chat(&m, &message);
     }
 
     fn send_chat(&mut self, player: &PlayerRef, message: ChatMessage) {
-        self.send_to(player.conn, chat_disguised(&message));
+        let m = self.command_message(&message);
+        self.deliver_chat(player.conn, &m, message.kind, &message.sender, message.target.as_ref(), &message.content);
     }
 
     fn send_chat_to_source(&mut self, message: ChatMessage) {
         match self.commands.source {
-            CommandSource::Player(conn) => self.send_to(conn, chat_disguised(&message)),
+            CommandSource::Player(conn) => {
+                let m = self.command_message(&message);
+                self.deliver_chat(conn, &m, message.kind, &message.sender, message.target.as_ref(), &message.content);
+            }
             CommandSource::Console | CommandSource::Block { .. } => info!("{}", console_text(&message.to_text())),
             CommandSource::Rcon => {
                 let line = console_text(&message.to_text());

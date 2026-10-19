@@ -72,6 +72,8 @@ pub struct ServerInfo {
     pub level_name: String,
     /// The version Query and the legacy ping report.
     pub version_name: String,
+    /// Mojang's public keys (X.509 DER) that sign players' chat keys; empty until fetched (online mode).
+    pub services_keys: std::sync::RwLock<Vec<Vec<u8>>>,
 }
 
 impl ServerInfo {
@@ -84,7 +86,12 @@ impl ServerInfo {
             enable_status: std::sync::atomic::AtomicBool::new(true),
             level_name: level_name.to_owned(),
             version_name: kiln_data::version::NAME.to_owned(),
+            services_keys: Default::default(),
         }
+    }
+
+    pub fn services_keys(&self) -> Vec<Vec<u8>> {
+        self.services_keys.read().map(|k| k.clone()).unwrap_or_default()
     }
 
     pub fn motd(&self) -> String {

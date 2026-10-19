@@ -27,6 +27,8 @@ mod combat;
 mod melee;
 mod command_data;
 mod commands;
+mod chat;
+mod chat_flow;
 mod consume;
 mod buckets;
 mod beehive;
@@ -514,6 +516,8 @@ struct Player {
     address: Option<std::net::IpAddr>,
     /// `ServerPlayer.lastActionTime`, for `/setidletimeout`.
     last_action: Instant,
+    /// The message chain, acknowledgements and signature cache of this player's chat.
+    chat: chat::ChatState,
     /// `ServerPlayer.postEffects` and whether the client has them (`postEffectsDirty`).
     post_effects: Vec<String>,
     post_effects_dirty: bool,
@@ -889,6 +893,11 @@ struct Player {
 
 impl Player {
     fn send(&mut self, p: Bytes) {
+        // A player whose chat is off gets no chat: none at all with "commands only", and only the action bar with "hidden"
+        // (`ServerPlayer.acceptsChatMessages` and `acceptsSystemMessages`).
+        if self.client.chat_visibility != chat_flow::CHAT_FULL && is_hidden_chat(&p, self.client.chat_visibility) {
+            return;
+        }
         self.outbox.push(p);
     }
     fn flush(&mut self) {
@@ -2041,6 +2050,7 @@ impl Sim {
         let packets = self.independent_b0(packets, !joins.is_empty() || !leaves.is_empty() || !console.is_empty());
         self.track_idle(&packets);
         let dt = diag::lap_slow("b0.idle", dt);
+        self.tick_chat_throttles();
         self.maintain_chunks();
         let dt = diag::lap_slow("b0.chunks", dt);
         self.rendezvous_for_topology();
@@ -3868,10 +3878,11 @@ impl Sim {
     fn exclusive_packet(&mut self, conn: ConnId, pkt: PlayIn) {
         match pkt {
             PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::PerformRespawn) => self.respawn(conn),
-            PlayIn::ChatCommand { command } => {
-                if !self.plugin_command_denied(conn, &command) {
-                    self.run_command(conn, &command);
-                }
+            PlayIn::ChatCommand { command } => self.handle_chat_command(conn, command),
+            PlayIn::ChatCommandSigned(c) => self.handle_chat_command_signed(conn, *c),
+            PlayIn::ChatAck { offset } => self.handle_chat_ack(conn, offset),
+            PlayIn::ChatSessionUpdate { session_id, expires_at_ms, key, key_signature } => {
+                self.handle_chat_session_update(conn, session_id, expires_at_ms, key, key_signature)
             }
             PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
             PlayIn::SetCommandBlock(update) => self.set_command_block(conn, &update),
@@ -3880,19 +3891,8 @@ impl Sim {
             PlayIn::JigsawGenerate { pos, levels, keep_jigsaws } => self.jigsaw_generate(conn, pos, levels, keep_jigsaws),
             PlayIn::ResourcePack { id, action } => self.resource_pack_response(conn, id, action),
             PlayIn::CookieResponse(response) => self.cookie_response(conn, response),
-            PlayIn::Chat { message } => {
-                let Some(p) = self.players.get_mut(&conn) else { return };
-                if commands::has_illegal_chars(&message) {
-                    p.disconnect("Illegal characters in chat");
-                    return;
-                }
-                if self.plugin_chat(conn, &message) {
-                    return;
-                }
-                let Some(p) = self.players.get(&conn) else { return };
-                info!("<{}> {}", p.name, message);
-                let pkt = players::chat_player(&p.name, &message);
-                self.broadcast(pkt);
+            PlayIn::Chat { message, timestamp_ms, salt, signature, last_seen } => {
+                self.handle_chat(conn, message, timestamp_ms, salt, signature, last_seen)
             }
             // A region packet queued behind a serial one: it runs here, in the player's region.
             pkt => {
@@ -4196,6 +4196,11 @@ impl Sim {
             sink: j.sink,
             address: j.address,
             last_action: Instant::now(),
+            chat: chat::ChatState::new(
+                self.config.server.enforce_secure_profile,
+                self.config.server.command_spam_threshold_seconds,
+                self.config.server.chat_spam_threshold_seconds,
+            ),
             post_effects: persist::saved_post_effects(joining.saved.raw()),
             post_effects_dirty: true,
             waypoint_icon: persist::saved_waypoint_icon(joining.saved.raw()),
@@ -4660,6 +4665,18 @@ fn persist_uuid(tag: &Tag) -> Option<u128> {
 
 fn player_chunk(pos: [f64; 3]) -> ChunkPos {
     ChunkPos::of_block(pos[0].floor() as i32, pos[2].floor() as i32)
+}
+
+/// Whether `packet` is chat that a player with this chat setting does not get.
+fn is_hidden_chat(packet: &[u8], visibility: u8) -> bool {
+    use kiln_data::packets::play::clientbound as ids;
+    let mut r = kiln_proto::Reader::new(packet);
+    match r.varint() {
+        Ok(id) if id == ids::PLAYER_CHAT || id == ids::DISGUISED_CHAT => true,
+        // System chat ends with its overlay flag; the action bar is shown even with chat hidden.
+        Ok(id) if id == ids::SYSTEM_CHAT => visibility == chat_flow::CHAT_HIDDEN && packet.last() == Some(&0),
+        _ => false,
+    }
 }
 
 fn yellow(s: &str) -> Tag {

@@ -37,6 +37,27 @@ impl Tag {
         }
     }
 
+    /// The tag with every compound's fields in the order a Java `HashMap` iterates them: how vanilla's
+    /// `CompoundTag` writes them, so a network component comes out byte for byte as vanilla's.
+    pub fn java_ordered(&self) -> Tag {
+        match self {
+            Tag::Compound(fields) => {
+                let mut capacity = 16usize;
+                while fields.len() * 4 > capacity * 3 {
+                    capacity *= 2;
+                }
+                let mut out: Vec<(String, Tag)> = fields.iter().map(|(k, v)| (k.clone(), v.java_ordered())).collect();
+                out.sort_by_key(|(k, _)| {
+                    let h = k.encode_utf16().fold(0i32, |h, c| h.wrapping_mul(31).wrapping_add(i32::from(c))) as u32;
+                    ((h ^ (h >> 16)) as usize) & (capacity - 1)
+                });
+                Tag::Compound(out)
+            }
+            Tag::List(items) => Tag::List(items.iter().map(Tag::java_ordered).collect()),
+            other => other.clone(),
+        }
+    }
+
     /// Writes this tag as a network root: type id, then payload (no name).
     pub fn write_network(&self, out: &mut BytesMut) {
         out.put_u8(self.id());

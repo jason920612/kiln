@@ -226,11 +226,17 @@ impl Player {
         d
     }
 
-    fn info_entry<'a>(&'a self, props: &'a [ProfileProperty<'a>]) -> PlayerInfoEntry<'a> {
-        PlayerInfoEntry::new(self.uuid, &self.name, props, self.game_mode as i32)
+    pub(crate) fn info_entry<'a>(&'a self, props: &'a [ProfileProperty<'a>]) -> PlayerInfoEntry<'a> {
+        let chat_session = self.chat.session().map(|s| kiln_proto::packets::entity::ChatSession {
+            session_id: s.id,
+            expires_at: s.expires_at_ms,
+            public_key: &s.key_der,
+            key_signature: &s.key_signature,
+        });
+        PlayerInfoEntry { chat_session, ..PlayerInfoEntry::new(self.uuid, &self.name, props, self.game_mode as i32) }
     }
 
-    fn profile_properties(&self) -> Vec<ProfileProperty<'_>> {
+    pub(crate) fn profile_properties(&self) -> Vec<ProfileProperty<'_>> {
         self.properties
             .iter()
             .map(|p| ProfileProperty { name: &p.name, value: &p.value, signature: p.signature.as_deref() })
