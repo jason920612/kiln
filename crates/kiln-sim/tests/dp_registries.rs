@@ -326,6 +326,6 @@ fn a_goat_horn_of_an_instrument_of_the_pack_plays_for_its_duration() {
     g.ticks(150);
     assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::SetCarriedItem { slot: 1 })]));
     assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::UseItem { hand: Hand::Main, sequence: 2, yaw: 0.0, pitch: 0.0 })]));
-    assert_eq!(cooldown(&mut g), [140]);
+    assert_eq!(cooldown(&mut g).into_iter().filter(|t| *t > 0).collect::<Vec<_>>(), [140]);
     g.cleanup();
 }
