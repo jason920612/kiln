@@ -213,7 +213,7 @@ def hut_template():
     pal = list_(10, [compound([tag(8, "Name", nbt_string(n))]) for n in palette])
     blks = []
     for x, y, z, s in blocks:
-        parts = [tag(11, "pos", int_(3) + int_(x) + int_(y) + int_(z)), tag(3, "state", int_(s))]
+        parts = [tag(9, "pos", list_(3, [int_(x), int_(y), int_(z)])), tag(3, "state", int_(s))]
         if s == 2:
             parts.append(tag(10, "nbt", compound([tag(8, "id", nbt_string("minecraft:chest")), tag(8, "LootTable", nbt_string("minecraft:chests/simple_dungeon"))])))
         blks.append(compound(parts))
