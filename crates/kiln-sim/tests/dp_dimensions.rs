@@ -255,6 +255,21 @@ fn blocks_of_a_pack_dimension_are_saved_in_its_own_directory() {
     kiln_data::levels::reset();
 }
 
+#[test]
+fn weather_follows_the_dimension_type() {
+    let _x = kiln_data::live::exclusive();
+    let mut w = World::new("weather", &["kiln85_dims"]);
+    w.run("weather rain 100000");
+    w.ticks(200);
+    // The superflat dimension has sky light and no ceiling, like the overworld; the nether-like one has a ceiling and no sky light.
+    assert!(w.sim.is_raining_in("minecraft:overworld"));
+    assert!(w.sim.is_raining_in(FLAT), "a level with sky light and no ceiling has the weather");
+    assert!(!w.sim.is_raining_in(CAVERN), "a level with a ceiling has none");
+    assert!(!w.sim.is_raining_in("minecraft:the_nether") && !w.sim.is_raining_in("minecraft:the_end"));
+    drop(w);
+    kiln_data::levels::reset();
+}
+
 impl World {
     fn shutdown(&mut self) {
         let (tx, rx) = std::sync::mpsc::channel();

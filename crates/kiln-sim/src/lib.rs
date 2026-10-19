@@ -2231,6 +2231,11 @@ impl Sim {
         (self.is_raining(OVERWORLD_ID), self.is_thundering(OVERWORLD_ID), w.rain_level(), w.thunder_level())
     }
 
+    /// Whether it rains in the level `dimension` (for tests): only levels with sky light and no ceiling (not the End) have weather.
+    pub fn is_raining_in(&self, dimension: &str) -> bool {
+        dim_id(dimension).is_some_and(|d| self.is_raining(d))
+    }
+
     /// The weather counters: (clear time, rain time, thunder time, raining, thundering).
     pub fn weather_counters(&self) -> (i32, i32, i32, bool, bool) {
         let w = &self.weather;
