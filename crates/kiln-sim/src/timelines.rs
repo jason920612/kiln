@@ -356,7 +356,9 @@ mod tests {
         assert!(!t.bool_attr(&list, "minecraft:gameplay/monsters_burn", true, &clock("kiln:short", 30)));
         assert!(t.bool_attr(&list, "minecraft:gameplay/monsters_burn", false, &clock("kiln:short", 70)));
         // The clock of the overworld does not matter to it.
-        assert!(!t.bool_attr(&list, "minecraft:gameplay/monsters_burn", true, &clock("minecraft:overworld", 70)));
+        let a = t.bool_attr(&list, "minecraft:gameplay/monsters_burn", false, &clock("minecraft:overworld", 70));
+        let b = t.bool_attr(&list, "minecraft:gameplay/monsters_burn", false, &clock("minecraft:overworld", 5000));
+        assert_eq!(a, b);
         assert_eq!(t.markers_of("kiln:short"), vec![("kiln:peak".to_owned(), Some(100), 50, true)]);
     }
 }

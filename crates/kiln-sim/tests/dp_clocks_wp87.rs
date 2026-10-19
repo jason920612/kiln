@@ -174,6 +174,7 @@ fn clients_are_told_the_clocks_of_the_pack_and_the_world_keeps_them() {
     assert_eq!((ours.1, ours.2), (333, 1.0));
     // Paused, it is told with rate 0.
     w.run(&format!("time of {SHORT} pause"));
+    w.ticks(2);
     let log = w.log();
     assert_eq!(set_time(&log).unwrap().iter().find(|c| c.0 == id).map(|c| c.2), Some(0.0));
     // The world keeps the clock (and its pause) across a restart.
