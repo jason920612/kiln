@@ -1,0 +1,6 @@
+//! What running Kiln as a dedicated server needs around the game itself: `server.properties`,
+//! `eula.txt`, and (later modules) the server list, remote administration and logging.
+
+pub mod eula;
+pub mod javaprops;
+pub mod properties;
