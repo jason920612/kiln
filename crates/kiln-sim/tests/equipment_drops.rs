@@ -6,6 +6,8 @@ use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
 use std::path::PathBuf;
 
+mod support;
+
 const PLUNDER: &str = r##"{
   "description": {"text": "Plunder"},
   "supported_items": "#minecraft:enchantable/melee_weapon",
@@ -94,6 +96,10 @@ impl Drop for World {
 
 #[test]
 fn an_enchantment_with_equipment_drops_raises_the_chance_a_killed_mob_drops_its_equipment() {
+    if !support::vanilla_data() {
+        eprintln!("skipped: needs the vanilla data pack (the enchantment's item tag)");
+        return;
+    }
     let _x = kiln_data::live::exclusive();
     let mut w = World::new();
     w.sim.console_now("give User minecraft:diamond_sword");
