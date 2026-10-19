@@ -292,6 +292,7 @@ fn carry_out_one(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, e
     match effect {
         // `EnchantmentAttributeEffect.onChangedBlock`: a modifier while active (`location_changed` only).
         EntityEffect::Attribute(a) => {
+            eprintln!("DBG attribute fresh {} attr {:?} has {:?}", d.fresh, attr_of(a.attribute), attr_of(a.attribute).map(|x| m.attrs.get(x).is_some()));
             if d.fresh
                 && let Some(attr) = attr_of(a.attribute)
                 && m.attrs.get(attr).is_some()
