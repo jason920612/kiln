@@ -84,8 +84,8 @@ fn a_hit_from_a_living_entity_starts_a_fight_and_three_hundred_ticks_later_it_en
         lab.ticks(1);
         assert!(lab.steps < 1000);
     }
-    // `LivingEntity.tick` rechecks when `tickCount % 20 == 0` (the player's tick count is this test's steps less the one of the join, and raised before the check).
-    assert_eq!((lab.steps - 1) % 20, 0, "the fight ended on the player's 20th tick: step {}", lab.steps);
+    // `LivingEntity.tick` rechecks when `tickCount % 20 == 0` (the steps of this test are the player's ticks, the join step being the first).
+    assert_eq!(lab.steps % 20, 0, "the fight ended on a multiple of 20 of the player's ticks: step {}", lab.steps);
     lab.ticks(40);
     let end = lab.with_id(cb::PLAYER_COMBAT_END);
     assert_eq!(end.len(), 1, "the fight ended");
