@@ -266,12 +266,12 @@ fn a_spawner_s_mobs_wear_what_the_equipment_table_rolls() {
 
 #[test]
 fn a_villager_throws_the_hero_gift_its_table_rolls() {
-    // The farmer's gift table of the pack: a diamond, thrown at the hero of the village.
+    // The unemployed villager's gift table of the pack: a diamond, thrown at the hero of the village.
     let t = table("gift", &[pool(&[item("diamond", 1)])]);
-    let mut w = World::new("hero", &[("gameplay/hero_of_the_village/farmer_gift", &t)]);
+    let mut w = World::new("hero", &[("gameplay/hero_of_the_village/unemployed_gift", &t)]);
     let [x, y, z] = w.at(3, 1, 0);
     w.run("time set 6000");
-    w.run(&format!("summon minecraft:villager {x} {y} {z} {{VillagerData:{{profession:\"minecraft:farmer\",level:1,type:\"minecraft:plains\"}},Age:0}}"));
+    w.run(&format!("summon minecraft:villager {x} {y} {z}"));
     w.run("effect give User minecraft:hero_of_the_village 1000 0");
     let diamonds = |w: &World| w.items().get("minecraft:diamond").copied().unwrap_or(0) + w.sim.inventory(1).unwrap().iter().flatten().filter(|&&(id, _)| id == kiln_data::builtin_id("minecraft:item", "minecraft:diamond").unwrap()).map(|&(_, n)| n).sum::<i32>();
     let mut n = 0;
