@@ -49,6 +49,7 @@ negsed "live tables replace the static ones" "-p kiln-data --lib installed_tags"
 negsed "the vanilla tables are the default" "-p kiln-data --lib static_tables" crates/kiln-data/src/live.rs 's|    assert_eq!(synced().len(), registries::SYNCHRONIZED.len());|    assert_eq!(synced().len(), 0);|'
 negsed "entries the codec rejects are left out" "-p kiln-sim --lib registry_data::tests::entries_the_codec" $S/registry_data.rs 's|let missing: Vec<\&str> = required(registry).iter().copied().filter(\|k\| json.get(k).is_none()).collect();|let missing: Vec<\&str> = Vec::new();|'
 negsed "a later pack overrides an earlier one" "-p kiln-sim --test dp_two_packs" $S/registry_data.rs 's|                from_packs.insert(name, text);|                from_packs.entry(name).or_insert(text);|'
+negsed "a block transformer of the pack decides what the hoe does" "$DP a_block_transformer" $S/block_transformer.rs 's|    let transforms = transformers().get(entry)?;|    let transforms = transformers().get(entry).filter(\|_\| false)?;|'
 # vanilla's own answer: the Java check must fail when the numbering is wrong
 if [ -z "$only" ] || [[ "numbering against vanilla" == *$only* ]]; then
   sed -i 's|split(a).cmp(&split(b))|split(a).1.cmp(\&split(b).1).then(split(a).0.cmp(\&split(b).0))|' $S/registry_data.rs

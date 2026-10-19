@@ -184,7 +184,7 @@
 | 戰利品接線：收成（甜莓、洞穴藤、蜂巢）、刮南瓜、鋤根土、貓晨間禮物、苦力怕充能、試煉箱子、刷子 | B（wp83 前 D） | 0（表本身 A） | `loot_calls.rs` 10 個（自己寫的小資料包改表，遊戲跟著改）、`loot_table_names.rs`、`neg83_loot.sh` | wp83（見 6.26）接上甜莓、洞穴藤、蜂巢、南瓜、鋤根土、充能苦力怕、生怪磚裝備、村民禮物；貓禮物、試煉箱子、金庫、考古、釣魚等本來就接好（盤點在 `docs/wp83-loot.md` §3）；`brush/armadillo` 與 `piglin_bartering` 的 context 不完整、沙漠水井沒有地物、亂數序列用位置雜湊（位元不同、分布相同） |
 | datapack：pack 探索與啟用、function、macro、schedule、predicate、item modifier、dialog、gametest、`/place`、`/reload` | B | 0 | `command_diff.py` 1,937 個比較單位 | – |
 | 遊戲邏輯用的 tag | B（wp83 前 C） | 0 | `dp_registries.rs`（方塊、物品、傷害類型、畫、`/reload`）、`CheckRegistries.java`（774 個 tag 的 id 與順序逐個與 vanilla 相同）、`a_shovel_mines_stone…` | wp83：約 75 處讀 tag 的地方改讀啟用資料包的 tag（`kiln_data::live`），`replace`、可選條目、巢狀、順序、`/reload` 重讀；未盤點「程式裡以方塊名後綴寫死 tag 內容」的地方；沒有 vanilla 檔案時內建 tag 按 id 排序 |
-| 自訂 registry（附魔、傷害類型、畫、橫幅圖案、歌曲、樂器、鑲飾、動物變體、dialog、聊天類型） | B（wp83 前 D） | 0 | `dp_registries.rs`（16 個）、`dp_two_packs.rs`、`enchant_packs.rs`（14 個）、`CheckRegistries.java`（32 個 registry、24～27 個帶資料的條目逐個與 vanilla 的 network codec 結果相同）、真實客戶端（`p83_cmp.py`：Kiln 與 vanilla 逐行相同） | wp83：世界載入時由啟用的資料包建出，順序如 vanilla（path 先於 namespace），登入只對客戶端認不得的條目送資料；`block_transformer`（鋤地、去皮、鏟路）有同步但遊戲規則仍內建；worldgen 類 registry 只送給客戶端（見 6.26 與 `docs/wp83.md` §5） |
+| 自訂 registry（附魔、傷害類型、畫、橫幅圖案、歌曲、樂器、鑲飾、動物變體、dialog、聊天類型） | B（wp83 前 D） | 0 | `dp_registries.rs`（16 個）、`dp_two_packs.rs`、`enchant_packs.rs`（14 個）、`CheckRegistries.java`（32 個 registry、24～27 個帶資料的條目逐個與 vanilla 的 network codec 結果相同）、真實客戶端（`p83_cmp.py`：Kiln 與 vanilla 逐行相同） | wp83：世界載入時由啟用的資料包建出，順序如 vanilla（path 先於 namespace），登入只對客戶端認不得的條目送資料；`block_transformer`（鋤地、去皮、鏟路）資料包覆寫時照資料執行（`block_transformer.rs`，真實客戶端與 vanilla 逐項相同），沒覆寫的用內建規則；worldgen 類 registry 只送給客戶端（見 6.26 與 `docs/wp83.md` §5） |
 | 物品元件 122 種 wire／NBT／hash／patch 位元組往返 | A | 10,745 個物品堆 | `vanilla_corpus.rs` | 部分元件的向量值少於 6 個；預設元件對 `item_components.json` 逐項比對為 C |
 
 ### 3.3 物品、戰鬥、效果、附魔、玩家
@@ -934,7 +934,7 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 物品預設元件的 registry id | **修**(找到的):唱片、錠等的預設元件存 vanilla 的 id,資料包新增條目後會錯位(歌曲 `kiln83:tune` 排在 `wait` 之前,`music_disc_wait` 會放成別首)。`the_default_components_of_items…` |
 | 附魔 | 見 `docs/wp83-enchant.md`:每種效果元件解碼並評估(`tick`、`location_changed`、`hit_block`、`projectile_spawned`、音效、`prevent_*`)、靈魂疾行者與霜行者就是它們的定義、絲綢之觸與詛咒讀 tag/元件、附魔定義世界載入時讀一次;`enchant_packs.rs` 14 個 |
 | loot 呼叫 | 見 `docs/wp83-loot.md`:甜莓(以前不能採)、洞穴藤、蜂巢、南瓜、鋤根土、充能苦力怕(以前不掉頭)、生怪磚裝備(以前只保存)、村民禮物、叢林神廟發射器的表 id(以前是空的);`loot_calls.rs` 10 個 |
-| 沒做 | worldgen 資料包(`docs/wp83.md` §5 寫了現況與做法);`block_transformer`(鋤地、去皮、鏟路的轉換清單)只同步不生效;`/give … decorated_pot[pot_decorations=[…]]` Kiln 收下、vanilla 回「Not a map」(與資料包無關,沒修);客戶端沒有 `minecraft:core` 時 Kiln 斷線(vanilla 全送資料);壞條目只擋缺必要欄位或壞 JSON 的 |
+| 沒做 | worldgen 資料包(`docs/wp83.md` §5 寫了現況與做法);`block_transformer` 沒覆寫的三個(鋤、斧、鏟)仍是 Kiln 內建規則、不讀 vanilla 的 JSON(資料包覆寫時才照資料執行);`/give … decorated_pot[pot_decorations=[…]]` Kiln 收下、vanilla 回「Not a map」(與資料包無關,沒修);客戶端沒有 `minecraft:core` 時 Kiln 斷線(vanilla 全送資料);壞條目只擋缺必要欄位或壞 JSON 的 |
 | 效能 | 登入(連線到第一批區塊,暖機後 p50):base 36~51 ms、new 46~59 ms、new+資料包 49~56 ms;伺服器啟動到 ready:4.60 / 4.64 / 4.48 s。`sim_load`(50 玩家、10 組、noise 地形、模板世界,8 對交替):mspt 平均 base 19.61、new 19.99,p50 18.8 / 18.7,使用者 CPU 22.57 / 22.84 s(VM 與另一個工作階段共用,同一邊內變動 ±1.5 ms);`survival_bench` 50 機器人各一次:mean 21.2→17.6、p99 44.1→41.9(不同時段,不是證據);沒有退步 |
 
 ## 7. 重跑
