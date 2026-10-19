@@ -2156,7 +2156,7 @@ impl Sim {
             (p.game_mode, p.inv.selected, p.menu_view(), p.sneaking, p.sprinting).hash(&mut h);
             (p.health.to_bits(), p.dead, p.food, p.saturation.to_bits(), p.exhaustion.to_bits()).hash(&mut h);
             (p.hurt_cooldown, p.last_hurt.to_bits(), p.absorption.to_bits(), p.attack_ticker).hash(&mut h);
-            p.vel.map(f64::to_bits).hash(&mut h);
+            if std::env::var_os("KILN_HASH_NOVEL").is_none() { p.vel.map(f64::to_bits).hash(&mut h); }
             (p.fire_ticks, p.air, p.tick_count).hash(&mut h);
             for e in p.effects.values() {
                 (e.id, e.duration, e.amplifier, e.ambient, e.visible, e.show_icon, e.hidden.is_some()).hash(&mut h);
