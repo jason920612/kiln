@@ -161,8 +161,8 @@ fn a_packs_tick_effect_runs_a_function_every_tick() {
     w.go(0, 0);
     w.equip("armor.feet", "minecraft:diamond_boots[enchantments={\"kz:ticker\":1}]");
     w.ticks(3);
-    // `kz:count` puts an emerald block two below the wearer's feet each time it runs.
-    let marker = [x, y - 1, z];
+    // `kz:count` puts an emerald block below the wearer's feet each time it runs.
+    let marker = [x, y, z];
     assert_eq!(w.name(marker), "minecraft:emerald_block");
     w.run(&format!("setblock {} {} {} minecraft:stone", marker[0], marker[1], marker[2]));
     w.ticks(2);
@@ -172,6 +172,7 @@ fn a_packs_tick_effect_runs_a_function_every_tick() {
 #[test]
 fn a_packs_hit_block_effect_summons_lightning_where_an_arrow_lands() {
     let Some(mut w) = World::new("strike", &["kz_effects"]) else { return };
+    w.platform(6);
     let p = w.client.pos;
     let bow = |enchantments: &str| format!(",weapon:{{id:\"minecraft:bow\",count:1,components:{{\"minecraft:enchantments\":{{{enchantments}}}}}}}");
     // An arrow from a plain bow lands without a bolt.
@@ -270,12 +271,10 @@ fn break_ice(w: &mut World, tool: &str, dx: i32) -> &'static str {
     w.equip("weapon.mainhand", tool);
     w.ticks(2);
     assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 0, pos: ice, face: 1, sequence: 10 + dx })]));
-    for t in 0..30 {
-        w.ticks(1);
-        if t % 5 == 0 {
-            eprintln!("DEBUG ice t={t}: {} player {:?} held {:?}", w.name(ice), w.client.pos, w.sim.inventory(1).map(|i| i.iter().flatten().count()));
-        }
-    }
+    // The client says it is done (with an iron pickaxe ice takes 3 ticks); the server breaks it.
+    w.ticks(6);
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 3, pos: ice, face: 1, sequence: 40 + dx })]));
+    w.ticks(4);
     w.name(ice)
 }
 
