@@ -6,6 +6,7 @@ is a copy of a Mojang file). Run: python3 tools/wp85/make_packs.py
   kiln85_hills      own noise settings (sea level 40, own terrain) for the overworld
   kiln85_structure  a new structure: a template, a pool, a processor list, a structure set and a biome tag
   kiln85_dims       a dimension type of its own and two new dimensions (superflat, nether noise + checkerboard)
+  kiln85_nether     replaces the nether's dimension type (shorter, brighter, beds work)
 """
 import gzip
 import json
@@ -354,7 +355,35 @@ def dims():
     })
 
 
+# ---- kiln85_nether -------------------------------------------------------------------------------------------------
+def nether():
+    pack = "kiln85_nether"
+    mcmeta(pack, "wp85: replaces the nether's dimension type")
+    write(pack, "data/minecraft/dimension_type/the_nether.json", {
+        "ambient_light": 0.5,
+        "attributes": {
+            "minecraft:gameplay/bed_rule": {"can_set_spawn": "always", "can_sleep": "always"},
+            "minecraft:gameplay/fast_lava": True,
+            "minecraft:gameplay/piglins_zombify": False,
+            "minecraft:gameplay/respawn_anchor_works": False,
+            "minecraft:gameplay/water_evaporates": False,
+        },
+        "coordinate_scale": 4.0,
+        "has_ceiling": True,
+        "has_ender_dragon_fight": False,
+        "has_fixed_time": True,
+        "has_skylight": False,
+        "height": 192,
+        "infiniburn": "#minecraft:infiniburn_nether",
+        "logical_height": 128,
+        "min_y": 16,
+        "monster_spawn_block_light_limit": 15,
+        "monster_spawn_light_level": 7,
+        "timelines": "#minecraft:in_nether",
+    })
+
+
 if __name__ == "__main__":
-    for f in (desert, crystal, hills, structure, dims):
+    for f in (desert, crystal, hills, structure, dims, nether):
         f()
     print("wrote", ROOT)

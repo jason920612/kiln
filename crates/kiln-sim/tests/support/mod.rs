@@ -35,6 +35,16 @@ pub fn pack_world(tag: &str, packs: &[&str]) -> PathBuf {
     dir
 }
 
+/// A fresh world directory whose `datapacks` holds copies of the wp85 packs (`tools/wp85/packs`).
+pub fn wp85_world(tag: &str, packs: &[&str]) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("wp85-{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    for pack in packs {
+        copy_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/wp85/packs").join(pack), &dir.join("datapacks").join(pack));
+    }
+    dir
+}
+
 /// A `Registry Data` packet: `(registry, [(entry, data)])`.
 pub fn registry_data(p: &Bytes) -> (String, Vec<(String, Option<Tag>)>) {
     let mut r = Reader::new(p);

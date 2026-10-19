@@ -1,0 +1,7 @@
+{
+  "pack": {
+    "description": "wp85: replaces the nether's dimension type",
+    "min_format": 121,
+    "max_format": 121
+  }
+}

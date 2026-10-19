@@ -1,0 +1,25 @@
+{
+  "ambient_light": 0.5,
+  "attributes": {
+    "minecraft:gameplay/bed_rule": {
+      "can_set_spawn": "always",
+      "can_sleep": "always"
+    },
+    "minecraft:gameplay/fast_lava": true,
+    "minecraft:gameplay/piglins_zombify": false,
+    "minecraft:gameplay/respawn_anchor_works": false,
+    "minecraft:gameplay/water_evaporates": false
+  },
+  "coordinate_scale": 4.0,
+  "has_ceiling": true,
+  "has_ender_dragon_fight": false,
+  "has_fixed_time": true,
+  "has_skylight": false,
+  "height": 192,
+  "infiniburn": "#minecraft:infiniburn_nether",
+  "logical_height": 128,
+  "min_y": 16,
+  "monster_spawn_block_light_limit": 15,
+  "monster_spawn_light_level": 7,
+  "timelines": "#minecraft:in_nether"
+}
