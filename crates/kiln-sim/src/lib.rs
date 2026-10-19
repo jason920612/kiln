@@ -4333,7 +4333,10 @@ impl Sim {
         lap(&mut self.stats, "g.waypoints");
         self.tick_raids(normal);
         self.resolve_display_texts();
-        self.tick_dragon_fight();
+        // (`ServerLevel.tick`: `EnderDragonFight.tick` runs only while the level runs normally, like the raids.)
+        if normal {
+            self.tick_dragon_fight();
+        }
         lap(&mut self.stats, "g.raids_dragon");
         // `save-all` asks for a save; `save-off` stops the autosave.
         let autosave = normal && self.commands.auto_save && self.game_time % AUTOSAVE_TICKS == 0;
