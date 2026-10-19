@@ -46,7 +46,11 @@ impl World {
         }
         let p = client.pos;
         let ground = [p[0].floor() as i32, p[1].floor() as i32 - 1, p[2].floor() as i32];
-        World { sim, client, ground, sequence: 0, dir }
+        let mut w = World { sim, client, ground, sequence: 0, dir };
+        // (A new world is empty but for the block the player stands on: a floor around it.)
+        let g = w.ground;
+        w.run(&format!("fill {} {} {} {} {} {} minecraft:stone", g[0] - 8, g[1], g[2] - 8, g[0] + 12, g[1], g[2] + 8));
+        w
     }
 
     fn ticks(&mut self, n: usize) {
@@ -272,21 +276,12 @@ fn a_villager_throws_the_hero_gift_its_table_rolls() {
     let [x, y, z] = w.at(3, 1, 0);
     w.run("time set 6000");
     w.run(&format!("summon minecraft:villager {x} {y} {z}"));
-    w.ticks(3);
-    eprintln!("ENTITIES {:?}", w.sim.entities());
     w.run("effect give User minecraft:hero_of_the_village 1000 0");
     let diamonds = |w: &World| w.items().get("minecraft:diamond").copied().unwrap_or(0) + w.sim.inventory(1).unwrap().iter().flatten().filter(|&&(id, _)| id == kiln_data::builtin_id("minecraft:item", "minecraft:diamond").unwrap()).map(|&(_, n)| n).sum::<i32>();
     let mut n = 0;
     while n < 3000 && diamonds(&w) == 0 {
         w.ticks(100);
         n += 100;
-        if n <= 600 {
-            eprintln!("t={n} ENTITIES {:?}", w.sim.entities());
-        }
-    }
-    if diamonds(&w) == 0 {
-        let v: Vec<_> = w.sim.entity_nbt().into_iter().filter(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some("minecraft:villager")).collect();
-        eprintln!("VILLAGERS {v:#?}");
     }
     assert!(diamonds(&w) > 0, "no gift from the pack's table in {n} ticks");
 }
