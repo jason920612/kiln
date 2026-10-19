@@ -1039,6 +1039,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let source = crate::health::Source { cause: crate::health::Cause::PlayerAttack, attacker: Some(attacker), direct: None, weapon: None, position: None };
         let mut rng = LegacyRandom::new(i64::from(id));
         let mut value = chance;
+        eprintln!("DEBUG equip {:?} ench-count {}", p.equipment().iter().map(|(s, st)| (format!("{s:?}"), st.item_name(), st.get(kiln_item::keys::ENCHANTMENTS).map(|e| e.0.clone()))).collect::<Vec<_>>(), loot.enchantments.len());
         loot.for_each_equipped_enchantment(&p.equipment(), |e, level, _slot, _stack| {
             let ctx = crate::enchant::DamageContext { level, this: &view, source: &source };
             for t in &e.effects.equipment_drops {
