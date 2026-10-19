@@ -279,5 +279,9 @@ fn a_villager_throws_the_hero_gift_its_table_rolls() {
         w.ticks(100);
         n += 100;
     }
+    if diamonds(&w) == 0 {
+        let v: Vec<_> = w.sim.entity_nbt().into_iter().filter(|t| t.get("id").and_then(kiln_proto::nbt::Tag::as_str) == Some("minecraft:villager")).collect();
+        eprintln!("VILLAGERS {v:#?}");
+    }
     assert!(diamonds(&w) > 0, "no gift from the pack's table in {n} ticks");
 }
