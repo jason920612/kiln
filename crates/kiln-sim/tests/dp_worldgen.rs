@@ -93,7 +93,14 @@ fn the_overworld_uses_the_biome_list_of_the_pack() {
             }
         }
     }
-    assert!(seen_crystal, "the pack's biome is in the world");
+    let mut counts: std::collections::BTreeMap<&str, usize> = Default::default();
+    for x in (-128..128).step_by(16) {
+        for z in (-128..128).step_by(16) {
+            let b = sim.biome_in("minecraft:overworld", x, 64, z).expect("loaded");
+            *counts.entry(kiln_data::live::synced_name("minecraft:worldgen/biome", b as i32).unwrap()).or_default() += 1;
+        }
+    }
+    assert!(seen_crystal, "the pack's biome is in the world: {counts:?}");
     assert_eq!(others, 0, "only the biomes of the pack's list are");
     drop(sim);
     kiln_data::levels::reset();
