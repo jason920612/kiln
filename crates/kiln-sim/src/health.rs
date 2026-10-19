@@ -786,7 +786,7 @@ impl Player {
             _ => self.fall_distance as f32,
         };
         // (`recordDamage` is timed by the player's tick count; entering a fight tells the client.)
-        let (left, entered) = self.combat.record(source, fall, self.tick_count, self.health > 0.0);
+        let (left, entered) = self.combat.record(source, fall, i64::from(self.tick_count), self.health > 0.0);
         if let Some(duration) = left {
             self.send(packets::player::player_combat_end(duration));
         }
@@ -942,7 +942,7 @@ impl Player {
         // `broadcastEntityEvent(DEATH)` reaches the player too.
         self.send(entity::entity_event(self.entity_id, 3));
         // ... and the combat tracker is rechecked (`die`'s last step): a player who was in a fight leaves it (dead: `isAlive` is false).
-        if let Some(duration) = self.combat.recheck(self.tick_count, false) {
+        if let Some(duration) = self.combat.recheck(i64::from(self.tick_count), false) {
             self.send(packets::player::player_combat_end(duration));
         }
         let by_wither = credit.is_none() && self.last_mob_attacker.is_some_and(|(k, t)| k == "minecraft:wither" && ctx.game_time - t <= 100);
@@ -964,7 +964,7 @@ impl Player {
         }
         // `LivingEntity.tick`: every 20th tick (`tickCount` has just been raised in `commonTick`, which Kiln does right after this).
         if (self.tick_count + 1) % 20 == 0
-            && let Some(duration) = self.combat.recheck(self.tick_count + 1, !self.dead && self.health > 0.0)
+            && let Some(duration) = self.combat.recheck(i64::from(self.tick_count) + 1, !self.dead && self.health > 0.0)
         {
             self.send(packets::player::player_combat_end(duration));
         }
