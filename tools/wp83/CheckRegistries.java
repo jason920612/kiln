@@ -54,7 +54,16 @@ import net.minecraft.world.flag.FeatureFlags;
 public final class CheckRegistries {
     record Entry(String name, Tag data) {}
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
+        try {
+            run(args);
+        } catch (Throwable t) {
+            t.printStackTrace(System.out);
+            System.exit(2);
+        }
+    }
+
+    static void run(String[] args) throws Exception {
         net.minecraft.SharedConstants.tryDetectVersion();
         net.minecraft.server.Bootstrap.bootStrap();
         Path packs = Path.of(args[0]);
@@ -105,7 +114,7 @@ public final class CheckRegistries {
         for (String line : Files.readAllLines(Path.of(args[1]))) {
             String[] p = line.split(" ", 4);
             if (p[0].equals("entry")) {
-                Tag data = p[3].equals("-") ? null : TagParser.parseCompoundFully(p[3]);
+                Tag data = p[3].equals("-") ? null : TagParser.create(NbtOps.INSTANCE).parseFully(p[3]);
                 kiln.computeIfAbsent(p[1], k -> new ArrayList<>()).add(new Entry(p[2], data));
             } else if (p[0].equals("tags")) {
                 String[] t = line.split(" ", 4);
