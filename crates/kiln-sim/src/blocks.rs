@@ -1778,7 +1778,7 @@ fn send_near(players: &mut [&mut Player], pos: BlockPos, range: f64, pkt: &Bytes
 }
 
 /// A deterministic value for effect `i` at `pos` this tick (sound seeds, drop jitter).
-fn effect_hash(env: &BlockEnv, pos: BlockPos, i: usize) -> u64 {
+pub(crate) fn effect_hash(env: &BlockEnv, pos: BlockPos, i: usize) -> u64 {
     let mut h = (env.game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ env.seed as u64;
     for v in [pos.x as i64, pos.y as i64, pos.z as i64, i as i64] {
         h = (h ^ v as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
