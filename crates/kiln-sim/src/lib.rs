@@ -1559,7 +1559,7 @@ pub struct Sim {
     /// The server-wide weather counters (`weather.dat`).
     weather: weather::WeatherData,
     /// Each level's rain and thunder levels, by [`DimId`].
-    level_weather: [weather::LevelWeather; 3],
+    level_weather: Vec<weather::LevelWeather>,
     /// Stand-in for the overworld's level random (weather cycle, `/weather` durations).
     weather_random: kiln_javamath::random::LegacyRandom,
     /// Biome climates from the datapack (precipitation, `isRainingAt`).
@@ -1863,7 +1863,7 @@ impl Sim {
             dragon_fight: dragon_fight::DragonFight::load(None, seed),
             commands: commands::CommandState::new(ops_from_env()),
             weather: Default::default(),
-            level_weather: Default::default(),
+            level_weather: vec![Default::default(); dim_count()],
             weather_random: kiln_javamath::random::LegacyRandom::new(seed ^ 0x7765_6174_6865_72),
             climates: weather::Climates::load(&roots).map(std::sync::Arc::new),
             zoom_seed: kiln_worldgen::generator::obfuscate_seed(seed),

@@ -1258,7 +1258,7 @@ pub(crate) fn check_spawn_rules(level: &RegionLevel, pos: KBlockPos, kind: MobKi
 fn light_magic(level: &RegionLevel, pos: KBlockPos) -> f32 {
     let f = level.raw_brightness(pos, level.env.mobs.sky_darken) as f32 / 15.0;
     let g = f / (4.0 - 3.0 * f);
-    let ambient = kiln_data::dimension_type(crate::dim_key(level.env.dim)).map_or(0.0, |d| d.ambient_light);
+    let ambient = crate::dim_type(level.env.dim).ambient_light;
     g + ambient * (1.0 - g)
 }
 

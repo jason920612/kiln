@@ -127,7 +127,7 @@ pub(crate) fn use_on_banner<B: Blocks>(p: &Player, off_hand: bool, blocks: &B, m
 
 /// Whether the level has a ceiling (`DimensionType.hasCeiling`): the Nether's maps are drawn differently.
 pub(crate) fn has_ceiling(dim: crate::DimId) -> bool {
-    kiln_data::dimension_type(crate::dim_key(dim)).is_some_and(|d| d.has_ceiling)
+    crate::dim_type(dim).has_ceiling
 }
 
 /// Filled-map ids in the stack list (all slots of the inventory).

@@ -276,7 +276,7 @@ impl Player {
     /// dry box without dangerous blocks).
     fn teleport_randomly(&mut self, diameter: f32, block: BlockAt, now: i64) -> bool {
         // `level.getMinY()` to `getMinY() + getLogicalHeight() - 1` of the player's level.
-        let dim = kiln_data::dimension_type(crate::dim_key(self.dim)).expect("dimension type");
+        let dim = crate::dim_type(self.dim);
         let (min_y, max_y) = (dim.min_y, dim.min_y + dim.logical_height - 1);
         for _ in 0..16 {
             let x = self.pos[0] + (self.entity_rng.next_double() - 0.5) * diameter as f64;
@@ -300,7 +300,7 @@ impl Player {
     fn random_teleport_target(&self, x: f64, y: f64, z: f64, block: BlockAt) -> Option<[f64; 3]> {
         let mut y = y;
         let mut pos = BlockPos::containing(x, y, z);
-        let min_y = kiln_data::dimension_type(crate::dim_key(self.dim)).map_or(-64, |d| d.min_y);
+        let min_y = crate::dim_type(self.dim).min_y;
         while pos.y > min_y {
             pos = pos.below();
             let state = block(pos);
