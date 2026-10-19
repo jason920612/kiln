@@ -337,14 +337,15 @@ pub fn keep_alive(id: i64) -> Bytes {
 
 pub fn system_chat(text: Tag, overlay: bool) -> Bytes {
     let mut b = packet(ids::play::clientbound::SYSTEM_CHAT);
-    text.write_network(&mut b);
+    // (A component's fields in the order vanilla's `CompoundTag` writes them.)
+    text.java_ordered().write_network(&mut b);
     b.put_bool(overlay);
     b.freeze()
 }
 
 pub fn play_disconnect_text(reason: Tag) -> Bytes {
     let mut b = packet(ids::play::clientbound::DISCONNECT);
-    reason.write_network(&mut b);
+    reason.java_ordered().write_network(&mut b);
     b.freeze()
 }
 

@@ -892,6 +892,10 @@ struct Player {
 }
 
 impl Player {
+    /// Sends `p` whatever the player's chat setting is (the packets the server sends to tell them chat is off).
+    fn send_unfiltered(&mut self, p: Bytes) {
+        self.outbox.push(p);
+    }
     fn send(&mut self, p: Bytes) {
         // A player whose chat is off gets no chat: none at all with "commands only", and only the action bar with "hidden"
         // (`ServerPlayer.acceptsChatMessages` and `acceptsSystemMessages`).

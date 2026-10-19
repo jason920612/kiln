@@ -964,11 +964,38 @@ impl Drop for PlayerSlot<'_> {
     }
 }
 
+/// A play packet the client sent that could not be decoded (`DecoderException`): vanilla tells the player
+/// "Internal Exception: io.netty.handler.codec.DecoderException: Failed to decode packet '<name>'".
+#[derive(Debug)]
+struct DecodeFailure {
+    packet: String,
+}
+
+impl std::fmt::Display for DecodeFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Failed to decode packet '{}'", self.packet)
+    }
+}
+
+impl std::error::Error for DecodeFailure {}
+
+impl DecodeFailure {
+    fn disconnect_packet(&self) -> Bytes {
+        let reason = format!("Internal Exception: io.netty.handler.codec.DecoderException: {self}");
+        let tag = kiln_proto::nbt::Tag::Compound(vec![
+            ("translate".to_owned(), kiln_proto::nbt::Tag::String("disconnect.genericReason".to_owned())),
+            ("with".to_owned(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::String(reason)])),
+        ]);
+        packets::play_disconnect_text(tag)
+    }
+}
+
 async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr, client: packets::ClientInfo) -> Result<()> {
     let conn_id = shared.next_conn.fetch_add(1, Ordering::Relaxed);
     let Conn { stream, mut rbuf, mut rx, tx, wbuf, encrypt, mut decrypt } = conn;
     let (reader, writer) = stream.into_split();
     let (out_tx, out_rx) = mpsc::unbounded_channel();
+    let decode_failure_tx = out_tx.clone();
     let queued = Arc::new(AtomicUsize::new(0));
     let name = profile.name.clone();
 
@@ -1007,6 +1034,11 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
         Err(anyhow!("simulation is not running"))
     };
 
+    // A packet that would not decode: the client is told why before the connection closes.
+    if let Some(failure) = result.as_ref().err().and_then(|e| e.downcast_ref::<DecodeFailure>()) {
+        let _ = decode_failure_tx.send(Outbound::Disconnect(failure.disconnect_packet()));
+        let _ = tokio::time::timeout(Duration::from_secs(2), &mut writer_task).await;
+    }
     let _ = shared.to_sim.send(ToSim::Leave(conn_id));
     writer_task.abort();
     let why = result.as_ref().err().map_or("disconnected".to_string(), |e| format!("{e:#}"));
@@ -1034,7 +1066,8 @@ async fn read_loop(
                 Ok(None) => {}
                 Err(e) => {
                     warn!("bad play packet {id}: {e}");
-                    bail!("malformed packet");
+                    let name = ids::play::serverbound::NAMES.get(id as usize).copied().unwrap_or("minecraft:unknown");
+                    return Err(DecodeFailure { packet: format!("serverbound/{name}") }.into());
                 }
             }
         }

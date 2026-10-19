@@ -63,7 +63,7 @@ impl Sim {
             return false;
         }
         if !is_command && p.client.chat_visibility == CHAT_HIDDEN {
-            p.send(packets::system_chat(Text::translate("chat.disabled.options", vec![]).color("red").to_nbt(), false));
+            p.send_unfiltered(packets::system_chat(Text::translate("chat.disabled.options", vec![]).color("red").to_nbt(), false));
             return false;
         }
         p.last_action = std::time::Instant::now();
@@ -213,8 +213,13 @@ impl Sim {
 
     /// `ServerboundChatSessionUpdatePacket`.
     pub(crate) fn handle_chat_session_update(&mut self, conn: ConnId, session_id: uuid::Uuid, expires_at_ms: i64, key: Vec<u8>, key_signature: Vec<u8>) {
-        let now = now_ms();
         let Some(p) = self.players.get_mut(&conn) else { return };
+        // The key is decoded with the packet (`Crypt.byteToPublicKey`): one that is not an RSA key fails to decode.
+        if <rsa::RsaPublicKey as rsa::pkcs8::DecodePublicKey>::from_public_key_der(&key).is_err() {
+            let reason = "Internal Exception: io.netty.handler.codec.DecoderException: Failed to decode packet 'serverbound/minecraft:chat_session_update'";
+            p.disconnect_text(Text::translate("disconnect.genericReason", vec![kiln_command::text::Arg::Str(reason.to_owned())]).to_nbt());
+            return;
+        }
         let old = p.chat.decoder.session();
         if old.is_some_and(|s| s.same_key(expires_at_ms, &key, &key_signature)) {
             return;
@@ -229,7 +234,6 @@ impl Sim {
             return;
         }
         let keys: Vec<rsa::RsaPublicKey> = keys.iter().filter_map(|k| rsa::pkcs8::DecodePublicKey::from_public_key_der(k).ok()).collect();
-        let _ = now;
         match chat::Session::validate(p.uuid, session_id, expires_at_ms, &key, &key_signature, &keys) {
             Ok(session) => {
                 let uuid = p.uuid;
