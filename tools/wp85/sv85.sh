@@ -35,8 +35,7 @@ echo $! > $D/keeper.pid
 if [ $who = K ]; then
   cp -f $BIN $D/kiln-run85
   export KILN_VIEW_DISTANCE=$view KILN_SIMULATION_DISTANCE=$sim KILN_PORT=25599 KILN_GENERATOR=noise KILN_SEED=$seed KILN_DATAPACK=$HOME/kiln/work/generated KILN_WORLD=$D/world KILN_ENABLE_COMMAND_BLOCK=true KILN_OPS=${OPS:-W0} KILN_WORK=$HOME/kiln/work RUST_LOG=${RUST_LOG:-info}
-  setsid nohup $D/kiln-run85 < console > server.log 2>&1 &
-  echo $! > $D/server.pid
+  setsid bash -c 'echo $$ > "$0"; exec "$1"' $D/server.pid $D/kiln-run85 < console > server.log 2>&1 &
 else
   [ -f eula.txt ] || echo eula=true > eula.txt
   cat > server.properties <<PROPS
@@ -60,7 +59,6 @@ white-list=false
 enforce-whitelist=false
 PROPS
   W=$HOME/kiln/work
-  setsid nohup java -Xmx2G -jar $W/server.jar nogui < console > server.log 2>&1 &
-  echo $! > $D/server.pid
+  setsid bash -c 'echo $$ > "$0"; exec java -Xmx2G -jar "$1" nogui' $D/server.pid $W/server.jar < console > server.log 2>&1 &
 fi
 echo started $who
