@@ -262,16 +262,22 @@ fn namespaces(root: &Path) -> Vec<PathBuf> {
 }
 
 /// The entries `data/<namespace>/<sub>/**.json` over the stack of pack roots, a later root's entry
-/// replacing an earlier one's with the same id; sorted by id.
+/// replacing an earlier one's with the same id, in the order vanilla registers them: sorted by identifier,
+/// which compares the path first and the namespace second (`Identifier.compareTo`). The order matters: it numbers
+/// the structures a decoration run seeds, the order structure sets are tried in and the biome order the feature
+/// sorter starts from.
 fn stacked_entries(roots: &[PathBuf], sub: &str) -> Result<Vec<(String, Json)>, Error> {
-    let mut merged: std::collections::BTreeMap<String, Json> = std::collections::BTreeMap::new();
+    let mut merged: std::collections::BTreeMap<(String, String), Json> = std::collections::BTreeMap::new();
     for root in roots {
         for ns_dir in namespaces(root) {
             let ns = ns_dir.file_name().unwrap().to_string_lossy().into_owned();
-            merged.extend(entries(&ns_dir.join(sub), &ns)?);
+            for (id, json) in entries(&ns_dir.join(sub), &ns)? {
+                let path = id.split_once(':').map_or(id.clone(), |(_, p)| p.to_owned());
+                merged.insert((path, ns.clone()), json);
+            }
         }
     }
-    Ok(merged.into_iter().collect())
+    Ok(merged.into_iter().map(|((path, ns), json)| (format!("{ns}:{path}"), json)).collect())
 }
 
 /// A tag's `values`: plain ids or `{"id", "required"}` entries.
