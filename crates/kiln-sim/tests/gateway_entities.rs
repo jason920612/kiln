@@ -90,5 +90,5 @@ fn a_gateway_keeps_the_motion_of_what_goes_through() {
     let m = motion_of(&sim, "minecraft:item").expect("the item");
     let p = pos_of(&sim, "minecraft:item").expect("the item");
     assert!((p[0] - 50.5).abs() < 2.0, "it went through: {p:?}");
-    assert!(m[1].abs() > 0.05 || p[1] > 102.0, "it kept going up: motion {m:?} at {p:?}");
+    assert!(m[1] > 0.1, "it kept going up: motion {m:?} at {p:?}");
 }
