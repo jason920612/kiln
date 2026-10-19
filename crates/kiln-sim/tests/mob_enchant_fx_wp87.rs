@@ -245,7 +245,11 @@ fn dbg_equipment() {
     let at = w.spot(3.0);
     let nbt = format!("{{NoAI:1b,PersistenceRequired:1b,{}}}", worn("husk", "feet", "golden_boots", "stride"));
     let id = w.summon("husk", at, &nbt);
-    w.ticks(4);
+    eprintln!("DBG after summon {:?}", w.sim.mob_attribute(id, "minecraft:movement_efficiency"));
+    for _ in 0..4 {
+        w.ticks(1);
+        eprintln!("DBG tick {:?}", w.sim.mob_attribute(id, "minecraft:movement_efficiency"));
+    }
     for t in w.sim.entity_nbt() {
         eprintln!("{t:?}");
     }

@@ -300,6 +300,7 @@ fn carry_out_one(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, e
                 let slot_name = SLOTS.iter().find(|(_, i)| *i == d.key.slot).map_or("mainhand", |(s, _)| s.name());
                 let (id, amount) = a.modifier(d.level, slot_name);
                 m.attrs.set_transient_modifier(attr, &id, amount, op_of(a.operation));
+                eprintln!("DBG set {id} {amount} -> value {}", m.attrs.value(attr));
                 if let Some(fx) = m.fx.as_mut() {
                     fx.mods.retain(|(_, at, i)| !(*at == attr && *i == id));
                     fx.mods.push((d.key, attr, id));
