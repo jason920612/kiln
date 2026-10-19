@@ -34,22 +34,11 @@ pub(crate) fn use_item(p: &mut Player, level: &mut RegionLevel, off_hand: bool, 
     }
 }
 
-/// The highest level of the crossbow's enchantments with an unconditional value effect named
-/// `pick` (`EnchantmentHelper.pickHighestLevel`), and that effect's result on `value`.
+/// `EnchantmentHelper.modifyCrossbowChargingTime(stack, entity, 1.25)`: every enchantment's
+/// `crossbow_charge_time` applied in turn, at least 0.
 fn charge_time(p: &Player, stack: &ItemStack) -> f32 {
     let Some(loot) = p.loot.clone() else { return 1.25 };
-    let mut best: Option<(i32, &kiln_loot::effects::ValueEffect)> = None;
-    loot.for_each_enchantment(stack, |e, lvl| {
-        if let Some(effect) = &e.effects.crossbow_charge_time
-            && best.is_none_or(|(l, _)| lvl > l)
-        {
-            best = Some((lvl, effect));
-        }
-    });
-    match best {
-        Some((lvl, effect)) => effect.process(lvl, &mut LegacyRandom::new(0), 1.25).max(0.0),
-        None => 1.25,
-    }
+    loot.crossbow_charge_time(stack, &mut LegacyRandom::new(0), 1.25)
 }
 
 /// `CrossbowItem.getChargeDuration`.
@@ -57,40 +46,41 @@ pub(crate) fn charge_duration(p: &Player, stack: &ItemStack) -> i32 {
     (charge_time(p, stack) * 20.0).floor() as i32
 }
 
-/// The highest quick charge level (its loading start sound).
-fn quick_charge_level(p: &Player, stack: &ItemStack) -> i32 {
-    let Some(loot) = p.loot.clone() else { return 0 };
-    let mut best = 0;
-    loot.for_each_enchantment(stack, |e, lvl| {
-        if e.effects.other.iter().any(|id| id.as_str() == "minecraft:crossbow_charging_sounds") {
-            best = best.max(lvl);
-        }
-    });
-    best
+/// `CrossbowItem.getChargingSounds`: the `crossbow_charging_sounds` of the enchantment with the highest level (at
+/// that level), else the default loading sounds. Each is `None` when the definition leaves it out.
+fn charging_sounds(p: &Player, stack: &ItemStack) -> [Option<String>; 3] {
+    let picked = p.loot.as_deref().and_then(|loot| loot.pick_highest_level(stack, |e| e.crossbow_charging_sounds.as_slice()));
+    match picked {
+        Some(s) => [s.start.as_ref(), s.mid.as_ref(), s.end.as_ref()].map(|n| n.map(|n| n.as_str().to_owned())),
+        None => ["minecraft:item.crossbow.loading_start", "minecraft:item.crossbow.loading_middle", "minecraft:item.crossbow.loading_end"].map(|n| Some(n.to_owned())),
+    }
 }
 
 /// `CrossbowItem.onUseTick`: the loading sounds, and the projectiles drawn once fully charged.
 pub(crate) fn on_use_tick(p: &mut Player, u: &mut Using) {
     let stack = p.in_hand(u.off_hand).clone();
     let f = (u.duration - u.remaining) as f32 / charge_duration(p, &stack) as f32;
+    let [start, mid, end] = charging_sounds(p, &stack);
     if f < 0.2 {
         u.sounds = 0;
     }
     if f >= 0.2 && u.sounds & 1 == 0 {
         u.sounds |= 1;
-        let start = match quick_charge_level(p, &stack) {
-            0 => "minecraft:item.crossbow.loading_start".to_owned(),
-            n => format!("minecraft:item.crossbow.quick_charge_{}", n.min(3)),
-        };
-        p.sound_for_all(&start, SoundSource::Players, 0.5, 1.0);
+        if let Some(start) = &start {
+            p.sound_for_all(start, SoundSource::Players, 0.5, 1.0);
+        }
     }
     if f >= 0.5 && u.sounds & 2 == 0 {
         u.sounds |= 2;
-        p.sound_for_all("minecraft:item.crossbow.loading_middle", SoundSource::Players, 0.5, 1.0);
+        if let Some(mid) = &mid {
+            p.sound_for_all(mid, SoundSource::Players, 0.5, 1.0);
+        }
     }
     if f >= 1.0 && !is_charged(&stack) && try_load(p, u.off_hand, &stack) {
-        let pitch = 1.0 / (p.entity_rng.next_float() * 0.5 + 1.0) + 0.2;
-        p.sound_for_all("minecraft:item.crossbow.loading_end", SoundSource::Players, 1.0, pitch);
+        if let Some(end) = &end {
+            let pitch = 1.0 / (p.entity_rng.next_float() * 0.5 + 1.0) + 0.2;
+            p.sound_for_all(end, SoundSource::Players, 1.0, pitch);
+        }
     }
 }
 

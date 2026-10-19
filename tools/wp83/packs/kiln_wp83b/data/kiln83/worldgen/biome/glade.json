@@ -1,0 +1,16 @@
+{
+  "attributes": {
+    "minecraft:visual/sky_color": "#aa7799",
+    "minecraft:visual/fog_color": "#ccaabb",
+    "minecraft:gameplay/natural_mob_spawns": {
+      "argument": {"spawn_costs": {}, "spawns_by_category": {"creature": [{"type": "minecraft:pig", "count": 4, "weight": 10}]}},
+      "modifier": "overlay"
+    }
+  },
+  "carvers": [],
+  "downfall": 0.3,
+  "effects": {"water_color": "#2255aa"},
+  "features": [],
+  "has_precipitation": true,
+  "temperature": 0.6
+}

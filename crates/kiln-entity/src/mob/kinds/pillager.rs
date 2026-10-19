@@ -254,6 +254,13 @@ pub fn perform_crossbow_attack(e: &mut Entity, m: &mut MobData, level: &mut dyn 
         let uncertainty = (14 - level.difficulty() as i32 * 4) as f32;
         mob::species::shoot(&mut arrow, x as f64, y as f64, z as f64, 1.6, uncertainty);
         arrow.set_old_pos_and_rot();
+        // The arrow remembers the crossbow, whose `projectile_spawned` effects run (`Projectile.applyOnProjectileSpawned`).
+        let crossbow = m.equipment[slot].clone();
+        if let crate::entity::EntityKind::Arrow(a) = &mut arrow.kind {
+            a.weapon = Some(crossbow.clone());
+        }
+        let at = arrow.position();
+        crate::enchanting::run_projectile_effects(crate::enchanting::ProjectileTrigger::Spawned, &mut arrow, level, &crossbow, Some(e.id), [at.x, at.y, at.z], None);
         level.add_entity(arrow);
         if !e.silent {
             level.emit(Event::Sound { pos: e.position(), sound: mob::sound_event("minecraft:item.crossbow.shoot"), source: m.kind.sound_source(), volume: 1.0, pitch: 1.0 });

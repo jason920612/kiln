@@ -16,7 +16,7 @@ pub(crate) const TICKS_REQUIRED_TO_FREEZE: i32 = 140;
 
 /// Whether an item id is in an item tag.
 fn item_tag(id: i32, tag: &str) -> bool {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:item")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

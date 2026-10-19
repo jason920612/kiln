@@ -5,7 +5,6 @@ use crate::ident::Identifier;
 use crate::value::{DataError, DataResult, Value};
 use kiln_proto::{DecodeError, Reader, WriteExt};
 use std::collections::HashMap;
-use std::sync::OnceLock;
 
 /// FNV-1a for the name indexes: names are looked up per entity and tick (attributes, effects),
 /// and SipHash's protection against crafted keys is wasted on the game's own names.
@@ -60,7 +59,7 @@ impl Registry {
     /// Entries indexed by network id.
     pub fn entries(self) -> &'static [&'static str] {
         kiln_data::builtin_entries(self.0)
-            .or_else(|| kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == self.0).map(|(_, e)| *e))
+            .or_else(|| kiln_data::live::synced_entries(self.0))
             .unwrap_or_else(|| panic!("unknown registry {}", self.0))
     }
 
@@ -71,9 +70,9 @@ impl Registry {
     /// Network id of `name` (a missing namespace means `minecraft`).
     pub fn id(self, name: &str) -> Option<i32> {
         type Index = Names<Names<i32>>;
-        static INDEX: OnceLock<Index> = OnceLock::new();
-        let all = INDEX.get_or_init(|| {
-            let regs = kiln_data::registries::BUILTIN.iter().chain(kiln_data::registries::SYNCHRONIZED);
+        static INDEX: kiln_data::live::Cached<Index, true> = kiln_data::live::Cached::new();
+        let all = INDEX.get(|| {
+            let regs = kiln_data::registries::BUILTIN.iter().chain(kiln_data::live::synced());
             regs.map(|(r, entries)| (*r, entries.iter().enumerate().map(|(i, e)| (*e, i as i32)).collect())).collect()
         });
         let index = all.get(self.0)?;

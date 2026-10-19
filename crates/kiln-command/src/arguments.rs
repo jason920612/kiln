@@ -759,7 +759,7 @@ impl ArgumentType {
                 if let Some(entries) = types::registry_entries(registry) {
                     builder.suggest_resources(entries.iter().copied(), "");
                 }
-                let tags: Vec<&str> = kiln_data::registries::TAGS
+                let tags: Vec<&str> = kiln_data::live::tags()
                     .iter()
                     .filter(|(r, _)| r == registry)
                     .flat_map(|(_, t)| t.iter().map(|(n, _)| *n))

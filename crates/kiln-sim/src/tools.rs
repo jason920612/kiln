@@ -85,8 +85,22 @@ pub(crate) fn item_use_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
     }
     let name = stack.item_name();
     let s = level.block(pos);
-    let used = if name.ends_with("_hoe") {
-        till(p, level, pos, face, s, spawns)
+    // A data pack that defines `hoe`, `axe` or `shovel` (`minecraft:block_transformer`) decides what they do; without one the rules below are the vanilla ones.
+    let transformer = if name.ends_with("_hoe") {
+        Some("minecraft:hoe")
+    } else if name.ends_with("_shovel") {
+        Some("minecraft:shovel")
+    } else if name.ends_with("_axe") {
+        Some("minecraft:axe")
+    } else {
+        None
+    };
+    let transformed = transformer.and_then(|t| crate::block_transformer::transform(t, p, level, pos, face, off_hand, spawns));
+    let used = if let Some(done) = transformed {
+        // (A shovel that transforms nothing still puts a campfire out.)
+        done || (name.ends_with("_shovel") && extinguish(level, pos, s))
+    } else if name.ends_with("_hoe") {
+        till(p, level, pos, face, s, &stack, spawns)
     } else if name.ends_with("_shovel") {
         flatten(p, level, pos, face, s)
     } else if name.ends_with("_axe") {
@@ -113,7 +127,7 @@ pub(crate) fn item_use_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
     }
     // Tools wear by one use (`hurtAndBreak(1)`); honeycomb, bone meal and fire charges are
     // used up where they are handled.
-    if name.ends_with("_hoe") || name.ends_with("_shovel") || name.ends_with("_axe") || name == "minecraft:shears" || name == "minecraft:flint_and_steel" {
+    if (transformed != Some(true) && (name.ends_with("_hoe") || name.ends_with("_shovel") || name.ends_with("_axe"))) || name == "minecraft:shears" || name == "minecraft:flint_and_steel" {
         p.hurt_and_break(hand_slot(off_hand), 1, None);
     }
     // `ItemStack.useOn` and `ServerPlayerGameMode.useItemOn`.
@@ -159,27 +173,36 @@ fn lodestone_compass(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: 
     true
 }
 
-/// `HoeItem.useOn`.
-fn till(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, face: Direction, s: u16, spawns: &mut Vec<Spawn>) -> bool {
+/// `HoeItem.useOn` (the `hoe` block transformer: the farmland and dirt rules, and for rooted dirt the `till/rooted_dirt` loot table popped out
+/// of the clicked face).
+fn till(_p: &mut Player, level: &mut RegionLevel, pos: BlockPos, face: Direction, s: u16, hoe: &ItemStack, spawns: &mut Vec<Spawn>) -> bool {
     let air_above = face != Direction::Down && kiln_data::blocks_types::is_air(level.block(pos.above()));
-    let (to, drop) = match short(s) {
+    let (to, loot) = match short(s) {
         "grass_block" | "dirt_path" | "dirt" if air_above => (d::FARMLAND, None),
         "coarse_dirt" if air_above => (d::DIRT, None),
-        "rooted_dirt" => (d::DIRT, Some("minecraft:hanging_roots")),
+        "rooted_dirt" => (d::DIRT, Some("minecraft:till/rooted_dirt")),
         _ => return false,
     };
+    // `BlockTransformer.transformBlock`: the loot (rolled for the block as it was) before the block changes.
+    let drops = loot.map(|table| {
+        crate::interact_loot::block_interact(level, table, pos, s, Some(hoe), true, 0x7469_6c6c)
+            .unwrap_or_else(|| ItemStack::of("minecraft:hanging_roots", 1).into_iter().collect())
+    });
     level.effect(Effect::ActorSound { pos, sound: "minecraft:item.hoe.till", volume: 1.0, pitch: 1.0 });
     kiln_blocks::set_block(level, pos, to, flags::ALL_IMMEDIATE);
-    // `Block.popResourceFromFace`.
-    if let Some(item) = drop.and_then(|n| ItemStack::of(n, 1)) {
-        let step = face.step();
-        let at = [
-            pos.x as f64 + 0.5 + if step[0] == 0 { level.random().next_double() * 0.5 - 0.25 } else { step[0] as f64 * 0.5 + step[0] as f64 * 0.125 },
-            pos.y as f64 + 0.5 + if step[1] == 0 { level.random().next_double() * 0.5 - 0.25 } else { step[1] as f64 * 0.5 + step[1] as f64 * 0.125 } - 0.125,
-            pos.z as f64 + 0.5 + if step[2] == 0 { level.random().next_double() * 0.5 - 0.25 } else { step[2] as f64 * 0.5 + step[2] as f64 * 0.125 },
-        ];
-        spawns.push(crate::mobs::drop_item(item, at, (pos.x as u64) << 20 ^ pos.z as u64 ^ p.entity_id as u64));
+    for item in drops.into_iter().flatten() {
+        crate::interact_loot::pop_resource_from_face(level, pos, face, item, spawns);
     }
+    true
+}
+
+/// `ShovelItem.useOn`: a lit campfire is put out.
+fn extinguish(level: &mut RegionLevel, pos: BlockPos, s: u16) -> bool {
+    if !(logic::is_instance(s, C::CampfireBlock) && state::get_bool(s, "lit")) {
+        return false;
+    }
+    level.effect(Effect::ActorLevelEvent { id: 1009, pos, data: 0 });
+    kiln_blocks::set_block(level, pos, state::set_bool(s, "lit", false), flags::ALL_IMMEDIATE);
     true
 }
 
@@ -473,6 +496,17 @@ pub(crate) fn block_use_without_item(p: &mut Player, level: &mut RegionLevel, po
     if logic::block_class(s) == C::FlowerPotBlock {
         return pot_take(p, level, pos, s, spawns);
     }
+    // `SweetBerryBushBlock.useWithoutItem`: from the second growth stage on, the berries are picked (`harvest/sweet_berry_bush`) and the bush
+    // goes back to its first.
+    if logic::block_class(s) == C::SweetBerryBushBlock && state::get_int(s, "age") > 1 {
+        harvest_berries(level, pos, s, "minecraft:harvest/sweet_berry_bush", "minecraft:block.sweet_berry_bush.pick_berries", state::set_int(s, "age", 1), 0.4, 0.8, spawns);
+        return true;
+    }
+    // `CaveVines.use` (both the vine and its head): the glow berries (`harvest/cave_vine`) come off.
+    if matches!(logic::block_class(s), C::CaveVinesBlock | C::CaveVinesPlantBlock) && state::get_bool(s, "berries") {
+        harvest_berries(level, pos, s, "minecraft:harvest/cave_vine", "minecraft:block.cave_vines.pick_berries", state::set_bool(s, "berries", false), 1.2 - 0.8, 0.8, spawns);
+        return true;
+    }
     // `DaylightDetectorBlock.useWithoutItem`: a player who may build turns it over.
     if logic::block_class(s) == C::DaylightDetectorBlock && p.game_mode <= 1 {
         kiln_blocks::behaviour::daylight::toggle(level, s, pos);
@@ -511,6 +545,25 @@ pub(crate) fn block_use_without_item(p: &mut Player, level: &mut RegionLevel, po
     kiln_blocks::set_block_and_update(level, pos, state::set_int(s, "level", 0));
     level.effect(Effect::Sound { pos, sound: "minecraft:block.composter.empty", volume: 1.0, pitch: 1.0 });
     true
+}
+
+/// The picking of `SweetBerryBushBlock.useWithoutItem` and `CaveVines.use`: the table's items popped out of the block (rolled for the block as
+/// it was, with no tool), the pick sound at a pitch of `base + nextFloat * span`, the block set to `after` for the clients only and told to
+/// the game events.
+#[allow(clippy::too_many_arguments)]
+fn harvest_berries(level: &mut RegionLevel, pos: BlockPos, s: u16, table: &str, sound: &'static str, after: u16, span: f32, base: f32, spawns: &mut Vec<Spawn>) {
+    let items = crate::interact_loot::block_interact(level, table, pos, s, None, true, 0x6861_7276).unwrap_or_else(|| {
+        // (Without loot data: the berries the tables give, one or two, a third from a ripe bush.)
+        let n = if table.ends_with("cave_vine") { 1 } else { 1 + level.random().next_int_bounded(2) + (state::get_int(s, "age") == 3) as i32 };
+        ItemStack::of(if table.ends_with("cave_vine") { "minecraft:glow_berries" } else { "minecraft:sweet_berries" }, n).into_iter().collect()
+    });
+    for item in items {
+        crate::interact_loot::pop_resource(level, pos, item, spawns);
+    }
+    let pitch = base + level.random().next_float() * span;
+    level.effect(Effect::Sound { pos, sound, volume: 1.0, pitch });
+    kiln_blocks::set_block(level, pos, after, flags::CLIENTS);
+    level.effect(Effect::BlockGameEvent { pos, event: "minecraft:block_change", state: after });
 }
 
 /// The potted block for a plant item (`FlowerPotBlock.POTTED_BY_CONTENT` of its block), if any.
@@ -669,20 +722,24 @@ fn compost(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: u16, off_h
     Some(true)
 }
 
-/// `PumpkinBlock.useItemOn` with shears: a carved pumpkin facing the clicked side (the player
-/// for top and bottom), four seeds thrown out of it.
+/// `PumpkinBlock.useItemOn` with shears: a carved pumpkin facing the clicked side (the player for top and bottom), and the `carve/pumpkin`
+/// table thrown out of it (vanilla's four seeds).
 fn carve(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, face: Direction, off_hand: bool, spawns: &mut Vec<Spawn>) {
     let dir = if matches!(face, Direction::Up | Direction::Down) { Direction::from_yaw(p.rot[0] as f64).opposite() } else { face };
-    level.effect(Effect::Sound { pos, sound: "minecraft:block.pumpkin.carve", volume: 1.0, pitch: 1.0 });
-    kiln_blocks::set_block(level, pos, state::set_dir(d::CARVED_PUMPKIN, "facing", dir), flags::ALL_IMMEDIATE);
+    let shears = p.in_hand(off_hand).clone();
+    let s = level.block(pos);
+    let items = crate::interact_loot::block_interact(level, "minecraft:carve/pumpkin", pos, s, Some(&shears), true, 0x6361_7276)
+        .unwrap_or_else(|| ItemStack::of("minecraft:pumpkin_seeds", 4).into_iter().collect());
     let step = dir.step();
-    if let Some(seeds) = ItemStack::of("minecraft:pumpkin_seeds", 4) {
+    for seeds in items {
         let at = [pos.x as f64 + 0.5 + step[0] as f64 * 0.65, pos.y as f64 + 0.1, pos.z as f64 + 0.5 + step[2] as f64 * 0.65];
         let r = level.random();
         let vel = [0.05 * step[0] as f64 + r.next_double() * 0.02, 0.05, 0.05 * step[2] as f64 + r.next_double() * 0.02];
         spawns.push(Spawn { kind: &kiln_data::entities::types::ITEM, pos: at, vel, body: crate::entities::Body::Item { stack: seeds, pickup_delay: 10, thrower: None } });
     }
+    level.effect(Effect::Sound { pos, sound: "minecraft:block.pumpkin.carve", volume: 1.0, pitch: 1.0 });
+    kiln_blocks::set_block(level, pos, state::set_dir(d::CARVED_PUMPKIN, "facing", dir), flags::ALL_IMMEDIATE);
     p.hurt_and_break(hand_slot(off_hand), 1, None);
-    let shears = p.in_hand(off_hand).item();
-    p.award_stat(Stat::item(player_stats::USED, shears), 1);
+    level.effect(Effect::GameEvent { pos, event: "minecraft:shear" });
+    p.award_stat(Stat::item(player_stats::USED, shears.item()), 1);
 }

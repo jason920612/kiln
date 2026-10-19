@@ -36,6 +36,13 @@ pub(crate) struct Attr {
     max: f64,
 }
 
+impl Attr {
+    /// An attribute by name with no particular base or range (to look at its modifiers).
+    pub(crate) fn named(name: &'static str) -> Attr {
+        Attr { name, base: 0.0, min: f64::MIN, max: f64::MAX }
+    }
+}
+
 pub(crate) const ATTACK_DAMAGE: Attr = Attr { name: "minecraft:attack_damage", base: 1.0, min: 0.0, max: 2048.0 };
 pub(crate) const ATTACK_SPEED: Attr = Attr { name: "minecraft:attack_speed", base: 4.0, min: 0.0, max: 1024.0 };
 pub(crate) const ATTACK_KNOCKBACK: Attr = Attr { name: "minecraft:attack_knockback", base: 0.0, min: 0.0, max: 5.0 };
@@ -60,6 +67,7 @@ pub(crate) const FALL_DAMAGE_MULTIPLIER: Attr =
     Attr { name: "minecraft:fall_damage_multiplier", base: 1.0, min: 0.0, max: 100.0 };
 pub(crate) const GRAVITY: Attr = Attr { name: "minecraft:gravity", base: 0.08, min: -1.0, max: 1.0 };
 pub(crate) const JUMP_STRENGTH: Attr = Attr { name: "minecraft:jump_strength", base: 0.41999998688697815, min: 0.0, max: 32.0 };
+#[cfg(test)]
 pub(crate) const MOVEMENT_EFFICIENCY: Attr = Attr { name: "minecraft:movement_efficiency", base: 0.0, min: 0.0, max: 1.0 };
 pub(crate) const WATER_MOVEMENT_EFFICIENCY: Attr = Attr { name: "minecraft:water_movement_efficiency", base: 0.0, min: 0.0, max: 1.0 };
 pub(crate) const OXYGEN_BONUS: Attr = Attr { name: "minecraft:oxygen_bonus", base: 0.0, min: 0.0, max: 1024.0 };
@@ -355,14 +363,11 @@ impl Player {
         {
             mods.push(("minecraft:powder_snow".into(), amount, AttributeOperation::AddValue));
         }
-        // The soul speed boots' transient modifiers (`EnchantmentAttributeEffect`, id `<id>/feet`).
-        if let Some(level) = self.soul_speed {
-            if attr.name == MOVEMENT_SPEED.name {
-                mods.push(("minecraft:enchantment.soul_speed/feet".into(), crate::enchant_loc::soul_speed_amount(level), AttributeOperation::AddValue));
-            }
-            if attr.name == MOVEMENT_EFFICIENCY.name {
-                mods.push(("minecraft:enchantment.soul_speed/feet".into(), 1.0, AttributeOperation::AddValue));
-            }
+        // The transient modifiers of the active `attribute` effects of `location_changed` (soul speed:
+        // `EnchantmentAttributeEffect`, id `<id>/<slot>`).
+        for m in self.loc_modifiers.iter().filter(|m| m.attribute == id) {
+            mods.retain(|x| x.0 != m.id);
+            mods.push((m.id.clone(), m.amount, m.operation));
         }
         if attr.name == MOVEMENT_SPEED.name && self.sprinting {
             mods.push(("minecraft:sprinting".into(), SPRINT_SPEED, AttributeOperation::AddMultipliedTotal));
@@ -544,22 +549,26 @@ impl Player {
 
     /// Remembers the equipment for attributes and resets the attack strength when the main
     /// hand holds a different item (`Player.tick`, `LivingEntity.detectEquipmentUpdates`).
-    pub(crate) fn tick_combat(&mut self) {
+    pub(crate) fn tick_combat(&mut self) -> Vec<EquipmentSlot> {
         self.attack_ticker += 1;
         self.tick_swing();
         let main = self.inv.selected_item().clone();
         if !main.is_same_item(&self.equipment_seen[0]) {
             self.attack_ticker = 0;
         }
+        let mut changed = Vec::new();
         for (i, slot) in SLOTS.iter().enumerate() {
             let stack = self.inv.equipped(*slot);
             if self.equipment_seen[i] != *stack {
                 self.equipment_seen[i] = stack.clone();
                 // `LivingEntity.collectEquipmentChanges`: the old item's attribute modifiers go and
-                // the new one's come, and the clients are told.
+                // the new one's come, and the clients are told; the enchantment effects of the old
+                // item stop and the new one's start (the caller).
                 self.attributes_dirty = true;
+                changed.push(*slot);
             }
         }
+        changed
     }
 
     /// `getCurrentItemAttackStrengthDelay`: ticks to a full-strength attack.
@@ -691,9 +700,7 @@ impl Player {
             if let Some(i) = SLOTS.iter().position(|s| *s == slot) {
                 self.equipment_seen[i] = ItemStack::empty();
             }
-            if slot == EquipmentSlot::Feet && self.soul_speed.take().is_some() {
-                self.attributes_dirty = true;
-            }
+            self.stop_location_effects(slot);
         }
         self.inv.times_changed += 1;
     }
@@ -755,7 +762,7 @@ fn item_display_name(stack: &ItemStack, name: kiln_proto::nbt::Tag) -> kiln_prot
 /// Whether an item is in a `minecraft:item` tag.
 pub(crate) fn item_in_tag(stack: &ItemStack, tag: &str) -> bool {
     !stack.is_empty()
-        && kiln_data::registries::TAGS
+        && kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:item")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

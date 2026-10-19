@@ -21,8 +21,8 @@ fn has_leaf_distance(s: u16) -> bool {
 /// `LeavesBlock.getDistanceAt`, looked up in a table made once (every leaf tick reads six of
 /// them, and a new forest has thousands of leaves ticking).
 fn distance_at(s: u16) -> i32 {
-    static TABLE: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
-    let table = TABLE.get_or_init(|| (0..kiln_data::blocks::STATE_COUNT as u16).map(|s| distance_at_uncached(s) as u8).collect());
+    static TABLE: kiln_data::live::Cached<Box<[u8]>> = kiln_data::live::Cached::new();
+    let table = TABLE.get(|| (0..kiln_data::blocks::STATE_COUNT as u16).map(|s| distance_at_uncached(s) as u8).collect());
     table.get(s as usize).map_or_else(|| distance_at_uncached(s), |&d| d as i32)
 }
 

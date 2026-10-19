@@ -1,0 +1,1 @@
+{"type":"minecraft:block_interact","pools":[{"rolls":1,"entries":[{"type":"minecraft:item","name":"minecraft:flint","modifier":{"type":"minecraft:set_count","count":3}}]}]}

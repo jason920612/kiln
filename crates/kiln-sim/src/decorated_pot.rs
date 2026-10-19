@@ -98,15 +98,15 @@ pub(crate) fn use_without_item(level: &mut RegionLevel, pos: BlockPos, s: u16) -
     true
 }
 
-/// `DecoratedPotBlock.playerWillDestroy`: a pot broken with a tool that breaks pots (and no silk touch)
+/// `DecoratedPotBlock.playerWillDestroy`: a pot broken with a tool that breaks pots (and no enchantment of `#prevents_decorated_pot_shattering`)
 /// cracks first, and so drops its sherds.
 pub(crate) fn will_destroy(level: &mut RegionLevel, pos: BlockPos, s: u16, tool: &ItemStack) {
     if !is_pot(s) {
         return;
     }
     let breaks = !tool.is_empty() && kiln_entity::mob::item_tag(tool.item(), "minecraft:breaks_decorated_pots");
-    let silk = tool.get(kiln_item::keys::ENCHANTMENTS).is_some_and(|e| kiln_item::registry::ENCHANTMENT.id("minecraft:silk_touch").is_some_and(|id| e.level(id) > 0));
-    if breaks && !silk {
+    let prevents = tool.has_enchantment_tag("minecraft:prevents_decorated_pot_shattering");
+    if breaks && !prevents {
         // `setBlock(pos, cracked, 260)`: clients only, no neighbour updates.
         kiln_blocks::set_block(level, pos, state::set_bool(s, "cracked", true), kiln_blocks::flags::NONE);
     }

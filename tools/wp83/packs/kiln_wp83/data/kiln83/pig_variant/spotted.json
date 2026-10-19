@@ -1,0 +1,1 @@
+{"asset_id":"kiln83:entity/pig/spotted","baby_asset_id":"kiln83:entity/pig/spotted_baby","model":"normal","spawn_conditions":[{"priority":50,"condition":{"type":"minecraft:biome","biomes":"minecraft:desert"}}]}

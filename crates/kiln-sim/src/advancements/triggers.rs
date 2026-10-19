@@ -49,7 +49,7 @@ impl WorldProbe for CellProbe<'_> {
                 cells[((((rel & 15) >> 2) << 4) | (((pos[2] & 15) >> 2) << 2) | ((pos[0] & 15) >> 2)) as usize]
             }
         };
-        let biomes = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?.1;
+        let biomes = kiln_data::live::synced().iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?.1;
         biomes.get(id as usize).copied()
     }
 

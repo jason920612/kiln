@@ -168,12 +168,12 @@ impl Player {
 /// The registries plugins see: levels, blocks, items and entity types by registry id, with
 /// the synchronized tags.
 fn registries() -> Arc<Registries> {
-    static REG: OnceLock<Arc<Registries>> = OnceLock::new();
-    REG.get_or_init(|| {
+    static REG: kiln_data::live::Cached<Arc<Registries>> = kiln_data::live::Cached::new();
+    REG.get(|| {
         let list = |r: &str| kiln_data::builtin_entries(r).unwrap_or(&[]).iter().map(|s| s.to_string()).collect();
         let levels = DIMENSIONS.iter().map(|(k, _)| (*k).to_owned()).collect();
         // Damage types by their network id (the order of the synchronized registry).
-        let damage_types = kiln_data::registries::SYNCHRONIZED
+        let damage_types = kiln_data::live::synced()
             .iter()
             .find(|(r, _)| *r == "minecraft:damage_type")
             .map(|(_, e)| e.iter().map(|s| s.to_string()).collect())
@@ -187,7 +187,7 @@ fn registries() -> Arc<Registries> {
                 RegistryKind::Level | RegistryKind::DamageType => return None,
             };
             let full = if tag.contains(':') { tag.to_owned() } else { format!("minecraft:{tag}") };
-            let (_, tags) = kiln_data::registries::TAGS.iter().find(|(r, _)| *r == registry)?;
+            let (_, tags) = kiln_data::live::tags().iter().find(|(r, _)| *r == registry)?;
             let (_, ids) = tags.iter().find(|(t, _)| *t == full)?;
             Some(ids.iter().map(|&i| i as u32).collect())
         })))

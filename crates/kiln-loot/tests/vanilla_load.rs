@@ -126,7 +126,20 @@ fn enchantment_effects_decode() {
     assert_eq!(e("minecraft:efficiency").effects.attributes.len(), 1);
     assert_eq!(e("minecraft:thorns").effects.post_attack.len(), 1);
     assert_eq!(e("minecraft:frost_walker").effects.damage_immunity.len(), 1);
-    assert!(e("minecraft:frost_walker").effects.other.iter().any(|c| c.as_str() == "minecraft:location_changed"));
+    // Every component decodes into its own field: nothing of vanilla's enchantments stays "by name".
+    for name in ["frost_walker", "soul_speed", "channeling", "flame", "riptide", "quick_charge", "binding_curse", "vanishing_curse", "lunge", "wind_burst"] {
+        assert!(e(&format!("minecraft:{name}")).effects.other.is_empty(), "{name}: {:?}", e(&format!("minecraft:{name}")).effects.other);
+    }
+    assert_eq!(e("minecraft:frost_walker").effects.location_changed.len(), 1);
+    assert!(matches!(&e("minecraft:frost_walker").effects.location_changed[0].effect, kiln_loot::effects::EntityEffect::ReplaceDisk { .. }));
+    assert_eq!(e("minecraft:soul_speed").effects.location_changed.len(), 2);
+    assert_eq!(e("minecraft:soul_speed").effects.tick.len(), 2);
+    assert_eq!(e("minecraft:channeling").effects.hit_block.len(), 1);
+    assert_eq!(e("minecraft:flame").effects.projectile_spawned.len(), 1);
+    assert_eq!(e("minecraft:riptide").effects.trident_sound.len(), 3);
+    assert_eq!(e("minecraft:quick_charge").effects.crossbow_charging_sounds.len(), 3);
+    assert!(e("minecraft:binding_curse").effects.prevent_armor_change && !e("minecraft:binding_curse").effects.prevent_equipment_drop);
+    assert!(e("minecraft:vanishing_curse").effects.prevent_equipment_drop);
     // Sharpness V on a sword: 1 + 0.5 * 4 more damage, whatever the target.
     let mut sword = ItemStack::of("minecraft:diamond_sword", 1).unwrap();
     let mut list = kiln_item::component::Enchantments::default();

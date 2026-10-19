@@ -945,8 +945,8 @@ const POI_TYPES: &[(&str, &[&str])] = &[
 
 /// The point of interest type of a block state, if it is one (computed once for all states).
 fn poi_type(state: u16) -> Option<&'static str> {
-    static TYPES: std::sync::OnceLock<Vec<Option<&'static str>>> = std::sync::OnceLock::new();
-    let types = TYPES.get_or_init(|| (0..kiln_data::blocks::STATE_COUNT as u32).map(|s| compute_poi_type(s as u16)).collect());
+    static TYPES: kiln_data::live::Cached<Vec<Option<&'static str>>> = kiln_data::live::Cached::new();
+    let types = TYPES.get(|| (0..kiln_data::blocks::STATE_COUNT as u32).map(|s| compute_poi_type(s as u16)).collect());
     types.get(state as usize).copied().flatten()
 }
 
@@ -1081,7 +1081,7 @@ impl Sim {
     ) -> Option<i32> {
         use kiln_world::Blocks;
         use kiln_world::section::Biomes;
-        let names = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?.1;
+        let names = kiln_data::live::synced().iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?.1;
         let new = names.iter().position(|b| *b == biome)? as u16;
         let chunks: Vec<kiln_world::ChunkPos> = ((min[2] >> 4)..=(max[2] >> 4))
             .flat_map(|z| ((min[0] >> 4)..=(max[0] >> 4)).map(move |x| kiln_world::ChunkPos::new(x, z)))

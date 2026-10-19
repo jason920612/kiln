@@ -83,7 +83,7 @@ pub fn type_for_biome(biome: &str) -> &'static str {
 
 /// The `minecraft:worldgen/biome` entry of a network id.
 pub fn biome_name(id: i32) -> Option<&'static str> {
-    let (_, entries) = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?;
+    let (_, entries) = kiln_data::live::synced().iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?;
     entries.get(usize::try_from(id).ok()?).copied()
 }
 
@@ -1404,11 +1404,15 @@ pub fn throw_item(cx: &mut Cx, stack: ItemStack, target: Vec3) {
 }
 
 /// `GiveGiftToHero.throwGift`: the hero-of-the-village loot of the profession (dropped at the villager).
-pub fn throw_gift(cx: &mut Cx, _hero: i32) {
+pub fn throw_gift(cx: &mut Cx, hero: i32) {
     let baby = cx.m.baby();
     let table = gift_table(state(cx.m).map_or("minecraft:none", |s| s.profession), baby);
     let (id, pos) = (cx.e.id, cx.e.position());
-    cx.level.emit(Event::GiftLoot { entity: id, table, pos });
+    // (`BehaviorUtils.throwItem(villager, stack, hero.position())`.)
+    match cx.level.player(hero).map(|h| h.pos) {
+        Some(to) => cx.level.emit(Event::GiftThrow { entity: id, table, to }),
+        None => cx.level.emit(Event::GiftLoot { entity: id, table, pos }),
+    }
 }
 
 /// `Villager.wantsToSpawnGolem(time)` for villager data `m`.

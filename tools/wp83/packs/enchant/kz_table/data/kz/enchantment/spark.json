@@ -1,0 +1,11 @@
+{
+  "description": {"text": "Spark"},
+  "supported_items": "minecraft:diamond_sword",
+  "weight": 10,
+  "max_level": 2,
+  "min_cost": {"base": 1, "per_level_above_first": 10},
+  "max_cost": {"base": 100, "per_level_above_first": 10},
+  "anvil_cost": 1,
+  "exclusive_set": "#kz:aura_set",
+  "slots": ["mainhand"]
+}

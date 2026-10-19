@@ -1,20 +1,17 @@
-//! Block tags from the generated registry data (`BlockState.is(TagKey)`).
+//! Block tags (`BlockState.is(TagKey)`) of the running server: the data packs' tags once the
+//! world has loaded them (`kiln_data::live`), the vanilla ones before.
 
 use kiln_data::block_logic as logic;
 use kiln_data::blocks::BLOCKS;
 use std::collections::HashMap;
-use std::sync::OnceLock;
 
-/// Membership of every block tag, indexed by block index; built once.
+/// Membership of every block tag, indexed by block index; rebuilt when the tags change.
 fn tags() -> &'static HashMap<&'static str, Box<[bool]>> {
-    static TAGS: OnceLock<HashMap<&'static str, Box<[bool]>>> = OnceLock::new();
-    TAGS.get_or_init(|| {
+    static TAGS: kiln_data::live::Cached<HashMap<&'static str, Box<[bool]>>> = kiln_data::live::Cached::new();
+    TAGS.get(|| {
         let names = kiln_data::builtin_entries("minecraft:block").unwrap_or(&[]);
         let index: Vec<Option<u16>> = names.iter().map(|n| crate::state::BlockId::by_name(n).map(|b| b.0)).collect();
-        kiln_data::registries::TAGS
-            .iter()
-            .find(|(r, _)| *r == "minecraft:block")
-            .map_or(&[][..], |(_, t)| *t)
+        kiln_data::live::tags_of("minecraft:block")
             .iter()
             .map(|&(name, ids)| {
                 let mut members = vec![false; BLOCKS.len()].into_boxed_slice();
@@ -32,11 +29,8 @@ fn tags() -> &'static HashMap<&'static str, Box<[bool]>> {
 /// The blocks of the block tag `name` in the tag's own order (`BuiltInRegistries.BLOCK.getRandomElementOf(tag, random)` picks from this list).
 pub fn members(name: &str) -> Vec<crate::state::BlockId> {
     let names = kiln_data::builtin_entries("minecraft:block").unwrap_or(&[]);
-    kiln_data::registries::TAGS
-        .iter()
-        .find(|(r, _)| *r == "minecraft:block")
-        .and_then(|(_, t)| t.iter().find(|(n, _)| *n == name))
-        .map_or_else(Vec::new, |(_, ids)| ids.iter().filter_map(|&id| names.get(id as usize).and_then(|n| crate::state::BlockId::by_name(n))).collect())
+    kiln_data::live::tag("minecraft:block", name)
+        .map_or_else(Vec::new, |ids| ids.iter().filter_map(|&id| names.get(id as usize).and_then(|n| crate::state::BlockId::by_name(n))).collect())
 }
 
 /// Whether `state`'s block is in the block tag `name` (e.g. `minecraft:fences`); false for

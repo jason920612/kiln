@@ -34,6 +34,12 @@ impl Enchantments {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// `EnchantmentHelper.hasTag`: whether any of the enchantments is in the enchantment tag `tag`
+    /// (with namespace, no `#`), as the packs define it now.
+    pub fn has_tag(&self, tag: &str) -> bool {
+        self.0.iter().any(|(e, _)| kiln_data::live::tag_contains("minecraft:enchantment", tag, *e))
+    }
 }
 
 impl PartialEq for Enchantments {

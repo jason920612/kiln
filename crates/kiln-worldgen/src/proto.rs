@@ -6,7 +6,6 @@ use crate::block_facts::fluid;
 use crate::blocks::{is_air, state};
 use kiln_proto::nbt::Tag;
 use std::collections::BTreeMap;
-use std::sync::OnceLock;
 
 /// How far a chunk got, as far as its own data is concerned (`ChunkAccess.getPersistedStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -81,16 +80,12 @@ const NO_LEAVES_OR_FLUID: u8 = 8;
 /// `#blocks_motion_in_heightmap`; that or a fluid; `#blocks_motion_in_heightmap_no_leaves` or a
 /// fluid).
 pub fn heightmap_flags(s: u16) -> u8 {
-    static TABLE: OnceLock<Vec<u8>> = OnceLock::new();
-    TABLE.get_or_init(|| {
+    static TABLE: kiln_data::live::Cached<Vec<u8>> = kiln_data::live::Cached::new();
+    TABLE.get(|| {
         let n = kiln_data::blocks::STATE_COUNT as usize;
         let tag = |name: &str| {
             let mut out = vec![false; n];
-            let ids = kiln_data::registries::TAGS
-                .iter()
-                .find(|(r, _)| *r == "minecraft:block")
-                .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == name))
-                .map_or(&[][..], |(_, ids)| *ids);
+            let ids = kiln_data::live::tag("minecraft:block", name).unwrap_or(&[]);
             let names = kiln_data::builtin_entries("minecraft:block").unwrap_or(&[]);
             for &id in ids {
                 if let Some(b) = names.get(id as usize).and_then(|n| kiln_data::blocks_types::block_by_name(n)) {

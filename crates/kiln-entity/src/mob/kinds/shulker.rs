@@ -387,10 +387,10 @@ fn find_attachable_surface(e: &Entity, m: &MobData, level: &dyn EntityLevel, pos
 }
 
 fn shulker_does_not_teleport_to(state: u16) -> bool {
-    static F: std::sync::OnceLock<Vec<bool>> = std::sync::OnceLock::new();
-    F.get_or_init(|| {
+    static F: kiln_data::live::Cached<Vec<bool>> = kiln_data::live::Cached::new();
+    F.get(|| {
         let mut out = vec![false; kiln_data::blocks::STATE_COUNT as usize];
-        let ids = kiln_data::registries::TAGS
+        let ids = kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:block")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == "minecraft:shulker_does_not_teleport_to"))

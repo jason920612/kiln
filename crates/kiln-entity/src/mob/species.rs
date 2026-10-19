@@ -44,7 +44,8 @@ pub fn pre_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             m.dead = true;
             let pos = e.position();
             let interaction = if level.mob_griefing() { crate::explosion::Interaction::Mob } else { crate::explosion::Interaction::Keep };
-            crate::explosion::explode(level, Some(e.id), pos, power, false, interaction);
+            let charged = *powered;
+            super::creeper_blast(e, charged, || crate::explosion::explode(level, Some(e.id), pos, power, false, interaction));
             e.discard();
         }
     }
@@ -130,6 +131,16 @@ pub fn perform_ranged_attack(e: &mut Entity, m: &mut MobData, level: &mut dyn En
     let uncertainty = (14 - level.difficulty() as i32 * 4) as f32;
     shoot(&mut arrow, dx, dy + d * 0.20000000298023224, dz, 1.6, uncertainty);
     arrow.set_old_pos_and_rot();
+    // The arrow remembers the bow (`ProjectileUtil.getMobArrow`: its enchantments act when it hits) and the bow's
+    // `projectile_spawned` effects run (`Projectile.applyOnProjectileSpawned`, flame).
+    let bow = if super::item_name(&m.equipment[super::MAINHAND]) == "minecraft:bow" { m.equipment[super::MAINHAND].clone() } else { m.equipment[super::OFFHAND].clone() };
+    if !bow.is_empty() {
+        if let crate::entity::EntityKind::Arrow(a) = &mut arrow.kind {
+            a.weapon = Some(bow.clone());
+        }
+        let at = arrow.position();
+        crate::enchanting::run_projectile_effects(crate::enchanting::ProjectileTrigger::Spawned, &mut arrow, level, &bow, Some(e.id), [at.x, at.y, at.z], None);
+    }
     level.add_entity(arrow);
     let pitch = 1.0 / (e.random.next_float() * 0.4 + 0.8);
     if !e.silent {
@@ -177,7 +188,7 @@ pub fn climate(biome: Option<i32>) -> Climate {
 
 /// Whether biome id `biome` is in the `minecraft:worldgen/biome` tag `tag`.
 pub fn biome_tag(biome: i32, tag: &str) -> bool {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:worldgen/biome")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

@@ -1207,7 +1207,7 @@ mod tests {
             if diff > 0 && std::env::var_os("KILN_EXPLORE_DEBUG").is_some() {
                 let want_biomes: Vec<u16> = v["biomes"].as_array().unwrap().iter().map(|b| b.as_u64().unwrap() as u16).collect();
                 let got_biomes = explorer.biome_grid(data.center, data.scale);
-                let names = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome").unwrap().1;
+                let names = kiln_data::live::synced().iter().find(|(r, _)| *r == "minecraft:worldgen/biome").unwrap().1;
                 let bd: Vec<String> = got_biomes
                     .iter()
                     .zip(&want_biomes)

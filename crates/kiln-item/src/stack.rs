@@ -63,6 +63,12 @@ impl ItemStack {
         self.item == air() || self.count <= 0
     }
 
+    /// `EnchantmentHelper.hasTag(stack, tag)`: the stack's `enchantments` hold one in the
+    /// enchantment tag `tag` (with namespace, no `#`).
+    pub fn has_enchantment_tag(&self, tag: &str) -> bool {
+        self.get(crate::component::keys::ENCHANTMENTS).is_some_and(|e| e.has_tag(tag))
+    }
+
     /// The item's network id.
     pub fn item(&self) -> i32 {
         self.item

@@ -1,0 +1,13 @@
+{
+  "description": {"text": "Swift"},
+  "supported_items": "minecraft:crossbow",
+  "weight": 5,
+  "max_level": 1,
+  "min_cost": {"base": 5, "per_level_above_first": 10},
+  "max_cost": {"base": 40, "per_level_above_first": 10},
+  "anvil_cost": 2,
+  "slots": ["mainhand", "offhand"],
+  "effects": {
+    "minecraft:crossbow_charge_time": {"type": "minecraft:add", "value": -0.25}
+  }
+}

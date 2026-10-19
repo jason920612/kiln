@@ -452,6 +452,12 @@ fn hit_block(e: &mut Entity, level: &mut dyn EntityLevel, pos: BlockPos, face: D
     data(e).last_state = Some(state);
     let owner = data(e).owner;
     level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: e.type_name, owner, hit: Hit::Block { pos, face, location } });
+    // `AbstractArrow.hitBlockEnchantmentEffects`: the weapon's `hit_block` effects at the hit, clamped into the block.
+    if let Some(w) = data(e).weapon.clone().filter(|w| !w.is_empty()) {
+        let clamp = |v: f64, at: i32| v.clamp((at as f32 + 1.0e-5f32) as f64, at as f64 + 1.0 - 9.999999747378752E-6);
+        let at = [clamp(location.x, pos.x), clamp(location.y, pos.y), clamp(location.z, pos.z)];
+        crate::enchanting::run_projectile_effects(crate::enchanting::ProjectileTrigger::HitBlock, e, level, &w, owner, at, Some(state));
+    }
     let d = e.delta;
     let back = Vec3::new(signum(d.x), signum(d.y), signum(d.z)).scale(0.05000000074505806);
     e.set_pos(e.position() - back);

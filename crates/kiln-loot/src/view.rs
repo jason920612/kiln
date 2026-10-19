@@ -31,6 +31,12 @@ pub struct EntityView {
     pub fall_distance: f64,
     /// What `type_specific/player` asks of a player.
     pub player: Option<PlayerFacts>,
+    /// `Entity.getKnownMovement()`, blocks per tick (the `movement` predicate scales it to a second).
+    pub movement: [f64; 3],
+    /// `getBlockPosBelowThatAffectsMyMovement` (the `movement_affected_by` predicate).
+    pub movement_block: Option<[i32; 3]>,
+    /// `getOnPos` (the `stepping_on` predicate, true only on the ground).
+    pub on_pos: Option<[i32; 3]>,
 }
 
 /// A player's game mode and stats, for `type_specific/player` predicates.
@@ -68,6 +74,16 @@ fn bounds(v: &Json, value: f64) -> bool {
     }
 }
 
+/// `MinMaxBounds.Doubles.matchesSqr`: the bounds squared against a squared value.
+fn bounds_sqr(v: &Json, value_sqr: f64) -> bool {
+    match v {
+        Json::Obj(_) => {
+            v.get("min").and_then(|m| m.as_f64()).is_none_or(|m| value_sqr >= m * m) && v.get("max").and_then(|m| m.as_f64()).is_none_or(|m| value_sqr <= m * m)
+        }
+        other => other.as_f64().is_some_and(|x| x * x == value_sqr),
+    }
+}
+
 fn entries_match(v: &Json, facts: &[(&str, f64)]) -> bool {
     let Json::Obj(entries) = v else { return false };
     entries.iter().all(|(k, b)| facts.iter().find(|(name, _)| name == k).is_some_and(|(_, value)| bounds(b, *value)))
@@ -77,7 +93,17 @@ impl EntityView {
     /// `EntityPredicate.matches` for the parts Kiln can answer; anything about vehicles,
     /// passengers, targets, locations, effects or NBT does not match (players ride nothing).
     pub fn matches(&self, p: &EntityPredicate) -> bool {
+        self.matches_with(p, &|_, _| false)
+    }
+
+    /// [`EntityView::matches`] with `location` answering a `LocationPredicate` at a position (for the
+    /// `location`, `stepping_on` and `movement_affected_by` parts).
+    pub fn matches_with(&self, p: &EntityPredicate, location: &dyn Fn(&crate::predicate::world::LocationPredicate, [f64; 3]) -> bool) -> bool {
+        let center = |p: [i32; 3]| [p[0] as f64 + 0.5, p[1] as f64 + 0.5, p[2] as f64 + 0.5];
         p.parts.iter().all(|part| match part {
+            EntitySubPredicate::Location(l) => location(l, self.pos),
+            EntitySubPredicate::SteppingOn(l) => self.on_ground && self.on_pos.is_some_and(|at| location(l, center(at))),
+            EntitySubPredicate::MovementAffectedBy(l) => self.movement_block.is_some_and(|at| location(l, center(at))),
             EntitySubPredicate::EntityType(set) => set.contains(self.type_id),
             EntitySubPredicate::Flags(f) => {
                 let ok = |want: Option<bool>, have: bool| want.is_none_or(|w| w == have);
@@ -96,10 +122,20 @@ impl EntityView {
             EntitySubPredicate::Other(id, json) if id.as_str() == "minecraft:type_specific/player" => {
                 self.player.as_ref().is_some_and(|p| p.matches(json))
             }
-            // `MovementPredicate`: the fall distance (the speeds are not known here).
+            // `MovementPredicate.matches(entity)`: the known movement scaled to a second.
             EntitySubPredicate::Other(id, json) if id.as_str() == "minecraft:movement" => {
                 let Json::Obj(entries) = json else { return false };
-                entries.iter().all(|(key, v)| key == "fall_distance" && bounds(v, self.fall_distance))
+                let v = [self.movement[0] * 20.0, self.movement[1] * 20.0, self.movement[2] * 20.0];
+                entries.iter().all(|(key, b)| match key.as_str() {
+                    "x" => bounds(b, v[0]),
+                    "y" => bounds(b, v[1]),
+                    "z" => bounds(b, v[2]),
+                    "speed" => bounds_sqr(b, v[0] * v[0] + v[1] * v[1] + v[2] * v[2]),
+                    "horizontal_speed" => bounds_sqr(b, v[0] * v[0] + v[2] * v[2]),
+                    "vertical_speed" => bounds(b, v[1].abs()),
+                    "fall_distance" => bounds(b, self.fall_distance),
+                    _ => false,
+                })
             }
             _ => false,
         })
@@ -108,7 +144,7 @@ impl EntityView {
 
 /// Whether a `minecraft:damage_type` network id is in a damage type tag.
 pub fn damage_type_in_tag(id: i32, tag: &str) -> bool {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:damage_type")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
@@ -367,5 +403,104 @@ fn collect_post_attack(effect: &EntityEffect, level: i32, rng: &mut dyn RandomSo
             out.push(MobPostAttack::MobEffect { effect: pick.as_str().to_owned(), duration, amplifier });
         }
         _ => {}
+    }
+}
+
+/// The context of an enchantment effect that is not a plain hit (`Enchantment.entityContext`,
+/// `locationContext`, `blockHitContext`, and `damageContext` of a hit with the level around):
+/// `this_entity` with the enchantment's level at `origin`, and whichever of the damage source's
+/// entities, the hit block's state and the active flag the trigger has.
+pub struct FxContext<'a> {
+    pub level: i32,
+    pub this: &'a EntityView,
+    /// A damage context's attacker and direct attacker, and the source's damage type.
+    pub attacker: Option<&'a EntityView>,
+    pub direct: Option<&'a EntityView>,
+    pub damage_type: Option<i32>,
+    /// A hit-block context's block state.
+    pub block_state: Option<u16>,
+    pub origin: [f64; 3],
+    /// A location-based effect's `enchantment_active_check`.
+    pub active: Option<bool>,
+    pub world: Option<crate::probe::WorldFacts<'a>>,
+}
+
+impl<'a> FxContext<'a> {
+    /// `Enchantment.entityContext(level, entity, origin)`.
+    pub fn entity(level: i32, this: &'a EntityView, origin: [f64; 3], world: Option<crate::probe::WorldFacts<'a>>) -> FxContext<'a> {
+        FxContext { level, this, attacker: None, direct: None, damage_type: None, block_state: None, origin, active: None, world }
+    }
+
+    fn view(&self, target: EntityTarget) -> Option<&EntityView> {
+        match target {
+            EntityTarget::This => Some(self.this),
+            EntityTarget::Attacker => self.attacker,
+            EntityTarget::DirectAttacker => self.direct.or(self.attacker),
+            _ => None,
+        }
+    }
+}
+
+impl LootContext for FxContext<'_> {
+    fn has_entity(&self, target: EntityTarget) -> bool {
+        self.view(target).is_some()
+    }
+
+    fn origin(&self) -> Option<[f64; 3]> {
+        Some(self.origin)
+    }
+
+    fn block_state(&self) -> Option<u16> {
+        self.block_state
+    }
+
+    fn has_damage_source(&self) -> bool {
+        self.damage_type.is_some()
+    }
+
+    fn enchantment_level(&self) -> Option<i32> {
+        Some(self.level)
+    }
+
+    fn enchantment_active(&self) -> Option<bool> {
+        self.active
+    }
+
+    fn is_raining(&self) -> bool {
+        self.world.is_some_and(|w| w.raining)
+    }
+
+    fn is_thundering(&self) -> bool {
+        self.world.is_some_and(|w| w.thundering)
+    }
+
+    fn entity_matches(&self, target: EntityTarget, predicate: &EntityPredicate) -> bool {
+        self.view(target).is_some_and(|v| v.matches_with(predicate, &|l, pos| self.location_matches(l, pos)))
+    }
+
+    fn location_matches(&self, predicate: &crate::predicate::world::LocationPredicate, pos: [f64; 3]) -> bool {
+        match &self.world {
+            Some(w) => crate::probe::location_matches(predicate, pos, w.dim, Some(w.probe)),
+            None => false,
+        }
+    }
+
+    fn damage_source_matches(&self, p: &DamageSourcePredicate) -> bool {
+        let Some(damage_type) = self.damage_type else { return false };
+        if !p.tags.iter().all(|t| damage_type_in_tag(damage_type, t.tag.as_str()) == t.expected) {
+            return false;
+        }
+        if let Some(d) = &p.direct_entity
+            && !self.direct.or(self.attacker).is_some_and(|e| e.matches(d))
+        {
+            return false;
+        }
+        if let Some(s) = &p.source_entity
+            && !self.attacker.is_some_and(|e| e.matches(s))
+        {
+            return false;
+        }
+        // `isDirect`: no separate direct entity (a melee blow).
+        p.is_direct.is_none_or(|want| want == self.direct.is_none())
     }
 }

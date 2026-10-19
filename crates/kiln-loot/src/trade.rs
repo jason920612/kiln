@@ -155,20 +155,19 @@ impl Trades {
     /// Loads `trade_set/` and `villager_trade/` of `packs` against `data` (its tags, modifiers,
     /// predicates and providers). Files that fail are listed in `errors`.
     pub fn load(packs: &[&Path], data: &LootData) -> Trades {
+        match crate::data::WorldDefs::read(packs) {
+            Ok(world) => Trades::load_world(&world, data),
+            Err(e) => Trades { errors: vec![format!("trades: {e}")], ..Trades::default() },
+        }
+    }
+
+    /// [`Trades::load`] from the entries the world loaded ([`crate::data::WorldDefs`]).
+    pub fn load_world(world: &crate::data::WorldDefs, data: &LootData) -> Trades {
         let mut out = Trades::default();
         let parser = Parser { names: &data.names, tags: &data.tags };
         for (dir, is_set) in [("villager_trade", false), ("trade_set", true)] {
-            let files = match crate::data::list_pack_files(packs, dir) {
-                Ok(f) => f,
-                Err(e) => {
-                    out.errors.push(format!("{dir}: {e}"));
-                    continue;
-                }
-            };
-            for (id, path) in files {
-                let parsed = std::fs::read_to_string(&path)
-                    .map_err(|e| ParseError::new(e.to_string()))
-                    .and_then(|t| Json::parse(&t).map_err(|e| ParseError::new(e.to_string())));
+            for (id, text) in world.dir(dir) {
+                let parsed = Json::parse(text).map_err(|e| ParseError::new(e.to_string()));
                 let r = parsed.and_then(|j| {
                     if is_set {
                         TradeSet::parse(&parser, &j).map(|s| {

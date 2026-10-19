@@ -1535,7 +1535,7 @@ impl Host for Sim {
         };
         let fallback = stored(x >> 2, y >> 2, z >> 2)?;
         let id = kiln_worldgen::generator::zoomed_biome(self.zoom_seed, x, y, z, &mut |qx, qy, qz| stored(qx, qy, qz).unwrap_or(fallback));
-        let biomes = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?.1;
+        let biomes = kiln_data::live::synced().iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?.1;
         biomes.get(id as usize).map(|b| (*b).to_owned())
     }
 

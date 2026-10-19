@@ -53,6 +53,9 @@ pub(crate) struct Packs {
     pub timers: TimerQueue,
     /// `#minecraft:load` runs on the next tick (`ServerFunctionManager.postReload`).
     pub load_pending: bool,
+    /// The registry entries read when the world loaded (`enchantment`, `enchantment_provider`, ...):
+    /// `/reload` keeps them, as vanilla keeps its registries.
+    pub world_defs: Option<std::sync::Arc<kiln_loot::data::WorldDefs>>,
     /// The enabled/disabled lists changed since `level.dat` was written.
     pub dirty: bool,
 }
@@ -96,6 +99,7 @@ impl Packs {
             library: FunctionLibrary::default(),
             timers: TimerQueue::default(),
             load_pending: true,
+            world_defs: None,
             dirty: false,
         };
         packs.discover();
@@ -156,6 +160,38 @@ impl Packs {
         packs.features = features;
         packs.update_disabled();
         packs
+    }
+
+    /// The packs of a world: its saved lists (or the initial ones) over what exists in the world's
+    /// `datapacks` directory (or `KILN_DATAPACKS`).
+    pub fn open(world: Option<&Path>, storage: Option<&crate::persist::Storage>, vanilla: PathBuf) -> Self {
+        let dir = match world {
+            Some(world) => Some(world.join("datapacks")),
+            None => std::env::var_os("KILN_DATAPACKS").map(PathBuf::from),
+        };
+        let level = storage.map(|s| &s.level);
+        let config = match level.and_then(|l| l.data_packs()) {
+            Some((enabled, disabled)) => {
+                // Worlds without saved features have vanilla's defaults.
+                let features = level.and_then(|l| l.enabled_features()).unwrap_or_else(|| vec![VANILLA_FEATURE.into()]);
+                PackConfig { enabled, disabled, features: Some(features) }
+            }
+            None => PackConfig::initial(),
+        };
+        Packs::new(dir, vanilla, config)
+    }
+
+    /// The enabled packs other than the vanilla data, in load order: what changes the registries.
+    fn extra_roots(&self) -> Vec<PathBuf> {
+        self.selected.iter().filter(|id| *id != "vanilla").filter_map(|id| self.find(id)?.root.clone()).collect()
+    }
+
+    /// `WorldLoader`: builds the synchronized registries from the enabled packs, once when the
+    /// world loads (`/reload` does not change them), and gives logins the `Registry Data` for them.
+    pub(crate) fn install_registries(&self, sync: &kiln_link::DataSync) {
+        let loaded = crate::registry_data::load(&self.extra_roots());
+        kiln_data::live::install_synced(loaded.names, loaded.data);
+        sync.set_registry_packets((!loaded.packets.is_empty()).then(|| std::sync::Arc::new(loaded.packets)));
     }
 
     fn find(&self, id: &str) -> Option<&Pack> {
@@ -417,30 +453,22 @@ fn resolve_tag(
 
 impl Sim {
     /// Sets up the packs from the world (or `KILN_DATAPACKS`) and loads what they provide.
-    pub(crate) fn init_packs(&mut self, vanilla: PathBuf) {
-        let dir = match &self.config.world {
-            Some(world) => Some(world.join("datapacks")),
-            None => std::env::var_os("KILN_DATAPACKS").map(PathBuf::from),
-        };
-        let level = self.storage.as_ref().map(|s| &s.level);
-        let config = match level.and_then(|l| l.data_packs()) {
-            Some((enabled, disabled)) => {
-                // Worlds without saved features have vanilla's defaults.
-                let features = level.and_then(|l| l.enabled_features()).unwrap_or_else(|| vec![VANILLA_FEATURE.into()]);
-                PackConfig { enabled, disabled, features: Some(features) }
-            }
-            None => PackConfig::initial(),
-        };
-        self.commands.packs = Packs::new(dir, vanilla, config);
+    pub(crate) fn init_packs(&mut self, packs: Packs) {
+        self.commands.packs = packs;
         self.config.data_sync.set_features(self.commands.packs.features.clone());
         if let Some(data) = self.storage.as_ref().and_then(|s| kiln_storage::saved_data::read(&s.dir, "scheduled_events")) {
             self.commands.packs.timers.load_nbt(&data);
         }
         let only_vanilla = self.commands.packs.selected == ["vanilla"];
-        self.load_packs(!only_vanilla);
+        // The tags first: recipes and loot tables resolve theirs while they load.
         if !only_vanilla {
             self.load_tags();
+        } else {
+            // The registry entries the world starts with are vanilla's (`/reload` keeps them).
+            self.commands.packs.world_defs = self.loot.as_ref().map(|l| l.world.clone());
+            self.install_enchant_markers();
         }
+        self.load_packs(!only_vanilla);
     }
 
     /// `/reload` and `/datapack enable|disable`: the new pack list, then everything the packs
@@ -458,10 +486,10 @@ impl Sim {
         }
         packs.update_disabled();
         packs.dirty = true;
-        self.load_packs(true);
         // `PlayerList.reloadResources`: the tags to everyone, then each player's recipes and
-        // recipe book.
+        // recipe book. (The tags first: recipes and loot tables resolve theirs while they load.)
         let tags = self.load_tags();
+        self.load_packs(true);
         let tags = kiln_proto::packets::update_tags_owned(kiln_data::packets::play::clientbound::UPDATE_TAGS, &tags);
         let recipes = kiln_inventory::recipe::sync::update_recipes(&self.rules.recipes);
         let rules = self.rules.clone();
@@ -474,22 +502,38 @@ impl Sim {
         }
     }
 
-    /// The enabled packs' tags for the network; logins get them from now on.
+    /// The enabled packs' tags: the game logic reads them from now on (`kiln_data::live`) and logins
+    /// send them.
     fn load_tags(&mut self) -> crate::tags::NetworkTags {
         use crate::tags::TagSource;
         let roots = self.commands.packs.tag_roots();
         let sources: Vec<TagSource> = roots
             .iter()
             .filter_map(|(builtin, root)| match (builtin, root) {
-                (true, _) => Some(TagSource::BuiltIn),
+                (true, _) => Some(TagSource::Builtin),
                 (false, Some(r)) => Some(TagSource::Dir(r)),
                 (false, None) => None,
             })
             .collect();
-        let tags = crate::tags::load(&sources);
+        let (tags, errors) = crate::tags::load(&sources);
+        for e in errors {
+            error!("Couldn't load tag {e}");
+        }
+        kiln_data::live::install_tags(tags.clone());
         let config = kiln_proto::packets::update_tags_owned(kiln_data::packets::configuration::clientbound::UPDATE_TAGS, &tags);
         self.config.data_sync.set_config_tags(Some(config));
         tags
+    }
+
+    /// The enchantments with the marker components (the curses), for the code that holds no loot data.
+    fn install_enchant_markers(&self) {
+        match self.loot.as_deref() {
+            Some(loot) => {
+                let (armor, drop) = loot.marker_enchantments();
+                kiln_item::enchant_flags::install(armor, drop);
+            }
+            None => kiln_item::enchant_flags::reset(),
+        }
     }
 
     /// Loads functions and function tags, and with `data`, recipes and loot tables, from the
@@ -508,9 +552,13 @@ impl Sim {
                 }
                 // (The explorer maps need the world's structure search, which the loaded data does not know: it stays.)
                 let explorer = self.map_explorer.clone();
-                match kiln_loot::LootData::load_lenient_packs(&refs) {
+                // (`enchantment`, `enchantment_provider`, `jukebox_song`, `trade_set` and `villager_trade` are
+                // registries: loaded with the world, the first time, and kept by `/reload`.)
+                let frozen = self.commands.packs.world_defs.clone();
+                match kiln_loot::LootData::load_lenient_packs_with(&refs, frozen.as_deref()) {
                     Ok(mut loot) => {
                         loot.explorer = explorer;
+                        self.commands.packs.world_defs = Some(loot.world.clone());
                         self.loot = Some(std::sync::Arc::new(loot));
                     }
                     Err(e) => warn!("loot tables not reloaded: {e}"),
@@ -520,6 +568,7 @@ impl Sim {
             for p in self.players.values_mut() {
                 p.loot = self.loot.clone();
             }
+            self.install_enchant_markers();
         }
         self.commands.packs.library = self.load_functions(&roots);
         self.commands.gametests.defs = crate::gametest::Defs::load(&roots);
@@ -644,6 +693,37 @@ impl Sim {
         self.commands.stack = saved;
         self.commands.source = previous;
         self.flush_scoreboard();
+    }
+
+    /// `RunFunction.apply` for the `run_function` effects the players' enchantments asked for this tick: each function runs as the
+    /// player, at the effect's position and the player's rotation, silent, at permission level 2. A function that does not
+    /// exist is logged.
+    pub(crate) fn run_enchantment_functions(&mut self) {
+        let mut jobs = Vec::new();
+        for (&conn, p) in self.players.iter_mut().filter(|(_, p)| !p.function_requests.is_empty()) {
+            for (name, at) in std::mem::take(&mut p.function_requests) {
+                jobs.push((conn, name, at));
+            }
+        }
+        for (conn, name, at) in jobs {
+            let Some(f) = Identifier::parse(&name).and_then(|id| self.commands.packs.library.get(&id)) else {
+                error!("Enchantment run_function effect failed for non-existent function {name}");
+                continue;
+            };
+            let Some(p) = self.players.get(&conn) else { continue };
+            let mut stack = SourceStack::of_entity(crate::commands::PlayerRef::of(conn, p, &self.commands.scoreboard));
+            stack.position = at;
+            stack.rotation = p.rot;
+            let dispatcher = self.commands.dispatcher.clone();
+            let previous = std::mem::replace(&mut self.commands.source, crate::commands::CommandSource::Console);
+            let saved = std::mem::replace(&mut self.commands.stack, stack.clone());
+            if let Err(e) = self.editing(|s| kiln_command::vanilla::run_as_server(&dispatcher, s, &f, stack)) {
+                warn!("Failed to execute function {}: {}", f.id, e.to_plain());
+            }
+            self.commands.stack = saved;
+            self.commands.source = previous;
+            self.flush_scoreboard();
+        }
     }
 
     /// Writes the scheduled functions if they changed.

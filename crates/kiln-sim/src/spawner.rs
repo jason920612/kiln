@@ -888,7 +888,7 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
         let count = 1 + r.next_int_bounded(env.mobs.difficulty as i32 + 1);
         for _ in 0..count {
             let seed = r.next_long();
-            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: false, monsters_disabled: false, camel_space: false, black_cat: false, group: None };
+            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: false, monsters_disabled: false, camel_space: false, structures: Vec::new(), group: None };
             spawns.push(crate::mobs::spawn(MobKind::Phantom, [at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5], Some(0.0), Some(fin)));
         }
     }
@@ -1050,8 +1050,8 @@ fn spawn_category_for_chunk(
             // `Husk.finalizeSpawn`: a camel husk jockey needs the room for the camel.
             let camel_space = kind == MobKind::Husk
                 && kiln_data::entities::by_name("minecraft:camel_husk").is_some_and(|c| no_collision(level, [fx.floor() + 0.5, y as f64, fz.floor() + 0.5], c.width, c.height));
-            // `VariantUtils`: a cat inside a swamp hut is all black.
-            let black_cat = kind == MobKind::Cat && black_cat_structure(level, [fx.floor() as i32, y, fz.floor() as i32]);
+            // `VariantUtils`: the structures the variants ask about (a cat inside a swamp hut is all black).
+            let structures = structures_at(level, [fx.floor() as i32, y, fz.floor() as i32], kind);
             // A tropical fish pack is a school of a common variant (9 in 10) or one odd fish (`TropicalFish.finalizeSpawn` rolls it for the first fish).
             if kind == MobKind::TropicalFish {
                 let mut g = group.0.lock().expect("group");
@@ -1059,7 +1059,7 @@ fn spawn_category_for_chunk(
                     g.tropical_school = Some(r.next_float() < 0.9);
                 }
             }
-            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: true, monsters_disabled, camel_space, black_cat, group: Some(group.clone()) };
+            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: true, monsters_disabled, camel_space, structures, group: Some(group.clone()) };
             // The caller counts it (nothing below reads the counts).
             let charge = cost.map(|(c, _)| ([pos.x, pos.y, pos.z], c));
             mine.extend(charge);
@@ -1191,11 +1191,26 @@ pub(crate) fn monster_light_rules(dim: usize) -> (i32, i32, i32) {
     }
 }
 
-/// Whether `at` is inside a piece of a `#minecraft:cats_spawn_as_black` structure (a swamp hut).
-pub(crate) fn black_cat_structure(level: &RegionLevel, at: [i32; 3]) -> bool {
-    let Some(ids) = crate::world_state::worldgen_tag("worldgen/structure", "minecraft:cats_spawn_as_black") else { return false };
+/// The structure specs (`#tag` or names) the variants of `kind` ask about (`variants::structure_specs`) that `at` is
+/// inside a piece of (`StructureCheck`: `getStructureWithPieceAt(pos, structures).isValid()`). Empty for a mob whose variants
+/// care about no structure.
+pub(crate) fn structures_at(level: &RegionLevel, at: [i32; 3], kind: MobKind) -> Vec<String> {
+    let Some(registry) = kiln_entity::mob::variants::registry_of(kind) else { return Vec::new() };
+    let specs = kiln_entity::mob::variants::structure_specs(registry);
+    if specs.is_empty() {
+        return specs;
+    }
     let structures = crate::structure_spawns::ChunkStructures(|c: ChunkPos| level.cells.chunk(c));
-    crate::structure_spawns::piece_at(&structures, at, &ids)
+    specs
+        .into_iter()
+        .filter(|spec| {
+            let ids = match spec.strip_prefix('#') {
+                Some(tag) => crate::world_state::worldgen_tag("worldgen/structure", tag).unwrap_or_default(),
+                None => vec![spec.clone()],
+            };
+            crate::structure_spawns::piece_at(&structures, at, &ids)
+        })
+        .collect()
 }
 
 /// `SpawnPlacementTypes.ON_GROUND.isSpawnPositionOk`.

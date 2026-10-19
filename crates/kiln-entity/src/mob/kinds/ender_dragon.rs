@@ -1100,10 +1100,10 @@ fn dying_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
 /// Which blocks the dragon flies through (`DRAGON_TRANSPARENT`) or cannot break
 /// (`DRAGON_IMMUNE`), per state: bit 0 transparent, bit 1 immune.
 fn dragon_block_flags(s: u16) -> u8 {
-    static FLAGS: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-    FLAGS.get_or_init(|| {
+    static FLAGS: kiln_data::live::Cached<Vec<u8>> = kiln_data::live::Cached::new();
+    FLAGS.get(|| {
         let mut out = vec![0u8; kiln_data::blocks::STATE_COUNT as usize];
-        let tags = kiln_data::registries::TAGS.iter().find(|(r, _)| *r == "minecraft:block").map_or(&[][..], |(_, t)| *t);
+        let tags = kiln_data::live::tags().iter().find(|(r, _)| *r == "minecraft:block").map_or(&[][..], |(_, t)| *t);
         let names = kiln_data::builtin_entries("minecraft:block").unwrap_or(&[]);
         for (bit, tag) in [(1u8, "minecraft:dragon_transparent"), (2, "minecraft:dragon_immune")] {
             let ids = tags.iter().find(|(t, _)| *t == tag).map_or(&[][..], |(_, ids)| *ids);

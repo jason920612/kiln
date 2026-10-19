@@ -312,7 +312,6 @@ fn shear_equipment(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
     if !allowed {
         return None;
     }
-    let curse = kiln_item::registry::ENCHANTMENT.id("minecraft:binding_curse");
     for slot in [
         EquipmentSlot::MainHand,
         EquipmentSlot::OffHand,
@@ -333,7 +332,7 @@ fn shear_equipment(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
         if !equippable.can_be_sheared {
             continue;
         }
-        let locked = curse.is_some_and(|c| worn.get(kiln_item::keys::ENCHANTMENTS).is_some_and(|en| en.level(c) > 0));
+        let locked = kiln_item::enchant_flags::has(&worn, kiln_item::enchant_flags::Marker::PreventArmorChange);
         if locked && !who.creative {
             continue;
         }

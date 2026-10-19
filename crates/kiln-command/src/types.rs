@@ -205,7 +205,7 @@ pub(crate) fn entity_type_exists(id: &str) -> bool {
 /// Whether `entity_type` is in the entity type tag `tag` (without `#`).
 pub fn entity_type_in_tag(entity_type: &str, tag: &str) -> bool {
     let Some(id) = kiln_data::builtin_id("minecraft:entity_type", entity_type) else { return false };
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:entity_type")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
@@ -213,7 +213,7 @@ pub fn entity_type_in_tag(entity_type: &str, tag: &str) -> bool {
 }
 
 pub(crate) fn entity_type_tags() -> impl Iterator<Item = &'static str> {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .filter(|(r, _)| *r == "minecraft:entity_type")
         .flat_map(|(_, tags)| tags.iter().map(|(t, _)| *t))
@@ -245,7 +245,7 @@ pub fn wildcard_match(name: &str, pattern: &str) -> bool {
 
 /// Entries of a synchronized or built-in registry, if kiln-data knows it.
 pub(crate) fn registry_entries(registry: &str) -> Option<&'static [&'static str]> {
-    kiln_data::registries::SYNCHRONIZED
+    kiln_data::live::synced()
         .iter()
         .find(|(r, _)| *r == registry)
         .map(|(_, e)| *e)

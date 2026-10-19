@@ -308,8 +308,8 @@ pub(crate) struct Finalize {
     /// The box a camel husk jockey would stand in is free (`Husk.finalizeSpawn`'s `noCollision`;
     /// only the natural spawner looks).
     pub camel_space: bool,
-    /// The mob appears inside a piece of a `#cats_spawn_as_black` structure (a swamp hut).
-    pub black_cat: bool,
+    /// The structure specs of its variants that its position is inside a piece of (a swamp hut for a cat).
+    pub structures: Vec<String>,
     /// The group data of the pack the mob spawns in (`SpawnGroupData`, handed from one mob of a natural spawn pack to the next as the spawner makes them).
     pub group: Option<Group>,
 }
@@ -321,7 +321,7 @@ pub(crate) struct Group(pub std::sync::Arc<std::sync::Mutex<mob::GroupData>>);
 impl Finalize {
     /// A summoned or egg-spawned mob (not `NATURAL`).
     pub(crate) fn command(ctx: mob::SpawnContext, seed: i64, persistent: bool, monsters_disabled: bool) -> Finalize {
-        Finalize { ctx, seed, persistent, natural: false, monsters_disabled, camel_space: false, black_cat: false, group: None }
+        Finalize { ctx, seed, persistent, natural: false, monsters_disabled, camel_space: false, structures: Vec::new(), group: None }
     }
 }
 
@@ -393,6 +393,10 @@ pub(crate) struct DeathExtra {
     pub vehicle_type: Option<&'static str>,
     /// The recipes (`furnace_smelt` cooks the meat of a mob that burned or was killed with fire aspect).
     pub rules: Option<std::sync::Arc<kiln_inventory::Rules>>,
+    /// The `tool` parameter, for the tables that have one (shearing: the shears).
+    pub tool: Option<kiln_item::ItemStack>,
+    /// The context has no `damage_source` (gifts, shearing, equipment: not a death).
+    pub no_damage_source: bool,
 }
 
 /// `EntitySubPredicate`s that depend on the entity's class (`type_specific/sheep`, `type_specific/cube_mob`).
@@ -449,7 +453,10 @@ impl kiln_loot::LootContext for DeathContext {
         Some(self.origin)
     }
     fn has_damage_source(&self) -> bool {
-        true
+        !self.extra.no_damage_source
+    }
+    fn tool(&self) -> Option<&kiln_item::ItemStack> {
+        self.extra.tool.as_ref()
     }
     /// `furnace_smelt`: the first smelting recipe that takes the item (`RecipeManager.getRecipeFor(SMELTING)` and `assemble`).
     fn smelt(&self, input: &kiln_item::ItemStack) -> Option<kiln_item::ItemStack> {
@@ -566,7 +573,7 @@ mod tests {
     fn pack(kind: MobKind, n: usize, group: Option<&Group>, seed: i64) -> Vec<crate::entities::Entity> {
         (0..n)
             .map(|i| {
-                let fin = Finalize { ctx: difficulty_instance(2, 0, 0, 1.0), seed: seed + i as i64, persistent: false, natural: true, monsters_disabled: false, camel_space: false, black_cat: false, group: group.cloned() };
+                let fin = Finalize { ctx: difficulty_instance(2, 0, 0, 1.0), seed: seed + i as i64, persistent: false, natural: true, monsters_disabled: false, camel_space: false, structures: Vec::new(), group: group.cloned() };
                 crate::entities::Entity::new(i as i32 + 1, uuid::Uuid::from_u128(i as u128 + 1), spawn(kind, [0.5, 64.0, 0.5], Some(0.0), Some(fin)))
             })
             .collect()

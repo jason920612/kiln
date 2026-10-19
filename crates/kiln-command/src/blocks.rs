@@ -140,7 +140,7 @@ pub fn block_tag(tag: &str) -> Option<&'static [i32]> {
 
 /// Members of a tag of `registry`, as kiln-data knows them (synchronized tags).
 pub fn registry_tag(registry: &str, tag: &str) -> Option<&'static [i32]> {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == registry)
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
@@ -148,7 +148,7 @@ pub fn registry_tag(registry: &str, tag: &str) -> Option<&'static [i32]> {
 }
 
 fn tags_of(registry: &str) -> impl Iterator<Item = &'static str> {
-    kiln_data::registries::TAGS.iter().filter(move |(r, _)| *r == registry).flat_map(|(_, tags)| tags.iter().map(|(t, _)| *t))
+    kiln_data::live::tags().iter().filter(move |(r, _)| *r == registry).flat_map(|(_, tags)| tags.iter().map(|(t, _)| *t))
 }
 
 /// `BlockStateParser`: shared by both argument types.

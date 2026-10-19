@@ -516,6 +516,10 @@ fn server_tick(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut SpawnerBe, r
                 }
                 nearby_chicken = group.nearby_chicken;
             }
+            // `spawnData.getEquipment().ifPresent(mob::equip)`.
+            if let Some(equipment) = &data.equipment {
+                mob::spawn_equipment::equip_from_table(&mut e, level, equipment);
+            }
         }
         let riders: Vec<crate::mob::Companion> = riders
             .into_iter()

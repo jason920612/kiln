@@ -2471,7 +2471,7 @@ def start_bot(port: int, exe: Path, prefix: str, log: Path):
     return subprocess.Popen(argv, stdout=open(log, "w", encoding="utf-8"), stderr=subprocess.STDOUT)
 
 
-_WAYPOINT_LIST = re.compile(r"^(d+ waypoint(s) in [^:]+: )(.*)$")
+_WAYPOINT_LIST = re.compile(r"^(\d+ waypoint\(s\) in [^:]+: )(.*)$")
 
 
 def same_lines(want, got):

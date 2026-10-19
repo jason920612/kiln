@@ -28,7 +28,9 @@ pub mod path;
 pub mod pickup;
 pub mod persist;
 pub mod random_pos;
+pub mod spawn_equipment;
 pub mod species;
+pub mod variants;
 pub mod weapon;
 
 use crate::entity::{Entity, EntityKind, MoverType};
@@ -974,7 +976,7 @@ pub fn sound_event(name: &str) -> &'static str {
 /// Whether item id `item` is in the `minecraft:item` tag `tag`.
 pub fn item_tag(item: i32, tag: &str) -> bool {
     item > 0
-        && kiln_data::registries::TAGS
+        && kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:item")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
@@ -986,27 +988,30 @@ pub fn item_tag(item: i32, tag: &str) -> bool {
 pub fn entity_type_tag(type_name: &str, tag: &str) -> bool {
     let Some(id) = kiln_data::builtin_id("minecraft:entity_type", type_name) else { return false };
     // Each tag as a flag per entity type, made on first use.
+    // (Dropped when the tags change.)
     thread_local! {
-        static TAGS: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<Vec<bool>>>> = Default::default();
+        static TAGS: std::cell::RefCell<(u64, std::collections::HashMap<String, std::rc::Rc<Vec<bool>>>)> = Default::default();
     }
     let flags = TAGS.with(|t| {
-        if let Some(f) = t.borrow().get(tag) {
+        let mut t = t.borrow_mut();
+        let generation = kiln_data::live::generation();
+        if t.0 != generation {
+            *t = (generation, Default::default());
+        }
+        let t = &mut t.1;
+        if let Some(f) = t.get(tag) {
             return f.clone();
         }
         let count = kiln_data::builtin_entries("minecraft:entity_type").map_or(0, |e| e.len());
         let mut flags = vec![false; count];
-        let ids = kiln_data::registries::TAGS
-            .iter()
-            .find(|(r, _)| *r == "minecraft:entity_type")
-            .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
-            .map(|(_, ids)| *ids);
+        let ids = kiln_data::live::tag("minecraft:entity_type", tag);
         for &i in ids.unwrap_or(&[]) {
             if let Some(f) = usize::try_from(i).ok().and_then(|i| flags.get_mut(i)) {
                 *f = true;
             }
         }
         let flags = std::rc::Rc::new(flags);
-        t.borrow_mut().insert(tag.to_owned(), flags.clone());
+        t.insert(tag.to_owned(), flags.clone());
         flags
     });
     flags.get(id as usize).copied().unwrap_or(false)
@@ -2787,8 +2792,15 @@ pub fn variant_voice(m: &MobData, what: &str) -> Option<&'static str> {
         MobKind::Chicken if !m.baby() => ("chicken", &["ambient", "death", "hurt"]),
         _ => return None,
     };
+    if !own.contains(&what) {
+        return None;
+    }
+    // A sound variant a data pack defines brings its sounds.
+    if let Some(s) = variants::pack_sound(&format!("minecraft:{ty}_sound_variant"), m.sound_variant, false, &format!("{what}_sound")) {
+        return Some(s);
+    }
     let variant = kinds::wolf::synced_name(&format!("minecraft:{ty}_sound_variant"), m.sound_variant)?.strip_prefix("minecraft:")?;
-    if variant == "classic" || !own.contains(&what) {
+    if variant == "classic" {
         return None;
     }
     Some(sound_event(&format!("minecraft:entity.{ty}_{variant}.{what}")))
@@ -2947,7 +2959,8 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     // `Mob.dropCustomDeathLoot`: equipment with its drop chance.
     for i in 0..6 {
         let chance = m.drop_chances[i];
-        if !m.kind.is_mob() || !should_drop || chance == 0.0 || m.equipment[i].is_empty() {
+        // (`EnchantmentHelper.has(item, PREVENT_EQUIPMENT_DROP)`: the curse of vanishing and the like keep it.)
+        if !m.kind.is_mob() || !should_drop || chance == 0.0 || m.equipment[i].is_empty() || kiln_item::enchant_flags::has(&m.equipment[i], kiln_item::enchant_flags::Marker::PreventEquipmentDrop) {
             continue;
         }
         let preserved = chance > 1.0;
@@ -2965,7 +2978,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     // The same for the slots past the six (a horse's body armor and saddle).
     if let Some(k) = m.kind.ext() {
         for (mut stack, chance) in k.take_extra_equipment_for_drop(m) {
-            if !should_drop || chance == 0.0 || stack.is_empty() {
+            if !should_drop || chance == 0.0 || stack.is_empty() || kiln_item::enchant_flags::has(&stack, kiln_item::enchant_flags::Marker::PreventEquipmentDrop) {
                 continue;
             }
             let preserved = chance > 1.0;
@@ -3241,6 +3254,10 @@ pub(crate) struct Killer {
     pub(crate) random: kiln_javamath::random::LegacyRandom,
     pub(crate) silent: bool,
     pub(crate) block: BlockPos,
+    /// `Creeper.isPowered()` of a creeper whose blast is killing: its victims may drop a head (`Creeper.killedEntity`).
+    pub(crate) charged_creeper: bool,
+    /// `Creeper.droppedSkulls`: one head per creeper.
+    pub(crate) dropped_skulls: bool,
 }
 
 thread_local! {
@@ -3254,7 +3271,7 @@ pub fn hurt_living_by(level: &mut dyn EntityLevel, e: &mut Entity, m: &MobData, 
         return hurt_living(level, t, source, damage);
     }
     let previous = KILLER.with(|k| {
-        k.borrow_mut().replace(Killer { id: e.id, zombie: true, random: e.random.clone(), silent: e.silent, block: e.block_position() })
+        k.borrow_mut().replace(Killer { id: e.id, zombie: true, random: e.random.clone(), silent: e.silent, block: e.block_position(), charged_creeper: false, dropped_skulls: false })
     });
     let hurt = hurt_living(level, t, source, damage);
     KILLER.with(|k| {
@@ -3273,8 +3290,27 @@ fn killer_notified(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
     let Some(attacker) = source.attacker else { return true };
     let Some(mut killer) = KILLER.with(|k| k.borrow_mut().take_if(|k| k.id == attacker)) else { return true };
     let proceed = if killer.zombie { kinds::zombie::killed_entity(&mut killer, e, m, level, source) } else { true };
+    // `Creeper.killedEntity`: a charged creeper's victim drops what `charged_creeper/root` rolls for it (a head), once per creeper (the flag is
+    // set when the table gave something; the simulation answers [`EntityLevel::charged_creeper_loot`]).
+    if killer.charged_creeper && !killer.dropped_skulls && level.mob_drops() {
+        killer.dropped_skulls = level.charged_creeper_loot(e, &source);
+    }
     KILLER.with(|k| *k.borrow_mut() = Some(killer));
     proceed
+}
+
+/// Runs `blast` (a creeper's explosion) with the creeper `e` as the killer of the mobs it kills, `charged` or not: a charged one's victims may
+/// drop a head ([`killer_notified`]).
+pub(crate) fn creeper_blast<R>(e: &Entity, charged: bool, blast: impl FnOnce() -> R) -> R {
+    if !charged {
+        return blast();
+    }
+    let previous = KILLER.with(|k| {
+        k.borrow_mut().replace(Killer { id: e.id, zombie: false, random: e.random.clone(), silent: e.silent, block: e.block_position(), charged_creeper: true, dropped_skulls: false })
+    });
+    let r = blast();
+    KILLER.with(|k| *k.borrow_mut() = previous);
+    r
 }
 
 /// The shared `Mob.doHurtTarget`: the attack damage through the weapon's enchantments
@@ -3339,9 +3375,9 @@ pub struct GroupData {
     pub patrol: bool,
     pub event: bool,
     pub structure: bool,
-    /// The mob appears inside a piece of a `#minecraft:cats_spawn_as_black` structure (a cat's variant is
-    /// then the all-black one: `VariantUtils.selectVariantToSpawn`'s priority 1 candidate).
-    pub black_cat: bool,
+    /// The structure specs of the animal's variants (`variants::structure_specs`) that the spawn position is inside
+    /// a piece of (a `#minecraft:cats_spawn_as_black` swamp hut for a cat).
+    pub structures: Vec<String>,
     /// `ZombieGroupData.canSpawnJockey` of the group the first zombie made (its baby chance is
     /// `zombie_baby`): a baby of such a group may ride a chicken.
     pub zombie_can_jockey: bool,
@@ -3449,15 +3485,8 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
     // Types that pick a variant first (from the biome, no randomness) draw their sound
     // variant before `Mob.finalizeSpawn`.
     if matches!(kind, MobKind::Pig | MobKind::Cow | MobKind::Chicken) {
-        // `VariantUtils.selectVariantToSpawn`: the climate's variant wins over the temperate
-        // fallback; one draw among the (single) best candidates.
-        let name = match species::climate(ctx.biome) {
-            species::Climate::Temperate => "minecraft:temperate",
-            species::Climate::Warm => "minecraft:warm",
-            species::Climate::Cold => "minecraft:cold",
-        };
-        let _ = r.next_int_bounded(1);
-        if let Some(v) = kiln_data::synced_id(&format!("{}_variant", kind.type_name()), name) {
+        // `VariantUtils.selectVariantToSpawn` (see [`variants`]): one draw among the best candidates.
+        if let Some(v) = variants::select_for(kind, ctx, group, r) {
             m.variant = v;
         }
         m.sound_variant = r.next_int_bounded(sound_variant_count(kind).max(1));
@@ -3509,7 +3538,7 @@ fn sound_variant_count(kind: MobKind) -> i32 {
         MobKind::Cow => "minecraft:cow_sound_variant",
         _ => "minecraft:chicken_sound_variant",
     };
-    kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == reg).map_or(1, |(_, e)| e.len() as i32)
+    kiln_data::live::synced().iter().find(|(r, _)| *r == reg).map_or(1, |(_, e)| e.len() as i32)
 }
 /// `isPersistenceRequired() || requiresCustomPersistence()`: the mobs `NaturalSpawner.createState` leaves out of its counts.
 pub fn persistent_for_counts(e: &Entity, m: &MobData) -> bool {
@@ -3615,7 +3644,7 @@ impl DamageKind {
             "minecraft:spit" => return DamageKind::Spit,
             _ => {}
         }
-        kiln_data::registries::SYNCHRONIZED
+        kiln_data::live::synced()
             .iter()
             .find(|(r, _)| *r == "minecraft:damage_type")
             .and_then(|(_, ids)| ids.iter().copied().find(|t| *t == name))
@@ -3687,7 +3716,7 @@ impl DamageKind {
     /// Whether the damage type is in a `minecraft:damage_type` tag.
     pub fn is_tag(self, tag: &str) -> bool {
         let Some(id) = kiln_data::synced_id("minecraft:damage_type", self.type_name()) else { return false };
-        kiln_data::registries::TAGS
+        kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:damage_type")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

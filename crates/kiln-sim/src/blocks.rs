@@ -961,7 +961,7 @@ impl Level for RegionLevel<'_> {
 
     fn biome_name(&self, pos: BlockPos) -> Option<String> {
         let id = crate::weather::biome_at(self.cells, self.env, pos);
-        let (_, names) = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?;
+        let (_, names) = kiln_data::live::synced().iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?;
         names.get(id as usize).map(|n| (*n).to_owned())
     }
 
@@ -1527,10 +1527,8 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                     let components = out.removed_components.iter().rev().find(|(p, _)| *p == pos).map(|(_, c)| c.clone());
                     // `InfestedBlock.spawnAfterBreak`: a silverfish comes out unless the tool has
                     // silk touch (`#prevents_infested_spawns`).
-                    let silk = tool.as_ref().and_then(|t| t.get(kiln_item::keys::ENCHANTMENTS)).is_some_and(|e| {
-                        kiln_item::registry::ENCHANTMENT.id("minecraft:silk_touch").is_some_and(|id| e.level(id) > 0)
-                    });
-                    if !silk && kiln_entity::mob::kinds::silverfish::is_infested(state) {
+                    let prevented = tool.as_ref().is_some_and(|t| t.has_enchantment_tag("minecraft:prevents_infested_spawns"));
+                    if !prevented && kiln_entity::mob::kinds::silverfish::is_infested(state) {
                         let at = [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5];
                         spawns.push(crate::mobs::spawn(kiln_entity::mob::MobKind::Silverfish, at, Some(0.0), None));
                     }
@@ -1778,7 +1776,7 @@ fn send_near(players: &mut [&mut Player], pos: BlockPos, range: f64, pkt: &Bytes
 }
 
 /// A deterministic value for effect `i` at `pos` this tick (sound seeds, drop jitter).
-fn effect_hash(env: &BlockEnv, pos: BlockPos, i: usize) -> u64 {
+pub(crate) fn effect_hash(env: &BlockEnv, pos: BlockPos, i: usize) -> u64 {
     let mut h = (env.game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ env.seed as u64;
     for v in [pos.x as i64, pos.y as i64, pos.z as i64, i as i64] {
         h = (h ^ v as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);

@@ -52,7 +52,7 @@ pub(crate) fn trigger_event(level: &mut RegionLevel, pos: BlockPos, dir: Directi
 /// Whether entity type `type_name` is in the entity type tag `tag` (without `#`).
 pub(crate) fn in_tag(type_name: &str, tag: &str) -> bool {
     let Some(id) = kiln_data::builtin_id("minecraft:entity_type", type_name) else { return false };
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:entity_type")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))

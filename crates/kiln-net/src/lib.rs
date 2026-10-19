@@ -761,8 +761,17 @@ async fn configure(conn: &mut Conn, shared: &Shared, name: &str) -> Result<packe
                     conn.send(&packets::config_disconnect(&msg)).await?;
                     bail!("client does not know {core:?}");
                 }
-                for p in &shared.registry_packets {
-                    conn.queue(p)?;
+                match shared.data_sync.registry_packets() {
+                    Some(packets) => {
+                        for p in packets.iter() {
+                            conn.queue(p)?;
+                        }
+                    }
+                    None => {
+                        for p in &shared.registry_packets {
+                            conn.queue(p)?;
+                        }
+                    }
                 }
                 match shared.data_sync.config_tags() {
                     Some(tags) => conn.queue(&tags)?,

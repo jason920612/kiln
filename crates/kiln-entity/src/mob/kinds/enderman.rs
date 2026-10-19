@@ -14,7 +14,6 @@ use crate::persist::{Input, Output};
 use kiln_javamath::random::RandomSource;
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets::entity::{DataValue, EntityData};
-use std::sync::OnceLock;
 
 pub struct Enderman;
 
@@ -368,7 +367,7 @@ fn in_water_or_rain(e: &Entity, level: &dyn EntityLevel) -> bool {
 /// A `minecraft:block` tag as per-state flags.
 fn tag_flags(tag: &str) -> Vec<bool> {
     let mut out = vec![false; kiln_data::blocks::STATE_COUNT as usize];
-    let ids = kiln_data::registries::TAGS
+    let ids = kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:block")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
@@ -383,18 +382,18 @@ fn tag_flags(tag: &str) -> Vec<bool> {
 }
 
 pub fn can_teleport_to(state: u16) -> bool {
-    static F: OnceLock<Vec<bool>> = OnceLock::new();
-    F.get_or_init(|| tag_flags("minecraft:entities_can_teleport_to"))[state as usize]
+    static F: kiln_data::live::Cached<Vec<bool>> = kiln_data::live::Cached::new();
+    F.get(|| tag_flags("minecraft:entities_can_teleport_to"))[state as usize]
 }
 
 pub fn enderman_does_not_teleport_to(state: u16) -> bool {
-    static F: OnceLock<Vec<bool>> = OnceLock::new();
-    F.get_or_init(|| tag_flags("minecraft:enderman_does_not_teleport_to"))[state as usize]
+    static F: kiln_data::live::Cached<Vec<bool>> = kiln_data::live::Cached::new();
+    F.get(|| tag_flags("minecraft:enderman_does_not_teleport_to"))[state as usize]
 }
 
 pub fn enderman_holdable(state: u16) -> bool {
-    static F: OnceLock<Vec<bool>> = OnceLock::new();
-    F.get_or_init(|| tag_flags("minecraft:enderman_holdable"))[state as usize]
+    static F: kiln_data::live::Cached<Vec<bool>> = kiln_data::live::Cached::new();
+    F.get(|| tag_flags("minecraft:enderman_holdable"))[state as usize]
 }
 
 /// `LivingEntity.randomTeleport(x, y, z, broadcast, forbidden)`: down to the first block

@@ -115,18 +115,18 @@ pub fn wants_to_attack(level: &dyn EntityLevel, t: &Living, owner: &PlayerView) 
 
 /// A synchronized registry entry's name.
 pub fn synced_name(registry: &str, id: i32) -> Option<&'static str> {
-    let (_, entries) = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == registry)?;
+    let (_, entries) = kiln_data::live::synced().iter().find(|(r, _)| *r == registry)?;
     entries.get(id as usize).copied()
 }
 
 fn synced_len(registry: &str) -> i32 {
-    kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == registry).map_or(1, |(_, e)| e.len() as i32)
+    kiln_data::live::synced().iter().find(|(r, _)| *r == registry).map_or(1, |(_, e)| e.len() as i32)
 }
 
 /// Whether biome `id` is `spec` (a biome name, or `#tag`).
 pub fn biome_is(id: i32, spec: &str) -> bool {
     match spec.strip_prefix('#') {
-        Some(tag) => kiln_data::registries::TAGS
+        Some(tag) => kiln_data::live::tags()
             .iter()
             .find(|(r, _)| *r == "minecraft:worldgen/biome")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
@@ -142,18 +142,19 @@ pub fn biome_is(id: i32, spec: &str) -> bool {
 pub fn block_in_tag(state: u16, tag: &str) -> bool {
     use std::cell::RefCell;
     thread_local! {
-        static CACHE: RefCell<Vec<(String, Box<[u64]>)>> = const { RefCell::new(Vec::new()) };
+        static CACHE: RefCell<(u64, Vec<(String, Box<[u64]>)>)> = const { RefCell::new((0, Vec::new())) };
     }
     CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
+        let generation = kiln_data::live::generation();
+        if cache.0 != generation {
+            *cache = (generation, Vec::new());
+        }
+        let cache = &mut cache.1;
         let i = match cache.iter().position(|(t, _)| t == tag) {
             Some(i) => i,
             None => {
-                let ids = kiln_data::registries::TAGS
-                    .iter()
-                    .find(|(r, _)| *r == "minecraft:block")
-                    .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
-                    .map(|(_, ids)| *ids);
+                let ids = kiln_data::live::tag("minecraft:block", tag);
                 let count = kiln_data::blocks::STATE_COUNT as usize;
                 let mut bits = vec![0u64; count.div_ceil(64)].into_boxed_slice();
                 if let Some(ids) = ids {
@@ -173,31 +174,23 @@ pub fn block_in_tag(state: u16, tag: &str) -> bool {
     })
 }
 
-/// `WolfVariants` spawn conditions (priority 1 by biome, else pale).
-const VARIANT_BIOMES: &[(&str, &str)] = &[
-    ("minecraft:ashen", "minecraft:snowy_taiga"),
-    ("minecraft:black", "minecraft:old_growth_pine_taiga"),
-    ("minecraft:chestnut", "minecraft:old_growth_spruce_taiga"),
-    ("minecraft:rusty", "#minecraft:is_jungle"),
-    ("minecraft:snowy", "minecraft:grove"),
-    ("minecraft:spotted", "#minecraft:is_savanna"),
-    ("minecraft:striped", "#minecraft:is_badlands"),
-    ("minecraft:woods", "minecraft:forest"),
-];
-
-/// `VariantUtils.selectVariantToSpawn` for wolves: the candidates of the highest matching
-/// priority (registry order), one picked with the level's random.
-fn spawn_variant(biome: Option<i32>, r: &mut dyn RandomSource) -> i32 {
-    let matching: Vec<&str> = VARIANT_BIOMES.iter().filter(|(_, b)| biome.is_some_and(|id| biome_is(id, b))).map(|(v, _)| *v).collect();
-    let candidates = if matching.is_empty() { vec!["minecraft:pale"] } else { matching };
-    let pick = candidates[r.next_int_bounded(candidates.len() as i32) as usize];
-    kiln_data::synced_id("minecraft:wolf_variant", pick).unwrap_or(0)
+/// `VariantUtils.selectVariantToSpawn` for wolves (see [`crate::mob::variants`]); a wolf no variant
+/// selects keeps the default one.
+fn spawn_variant(ctx: &SpawnContext, group: &GroupData, r: &mut dyn RandomSource) -> i32 {
+    crate::mob::variants::select_for(MobKind::Wolf, ctx, group, r).unwrap_or(0)
 }
 
-/// The wolf's `WolfSoundSet` sound `what` (ambient, growl, pant, whine, hurt, death).
+/// The wolf's `WolfSoundSet` sound `what` (ambient, growl, pant, whine, hurt, death): the sound variant's own when a data pack
+/// defines it, else the game's `entity.wolf[_<variant>].<what>`.
 fn sound(m: &MobData, what: &str) -> &'static str {
+    if let Some(s) = crate::mob::variants::pack_sound("minecraft:wolf_sound_variant", m.sound_variant, m.baby(), &format!("{what}_sound")) {
+        return s;
+    }
     let v = synced_name("minecraft:wolf_sound_variant", m.sound_variant).unwrap_or("minecraft:classic");
-    let set = if v == "minecraft:classic" { "wolf".to_owned() } else { format!("wolf_{}", &v[10..]) };
+    let set = match v.strip_prefix("minecraft:") {
+        Some("classic") | None => "wolf".to_owned(),
+        Some(short) => format!("wolf_{short}"),
+    };
     crate::mob::sound_event(&format!("minecraft:entity.{set}.{what}"))
 }
 
@@ -481,7 +474,7 @@ impl Kind for Wolf {
         let variant = match group.variant {
             Some(v) => v,
             None => {
-                let v = spawn_variant(ctx.biome, r);
+                let v = spawn_variant(ctx, group, r);
                 group.variant = Some(v);
                 v
             }

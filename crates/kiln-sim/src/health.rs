@@ -48,13 +48,11 @@ pub(crate) struct DamageRules {
     pub difficulty: u8,
     /// `minecraft:keep_inventory`.
     pub keep_inventory: bool,
-    /// The enchantments with `prevent_equipment_drop` (see `kiln_inventory::Rules`).
-    pub vanishing: Option<&'static [i32]>,
 }
 
 impl Default for DamageRules {
     fn default() -> Self {
-        DamageRules { pvp: true, fall: true, fire: true, freeze: true, drowning: true, difficulty: 2, keep_inventory: false, vanishing: None }
+        DamageRules { pvp: true, fall: true, fire: true, freeze: true, drowning: true, difficulty: 2, keep_inventory: false }
     }
 }
 
@@ -245,7 +243,7 @@ fn translate_plain(key: &str) -> Tag {
 
 /// Whether a `minecraft:damage_type` network id is in a damage type tag.
 pub(crate) fn damage_type_tag(id: i32, tag: &str) -> bool {
-    kiln_data::registries::TAGS
+    kiln_data::live::tags()
         .iter()
         .find(|(r, _)| *r == "minecraft:damage_type")
         .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
@@ -305,6 +303,7 @@ impl DamageEffects {
 }
 
 /// A damage type's definition (`DamageType`, from the vanilla datapack).
+#[derive(Clone, Copy)]
 struct DamageTypeInfo {
     name: &'static str,
     message_id: &'static str,
@@ -435,8 +434,54 @@ pub(crate) fn static_damage_type(name: &str) -> &'static str {
     damage_type_info(name).name
 }
 
+/// The definition of damage type `name`: its entry when a data pack defines or overrides it, else the vanilla
+/// datapack's (`generic` for an unknown name).
 fn damage_type_info(name: &str) -> &'static DamageTypeInfo {
-    DAMAGE_TYPES.iter().find(|t| t.name == name).unwrap_or_else(|| damage_type_info("minecraft:generic"))
+    static TABLE: kiln_data::live::Cached<std::collections::HashMap<&'static str, DamageTypeInfo>> = kiln_data::live::Cached::new();
+    let table = TABLE.get(|| {
+        let mut map: std::collections::HashMap<&'static str, DamageTypeInfo> = DAMAGE_TYPES.iter().map(|t| (t.name, *t)).collect();
+        for entry in kiln_data::live::custom_entries("minecraft:damage_type") {
+            let json = kiln_data::live::entry_data("minecraft:damage_type", entry).and_then(|t| kiln_loot::Json::parse(t).ok());
+            if let Some(info) = json.and_then(|j| DamageTypeInfo::from_entry(entry, &j)) {
+                map.insert(entry, info);
+            }
+        }
+        map
+    });
+    table.get(name).or_else(|| table.get("minecraft:generic")).expect("generic damage type")
+}
+
+impl DamageTypeInfo {
+    /// `DamageType.DIRECT_CODEC`: `message_id`, `scaling` and `exhaustion` are required; `effects` and
+    /// `death_message_type` default to `hurt` and `default`.
+    fn from_entry(name: &'static str, json: &kiln_loot::Json) -> Option<DamageTypeInfo> {
+        let message_id = kiln_data::live::leak_str(json.get("message_id")?.as_str()?);
+        let scaling = match json.get("scaling")?.as_str()? {
+            "never" => Scaling::Never,
+            "when_caused_by_living_non_player" => Scaling::WhenCausedByLivingNonPlayer,
+            "always" => Scaling::Always,
+            _ => return None,
+        };
+        let exhaustion = json.get("exhaustion")?.as_f32()?;
+        let death_message = match json.get("death_message_type").and_then(kiln_loot::Json::as_str) {
+            None | Some("default") => DeathMessageType::Default,
+            Some("fall_variants") => DeathMessageType::FallVariants,
+            Some("intentional_game_design") => DeathMessageType::IntentionalGameDesign,
+            Some(_) => return None,
+        };
+        let effects = match json.get("effects").map(kiln_loot::Json::as_str) {
+            None => DamageEffects::Hurt,
+            Some(Some("hurt")) => DamageEffects::Hurt,
+            Some(Some("thorns")) => DamageEffects::Thorns,
+            Some(Some("drowning")) => DamageEffects::Drowning,
+            Some(Some("burning")) => DamageEffects::Burning,
+            Some(Some("poking")) => DamageEffects::Poking,
+            Some(Some("freezing")) => DamageEffects::Freezing,
+            Some(_) => return None,
+        };
+        let key = kiln_data::live::leak_str(&format!("death.attack.{message_id}"));
+        Some(DamageTypeInfo { name, message_id, key, exhaustion, scaling, death_message, effects })
+    }
 }
 
 /// `CombatEntry`: one hit the combat tracker remembers.
@@ -909,12 +954,12 @@ impl Player {
         let keep = ctx.rules.keep_inventory;
         if !keep && self.game_mode != 3 {
             for i in 0..self.inv.items.len() {
-                if kiln_inventory::rules::prevents_equipment_drop(ctx.rules.vanishing, &self.inv.items[i]) {
+                if kiln_inventory::rules::prevents_equipment_drop(&self.inv.items[i]) {
                     self.inv.items[i] = kiln_item::ItemStack::empty();
                 }
             }
             for i in 0..self.inv.equipment.len() {
-                if kiln_inventory::rules::prevents_equipment_drop(ctx.rules.vanishing, &self.inv.equipment[i]) {
+                if kiln_inventory::rules::prevents_equipment_drop(&self.inv.equipment[i]) {
                     self.inv.equipment[i] = kiln_item::ItemStack::empty();
                 }
             }

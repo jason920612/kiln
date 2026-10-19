@@ -30,6 +30,7 @@ mod commands;
 mod consume;
 mod buckets;
 mod beehive;
+mod interact_loot;
 mod brush;
 mod command_block;
 mod vault;
@@ -71,6 +72,8 @@ mod xp;
 mod container;
 mod datapacks;
 mod tags;
+mod block_transformer;
+mod registry_data;
 mod tickets;
 mod zip_pack;
 pub mod lobby;
@@ -82,7 +85,7 @@ mod fall;
 mod phantom;
 mod pose;
 mod freeze;
-mod enchant_loc;
+mod enchant_fx;
 mod entities;
 mod entity_world;
 mod fishing;
@@ -628,11 +631,19 @@ struct Player {
     is_in_powder_snow: bool,
     frost_speed: Option<f64>,
     /// `LivingEntity.lastPos`: the block the location-changed enchantments last ran for; whether the
-    /// player landed this tick (`checkFallDamage` runs them too); the soul speed level whose modifiers
-    /// are on.
+    /// player landed this tick (`checkFallDamage` runs them too).
     loc_last_pos: Option<[i32; 3]>,
     loc_landed: bool,
-    soul_speed: Option<i32>,
+    /// `activeLocationDependentEnchantments`: the `location_changed` effects that are active, and the
+    /// attribute modifiers the active `attribute` effects added (see [`enchant_fx`]).
+    loc_active: Vec<enchant_fx::ActiveEffect>,
+    loc_modifiers: Vec<enchant_fx::LocationModifier>,
+    /// World effects the enchantments asked for this tick, run with the region's blocks; functions
+    /// they asked to run (name, position).
+    fx_jobs: Vec<enchant_fx::LevelJob>,
+    function_requests: Vec<(String, [f64; 3])>,
+    /// The move since the last tick (`Entity.getKnownMovement` for the `movement` predicate).
+    move_delta: [f64; 3],
     /// Block changes a player's own tick asks of its region (melted powder snow, trampled
     /// farmland).
     block_edits: Vec<fall::BlockEdit>,
@@ -1639,7 +1650,13 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
 
 impl Sim {
     pub fn new(config: SimConfig) -> Sim {
-        let biome_count = kiln_data::registries::SYNCHRONIZED
+        // The data packs decide the registries (ids of biomes, damage types, variants...) before
+        // anything numbers by them: the worlds' generators, chunk sources and the players' packets.
+        let storage = config.world.as_deref().map(persist::Storage::open);
+        let vanilla_pack = datapack_dir(config.noise.as_ref().map(|n| n.datapack.as_path()));
+        let packs = datapacks::Packs::open(config.world.as_deref(), storage.as_ref(), vanilla_pack.clone());
+        packs.install_registries(&config.data_sync);
+        let biome_count = kiln_data::live::synced()
             .iter()
             .find(|(r, _)| *r == "minecraft:worldgen/biome")
             .map_or(0, |(_, e)| e.len());
@@ -1736,7 +1753,7 @@ impl Sim {
         let spawn = spawn.expect("overworld spawn");
         let policy = if config.unified_regions { RegionPolicy::unified() } else { RegionPolicy::default() };
         let threads = config.noise.as_ref().map_or(1, |n| n.threads);
-        let mut storage = config.world.as_deref().map(persist::Storage::open);
+        let mut storage = storage;
         let level = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.state());
         // The seed: the generator's, else the save's (`world_gen_settings.dat`); a world that
         // generates with a seed and has none saved gets it written, so vanilla loads the same.
@@ -1763,7 +1780,7 @@ impl Sim {
             if config.unified_regions { "unified" } else { "split" }
         );
         let datapack = config.noise.as_ref().map(|n| n.datapack.as_path());
-        let vanilla_pack = datapack_dir(datapack);
+
         let rules = std::sync::Arc::new(load_rules(datapack));
         let maps = maps::MapStore::shared(storage.as_ref().map(|s| s.dir.clone()));
         // Treasure and explorer maps look for structures in the overworld.
@@ -1833,7 +1850,7 @@ impl Sim {
         sim.load_raids();
         sim.load_trader();
         sim.load_dragon_fight();
-        sim.init_packs(vanilla_pack);
+        sim.init_packs(packs);
         sim.load_plugins();
         // Tables built on first use, built now rather than in the middle of a tick (the path
         // types of every block state: 13 ms the first time a mob looks for a path).
@@ -2014,6 +2031,8 @@ impl Sim {
         self.collect_pearl_tickets();
         // The command blocks whose tick came run their commands (they may change anything).
         self.run_command_blocks();
+        // The functions the players' enchantments run (`run_function`).
+        self.run_enchantment_functions();
         self.run_structure_triggers();
         // Entities from here on have newer ids.
         let first_new = self.next_entity_id;
@@ -2811,7 +2830,6 @@ impl Sim {
             drowning: self.rule_bool("minecraft:drowning_damage"),
             difficulty: self.commands.difficulty as u8,
             keep_inventory: self.rule_bool("minecraft:keep_inventory"),
-            vanishing: self.rules.equipment_drop_lock(),
         }
     }
 
@@ -4110,7 +4128,11 @@ impl Sim {
             frost_speed: None,
             loc_last_pos: None,
             loc_landed: false,
-            soul_speed: None,
+            loc_active: Vec::new(),
+            loc_modifiers: Vec::new(),
+            fx_jobs: Vec::new(),
+            function_requests: Vec::new(),
+            move_delta: [0.0; 3],
             block_edits: Vec::new(),
             flying,
             dead: joining.health <= 0.0,

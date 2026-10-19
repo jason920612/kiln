@@ -256,6 +256,22 @@ fn destroy_or_resend(p: &mut Player, level: &mut RegionLevel, pos: [i32; 3]) {
     }
 }
 
+/// `IceBlock.playerDestroy` after the drops: where water evaporates the spot is left empty, else water
+/// fills it when something solid or a liquid lies below.
+fn ice_melts(tool: &ItemStack, level: &mut RegionLevel, pos: BlockPos) {
+    if tool.has_enchantment_tag("minecraft:prevents_ice_melting") {
+        return;
+    }
+    if level.rules().water_evaporates {
+        kiln_blocks::remove_block(level, pos, false);
+        return;
+    }
+    let below = level.block(pos.below());
+    if kiln_entity::mob::kinds::wolf::block_in_tag(below, "minecraft:ice_melts_when_destroyed_above") || kiln_data::block_logic::fluid(below).kind != kiln_data::block_logic::FluidKind::Empty {
+        kiln_blocks::set_block_and_update(level, pos, kiln_data::blocks::default_state::WATER);
+    }
+}
+
 /// `ServerPlayerGameMode.destroyBlock`: returns whether the break happened.
 pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 3]) -> bool {
     let bp = block_pos(pos);
@@ -270,6 +286,8 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     }
     let actor = p.actor();
     let drops = !actor.creative && has_correct_tool(stack, state);
+    // (`destroyBlock` hands `playerDestroy` a copy of the tool from before it was used.)
+    let ice_tool = (drops && kiln_data::block_logic::is_instance(state, kiln_data::block_logic::BlockClass::IceBlock)).then(|| stack.clone());
     // `ItemStack.mineBlock`: a tool counts as used.
     if !actor.creative && stack.get(keys::TOOL).is_some() {
         let item = stack.item();
@@ -301,6 +319,10 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
         if per_block > 0 && block_props::hardness(state) != 0.0 {
             p.hurt_and_break(kiln_item::component::EquipmentSlot::MainHand, per_block, None);
         }
+    }
+    // `IceBlock.playerDestroy`: the ice melts away unless the tool holds an enchantment of `#prevents_ice_melting`.
+    if let (true, Some(tool)) = (removed, ice_tool.as_ref()) {
+        ice_melts(tool, level, bp);
     }
     // `Block.playerDestroy`, which runs when the player can harvest the block.
     if removed && drops {

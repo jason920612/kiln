@@ -392,7 +392,7 @@ impl Sim {
         by: Option<&PlayerRef>,
         from: Option<&PlayerRef>,
     ) -> Result<bool, CommandError> {
-        let ty = kiln_data::registries::SYNCHRONIZED
+        let ty = kiln_data::live::synced()
             .iter()
             .find(|(r, _)| *r == "minecraft:damage_type")
             .and_then(|(_, ids)| ids.iter().copied().find(|t| *t == damage_type))
@@ -1151,7 +1151,7 @@ impl Sim {
                     attacker: None,
                     components: self.entity_mut(target).and_then(|e| e.phys.as_deref()).and_then(kiln_entity::mob::data).map(kiln_entity::mob::variant_components).unwrap_or_default(),
                     specific: crate::mobs::TypeSpecific::of(self.entity_mut(target).and_then(|e| e.phys.as_deref()).and_then(kiln_entity::mob::data)),
-                    extra: crate::mobs::DeathExtra { loot: self.loot.clone(), vehicle_type: None, rules: Some(self.rules.clone()) },
+                    extra: crate::mobs::DeathExtra { loot: self.loot.clone(), vehicle_type: None, rules: Some(self.rules.clone()), ..Default::default() },
                 };
                 self.roll_table(&kiln_command::host::LootTableArg::Id(table), &ctx)?
             }

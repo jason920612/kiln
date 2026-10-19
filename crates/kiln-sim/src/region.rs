@@ -660,9 +660,6 @@ impl RegionWork<'_> {
                             let pos = BlockPos::new(pos.x, pos.y, pos.z);
                             kiln_blocks::destroy_block(&mut level, pos, false, 512);
                         }
-                        crate::fall::BlockEdit::FrostWalker { origin, radius, pos } => {
-                            crate::enchant_loc::frost_walker_disk(&mut level, origin, radius, pos);
-                        }
                         crate::fall::BlockEdit::Dirt(pos) => {
                             let pos = BlockPos::new(pos.x, pos.y, pos.z);
                             // `FarmBlock.turnToDirt`.
@@ -672,6 +669,13 @@ impl RegionWork<'_> {
                         }
                     }
                 }
+            }
+            // What the players' enchantments asked of the level (`replace_disk`, `set_block_properties`, summoned entities,
+            // functions), in the same canonical player order as the edits above.
+            for p in self.players.iter_mut().filter(|p| !p.fx_jobs.is_empty()) {
+                let mut spawns = Vec::new();
+                crate::enchant_fx::run_level_jobs(&mut level, p, env.blocks.mobs.difficulty, &mut spawns);
+                level.out.spawns.extend(spawns);
             }
             // `Player.tick`'s sleeping part and the insomnia statistic.
             for p in self.players.iter_mut().filter(|p| !p.disconnected) {
@@ -959,6 +963,7 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     {
         let last = p.speed_pos.unwrap_or(p.pos);
         p.speed_h = ((p.pos[0] - last[0]).powi(2) + (p.pos[2] - last[2]).powi(2)).sqrt();
+        p.move_delta = [p.pos[0] - last[0], p.pos[1] - last[1], p.pos[2] - last[2]];
         p.speed_pos = Some(p.pos);
     }
     p.tick_damage();
@@ -970,11 +975,20 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
         let bp = kiln_entity::math::BlockPos::new(at[0], at[1], at[2]);
         p.omen_raid_full = crate::raid::raid_at_view(&env.blocks.raids, bp).is_some_and(|r| r.omen_level >= 5);
     }
+    // What the enchantments' effects see of the level around the player.
+    let fx_probe = crate::advancements::triggers::CellProbe::new(cells, &env.blocks);
+    let fx = crate::enchant_fx::FxWorld {
+        block: &block,
+        probe: &fx_probe,
+        dim: crate::DIMENSIONS[env.dim].0,
+        raining: env.blocks.weather.weather.raining,
+        thundering: env.blocks.weather.weather.thundering,
+    };
     // `LivingEntity.baseTick` starts with the enchantments' `tick` effects.
-    p.tick_enchant_effects(&block);
+    p.tick_enchant_effects(&fx, &mut ctx);
     p.base_tick(&block, env.min_y, &env.border, &mut ctx);
     // `LivingEntity.baseTick`: a new block position runs the location-changed enchantments.
-    p.tick_location_changed(&block);
+    p.tick_location_changed(&fx, &mut ctx);
     // `LivingEntity.tick`: arrows and stingers in the body fall out in time.
     p.tick_stuck_in_body();
     p.tick_peaceful_regeneration(env.natural_regen, ctx.rules.difficulty);
@@ -994,18 +1008,18 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     }
     p.tick_using(&block, &mut ctx);
     p.tick_cooldowns();
-    // (`ServerPlayer`: new boots start their location effects at once, old ones stop.)
-    let boots_before = p.equipment_seen[2].clone();
-    p.tick_combat();
-    if p.equipment_seen[2] != boots_before {
-        p.boots_changed(&block);
+    // (`LivingEntity.collectEquipmentChanges`: a changed piece of equipment stops its location effects and the
+    // new one starts its own at once.)
+    let changed = p.tick_combat();
+    if !changed.is_empty() {
+        p.equipment_changed_effects(&changed, &fx, &mut ctx);
     }
     // The server's body moves on its own (gravity, drag, a ladder's grip) and the blocks it
     // passes through take effect, then the connection puts the position back (`doTick`).
     let snap = p.pos;
     p.phantom_travel(cells, pistons, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
     // (`checkFallDamage` in the move: a landing runs them as well.)
-    p.landed_location_changed(&block);
+    p.landed_location_changed(&fx, &mut ctx);
     let (_, h, _) = p.dimensions();
     let in_rain = crate::weather::in_rain(cells, &env.blocks, p.pos, p.pos[1] + h as f64);
     p.block_effects(&block, env.dim, in_rain, &mut ctx);

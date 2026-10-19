@@ -114,6 +114,15 @@ fn instrument(stack: &ItemStack) -> Option<(String, f32, f32)> {
     match &comp.0 {
         kiln_item::Holder::Reference(id) => {
             let name = kiln_item::registry::INSTRUMENT.name(*id)?;
+            // An instrument a data pack defines or overrides: its own sound, duration and range.
+            if let Some(json) = kiln_data::live::entry_data("minecraft:instrument", name).and_then(|t| kiln_loot::Json::parse(t).ok()) {
+                let sound = match json.get("sound_event")? {
+                    kiln_loot::Json::Str(s) => s.clone(),
+                    other => other.get("sound_id")?.as_str()?.to_owned(),
+                };
+                let sound = if sound.contains(':') { sound } else { format!("minecraft:{sound}") };
+                return Some((sound, json.get("use_duration")?.as_f32()?, json.get("range")?.as_f32()?));
+            }
             let short = name.strip_prefix("minecraft:").unwrap_or(name).strip_suffix("_goat_horn")?;
             let i = HORNS.iter().position(|h| *h == short)?;
             Some((format!("minecraft:item.goat_horn.sound.{i}"), 7.0, 256.0))
@@ -251,16 +260,6 @@ pub(crate) fn weapon_value(p: &Player, weapon: &ItemStack, tool: &ItemStack, c: 
     v
 }
 
-/// Whether the weapon has an enchantment with `projectile_spawned` effects (flame).
-fn sets_projectiles_on_fire(p: &Player, weapon: &ItemStack) -> bool {
-    let Some(loot) = p.loot.clone() else { return false };
-    let mut fire = false;
-    loot.for_each_enchantment(weapon, |e, _| {
-        fire |= e.effects.other.iter().any(|id| id.as_str() == "minecraft:projectile_spawned");
-    });
-    fire
-}
-
 /// `ProjectileWeaponItem.draw`: the projectiles one shot fires, taken from the ammunition in
 /// `slot` (`None`: a creative player's free arrow). The first uses ammunition as
 /// `useAmmo` says (infinity and creative players keep it, marked intangible); multishot's
@@ -361,7 +360,6 @@ pub(crate) fn shoot(
     let start = ((n - 1) % 2) as f32 * step / 2.0;
     let mut sign = 1.0f32;
     let mut shot = 0;
-    let fire = sets_projectiles_on_fire(p, weapon);
     for (j, ammo) in projectiles.into_iter().enumerate() {
         if ammo.is_empty() {
             continue;
@@ -371,10 +369,8 @@ pub(crate) fn shoot(
         let seed = projectile_seed(level, p, (spawns.len() + j) as u64);
         let mut e = create_arrow(p, weapon, &ammo, crit, seed);
         aim(&mut e, p, j, angle);
-        // `applyOnProjectileSpawned`: flame sets the arrow alight.
-        if fire && matches!(e.kind, kiln_entity::EntityKind::Arrow(_)) {
-            e.ignite_for_seconds(100.0);
-        }
+        // `applyOnProjectileSpawned`: the `projectile_spawned` effects (flame sets the arrow alight).
+        crate::enchant_fx::projectile_spawned(p, level, &mut e, &ammo, weapon, spawns);
         push_spawn(spawns, e);
         shot += 1;
         p.hurt_and_break(if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand }, 1, None);
