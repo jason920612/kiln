@@ -75,6 +75,7 @@ mod dimensions;
 mod tags;
 mod block_transformer;
 mod registry_data;
+mod registry_schema;
 mod tickets;
 mod zip_pack;
 pub mod lobby;

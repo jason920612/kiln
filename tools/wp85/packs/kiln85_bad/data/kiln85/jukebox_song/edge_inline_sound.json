@@ -1,0 +1,11 @@
+{
+  "sound_event": {
+    "sound_id": "kiln85:own",
+    "range": 12.0
+  },
+  "description": {
+    "text": "x"
+  },
+  "length_in_seconds": 1.5,
+  "comparator_output": 3
+}

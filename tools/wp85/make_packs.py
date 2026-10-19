@@ -7,6 +7,8 @@ is a copy of a Mojang file). Run: python3 tools/wp85/make_packs.py
   kiln85_structure  a new structure: a template, a pool, a processor list, a structure set and a biome tag
   kiln85_dims       a dimension type of its own and two new dimensions (superflat, nether noise + checkerboard)
   kiln85_nether     replaces the nether's dimension type (shorter, brighter, beds work)
+  kiln85_bad        malformed registry entries (wrong field types, ranges, enums) and a few odd ones vanilla accepts: vanilla refuses to load
+                    the world with it; its error list is the oracle for crates/kiln-sim's registry_schema (tools/wp85/schema85.sh)
 """
 import gzip
 import json
@@ -383,7 +385,73 @@ def nether():
     })
 
 
+# ---- kiln85_bad ----------------------------------------------------------------------------------------------------
+def bad():
+    pack = "kiln85_bad"
+    mcmeta(pack, "wp85: malformed registry entries")
+
+    def entry(registry, name, data):
+        write(pack, f"data/kiln85/{registry}/{name}.json", data)
+
+    ok_painting = {"width": 1, "height": 1, "asset_id": "kiln85:x"}
+    entry("painting_variant", "bad_width_object", {**ok_painting, "width": {"v": 1}})
+    entry("painting_variant", "bad_too_wide", {**ok_painting, "width": 17})
+    entry("painting_variant", "bad_height_zero", {**ok_painting, "height": 0})
+    entry("painting_variant", "bad_no_asset", {"width": 1, "height": 1})
+    entry("painting_variant", "bad_asset_list", {**ok_painting, "asset_id": ["kiln85:x"]})
+    entry("painting_variant", "edge_float_width", {**ok_painting, "width": 1.5})
+    entry("painting_variant", "edge_string_height", {**ok_painting, "height": "2"})
+    entry("painting_variant", "edge_bool_height", {**ok_painting, "height": True})
+    entry("painting_variant", "edge_number_title", {**ok_painting, "title": 5})
+    ok_damage = {"message_id": "x", "scaling": "never", "exhaustion": 0.1}
+    entry("damage_type", "bad_scaling", {**ok_damage, "scaling": "sometimes"})
+    entry("damage_type", "bad_exhaustion", {**ok_damage, "exhaustion": "lots"})
+    entry("damage_type", "bad_effects", {**ok_damage, "effects": "sparkles"})
+    entry("damage_type", "edge_exhaustion_string", {**ok_damage, "exhaustion": "0.5"})
+    entry("damage_type", "edge_message_number", {**ok_damage, "message_id": 7})
+    ok_song = {"sound_event": "minecraft:music_disc.5", "description": {"text": "x"}, "length_in_seconds": 1.5, "comparator_output": 3}
+    entry("jukebox_song", "bad_length_zero", {**ok_song, "length_in_seconds": 0})
+    entry("jukebox_song", "bad_comparator", {**ok_song, "comparator_output": 16})
+    entry("jukebox_song", "bad_sound_list", {**ok_song, "sound_event": ["a"]})
+    entry("jukebox_song", "bad_no_description", {k: v for k, v in ok_song.items() if k != "description"})
+    entry("jukebox_song", "edge_inline_sound", {**ok_song, "sound_event": {"sound_id": "kiln85:own", "range": 12.0}})
+    ok_instrument = {"sound_event": "minecraft:item.goat_horn.sound.2", "description": {"text": "x"}, "use_duration": 3.0, "range": 10.0}
+    entry("instrument", "bad_range_zero", {**ok_instrument, "range": 0})
+    entry("instrument", "bad_duration_negative", {**ok_instrument, "use_duration": -1})
+    entry("instrument", "edge_duration_zero", {**ok_instrument, "use_duration": 0})
+    entry("trim_pattern", "bad_no_description", {"asset_id": "kiln85:wave"})
+    entry("trim_pattern", "bad_decal", {"asset_id": "kiln85:wave", "description": {"text": "x"}, "decal": "yes"})
+    entry("trim_material", "bad_no_palette", {"description": {"text": "x"}})
+    entry("banner_pattern", "bad_key_object", {"asset_id": "kiln85:z", "translation_key": {"x": 1}})
+    entry("decorated_pot_pattern", "bad_asset_list", {"asset_id": [5]})
+    ok_wolf = {"assets": {"wild": "kiln85:w", "tame": "kiln85:t", "angry": "kiln85:a"}, "baby_assets": {"wild": "kiln85:w", "tame": "kiln85:t", "angry": "kiln85:a"}, "spawn_conditions": []}
+    entry("wolf_variant", "bad_assets_list", {**ok_wolf, "assets": ["kiln85:w"]})
+    entry("wolf_variant", "bad_missing_angry", {**ok_wolf, "assets": {"wild": "kiln85:w", "tame": "kiln85:t"}})
+    ok_cat = {"asset_id": "kiln85:c", "baby_asset_id": "kiln85:cb", "spawn_conditions": []}
+    entry("cat_variant", "bad_conditions_object", {**ok_cat, "spawn_conditions": {}})
+    entry("cat_variant", "bad_no_baby", {"asset_id": "kiln85:c", "spawn_conditions": []})
+    entry("pig_variant", "bad_model", {**ok_cat, "model": "sideways"})
+    entry("frog_variant", "bad_asset_number", {"asset_id": 3, "spawn_conditions": []})
+    entry("chat_type", "bad_chat_string", {"chat": "x", "narration": {"translation_key": "k", "parameters": []}})
+    entry("chat_type", "bad_parameters", {"chat": {"translation_key": "k", "parameters": "sender"}, "narration": {"translation_key": "k", "parameters": []}})
+    entry("dialog", "bad_type_number", {"type": 5})
+    ok_biome = {"has_precipitation": False, "temperature": 0.5, "downfall": 0.0, "effects": {"water_color": "#3f76e4"}, "carvers": [], "features": []}
+    write(pack, "data/kiln85/worldgen/biome/bad_precipitation.json", {**ok_biome, "has_precipitation": "maybe"})
+    write(pack, "data/kiln85/worldgen/biome/bad_color_number.json", {**ok_biome, "effects": {"water_color": 16711680}})
+    write(pack, "data/kiln85/worldgen/biome/bad_no_downfall.json", {k: v for k, v in ok_biome.items() if k != "downfall"})
+    write(pack, "data/kiln85/worldgen/biome/bad_modifier.json", {**ok_biome, "temperature_modifier": "hot"})
+    write(pack, "data/kiln85/worldgen/biome/edge_temperature_string.json", {**ok_biome, "temperature": "0.5"})
+    write(pack, "data/kiln85/worldgen/biome/edge_short_color.json", {**ok_biome, "effects": {"water_color": "#fff"}})
+    ok_type = {"has_skylight": True, "has_ceiling": False, "has_ender_dragon_fight": False, "coordinate_scale": 1.0, "min_y": 0, "height": 64, "logical_height": 64,
+               "infiniburn": "#minecraft:infiniburn_overworld", "ambient_light": 0.0, "monster_spawn_light_level": 7, "monster_spawn_block_light_limit": 0}
+    write(pack, "data/kiln85/dimension_type/bad_height.json", {**ok_type, "height": 100, "logical_height": 96})
+    write(pack, "data/kiln85/dimension_type/bad_logical.json", {**ok_type, "logical_height": 96})
+    write(pack, "data/kiln85/dimension_type/bad_scale.json", {**ok_type, "coordinate_scale": 0})
+    write(pack, "data/kiln85/dimension_type/bad_skylight.json", {**ok_type, "has_skylight": "yes"})
+    write(pack, "data/kiln85/dimension_type/edge_ok.json", ok_type)
+
+
 if __name__ == "__main__":
-    for f in (desert, crystal, hills, structure, dims, nether):
+    for f in (desert, crystal, hills, structure, dims, nether, bad):
         f()
     print("wrote", ROOT)
