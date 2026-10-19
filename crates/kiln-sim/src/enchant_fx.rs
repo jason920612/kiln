@@ -93,7 +93,7 @@ impl Player {
         v
     }
 
-    fn fx_subject(&self) -> Subject {
+    pub(crate) fn fx_subject(&self) -> Subject {
         let (width, height, _) = self.dimensions();
         Subject { pos: self.pos, rot: self.rot, width, height, movement: self.move_delta, silent: false, living: true }
     }

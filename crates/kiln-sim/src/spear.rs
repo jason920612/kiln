@@ -595,7 +595,25 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
                 let (at, game_time) = (p.pos, self.level.env.game_time);
                 play_sound(self.players, at, sounds[index].as_str(), SoundSource::Players, v, pi, None, game_time);
             }
-            _ => {}
+            // Any other effect (ignite, particles, a summoned entity, blocks, a function ...): resolved against the wielder like the
+            // `tick` and `location_changed` ones, and done to it (`Player::apply_fx`).
+            other => {
+                let mut actions = Vec::new();
+                {
+                    let p = &mut *self.players[a];
+                    let subject = p.fx_subject();
+                    let mut entity_rng = std::mem::replace(&mut p.entity_rng, LegacyRandom::new(0));
+                    let mut level_rng = self.rng.take().unwrap_or_else(|| LegacyRandom::new(0));
+                    kiln_loot::fx::resolve(other, level, p.pos, &subject, &mut entity_rng, &mut level_rng, &mut actions);
+                    self.rng = Some(level_rng);
+                    p.entity_rng = entity_rng;
+                }
+                self.with_ctx(|players, ctx| {
+                    for action in actions {
+                        players[a].apply_fx(action, EquipmentSlot::MainHand, ctx);
+                    }
+                });
+            }
         }
     }
 }
