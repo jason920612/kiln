@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn bad_values_fall_back_and_are_normalized() {
         let p = parse(
-            "server-port=abc\nmax-players= 5\nview-distance=+12\ndifficulty=HARD\ngamemode=7\nop-permission-level=9\n\
+            "server-port=abc\nmax-players=5 \nview-distance=+12\ndifficulty=HARD\ngamemode=7\nop-permission-level=9\n\
              max-world-size=0\nonline-mode=yes\nlevel-type=MineCraft:FLAT\nannounce-player-achievements=true\nfoo=bar\n",
         );
         assert_eq!(p.server_port, 25565, "unparsable number: default");
