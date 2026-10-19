@@ -512,3 +512,13 @@ impl Player {
         self.pending_sounds.push(pkt);
     }
 }
+
+impl crate::Sim {
+    /// The modifiers on attribute `attribute` of player `conn` as `(id, amount)`: the equipment's, the effects', the active
+    /// `location_changed` effects' and the commands' (for tests).
+    pub fn attribute_modifiers(&self, conn: kiln_link::ConnId, attribute: &str) -> Option<Vec<(String, f64)>> {
+        let p = self.players.get(&conn)?;
+        let attr = crate::combat::Attr::named(kiln_data::live::leak_str(attribute));
+        Some(p.attribute_modifiers(attr).into_iter().map(|(id, amount, _)| (id, amount)).collect())
+    }
+}

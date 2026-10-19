@@ -36,6 +36,13 @@ pub(crate) struct Attr {
     max: f64,
 }
 
+impl Attr {
+    /// An attribute by name with no particular base or range (to look at its modifiers).
+    pub(crate) fn named(name: &'static str) -> Attr {
+        Attr { name, base: 0.0, min: f64::MIN, max: f64::MAX }
+    }
+}
+
 pub(crate) const ATTACK_DAMAGE: Attr = Attr { name: "minecraft:attack_damage", base: 1.0, min: 0.0, max: 2048.0 };
 pub(crate) const ATTACK_SPEED: Attr = Attr { name: "minecraft:attack_speed", base: 4.0, min: 0.0, max: 1024.0 };
 pub(crate) const ATTACK_KNOCKBACK: Attr = Attr { name: "minecraft:attack_knockback", base: 0.0, min: 0.0, max: 5.0 };
@@ -60,6 +67,8 @@ pub(crate) const FALL_DAMAGE_MULTIPLIER: Attr =
     Attr { name: "minecraft:fall_damage_multiplier", base: 1.0, min: 0.0, max: 100.0 };
 pub(crate) const GRAVITY: Attr = Attr { name: "minecraft:gravity", base: 0.08, min: -1.0, max: 1.0 };
 pub(crate) const JUMP_STRENGTH: Attr = Attr { name: "minecraft:jump_strength", base: 0.41999998688697815, min: 0.0, max: 32.0 };
+#[cfg(test)]
+pub(crate) const MOVEMENT_EFFICIENCY: Attr = Attr { name: "minecraft:movement_efficiency", base: 0.0, min: 0.0, max: 1.0 };
 pub(crate) const WATER_MOVEMENT_EFFICIENCY: Attr = Attr { name: "minecraft:water_movement_efficiency", base: 0.0, min: 0.0, max: 1.0 };
 pub(crate) const OXYGEN_BONUS: Attr = Attr { name: "minecraft:oxygen_bonus", base: 0.0, min: 0.0, max: 1024.0 };
 pub(crate) const WAYPOINT_TRANSMIT_RANGE: Attr =

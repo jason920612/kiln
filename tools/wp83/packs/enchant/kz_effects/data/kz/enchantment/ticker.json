@@ -1,0 +1,22 @@
+{
+  "description": {"text": "Ticker"},
+  "supported_items": "minecraft:diamond_boots",
+  "weight": 5,
+  "max_level": 1,
+  "min_cost": {"base": 5, "per_level_above_first": 10},
+  "max_cost": {"base": 40, "per_level_above_first": 10},
+  "anvil_cost": 2,
+  "slots": ["feet"],
+  "effects": {
+    "minecraft:tick": [
+      {
+        "effect": {"type": "minecraft:run_function", "function": "kz:count"},
+        "requirements": {
+          "type": "minecraft:entity_properties",
+          "entity": "this",
+          "predicate": {"minecraft:flags": {"is_on_ground": true}}
+        }
+      }
+    ]
+  }
+}
