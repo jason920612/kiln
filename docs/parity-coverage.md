@@ -954,6 +954,24 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 沒做 | worldgen 資料包(`docs/wp83.md` §5 寫了現況與做法);`block_transformer` 沒覆寫的三個(鋤、斧、鏟)仍是 Kiln 內建規則、不讀 vanilla 的 JSON(資料包覆寫時才照資料執行);`/give … decorated_pot[pot_decorations=[…]]` Kiln 收下、vanilla 回「Not a map」(與資料包無關,沒修);客戶端沒有 `minecraft:core` 時 Kiln 斷線(vanilla 全送資料);壞條目只擋缺必要欄位或壞 JSON 的 |
 | 效能 | 登入(連線到第一批區塊,暖機後 p50):base 36~51 ms、new 46~59 ms、new+資料包 49~56 ms;伺服器啟動到 ready:4.60 / 4.64 / 4.48 s。`sim_load`(50 玩家、10 組、noise 地形、模板世界,8 對交替):mspt 平均 base 19.61、new 19.99,p50 18.8 / 18.7,使用者 CPU 22.57 / 22.84 s(VM 與另一個工作階段共用,同一邊內變動 ±1.5 ms);`survival_bench` 50 機器人各一次:mean 21.2→17.6、p99 44.1→41.9(不同時段,不是證據);沒有退步 |
 
+### 6.27 wp84(`wp84-playthrough11`):第十一次真實客戶端遊玩(快樂恐魔、騎乘與長矛、不祥試煉、考古與陶罐、凋零與傳送門、物品×生物矩陣、資料包伺服器)
+
+細節見 `docs/playthrough-wp84.md`。新工具(`tools/wp84/`):`p84_cmp.py`(兩邊的 facts 與封包集合逐項比)、`p84_ghast.py`/`p84_gfollow.py`/`p84_spear.py`/`p84_lunge.py`/`p84_trial.py`/`p84_pots.py`/`p84_arch.py`/`p84_jockeys.py`/`p84_wither2.py`/`p84_dp.py`、資料包 `packs/kw84`(自己寫的 JSON,`make_kw84.py` 產生)、`neg84.sh`(負向檢查)、`verify84.sh`;`ClientCtl` 的 spy 新增本機玩家的 `SetEntityMotion`(`motion_self`)。
+
+| 區域 | 結果 |
+|---|---|
+| 快樂恐魔 | **補/修**:成體不收雪球(`canFallInLove`)、由 NBT 載入的幼體照幼體設定(用腦跟人;存檔重啟後也是)、護目鏡上下音與乘客變動時的靜止、繩子的彈性 10/斷裂 16/近距離不拉/拉扯時 `Wait`。`happy_ghast_wp84.rs`(4)。沒做:四點彈簧(恐魔當持繩者拉船/馬) |
+| **玩家的伺服器端速度** | **修(找到的最大一個)**:vanilla 的 `ServerPlayer` 每刻 `travel`:站著 `Motion y = −0.0784`、擊退封包送的是走一步之後的值(殭屍打 y 0.275/水平 0.218,Kiln 以前送原始的 0.4/0.4、剩的不衰減,連打累加)、長矛突進從 −0.0784 起算(以前 y=0 → 客戶端離地,走 1.21 格而不是 1.00)。`vel` 與 `server_delta` 併成一個欄位,擊退封包等一刻;`state_hash` 只含水平分量,`crowd_golden` 四個沒有重錄;parity 套件的玩家標 `untravelled`(它們重播 vanilla 記下來的一擊,沒有玩家 tick),`combat`/`melee`(690)/`spear`(148)/`combat75`/`melee52` 都過。`player_knockback_wp84.rs`;真客戶端兩邊 `motion_self` 逐位相同 |
+| 喝不祥之瓶、消耗品的 `play_sound` 效果 | **修**:`PlaySoundConsumeEffect` 是 `playSound(null,…)`,喝的人也聽到(`ominous_bottle_sound.rs`) |
+| 裝飾陶罐 | **修**:每放一個物品都更新旁邊的比較器(`pot_comparator.rs`);放入/搖頭/漏斗/打碎/合成/掉落全部逐項相同 |
+| 物品×生物矩陣 | 17 種生物 × 12 種物品 204 組:168 相同;**修**:駱駝屍殼/殭屍馬/殭屍鸚鵡螺可拴、骷髏馬收鞍、悅靈給/取物音排除給的人、哞菇剪完有爆炸粒子(`interact_wp84.rs` 4 個) |
+| 資料包 | **修**:進度的 `player` 條件可以寫成述詞檔案的名字(字串)(`advancement_reference.rs`);其餘(函式 load/tick/巨集/`return`、述詞、7 個進度與獎勵、loot 與 recipe 覆寫、4 個附魔含 `post_attack`/`damage` 條件/屬性、傷害類型、tag)兩邊逐項相同 |
+| 鸚鵡螺離水的音效 | **修**:id 是 `*_land`(以前拼成 `*_on_land`,不存在的音效):`land_sounds::the_land_sounds_are_registered` |
+| 不祥試煉 | 喝瓶 → Bad Omen → Trial Omen(20 刻)→ 刷怪籠不祥化 → 物品生成器 → 保險庫與不祥鑰匙:相同 |
+| 考古 | 四種結構的 `locate`、可疑沙/礫/陶罐/箱子的位置與 `LootTable` 相同;**記錄(世界產生,wp85)**:沙漠神殿下 K 多一個地牢、暖海遺跡多 6 塊可疑沙 |
+| 沒做 | 重錘空中一擊的並排傷害(驅動打不到)、監守者潛行與被打斷的傳送門(wp78 做過)、`/damage` 指令的擊退封包(vanilla 在實體階段外是原始值)、四點彈簧、`data merge` 陶罐不更新比較器、沒有新的向量檔(`work/wp84/` 空;`work/m6-mobs2/vectors.jsonl` 沒動) |
+| 驗證 | VERIF |
+
 ## 7. 重跑
 
 ```sh
