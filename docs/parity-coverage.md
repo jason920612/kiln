@@ -882,6 +882,24 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 
 
 
+### 6.23 wp80(`wp80-playthrough10`):第十次真實客戶端遊玩(封包畫廊)
+
+細節見 `docs/playthrough-wp80.md`。新工具(`tools/wp80/`):`p80_gallery.py`(44 種怪物的封包集合比較)、`p80_proj.py`、`p80_hurt.py`、`p80_matrix.py`(物品×生物)、`p80_beaudit.py`(21 種方塊實體的 `data get block`)、`p80_bonemeal.py`、`p80_pale.py`、`p80_gateway.py`、`p80_crops.py`、`p80_sniffer.py`、`p80_copper.py`、`p80_beacon.py`、`p80_small8.py`、`neg80.sh`。
+
+| 區域 | 結果 |
+|---|---|
+| 玩家被投射物/守衛者雷射/鐵砧打到 | **修**:`dealDefaultKnockback` 與 `indicateDamage`(`Hurt Animation`)原本只有近戰與荊棘;改成 `#no_knockback` 以外全部。`player_hurt_animation.rs` |
+| 生物與玩家落地 | **補**:塵土粒子(`150 × min(0.2 + power/15, 2.5)`)。`landing_dust.rs` |
+| 眼眨花 | **補**:`EyeblossomBlock`(隨機刻、排程刻、trail 粒子、音效、鄰居波及),鎖步 1600 朵 10 個時間點逐點相同。`eyeblossom.rs` |
+| 骨粉 | **補**約 30 種方塊(苔蘚、竹子、藤蔓、滴水葉、灌木、海草、海泡菜、匹克植物、花簇、菌岩…)與水下骨粉;未做:發光地衣/幽匿脈、蒼白苔蘚地毯頂部、棚狀蘑菇。`behaviour/bonemeal.rs` 單元測試 + `bone_meal_dispenser.rs`;統計:苔蘚/竹子/滴水葉兩邊相同 |
+| 終界閘道 | **補**:生物與物品也傳送(原本只有玩家);三種落點與 V 逐位相同。`gateway_entities.rs` |
+| 信標 | **修**:`data get block` 的 `Levels`(容器寫回)、`data merge` 後保留層數與光束;層數/範圍/金屬並排相同。`beacon_pyramids.rs` |
+| 合成器 | **修**:指令放的合成器 `data get block` 沒有欄位 |
+| 羅盤 | **補**:對磁石使用、磁石消失後忘掉目標。`lodestone_compass.rs` |
+| 餵食 `LoveCause` | **補**:存成 UUID,重新載入後找回玩家。`love_cause.rs` |
+| 並排相同(不用改) | 守衛者雷射(6.0/擊、90~100 刻)、長老守衛者挖掘疲勞、海綿(含植物/地獄烘乾)、導管(15/16/42 框架、範圍、傷害)、悅靈跳舞與紫水晶複製、不祥之兆→襲擊前半、作物生長(6 種 800 株)、嗅探獸蛋(苔蘚/沙)、嗅探獸挖掘、銅燈泡(5 種×4 脈衝)、閃電清銅、激流(水裡)、結構位置與府邸/前哨站普查 |
+| 沒修 | 釀造台 `BrewTime` 差 1 刻、漏斗 `TransferCooldown` 顯示、講台 `Page`、`ProjectilePower`/`PlayerCombatEnter/End` 封包、襲擊者在血條滿後的出現方式(K 一次、V 陸續) |
+
 ## 7. 重跑
 
 ```sh
@@ -1003,6 +1021,11 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 #   雙客戶端同伺服器：switch.sh K|V both，TARGET=K|V python3 p78_dragon.py（STEPS=crystals,fight,death,respawn；FASTFWD、FULLHP）、p78_dying.py；兩位玩家的突襲：bash raid2.sh K|V
 #   鎖步（只要 console）：p78_wexp.py N（凋零生成爆炸）、p78_wdmg.py、p78_arrowcmp.py、p78_tridentcmp.py、p78_itemblast*.py、p78_wire.py；複製機搜尋：p78_dupe.py SEED N dupe2、p78_minitems.py
 #   負向檢查：CARGO_BUILD_JOBS=4 ~/kt wp78-playthrough9 bash tools/wp78/neg78.sh；最後驗證：~/kt wp78-playthrough9 bash tools/wp78/verify78.sh
+# wp80：第十次遊玩（VM；Kiln 25589、vanilla 25595；見 docs/playthrough-wp80.md）
+#   bash tools/wp80/push_tools.sh；bash wp80_start.sh / wp80_vanilla.sh（KILN_SEED=80 / VSEED=80）、switch.sh K|V split|both，然後（鎖步，只要 console）
+#   p80_pale.py | p80_gateway.py | p80_beacon.py | p80_copper.py | p80_conduit.py | p80_monument.py | p80_crops.py kind[,kind] 400 100 | p80_sniffer.py eggs|dig N | p80_bonemeal.py kind[,kind] N | p80_beaudit.py
+#   真客戶端（par.sh）：p80_allay.py、p80_small8.py lodestone,riptide、p80_omen.py；雙客戶端：p80_gallery.py [mob,…] SECS、p80_proj.py、p80_guard.py、p80_elder.py；矩陣：p80_matrix.py + p80_matrix_cmp.py
+#   負向檢查：~/kt wp80-playthrough10 bash tools/wp80/neg80.sh
 # 登入等封包的 golden 由原版驗證後寫入
 python tools/packet_vectors.py --bless
 ```
