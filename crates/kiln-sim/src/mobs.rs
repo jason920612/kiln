@@ -562,6 +562,83 @@ pub(crate) fn drop_item(stack: kiln_item::ItemStack, pos: [f64; 3], h: u64) -> S
 mod tests {
     use super::*;
 
+    /// A natural spawn pack made the way the spawner hands it over: every mob finalized in turn with the pack's shared group data.
+    fn pack(kind: MobKind, n: usize, group: Option<&Group>, seed: i64) -> Vec<crate::entities::Entity> {
+        (0..n)
+            .map(|i| {
+                let fin = Finalize { ctx: difficulty_instance(2, 0, 0, 1.0), seed: seed + i as i64, persistent: false, natural: true, monsters_disabled: false, camel_space: false, black_cat: false, group: group.cloned() };
+                crate::entities::Entity::new(i as i32 + 1, i as u128 + 1, spawn(kind, [0.5, 64.0, 0.5], Some(0.0), Some(fin)))
+            })
+            .collect()
+    }
+
+    fn babies(pack: &[crate::entities::Entity]) -> Vec<bool> {
+        pack.iter().map(|e| e.phys.as_deref().and_then(mob::data).is_some_and(|m| m.baby())).collect()
+    }
+
+    /// `AgeableMob.finalizeSpawn`: after the first mob of a spawn group 5 in 100 are calves. Every natural mob was finalized with a group of its own, so
+    /// no herd ever had a calf.
+    #[test]
+    fn the_cows_of_a_natural_pack_can_be_calves_but_not_the_first() {
+        let mut calves = 0;
+        let mut firsts = 0;
+        for s in 0..300 {
+            let group = Group::default();
+            let b = babies(&pack(MobKind::Cow, 4, Some(&group), s * 10));
+            firsts += usize::from(b[0]);
+            calves += b[1..].iter().filter(|&&c| c).count();
+        }
+        assert_eq!(firsts, 0, "the first of a group is never a calf");
+        // 900 later members at 5 in 100: 45 expected.
+        assert!((20..80).contains(&calves), "{calves} calves among 900 later members");
+        // Alone, every mob is the first of its own group.
+        let alone: usize = (0..300).map(|s| babies(&pack(MobKind::Cow, 4, None, s * 10)).iter().filter(|&&c| c).count()).sum();
+        assert_eq!(alone, 0, "without the pack's group data nothing is a calf: {alone}");
+    }
+
+    /// `ZombieGroupData`: the first zombie of a pack decides, with 5 in 100, whether the whole pack is made of babies.
+    #[test]
+    fn a_zombie_pack_is_all_babies_or_none() {
+        let (mut all, mut none, mut mixed) = (0, 0, 0);
+        for s in 0..400 {
+            let group = Group::default();
+            let b = babies(&pack(MobKind::Zombie, 4, Some(&group), s * 10));
+            match b.iter().filter(|&&c| c).count() {
+                0 => none += 1,
+                4 => all += 1,
+                _ => mixed += 1,
+            }
+        }
+        assert_eq!(mixed, 0, "all babies {all}, none {none}, mixed {mixed}");
+        assert!(all > 0 && none > 300, "all babies {all}, none {none}");
+    }
+
+    /// `AbstractSchoolingFish.finalizeSpawn` and `TropicalFishGroupData`: the first fish of a pack leads, the others follow it and wear its variant.
+    #[test]
+    fn the_tropical_fish_of_a_pack_share_a_variant_and_follow_the_first() {
+        let group = Group::default();
+        group.0.lock().unwrap().tropical_school = Some(true);
+        let fish = pack(MobKind::TropicalFish, 4, Some(&group), 5);
+        let state = |e: &crate::entities::Entity| {
+            let m = e.phys.as_deref().and_then(mob::data).expect("mob");
+            let s = mob::ext::state::<mob::kinds::fish::FishState>(m).expect("fish state");
+            (s.leader, s.variant, s.is_school)
+        };
+        let leader = state(&fish[0]);
+        assert_eq!(leader.0, None, "the first fish leads");
+        assert!(leader.2);
+        for f in &fish[1..] {
+            let s = state(f);
+            assert_eq!(s.0, Some(1), "it follows the first");
+            assert_eq!(s.1, leader.1, "and wears its variant");
+        }
+        // An odd single fish: no school.
+        let group = Group::default();
+        group.0.lock().unwrap().tropical_school = Some(false);
+        let fish = pack(MobKind::TropicalFish, 1, Some(&group), 5);
+        assert!(!state(&fish[0]).2, "not a school");
+    }
+
     /// A camel (and its husk) is tame by `isTamed()` alone: a vanilla server does not list the horse flags (field 18) for it
     /// unless it is grazing, and Kiln sent the tame bit.
     #[test]
