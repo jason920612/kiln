@@ -427,9 +427,6 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         } else {
             [0.0, 0.0]
         };
-        let fire = weapon
-            .get(keys::ENCHANTMENTS)
-            .map_or(0, |e| e.level(kiln_item::registry::ENCHANTMENT.id("minecraft:fire_aspect").unwrap_or(-1)));
         let p = &*self.players[a];
         let stab = crate::entities::MobStab {
             target: id,
@@ -441,7 +438,6 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
             damage: s.damage,
             knockbacks: strengths,
             dismount: s.dismount,
-            fire_seconds: if s.damage { 4.0 * fire as f32 } else { 0.0 },
         };
         let Some(out) = crate::entities::stab_mob(self.entities, self.level, self.players, self.spawns, self.deaths, &stab) else { return false };
         // The attacker slows down for each knockback (`Player.causeExtraKnockback`).
@@ -499,8 +495,12 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
                 }
             }
         }
-        if hurt && let Victim::Player(t) = victim {
-            self.with_ctx(|players, ctx| crate::combat::post_attack(players, a, t, source, ctx));
+        // The post-attack enchantment effects of a hurt victim (fire aspect's `ignite`, ...).
+        if hurt {
+            match victim {
+                Victim::Player(t) => self.with_ctx(|players, ctx| crate::combat::post_attack(players, a, t, source, ctx)),
+                Victim::Entity(id) => self.post_attack_entity(a, id, source),
+            }
         }
         // `damageStatsAndHearts`.
         let health_now = match victim {

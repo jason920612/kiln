@@ -452,6 +452,11 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         send_particles(self.players, "minecraft:sweep_attack", at, 0, [dx as f32, 0.0, dz as f32], 0.0);
     }
 
+    /// [`Work::post_attack`] for the mob `id` (a stab of a spear).
+    pub(crate) fn post_attack_entity(&mut self, a: usize, id: i32, source: &Source) {
+        self.post_attack(a, Victim::Entity(id, None), source);
+    }
+
     /// `EnchantmentHelper.doPostAttackEffectsWithItemSource(victim, source, weapon)`: the victim's
     /// equipment effects enchanted `victim`, then the weapon's (`attacker`), each carried out on
     /// who it affects.
