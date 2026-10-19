@@ -19,7 +19,7 @@ const PLUNDER: &str = r##"{
     "minecraft:equipment_drops": [{
       "effect": {"type": "minecraft:add", "value": {"type": "minecraft:linear", "base": 1.0, "per_level_above_first": 0.0}},
       "enchanted": "attacker",
-      "requirements": {"condition": "minecraft:entity_properties", "entity": "attacker", "predicate": {"type": "minecraft:player"}}
+      "requirements": {"type": "minecraft:entity_properties", "entity": "attacker", "predicate": {"type": "minecraft:player"}}
     }]
   }
 }"##;
