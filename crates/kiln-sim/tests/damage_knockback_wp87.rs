@@ -16,7 +16,9 @@ struct World {
 
 impl World {
     fn new() -> Self {
-        let mut sim = Sim::new(SimConfig::new(4, 4, None));
+        let mut config = SimConfig::new(4, 4, None);
+        config.enable_command_block = true;
+        let mut sim = Sim::new(config);
         let (msg, stats) = join(1, "Farmer", 2);
         *stats.log.lock().unwrap() = Some(Vec::new());
         let keep = stats.clone();
