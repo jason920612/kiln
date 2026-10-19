@@ -289,8 +289,11 @@ mod tests {
         for line in expected.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
             let [verdict, registry, name] = line.split_whitespace().collect::<Vec<_>>()[..] else { panic!("{line}") };
             let registry = format!("minecraft:{registry}");
-            let (_, names) = loaded.names.iter().find(|(r, _)| *r == registry).unwrap_or_else(|| panic!("no entries in {registry}"));
-            let present = names.iter().any(|n| n == name);
+            // (A registry no entry of the pack got into keeps vanilla's entries.)
+            let present = match loaded.names.iter().find(|(r, _)| *r == registry) {
+                Some((_, names)) => names.iter().any(|n| n == name),
+                None => false,
+            };
             assert_eq!(present, verdict == "accepted", "{registry} {name}: vanilla {verdict}");
             checked += 1;
         }
