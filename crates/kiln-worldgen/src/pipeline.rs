@@ -31,6 +31,7 @@ use crate::order;
 use crate::proto::{ProtoChunk, Status};
 use crate::region::Region;
 use crate::sets::Loader;
+use crate::stem::{Stem, StemGenerator};
 use crate::structure::beard::Beardifier;
 use crate::structure::{ChunkStarts, StartCache, Structures};
 use kiln_proto::nbt::Tag;
@@ -67,6 +68,17 @@ impl Worldgen {
         let decorator = Decorator::new(&generator, &loader)?;
         let structures = Structures::load(&generator, &loader)?;
         Ok(Worldgen { generator, decorator, structures, generate_structures })
+    }
+
+    /// A noise-generated dimension of `pack`: `stem` (a parsed `LevelStem`, see [`Datapack::parse_stem`]) in the
+    /// level `stem.dimension_type` describes, for `seed`. Flat and debug stems have no noise pipeline (`None`).
+    pub fn from_stem(pack: &Datapack, stem: &Stem, seed: i64, generate_structures: bool) -> Result<Option<Worldgen>, Error> {
+        let StemGenerator::Noise { settings, source } = &stem.generator else { return Ok(None) };
+        let generator = Generator::for_dimension(pack, settings, source.kind(), &stem.dimension_type, seed)?;
+        let loader = Loader::new(pack, generator.biomes.iter().map(|b| b.name.clone()).collect());
+        let decorator = Decorator::new(&generator, &loader)?;
+        let structures = Structures::load(&generator, &loader)?;
+        Ok(Some(Worldgen { generator, decorator, structures, generate_structures }))
     }
 
     /// The End of `pack` for `seed` (noise settings `minecraft:end`, the end biome source).
