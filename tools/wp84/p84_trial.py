@@ -39,11 +39,15 @@ def setup():
     sv(f"tp {ME} {CX}.5 20 {CZ}.5", show=False)
     sv(f"forceload add {CX - 50} {CZ - 50} {CX + 50} {CZ + 50}", show=False)
     time.sleep(12)
-    out = sv(f"place structure minecraft:trial_chambers {CX} {CY} {CZ}", show=False, wait=8.0)
+    for _ in range(12):
+        out = sv(f"place structure minecraft:trial_chambers {CX} {CY} {CZ}", show=False, wait=8.0)
+        if "unloaded" not in out:
+            break
+        time.sleep(10)
     F("place:", out[-100:])
     time.sleep(5)
     sv("kill @e[type=!player]", show=False)
-    sv("gamerule spawn_mobs false", show=False)
+    sv("gamerule spawn_mobs true", show=False)
     sv("difficulty normal", show=False)
     sv(f"gamemode survival {ME}", show=False)
     sv(f"effect clear {ME}", show=False)
@@ -74,6 +78,11 @@ def omen():
     F("chosen spawner:", S)
     sv(f"tp {ME} {S[0] + 0.5} {S[1] + 8} {S[2] + 0.5}", show=False)
     time.sleep(2)
+    # no natural spawns beside the spawner: light the room (the spawner needs `spawn_mobs`)
+    for dx in range(-9, 10, 3):
+        for dz in range(-9, 10, 3):
+            for dy in (1, 2):
+                sv(f"execute if block {S[0] + dx} {S[1] + dy} {S[2] + dz} minecraft:air run setblock {S[0] + dx} {S[1] + dy} {S[2] + dz} minecraft:light[level=15]", show=False, wait=0.05)
     # the ominous bottle: a real drink
     sv(f"give {ME} minecraft:ominous_bottle[minecraft:ominous_bottle_amplifier=1] 1", show=False)
     a.select("minecraft:ominous_bottle")
@@ -85,7 +94,13 @@ def omen():
     cnt = rec_stop(a, "bottle", show=False)
     F("after the ominous bottle: effects", effects(), "bottle left", a.inv().get("minecraft:ominous_bottle", 0), "fx", sorted(k for k in cnt if k.startswith(("sound", "UpdateMobEffect", "entity_event")))[:6])
     # walk into the room: put the player beside the spawner and poll
-    sv(f"tp {ME} {S[0] + 0.5} {S[1] + 1} {S[2] + 2.5}", show=False)
+    spot = (S[0] + 0.5, S[1] + 1, S[2] + 2.5)
+    for dx, dz in ((0, 2), (0, -2), (2, 0), (-2, 0), (2, 2), (-2, -2)):
+        if blk(a, S[0] + dx, S[1] + 1, S[2] + dz).startswith(("air", "light")) and blk(a, S[0] + dx, S[1] + 2, S[2] + dz).startswith(("air", "light")):
+            spot = (S[0] + dx + 0.5, S[1] + 1, S[2] + dz + 0.5)
+            break
+    sv(f"tp {ME} {spot[0]} {spot[1]} {spot[2]}", show=False)
+    F("standing at", spot)
     t0 = time.time()
     g0 = gametime()
     seq, last = [], None
