@@ -945,6 +945,9 @@ public class ClientCtl {
                     sb.append(' ').append(en.profileId().toString(), 0, 4).append(":mode=").append(en.gameMode()).append(",listed=").append(en.listed());
                 }
                 d = sb.toString();
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket p && mc.player != null && p.id() == mc.player.getId()) {
+                // wp84: the local player's own motion packets (knockback, lunge, wind charge ...) with their values
+                d = "motion_self " + p.movement().x + " " + p.movement().y + " " + p.movement().z;
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundGameEventPacket p) {
                 Field idf = p.getEvent().getClass().getDeclaredField("id");
                 idf.setAccessible(true);
@@ -956,7 +959,7 @@ public class ClientCtl {
         if (d != null) {
             SPY.merge("= " + d, 1, Integer::sum);
         }
-        if (!SPY_NOISE.contains(cn) && !cn.equals("ClientboundSetEntityDataPacket")) {
+        if ((!SPY_NOISE.contains(cn) || (d != null && d.startsWith("motion_self"))) && !cn.equals("ClientboundSetEntityDataPacket")) {
             spyAdd(d != null ? d : cn.replace("Clientbound", "").replace("Packet", ""));
         }
     }
