@@ -356,7 +356,7 @@ fn max_age(s: u16) -> i32 {
 /// `BonemealableBlock.isValidBonemealTarget`.
 fn valid_target(_level: &RegionLevel, _pos: BlockPos, s: u16) -> bool {
     match logic::block_class(s) {
-        C::CropBlock | C::BeetrootBlock | C::TorchflowerCropBlock => state::get_int(s, "age") < max_age(s),
+        C::CropBlock | C::CarrotBlock | C::PotatoBlock | C::BeetrootBlock | C::TorchflowerCropBlock => state::get_int(s, "age") < max_age(s),
         C::StemBlock => state::get_int(s, "age") != 7,
         C::SweetBerryBushBlock => state::get_int(s, "age") < 3,
         C::CocoaBlock => state::get_int(s, "age") < 2,
@@ -373,7 +373,7 @@ fn success(_level: &mut RegionLevel, _s: u16) -> bool {
 /// `BonemealableBlock.performBonemeal`.
 fn perform(level: &mut RegionLevel, pos: BlockPos, s: u16, spawns: &mut Vec<Spawn>) {
     match logic::block_class(s) {
-        C::CropBlock | C::BeetrootBlock | C::TorchflowerCropBlock => {
+        C::CropBlock | C::CarrotBlock | C::PotatoBlock | C::BeetrootBlock | C::TorchflowerCropBlock => {
             let increase = match logic::block_class(s) {
                 C::TorchflowerCropBlock => 1,
                 C::BeetrootBlock => next_int_between(level.random(), 2, 5) / 3,
