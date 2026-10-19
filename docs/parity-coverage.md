@@ -919,6 +919,23 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 並排相同(不用改) | 守衛者雷射(6.0/擊、90~100 刻)、長老守衛者挖掘疲勞、海綿(含植物/地獄烘乾)、導管(15/16/42 框架、範圍、傷害)、悅靈跳舞與紫水晶複製、不祥之兆→襲擊前半、作物生長(6 種 800 株)、嗅探獸蛋(苔蘚/沙)、嗅探獸挖掘、銅燈泡(5 種×4 脈衝)、閃電清銅、激流(水裡)、結構位置與府邸/前哨站普查 |
 | 沒修 | 釀造台 `BrewTime` 差 1 刻、漏斗 `TransferCooldown` 顯示、講台 `Page`、`ProjectilePower`/`PlayerCombatEnter/End` 封包、襲擊者在血條滿後的出現方式(K 一次、V 陸續) |
 
+### 6.25 wp82(`wp82-gaps`):wp80、wp81 留下的差異(突襲、骨粉、方塊實體、封包、傳送門與閘道、生怪與結構)
+
+細節見 `docs/wp82.md`。新工具(`tools/wp82/`):`raid82.py`/`raidcd82.py`(突襲即時與鎖步)、`bonemeal82.py`、`be82.py`(方塊實體逐刻)、`portal82.py`、`gateway82.py`/`gwbatch82.py`/`gwflat82.py`/`heights82.py`/`spawn82.py`(閘道出口)、`ticket82.py`、`neg82.sh`;**vanilla 伺服器 java agent**(`tools/wp82/agent`,記錄 `TheEndGatewayBlockEntity` 的出口搜尋)。
+
+| 區域 | 結果 |
+|---|---|
+| 突襲血條滿後的出現方式 | **無生成機制差異**:兩邊 5 隻同刻生成在離玩家 87~110 格,走進村莊的時間表相同(第一波 K 46.1 s / V 46.1 s,之後 14.5 / 15.2 s);wp80 的「陸續出現」是生成點在玩家另一側。**修**兩個真差異:波次位置必須在 `isPositionEntityTicking` 內;`/tick freeze` 不 tick 突襲、自訂生怪者、龍戰(鎖步下一波 K 311 刻 = V 311 刻,修前 K 131)。`raids.rs` |
+| 骨粉 | **修**胡蘿蔔/馬鈴薯(各自的方塊類別沒進作物分支)、棚狀蘑菇、發光地衣(`MultifaceSpreader`)、莖到年齡 7 立刻 `randomTick`;幽匿脈不是 `BonemealableBlock`(並排無變化);巨大蘑菇並排相同(13~16/40)。`bone_meal_wp82.rs`、`bonemeal.rs` |
+| 方塊實體 `data get block` | 釀造台 `BrewTime`、漏斗 `TransferCooldown`、熔爐:逐刻與 30 刻都相同(wp80 的差 1 是步進讀值錯位);**修**講台 `Page`(沒有頁數得 −1)、方塊實體丟掉不認得的欄位(唱片機 `is_playing`、`Foo`)。`be_fields.rs` |
+| 封包 | **補** `ProjectilePower`(bundle 裡跟著 motion,四種投射物)、`PlayerCombatEnter/End`(`CombatTracker`:生物造成的傷害進入、每 20 刻 recheck、300 刻離開、死亡時結束)。`combat_packets.rs` |
+| 非玩家實體進傳送門 | **修**晚一刻:進門後**下一刻**傳送(來源先 tick 的目的地在下一刻開始、後 tick 的在下一刻結束);凍結的遊戲不掃描。逐刻並排兩個方向 K = V。`dimensions.rs` |
+| 終界閘道出口 | **找到來源,修**:vanilla 的 `findValidSpawnInChunk` 把「最近的」存成迭代器游標的參照,回傳的是 chunk 的**遠角**(最大 x、z,最高區段頂端);agent 看到 (687,63,687) 而最近候選是 (672,32,672)。修後 (20,−40)、(30,30)、(40,10) 三個樣本 K = V。閘道對速度/朝向:保留(珍珠歸零)。`portal.rs`、`gateway_entities.rs` |
+| 傳送門票跨重啟 | 沒有差異(兩邊都存 `minecraft:portal` + `ticks_left`;Kiln 重開後 130 刻仍載入、330 刻後放掉)。`tickets.rs` |
+| 自然生怪的群組資料 | **修**:每個群共用 `SpawnGroupData`(動物群的幼體、殭屍群全嬰兒/全成年、蜘蛛效果、變種、熱帶魚群與領隊);`TropicalFish.isMaxGroupSizeReached`(單隻就結束這個群)。`mobs.rs` 單元測試 |
+| 探險家地圖第二次搜尋 | **修**:`skip_existing_chunks` = 結構起點 `references`(最多 1,存檔),第二次從同一處找下一個。`maps.rs` |
+| 沒做 | 殭屍豬人啟用刻比例(Kiln 約高 10%,需數小時並排長跑) |
+
 ## 7. 重跑
 
 ```sh
@@ -1050,6 +1067,10 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 #   p80_pale.py | p80_gateway.py | p80_beacon.py | p80_copper.py | p80_conduit.py | p80_monument.py | p80_crops.py kind[,kind] 400 100 | p80_sniffer.py eggs|dig N | p80_bonemeal.py kind[,kind] N | p80_beaudit.py
 #   真客戶端（par.sh）：p80_allay.py、p80_small8.py lodestone,riptide、p80_omen.py；雙客戶端：p80_gallery.py [mob,…] SECS、p80_proj.py、p80_guard.py、p80_elder.py；矩陣：p80_matrix.py + p80_matrix_cmp.py
 #   負向檢查：~/kt wp80-playthrough10 bash tools/wp80/neg80.sh
+# wp82:wp80、wp81 的差異(VM;Kiln 25599、vanilla 25596;見 docs/wp82.md)
+#   bash tools/wp82/push.sh；SEED=78 ./sv.sh K|V fresh 8（AGENT=1 ./sv.sh V …：閘道出口 agent，先 bash tools/wp82/agent/build.sh）；./bot.sh K|V W 1
+#   python3 raid82.py 4 1 | raidcd82.py | bonemeal82.py all 40 | be82.py 5 | portal82.py 6 | gateway82.py 20 -40 | gwbatch82.py 30,30 40,10 | ticket82.py A|B
+#   負向檢查：~/kt wp82-gaps bash tools/wp82/neg82.sh
 # 登入等封包的 golden 由原版驗證後寫入
 python tools/packet_vectors.py --bless
 ```
