@@ -126,51 +126,78 @@ def harness():
     sv(f"give {ME} minecraft:shears 1", show=False)
     for col in ("white", "red", "lime"):
         give(ME, f"minecraft:{col}_harness", 1)
-    for col in ("red", "lime"):
-        rec_start(a)
-        ok = use_on_entity(a, eid, f"minecraft:{col}_harness", dy=1.5)
-        time.sleep(0.8)
-        cnt = rec_stop(a, f"harness_{col}", show=False)
-        F("harness", col, "click", ok, "body", sget("equipment"), "inv", {k: v for k, v in a.inv().items() if "harness" in k}, "fx", sorted(k for k in cnt if k.startswith(("sound", "SetEquipment")))[:5])
+    fxk = lambda cnt: sorted(k for k in cnt if k.startswith(("sound", "SetEquipment", "SetPassengers", "ContainerSetSlot")))[:6]
+    rec_start(a)
+    ok = use_on_entity(a, eid, "minecraft:red_harness", dy=1.5)
+    time.sleep(0.8)
+    cnt = rec_stop(a, "harness_red", show=False)
+    F("harness red click", ok, "body", sget("equipment"), "vehicle", a.state(0).get("vehicle"), "fx", fxk(cnt))
+    # a second harness on a harnessed ghast: not a replacement, the click boards it
+    rec_start(a)
+    ok = use_on_entity(a, eid, "minecraft:lime_harness", dy=1.5)
+    time.sleep(1.0)
+    cnt = rec_stop(a, "harness_lime", show=False)
+    F("harness lime click", ok, "body", sget("equipment"), "vehicle", a.state(0).get("vehicle"), "fx", fxk(cnt))
+    rec_start(a)
+    a.key("shift", "down"); time.sleep(0.3); a.key("shift", "up")
+    time.sleep(1.2)
+    cnt = rec_stop(a, "dismount", show=False)
+    F("sneak: vehicle", a.state(0).get("vehicle"), "fx", fxk(cnt))
+    # sneaking with a harness in hand: no ride, and no replacement
+    a.key("shift", "down"); time.sleep(0.3)
+    rec_start(a)
+    ok = use_on_entity(a, eid, "minecraft:lime_harness", dy=1.5)
+    time.sleep(0.8)
+    a.key("shift", "up")
+    cnt = rec_stop(a, "sneak_lime", show=False)
+    F("sneak + lime harness click", ok, "body", sget("equipment"), "vehicle", a.state(0).get("vehicle"), "fx", fxk(cnt))
     rec_start(a)
     ok = use_on_entity(a, eid, "minecraft:shears", dy=1.5)
     time.sleep(0.8)
     cnt = rec_stop(a, "shears", show=False)
-    F("shears: click", ok, "body", sget("equipment"), "inv", {k: v for k, v in a.inv().items() if "harness" in k}, "fx", sorted(k for k in cnt if k.startswith(("sound", "SetEquipment", "ContainerSetSlot", "AddEntity")))[:6])
-    # empty hand on a harnessed ghast = mount; with a lead
-    for _ in range(2):
-        sv(f"item replace entity {ME} weapon.mainhand with minecraft:air", show=False)
-    use_on_entity(a, eid, "minecraft:stick", dy=1.5)
-    F("after stick click: vehicle", a.state(0).get("vehicle"))
+    F("shears: click", ok, "body", sget("equipment"), "vehicle", a.state(0).get("vehicle"), "inv", {k: v for k, v in a.inv().items() if "harness" in k}, "fx", fxk(cnt))
+    # a ghastling cannot wear one
+    sv("kill @e[type=happy_ghast]", show=False)
+    sv("summon minecraft:happy_ghast 20.5 202 24.5 {Age:-24000,NoAI:1b,PersistenceRequired:1b}", show=False)
+    time.sleep(1.2)
+    eid = ghasts()[0]["id"]
+    rec_start(a)
+    ok = use_on_entity(a, eid, "minecraft:white_harness", dy=0.5)
+    time.sleep(0.8)
+    cnt = rec_stop(a, "baby_harness", show=False)
+    F("ghastling + white harness: click", ok, "body", sget("equipment"), "vehicle", a.state(0).get("vehicle"), "fx", fxk(cnt))
 
 
 def lead():
     reset()
     sv("setblock 26 200 24 minecraft:oak_fence", show=False)
-    sv("summon minecraft:happy_ghast 24.5 203 24.5 {PersistenceRequired:1b,equipment:{body:{id:\"minecraft:blue_harness\",count:1}}}", show=False)
+    sv("summon minecraft:happy_ghast 24.5 202 24.5 {NoAI:1b,PersistenceRequired:1b,equipment:{body:{id:\"minecraft:blue_harness\",count:1}}}", show=False)
     time.sleep(1.2)
     eid = ghasts()[0]["id"]
     give(ME, "minecraft:lead", 3)
+    # sneaking, so that the click does not board it
+    a.key("shift", "down"); time.sleep(0.3)
     rec_start(a)
     ok = use_on_entity(a, eid, "minecraft:lead", dy=1.5)
     time.sleep(0.8)
+    a.key("shift", "up")
     cnt = rec_stop(a, "lead", show=False)
-    F("lead click", ok, "Leash", sget("leash"), "fx", sorted(k for k in cnt if k.startswith(("sound", "SetEntityLink", "EntityLink")))[:5])
-    # tie to the fence with a real click on the fence
-    a.select("minecraft:lead")
-    ok2 = a.use_on(26, 200, 24)
-    time.sleep(0.8)
-    F("fence click", ok2, "Leash", sget("leash"))
-    # the player walks away; the tethered ghast: max distance from the fence over 20 s
-    sv(f"tp {ME} 26.5 200 30.5", show=False)
+    F("lead click", ok, "leash", sget("leash"), "vehicle", a.state(0).get("vehicle"), "fx", sorted(k for k in cnt if k.startswith(("sound", "SetEntityLink", "EntityLink")))[:5])
+    sv("data merge entity @e[type=happy_ghast,limit=1] {NoAI:0b}", show=False)
+    # the player walks away; how far does the led ghast follow / is held
     mx, trk = 0.0, []
-    for i in range(20):
+    for i in range(10):
         time.sleep(1.0)
         gp = gpos()
-        d = round(math.hypot(gp[0] - 26.5, gp[2] - 24.5), 1) if gp else None
-        trk.append(d)
-    F("tethered ghast distance to the fence each second:", trk)
-    F("ghast", gpos(), "leash entity", sget("leash"))
+        trk.append(hyp(gp, pos(a)) if gp else None)
+    F("led ghast distance to the player each second (player still):", trk)
+    a.walk_to(8.5, 8.5, timeout=10, tol=1.5)
+    trk = []
+    for i in range(10):
+        time.sleep(1.0)
+        gp = gpos()
+        trk.append(hyp(gp, pos(a)) if gp else None)
+    F("after the player walked 17 blocks away: distance each second:", trk, "leash", sget("leash"))
 
 
 FN = {"follow": follow, "feed": feed, "stand": stand, "harness": harness, "lead": lead}

@@ -139,3 +139,32 @@ fn a_harnessed_happy_ghast_plays_its_goggles_when_the_first_rider_boards_and_the
     w.ticks(3);
     assert_eq!(sounds_heard(&w).iter().filter(|s| **s == up).count(), 1, "goggles up once the last rider left");
 }
+
+#[test]
+fn a_leashed_happy_ghast_keeps_its_lead_out_to_16_blocks_not_12() {
+    let mut w = World::new();
+    let p = w.client.pos;
+    let uuid = match w.sim.saved_player_nbt(1).and_then(|t| t.get("UUID").cloned()) {
+        Some(Tag::IntArray(v)) if v.len() == 4 => v,
+        other => panic!("the player's UUID: {other:?}"),
+    };
+    // 14 blocks away (centre to centre): past the 12 of an ordinary lead (it would snap), inside the 16 of `HappyGhast.leashSnapDistance`.
+    w.run(&format!(
+        "summon minecraft:happy_ghast {} {} {} {{NoAI:1b,PersistenceRequired:1b,leash:{{UUID:[I;{},{},{},{}]}}}}",
+        p[0] + 0.0,
+        p[1] + 0.0,
+        p[2] + 14.0 - 0.0,
+        uuid[0],
+        uuid[1],
+        uuid[2],
+        uuid[3]
+    ));
+    w.ticks(10);
+    let g = w.ghast();
+    assert!(g.get("leash").is_some(), "the lead holds at 14 blocks: {g:?}");
+    // ... and it snaps past 16.
+    w.run("tp @e[type=happy_ghast,limit=1] ~ ~ ~4");
+    w.ticks(5);
+    let g = w.ghast();
+    assert!(g.get("leash").is_none(), "the lead snapped farther than 16 blocks: {g:?}");
+}

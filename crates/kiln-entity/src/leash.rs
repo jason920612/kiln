@@ -23,6 +23,15 @@ use kiln_proto::nbt::Tag;
 pub const SNAP_DISTANCE: f64 = 12.0;
 /// `Leashable.LEASH_ELASTIC_DIST`: past this (less the widths of both) the lead pulls.
 pub const ELASTIC_DISTANCE: f64 = 6.0;
+/// `Leashable.leashSnapDistance` / `leashElasticDistance` of an entity: the happy ghast's (and the ghast's) are 16 and 10.
+fn snap_distance(e: &Entity) -> f64 {
+    if matches!(e.type_name, "minecraft:happy_ghast" | "minecraft:ghast") { 16.0 } else { SNAP_DISTANCE }
+}
+
+fn elastic_distance_of(e: &Entity) -> f64 {
+    if matches!(e.type_name, "minecraft:happy_ghast" | "minecraft:ghast") { 10.0 } else { ELASTIC_DISTANCE }
+}
+
 /// `Leashable.AXIS_SPECIFIC_ELASTICITY`.
 const AXIS_SPECIFIC_ELASTICITY: Vec3 = Vec3 { x: 0.8, y: 0.2, z: 0.8 };
 const TORSIONAL_ELASTICITY: f64 = 10.0;
@@ -102,7 +111,7 @@ pub fn leash_distance_to(e: &Entity, other: &Entity) -> f64 {
 
 /// `Leashable.canHaveALeashAttachedTo(holder)`.
 pub fn can_have_leash_attached_to(e: &Entity, m: Option<&MobData>, holder: &Entity, level: &dyn EntityLevel) -> bool {
-    e.id != holder.id && leash_distance_to(e, holder) <= SNAP_DISTANCE && can_be_leashed(e, m, level)
+    e.id != holder.id && leash_distance_to(e, holder) <= snap_distance(e) && can_be_leashed(e, m, level)
 }
 
 /// `Leashable.leashableLeashedTo` / `leashableInArea(level, centre, leashed to holder)`: the
@@ -347,16 +356,16 @@ pub fn tick_leash(e: &mut Entity, mut m: Option<&mut MobData>, level: &mut dyn E
     // `PathfinderMob.whenLeashedTo`: the home follows the holder.
     let leasher_block = BlockPos::containing(hp.x, hp.y, hp.z);
     if let Some(m) = mob_of(e, &mut m) {
-        m.home = Some((leasher_block, ELASTIC_DISTANCE as i32 - 1));
+        m.home = Some((leasher_block, elastic_distance_of(e) as i32 - 1));
     }
-    if dist > SNAP_DISTANCE {
+    if dist > snap_distance(e) {
         level.emit(Event::Sound { pos: hp, sound: "minecraft:item.lead.break", source: "neutral", volume: 1.0, pitch: 1.0 });
         // `Leashable.leashTooFarBehaviour`, and the mob's: no more walking this tick.
         drop_leash(e, m.as_deref_mut(), level);
         if let Some(m) = mob_of(e, &mut m) {
             m.goals.set_control_flag(MOVE, false);
         }
-    } else if dist > ELASTIC_DISTANCE - h_width as f64 - e.width as f64
+    } else if dist > elastic_distance_of(e) - h_width as f64 - e.width as f64
         && check_elastic_interactions(e, m.as_deref(), (hp, h_width, h_height, h_y_rot, h_no_ai, h_move), level)
     {
         on_elastic_leash_pull(e, &mut m, level);
@@ -406,7 +415,7 @@ fn check_elastic_interactions(
     _level: &dyn EntityLevel,
 ) -> bool {
     let _ = h_no_ai;
-    let elastic = ELASTIC_DISTANCE;
+    let elastic = elastic_distance_of(e);
     let movement = own_movement(e, m);
     let y_rad = e.y_rot * 0.017453292f32;
     let size = Vec3::new(e.width as f64, e.height as f64, e.width as f64);
@@ -459,6 +468,12 @@ fn on_elastic_leash_pull(e: &mut Entity, m: &mut Option<&mut MobData>, level: &m
                 mob::kinds::horse::stop_eating(m);
             }
         }
+        // `HappyGhast.onElasticLeashPull`: `getMoveControl().setWait()`.
+        MobKind::HappyGhast => {
+            if let Some(m) = mob_of(e, m) {
+                m.mov.operation = mob::control::Operation::Wait;
+            }
+        }
         MobKind::Camel => {
             // (`Camel.onElasticLeashPull`: borrow the mob data out of the entity.)
             match m {
@@ -478,7 +493,8 @@ fn on_elastic_leash_pull(e: &mut Entity, m: &mut Option<&mut MobData>, level: &m
 /// panics.
 fn close_range_leash_behaviour(e: &mut Entity, m: &mut Option<&mut MobData>, holder_pos: Vec3, level: &mut dyn EntityLevel) {
     let Some(m) = m.as_deref_mut() else { return };
-    if m.kind == MobKind::Allay || is_panicking(m) {
+    // (`shouldStayCloseToLeashHolder` is false for the allay and the happy ghast.)
+    if matches!(m.kind, MobKind::Allay | MobKind::HappyGhast) || is_panicking(m) {
         return;
     }
     m.goals.set_control_flag(MOVE, true);
