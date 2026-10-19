@@ -196,3 +196,55 @@ fn compare(name: &str) {
 fn seed_84_around_the_pyramid_and_the_ruins_matches_vanilla_in_kilns_order() {
     compare("seed84_canonical");
 }
+
+/// Vanilla against vanilla: the same windows decorated in other orders vanilla can take (`tools/wp87/order87.py seed84_reverse 84 8,7,6,5,4,3,2,1,0 ...`):
+/// what differs is what no order-free implementation can match, and it is where wp84 saw the dungeon under the pyramid and the sand of the ruins.
+#[test]
+fn vanilla_itself_changes_with_the_decoration_order() {
+    let work = work_dir();
+    let dir = work.join("wp87/vectors");
+    let (a, others) = (dir.join("pack_seed84_canonical.bin"), ["pack_seed84_reverse.bin", "pack_seed84_c.bin"].map(|n| dir.join(n)));
+    if !a.is_file() || others.iter().any(|f| !f.is_file()) {
+        eprintln!("skipped: need the three dumps of tools/wp87/order87.py in {}", dir.display());
+        return;
+    }
+    let base = read_dump(&a);
+    let mut total_diffs = 0usize;
+    for file in &others {
+        let other = read_dump(file);
+        assert_eq!(base.targets.len(), other.targets.len());
+        let mut by_pair: std::collections::BTreeMap<(String, String), usize> = Default::default();
+        let (mut chunks, mut blocks) = (0usize, 0usize);
+        let mut near_spots = Vec::new();
+        let spots = [(-769, -35, 160), (-544, 55, 160)];
+        for (t, u) in base.targets.iter().zip(&other.targets) {
+            assert_eq!((t.x, t.z), (u.x, u.z));
+            let min_y = -64;
+            let mut bad = false;
+            for (i, (&p, &q)) in t.blocks.iter().zip(&u.blocks).enumerate() {
+                if p != q {
+                    bad = true;
+                    blocks += 1;
+                    *by_pair.entry((state_name(p), state_name(q))).or_default() += 1;
+                    let (s, k) = (i >> 12, i & 4095);
+                    let (x, y, z) = (t.x * 16 + (k & 15) as i32, min_y + (s * 16 + (k >> 8)) as i32, t.z * 16 + ((k >> 4) & 15) as i32);
+                    if spots.iter().any(|&(sx, sy, sz): &(i32, i32, i32)| (x - sx).abs() <= 24 && (y - sy).abs() <= 24 && (z - sz).abs() <= 24) && near_spots.len() < 12 {
+                        near_spots.push(format!("({x}, {y}, {z}): {} / {}", state_name(p), state_name(q)));
+                    }
+                }
+            }
+            chunks += usize::from(bad);
+        }
+        total_diffs += blocks;
+        let mut top: Vec<_> = by_pair.into_iter().collect();
+        top.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        eprintln!("{}: {chunks} of {} chunks differ from the canonical order, {blocks} blocks", file.file_name().unwrap().to_string_lossy(), base.targets.len());
+        for ((a, b), n) in top.iter().take(8) {
+            eprintln!("    {n:6} {a} -> {b}");
+        }
+        for line in &near_spots {
+            eprintln!("    near the spots {line}");
+        }
+    }
+    eprintln!("(vanilla in three valid orders: {total_diffs} blocks differ between the first order and the others)");
+}
