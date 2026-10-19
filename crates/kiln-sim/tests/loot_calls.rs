@@ -272,6 +272,8 @@ fn a_villager_throws_the_hero_gift_its_table_rolls() {
     let [x, y, z] = w.at(3, 1, 0);
     w.run("time set 6000");
     w.run(&format!("summon minecraft:villager {x} {y} {z}"));
+    w.ticks(3);
+    eprintln!("ENTITIES {:?}", w.sim.entities());
     w.run("effect give User minecraft:hero_of_the_village 1000 0");
     let diamonds = |w: &World| w.items().get("minecraft:diamond").copied().unwrap_or(0) + w.sim.inventory(1).unwrap().iter().flatten().filter(|&&(id, _)| id == kiln_data::builtin_id("minecraft:item", "minecraft:diamond").unwrap()).map(|&(_, n)| n).sum::<i32>();
     let mut n = 0;
