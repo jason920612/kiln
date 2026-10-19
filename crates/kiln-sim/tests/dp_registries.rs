@@ -592,9 +592,9 @@ fn a_block_transformer_of_the_pack_decides_what_the_hoe_does() {
     // The axe is not in the pack: the built-in rules strip as before.
     g.console("give Farmer minecraft:diamond_axe");
     g.ticks(1);
-    g.console(&format!("setblock {} {y} {z} minecraft:oak_log", x + 4));
+    g.console(&format!("setblock {} {y} {z} minecraft:oak_log", x - 1));
     assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::SetCarriedItem { slot: 1 })]));
-    use_on(&mut g, [x + 4, y, z], 1, 5);
-    assert_eq!(block(&g, [x + 4, y, z]), "minecraft:stripped_oak_log[axis=y]");
+    use_on(&mut g, [x - 1, y, z], 1, 5);
+    assert_eq!(block(&g, [x - 1, y, z]), "minecraft:stripped_oak_log[axis=y]");
     g.cleanup();
 }
