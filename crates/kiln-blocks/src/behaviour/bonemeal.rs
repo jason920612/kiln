@@ -726,7 +726,8 @@ mod tests {
     fn bone_meal_puts_a_pale_moss_carpet_on_top_of_one_on_the_ground() {
         let mut l = level();
         let carpet = state::set_bool(named("minecraft:pale_moss_carpet"), "bottom", true);
-        put(&mut l, 0, -62, 0, carpet);
+        // (The carpet below has the side too: an upper carpet only climbs where the lower one does.)
+        put(&mut l, 0, -62, 0, state::set(carpet, "east", "low"));
         // A stone wall beside it gives the upper carpet a side to climb.
         put(&mut l, 1, -62, 0, d::STONE);
         put(&mut l, 1, -61, 0, d::STONE);
