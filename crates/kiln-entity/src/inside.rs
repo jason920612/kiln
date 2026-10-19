@@ -282,6 +282,12 @@ impl Entity {
                     self.delta = self.delta.multiply(e, 1.0, e);
                 }
             }
+            // `MagmaBlock.stepOn`: a living entity that is not stepping carefully (sneaking) is burned.
+            Kind::MagmaBlock => {
+                if !self.shift_key_down && self.is_living() {
+                    self.hurt(level, DamageKind::HotFloor, 1.0, None);
+                }
+            }
             _ => {
                 let name = crate::blocks::block_name(state);
                 if matches!(name, "minecraft:sculk_sensor" | "minecraft:calibrated_sculk_sensor" | "minecraft:sculk_shrieker") {
