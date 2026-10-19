@@ -106,6 +106,22 @@ fn canonical(t: kiln_proto::nbt::Tag) -> kiln_proto::nbt::Tag {
     }
 }
 
+/// The first differing piece (or field) of two saved starts.
+fn first_difference(kiln: &kiln_proto::nbt::Tag, vanilla: &kiln_proto::nbt::Tag) -> String {
+    let children = |t: &kiln_proto::nbt::Tag| t.get("Children").and_then(|c| c.as_list()).map(|l| l.to_vec()).unwrap_or_default();
+    let (a, b) = (children(kiln), children(vanilla));
+    for i in 0..a.len().max(b.len()) {
+        if a.get(i) != b.get(i) {
+            return format!("{} kiln / {} vanilla pieces; piece {i}
+    kiln    {:?}
+    vanilla {:?}", a.len(), b.len(), a.get(i), b.get(i));
+        }
+    }
+    format!("
+    kiln    {kiln:?}
+    vanilla {vanilla:?}")
+}
+
 fn state_name(s: u16) -> String {
     let b = kiln_data::blocks_types::block_of(s);
     let props: Vec<String> = b.properties.iter().zip(b.property_indices(s)).map(|(p, i)| format!("{}={}", p.name, p.values[i])).collect();
@@ -161,6 +177,9 @@ fn compare(name: &str) {
         if ours != t.starts {
             start_diffs += 1;
             chunk_bad = true;
+            let ids = |l: &[(String, kiln_proto::nbt::Tag)]| l.iter().map(|(i, _)| i.clone()).collect::<Vec<_>>();
+            let detail = ours.iter().zip(&t.starts).find(|(a, b)| a != b).map(|(a, b)| format!(" {}", first_difference(&a.1, &b.1))).unwrap_or_default();
+            first.insert(0, format!("chunk {},{} structure starts: kiln {:?} vanilla {:?}{detail}", t.x, t.z, ids(&ours), ids(&t.starts)));
         }
         bad_chunks += usize::from(chunk_bad);
     }
