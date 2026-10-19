@@ -154,10 +154,10 @@ pub fn level_events(log: &[Bytes]) -> Vec<(i32, i32)> {
         .collect()
 }
 
-/// Whether this machine has the vanilla data (`KILN_DATAPACK`, or `work/generated` next to the checkout): the loot tables and the like.
+/// Whether the simulation finds the vanilla data (the loot tables and the like) where it looks for it: `KILN_DATAPACK`, else
+/// `work/generated` under the current directory (`kiln_sim::datapack_dir`; a test runs in its crate's directory, so the checkout's
+/// own `work/generated` is not read without `KILN_DATAPACK`).
 pub fn vanilla_data() -> bool {
-    let root = std::env::var_os("KILN_DATAPACK")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../work/generated"));
+    let root = std::env::var_os("KILN_DATAPACK").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("work/generated"));
     root.join("data/minecraft/loot_table").is_dir()
 }

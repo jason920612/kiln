@@ -204,6 +204,8 @@ mod tests {
 
     #[test]
     fn spot_checks_against_known_vanilla_values() {
+        // (The heightmap flags come from the tags, which `live`'s own tests replace for a while.)
+        let _x = crate::live::exclusive();
         assert_eq!((light_emission(d::TORCH), light_dampening(d::STONE)), (14, 15));
         assert_eq!(light_emission(d::GLOWSTONE), 15);
         assert!(propagates_skylight_down(d::GLASS) && !propagates_skylight_down(d::STONE));
