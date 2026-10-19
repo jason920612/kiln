@@ -35,8 +35,7 @@ fn zip(entries: &[(&str, &[u8], bool)]) -> Vec<u8> {
         central.extend_from_slice(&(body.len() as u32).to_le_bytes());
         central.extend_from_slice(&(data.len() as u32).to_le_bytes());
         central.extend_from_slice(&(name.len() as u16).to_le_bytes());
-        central.extend_from_slice(&[0; 12]); // extra, comment, disk, internal attributes
-        central.extend_from_slice(&[0; 4]); // external attributes
+        central.extend_from_slice(&[0; 12]); // extra, comment, disk, internal and external attributes
         central.extend_from_slice(&offset.to_le_bytes());
         central.extend_from_slice(name.as_bytes());
     }
