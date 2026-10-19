@@ -9,10 +9,18 @@ for t in "KV":
     w(t, E + "forceload add -48 -1070 48 -980")
     w(t, E + "tp W0 0.5 120 -1000.5")
 time.sleep(20)
-cmds = [
-    "fill -48 0 -1070 48 255 -980 minecraft:air",
-    "fill 0 50 -1024 15 50 -1009 minecraft:end_stone",
-]
+cmds = []
+# (a fill takes 32768 blocks at most)
+for x0 in range(-48, 49, 32):
+    for z0 in range(-1070, -979, 32):
+        for y0 in range(0, 128, 32):
+            cmds.append(f"fill {x0} {y0} {z0} {min(x0 + 31, 48)} {y0 + 31} {min(z0 + 31, -980)} minecraft:air")
+if V_ != 5:
+    cmds += ["fill 0 50 -1024 15 50 -1009 minecraft:end_stone"]
+if V_ == 5:
+    cmds += ["setblock 7 32 -1020 minecraft:end_stone"]
+if V_ == 6:
+    cmds += ["setblock 7 40 -1020 minecraft:end_stone"]
 if V_ in (1, 2):
     cmds += ["setblock -10 55 -1020 minecraft:end_stone", "setblock -5 55 -1000 minecraft:end_stone", "setblock 12 55 -1004 minecraft:end_stone"]
 if V_ == 2:
@@ -21,7 +29,7 @@ if V_ == 4:
     cmds += ["setblock 20 61 -1000 minecraft:end_stone", "setblock -3 58 -1015 minecraft:end_stone"]
 for c in cmds:
     both_(E + c)
-    time.sleep(0.3)
+    time.sleep(0.15)
 time.sleep(2)
 for t in "KV":
     w(t, E + "tp W0 0.5 100 -30.5")

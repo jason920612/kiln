@@ -6,6 +6,12 @@ for t in "KV":
     w(t, "gamemode creative W0"); w(t, "gamerule spawn_mobs false")
     w(t, E + "forceload add -64 -64 64 64")
     w(t, E + "tp W0 0.5 130 0.5")
+import os
+if os.environ.get("PRELOAD"):
+    a, b, c, d = os.environ["PRELOAD"].split()
+    for t in "KV":
+        w(t, E + f"forceload add {a} {b} {c} {d}")
+    time.sleep(float(os.environ.get("PRELOAD_WAIT", "40")))
 time.sleep(12)
 for (x, z) in pts:
     for t in "KV":
