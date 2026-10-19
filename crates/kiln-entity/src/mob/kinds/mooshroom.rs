@@ -169,6 +169,8 @@ impl Kind for Mooshroom {
             let height = e.height as f64;
             let converted = crate::mob::convert::convert_to(e, m, level, MobKind::Cow, false, false, |_, _, _| {});
             if converted.is_some() {
+                // `sendParticles(EXPLOSION, x, getY(0.5), z, 1, 0, 0, 0, 0)`.
+                level.particle("minecraft:explosion", Vec3::new(pos.x, pos.y + height * 0.5, pos.z));
                 // `spawnAtLocation` at the top of the mooshroom (the drop goes 1 up from `pos`).
                 level.emit(Event::ShearLoot { entity: e.id, table: table.into(), pos: Vec3::new(pos.x, pos.y + height - 1.0, pos.z) });
             }

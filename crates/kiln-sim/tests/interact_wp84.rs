@@ -57,7 +57,7 @@ impl World {
         let id = self.sim.entity_ids_of(&format!("minecraft:{mob}"))[0];
         assert!(self.sim.step([ToSim::Packet(1, PlayIn::Interact { entity_id: id, hand: Hand::Main, location: [0.0, 0.5, 0.0], sneaking: false })]));
         self.ticks(3);
-        self.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some(&format!("minecraft:{mob}"))).expect("the mob")
+        self.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some(&format!("minecraft:{mob}"))).unwrap_or(Tag::Compound(vec![]))
     }
 }
 
@@ -93,4 +93,13 @@ fn the_allay_item_given_sound_is_not_sent_to_the_player_who_gave() {
         })
         .count();
     assert_eq!(heard, 0, "the giving player plays the sound itself");
+}
+
+#[test]
+fn a_sheared_mooshroom_puffs_an_explosion_particle() {
+    let mut w = World::new();
+    let before = w.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::LEVEL_PARTICLES).map_or(0, |a| a.0);
+    let _ = w.click("minecraft:shears", "mooshroom");
+    let after = w.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::LEVEL_PARTICLES).map_or(0, |a| a.0);
+    assert!(after > before, "the explosion particle of the conversion: {before} -> {after}");
 }
