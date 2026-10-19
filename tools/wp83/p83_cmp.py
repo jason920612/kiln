@@ -82,4 +82,26 @@ c.mouse("right")
 time.sleep(1.5)
 line("jukebox overlay", c.state()["overlay"])
 shot(f"/home/test/wp83/shots/jukebox_{side}.png")
+
+# The pack's `hoe` block transformer (it replaces vanilla's rules): stone with air above becomes diamond (3 damage), gravel becomes sand
+# and drops the pack's flint out of the clicked face; grass does not till.
+con("clear KilnTest minecraft:stick", side)
+con("give KilnTest minecraft:diamond_hoe", side)
+time.sleep(0.5)
+slot = next(i for i in range(9) if "diamond_hoe" in c.cmd(f"item {i}"))
+c.cmd(f"hotbar {slot + 1}")
+tx, tz = x - 2, z + 4
+for dx, kind in enumerate(("stone", "gravel", "grass_block")):
+    con(f"setblock {tx + dx} {y - 1} {tz} minecraft:stone", side, 0.1)
+    con(f"setblock {tx + dx} {y} {tz} minecraft:{kind}", side, 0.1)
+time.sleep(1)
+for dx, kind in enumerate(("stone", "gravel", "grass_block")):
+    c.lookat(tx + dx + 0.5, y + 1.0, tz + 0.5)
+    time.sleep(0.4)
+    c.mouse("right")
+    time.sleep(1.2)
+    line("hoe on", kind, "->", c.block(tx + dx, y, tz))
+    line("hoe item", c.cmd(f"comps inv {slot}"))
+items = [e for e in c.state(40)["entities"] if e["t"] == "item"]
+line("item entities near", len(items))
 out.close()
