@@ -1039,7 +1039,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let source = crate::health::Source { cause: crate::health::Cause::PlayerAttack, attacker: Some(attacker), direct: None, weapon: None, position: None };
         let mut rng = LegacyRandom::new(i64::from(id));
         let mut value = chance;
-        eprintln!("DEBUG equip {:?} ench-count {}", p.equipment().iter().map(|(s, st)| (format!("{s:?}"), st.item_name(), st.get(kiln_item::keys::ENCHANTMENTS).map(|e| e.0.clone()))).collect::<Vec<_>>(), 0);
+        eprintln!("DEBUG equip {:?} ench {}", p.equipment().iter().map(|(s, st)| (format!("{s:?}"), st.item_name(), st.get(kiln_item::keys::ENCHANTMENTS).map(|e| e.0.clone()))).collect::<Vec<_>>(), format!("{:?} {:?}", loot.enchantment(26).is_some(), loot.errors));
         loot.for_each_equipped_enchantment(&p.equipment(), |e, level, _slot, _stack| {
             let ctx = crate::enchant::DamageContext { level, this: &view, source: &source };
             for t in &e.effects.equipment_drops {
@@ -2140,7 +2140,7 @@ impl ProxySeed {
     }
 
     fn make(&self) -> kiln_entity::Entity {
-        let mut e = kiln_entity::Entity::new("minecraft:player", self.id, self.uuid, EntityKind::Other { type_name: "minecraft:player" }, 0);
+        let mut e = kiln_entity::Entity::new("minecraft:player", self.id, self.uuid, EntityKind::Other { type_name: "minecraft:player" }, format!("{:?} {:?}", loot.enchantment(26).is_some(), loot.errors));
         e.height = self.height;
         e.eye_height = self.eye_height;
         e.set_pos(vec3(self.pos));
@@ -2485,7 +2485,7 @@ fn process_pending_kills(sim: &mut SimLevel) {
 fn tick_new_passenger(sim: &mut SimLevel, id: i32, vehicle: usize) {
     let Some(k) = sim.spawns.iter().position(|s| matches!(&s.body, Body::Ready(e) if e.id == id)) else { return };
     let Body::Ready(boxed) = &mut sim.spawns[k].body else { return };
-    let marker = kiln_entity::Entity::new("minecraft:marker", 0, 0, kiln_entity::EntityKind::Other { type_name: "minecraft:marker" }, 0);
+    let marker = kiln_entity::Entity::new("minecraft:marker", 0, 0, kiln_entity::EntityKind::Other { type_name: "minecraft:marker" }, format!("{:?} {:?}", loot.enchantment(26).is_some(), loot.errors));
     let mut phys = std::mem::replace(&mut **boxed, marker);
     if phys.is_removed() || phys.vehicle != sim.list[vehicle].phys.as_deref().map(|p| p.id) {
         if let Body::Ready(b) = &mut sim.spawns[k].body {
@@ -2493,7 +2493,7 @@ fn tick_new_passenger(sim: &mut SimLevel, id: i32, vehicle: usize) {
         }
         return;
     }
-    (sim.current, sim.seeds) = (phys.id, 0);
+    (sim.current, sim.seeds) = (phys.id, format!("{:?} {:?}", loot.enchantment(26).is_some(), loot.errors));
     sim.current_info = Some((phys.type_name, arr(phys.position())));
     sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
     sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, phys.id);
@@ -2522,7 +2522,7 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     }
     e.age += 1;
     let Some(mut phys) = e.phys.take() else { return };
-    (sim.current, sim.seeds) = (phys.id, 0);
+    (sim.current, sim.seeds) = (phys.id, format!("{:?} {:?}", loot.enchantment(26).is_some(), loot.errors));
     sim.current_info = Some((phys.type_name, arr(phys.position())));
     sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
     sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, phys.id);
@@ -3089,7 +3089,7 @@ pub(crate) fn tick_spawns(
             gone.push(k);
             continue;
         };
-        (sim.current, sim.seeds) = (placeholder, 0);
+        (sim.current, sim.seeds) = (placeholder, format!("{:?} {:?}", loot.enchantment(26).is_some(), loot.errors));
         sim.current_info = Some((phys.type_name, arr(phys.position())));
         sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &sim));
         sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, placeholder);
@@ -3435,7 +3435,7 @@ pub(crate) fn with_level<R>(
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
-    let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, 0);
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, format!("{:?} {:?}", loot.enchantment(26).is_some(), loot.errors));
     let mut sim = SimLevel {
         level: World::Region(level),
         list: &mut entities.list,
