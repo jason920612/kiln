@@ -426,3 +426,36 @@ fn chat_types_of_the_pack_are_registry_entries_with_their_data() {
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn paintings_take_the_placeable_variants_of_the_pack_and_summon_any_entry() {
+    use kiln_entity::Entity;
+    use kiln_entity::ext_entity::painting::{self, Painting};
+    use kiln_entity::math::{BlockPos, Direction};
+    use support::Game;
+    let _x = kiln_data::live::exclusive();
+    let mut g = Game::new("paintings", &["kiln_wp83"], "Gallery");
+    let id = |name: &str| kiln_data::synced_id("minecraft:painting_variant", name).unwrap() as usize;
+    let variant_of = |max_area: i32| -> Option<usize> {
+        let survives = move |e: &Entity| {
+            kiln_entity::ext_entity::get::<Painting>(e).is_some_and(|p| {
+                let (w, h) = p.size();
+                w * h <= max_area
+            })
+        };
+        let e = painting::create(&survives, 1, BlockPos::new(0, 64, 0), Direction::North, 7)?;
+        kiln_entity::ext_entity::get::<Painting>(&e).map(|p| p.variant)
+    };
+    // `#minecraft:painting_variant/placeable` is the pack's three variants (`replace`): the largest that fits, its own sizes.
+    assert_eq!(variant_of(99), Some(id("kiln83:sunrise_wide")), "3x2 beats the rest");
+    assert_eq!(variant_of(5), Some(id("minecraft:aztec")), "the pack made aztec 2x2");
+    assert_eq!(variant_of(1), Some(id("kiln83:speck")));
+    assert_eq!(variant_of(0), None, "nothing fits");
+    // /summon takes any entry of the registry, saved by name.
+    g.console("summon minecraft:painting ~ ~ ~ {variant:\"kiln83:speck\",facing:2b}");
+    g.ticks(2);
+    let nbt = g.sim.entity_nbt();
+    let painting = nbt.iter().find(|t| t.get("id").and_then(|i| i.as_str()) == Some("minecraft:painting")).expect("a painting");
+    assert_eq!(painting.get("variant").and_then(|v| v.as_str()), Some("kiln83:speck"));
+    g.cleanup();
+}
