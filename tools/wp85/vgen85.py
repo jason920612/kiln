@@ -45,7 +45,7 @@ def main():
         return len(open(log, encoding="utf-8", errors="replace").read())
 
     wait_for("Done (")
-    for dim, x1, z1, x2, z2 in case["areas"]:
+    for dim, x1, z1, x2, z2, *_ in case["areas"]:
         cx1, cz1, cx2, cz2 = x1 >> 4, z1 >> 4, x2 >> 4, z2 >> 4
         for wx in range(cx1, cx2 + 1, 16):
             for wz in range(cz1, cz2 + 1, 16):

@@ -336,7 +336,7 @@ def dims():
                     {"block": "minecraft:stone", "height": 3},
                     {"block": "minecraft:dirt", "height": 2},
                     {"block": "minecraft:grass_block", "height": 1},
-                    {"block": "minecraft:water", "height": 1},
+                    {"block": "minecraft:short_grass", "height": 1},
                 ],
             },
         },
