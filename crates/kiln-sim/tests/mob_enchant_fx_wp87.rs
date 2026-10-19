@@ -8,6 +8,8 @@ use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
 use std::path::PathBuf;
 
+mod support;
+
 const BOOTS_SLOT: &str = r#""slots": ["feet"], "supported_items": "minecraft:golden_boots""#;
 const SWORD_SLOT: &str = r#""slots": ["mainhand"], "supported_items": "minecraft:iron_sword""#;
 
@@ -283,6 +285,10 @@ fn a_players_tick_explosion_pushes_a_mob_next_to_it() {
 
 #[test]
 fn boots_with_a_damage_immunity_protect_a_mob_on_magma() {
+    if !support::vanilla_data() {
+        eprintln!("skipped: needs the vanilla data pack (the damage type tag burn_from_stepping)");
+        return;
+    }
     let _x = kiln_data::live::exclusive();
     let cool = enchantment(
         BOOTS_SLOT,
@@ -307,8 +313,10 @@ fn a_mob_in_a_cactus_is_hurt() {
     let mut w = World::new("cactus", &[]);
     let at = w.spot(4.0);
     let (x, y, z) = (at[0].floor() as i32, w.ground[1] + 1, at[2].floor() as i32);
-    let id = w.summon("husk", at, "{PersistenceRequired:1b,attributes:[{id:\"minecraft:movement_speed\",base:0.0d}]}");
+    w.sim.console_now(&format!("setblock {x} {} {z} minecraft:sand", y - 1));
     w.sim.console_now(&format!("setblock {x} {y} {z} minecraft:cactus"));
+    w.ticks(2);
+    let id = w.summon("husk", at, "{PersistenceRequired:1b,attributes:[{id:\"minecraft:movement_speed\",base:0.0d}]}");
     w.ticks(40);
     let health = w.sim.mob_state(id).expect("the husk").health;
     assert!(health < 20.0, "the husk in the cactus took damage: {health}");
