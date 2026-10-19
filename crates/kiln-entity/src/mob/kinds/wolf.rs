@@ -174,25 +174,10 @@ pub fn block_in_tag(state: u16, tag: &str) -> bool {
     })
 }
 
-/// `WolfVariants` spawn conditions (priority 1 by biome, else pale).
-const VARIANT_BIOMES: &[(&str, &str)] = &[
-    ("minecraft:ashen", "minecraft:snowy_taiga"),
-    ("minecraft:black", "minecraft:old_growth_pine_taiga"),
-    ("minecraft:chestnut", "minecraft:old_growth_spruce_taiga"),
-    ("minecraft:rusty", "#minecraft:is_jungle"),
-    ("minecraft:snowy", "minecraft:grove"),
-    ("minecraft:spotted", "#minecraft:is_savanna"),
-    ("minecraft:striped", "#minecraft:is_badlands"),
-    ("minecraft:woods", "minecraft:forest"),
-];
-
-/// `VariantUtils.selectVariantToSpawn` for wolves: the candidates of the highest matching
-/// priority (registry order), one picked with the level's random.
-fn spawn_variant(biome: Option<i32>, r: &mut dyn RandomSource) -> i32 {
-    let matching: Vec<&str> = VARIANT_BIOMES.iter().filter(|(_, b)| biome.is_some_and(|id| biome_is(id, b))).map(|(v, _)| *v).collect();
-    let candidates = if matching.is_empty() { vec!["minecraft:pale"] } else { matching };
-    let pick = candidates[r.next_int_bounded(candidates.len() as i32) as usize];
-    kiln_data::synced_id("minecraft:wolf_variant", pick).unwrap_or(0)
+/// `VariantUtils.selectVariantToSpawn` for wolves (see [`crate::mob::variants`]); a wolf no variant
+/// selects keeps the default one.
+fn spawn_variant(ctx: &SpawnContext, group: &GroupData, r: &mut dyn RandomSource) -> i32 {
+    crate::mob::variants::select_for(MobKind::Wolf, ctx, group, r).unwrap_or(0)
 }
 
 /// The wolf's `WolfSoundSet` sound `what` (ambient, growl, pant, whine, hurt, death).
@@ -482,7 +467,7 @@ impl Kind for Wolf {
         let variant = match group.variant {
             Some(v) => v,
             None => {
-                let v = spawn_variant(ctx.biome, r);
+                let v = spawn_variant(ctx, group, r);
                 group.variant = Some(v);
                 v
             }

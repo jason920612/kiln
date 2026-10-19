@@ -126,8 +126,8 @@ impl Sim {
         let inhabited = 0;
         let mut ctx = mobs::difficulty_instance(self.commands.difficulty as u8, self.game_time, inhabited, spawner::moon_brightness(self.day_time));
         ctx.biome = self.biome_name(OVERWORLD_ID, pos).and_then(|n| kiln_data::synced_id("minecraft:worldgen/biome", n));
-        let black_cat = self.with_level_in(OVERWORLD_ID, pos, |l| spawner::black_cat_structure(l, pos)).unwrap_or(false);
-        let fin = mobs::Finalize { ctx, seed: rng.next_long(), persistent, natural: true, monsters_disabled: false, camel_space: false, black_cat };
+        let structures = self.with_level_in(OVERWORLD_ID, pos, |l| spawner::structures_at(l, pos, MobKind::Cat)).unwrap_or_default();
+        let fin = mobs::Finalize { ctx, seed: rng.next_long(), persistent, natural: true, monsters_disabled: false, camel_space: false, structures };
         let d = &mut self.dims[OVERWORLD_ID];
         d.spawns.push(mobs::spawn(MobKind::Cat, [pos[0] as f64 + 0.5, pos[1] as f64, pos[2] as f64 + 0.5], Some(0.0), Some(fin)));
         self.materialize_spawns();
@@ -206,7 +206,7 @@ impl Sim {
     fn siege_try_spawn(&mut self, rng: &mut LegacyRandom) {
         let Some(pos) = self.siege_spawn_pos(self.siege.spawn, rng) else { return };
         let ctx = mobs::difficulty_instance(self.commands.difficulty as u8, self.game_time, 0, 1.0);
-        let fin = mobs::Finalize { ctx, seed: rng.next_long(), persistent: false, natural: false, monsters_disabled: false, camel_space: false, black_cat: false };
+        let fin = mobs::Finalize { ctx, seed: rng.next_long(), persistent: false, natural: false, monsters_disabled: false, camel_space: false, structures: Vec::new() };
         let yaw = rng.next_float() * 360.0;
         self.dims[OVERWORLD_ID].spawns.push(mobs::spawn(MobKind::Zombie, pos, Some(yaw), Some(fin)));
         self.materialize_spawns();

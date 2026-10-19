@@ -670,10 +670,7 @@ impl Kind for Nautilus {
     /// the animal's. The zombie one picks its variant first (one draw among the single best).
     fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, group: &mut GroupData) {
         if self.0 {
-            let _ = r.next_int_bounded(1);
-            let warm = ctx.biome.is_some_and(|b| mob::species::biome_tag(b, "minecraft:spawns_coral_variant_zombie_nautilus"));
-            let name = if warm { "minecraft:warm" } else { "minecraft:temperate" };
-            if let Some(v) = kiln_data::synced_id("minecraft:zombie_nautilus_variant", name) {
+            if let Some(v) = mob::variants::select_for(MobKind::ZombieNautilus, ctx, group, r) {
                 m.variant = v;
             }
         }

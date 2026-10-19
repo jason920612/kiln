@@ -29,6 +29,7 @@ pub mod pickup;
 pub mod persist;
 pub mod random_pos;
 pub mod species;
+pub mod variants;
 pub mod weapon;
 
 use crate::entity::{Entity, EntityKind, MoverType};
@@ -3337,9 +3338,9 @@ pub struct GroupData {
     pub patrol: bool,
     pub event: bool,
     pub structure: bool,
-    /// The mob appears inside a piece of a `#minecraft:cats_spawn_as_black` structure (a cat's variant is
-    /// then the all-black one: `VariantUtils.selectVariantToSpawn`'s priority 1 candidate).
-    pub black_cat: bool,
+    /// The structure specs of the animal's variants (`variants::structure_specs`) that the spawn position is inside
+    /// a piece of (a `#minecraft:cats_spawn_as_black` swamp hut for a cat).
+    pub structures: Vec<String>,
     /// `ZombieGroupData.canSpawnJockey` of the group the first zombie made (its baby chance is
     /// `zombie_baby`): a baby of such a group may ride a chicken.
     pub zombie_can_jockey: bool,
@@ -3447,15 +3448,8 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
     // Types that pick a variant first (from the biome, no randomness) draw their sound
     // variant before `Mob.finalizeSpawn`.
     if matches!(kind, MobKind::Pig | MobKind::Cow | MobKind::Chicken) {
-        // `VariantUtils.selectVariantToSpawn`: the climate's variant wins over the temperate
-        // fallback; one draw among the (single) best candidates.
-        let name = match species::climate(ctx.biome) {
-            species::Climate::Temperate => "minecraft:temperate",
-            species::Climate::Warm => "minecraft:warm",
-            species::Climate::Cold => "minecraft:cold",
-        };
-        let _ = r.next_int_bounded(1);
-        if let Some(v) = kiln_data::synced_id(&format!("{}_variant", kind.type_name()), name) {
+        // `VariantUtils.selectVariantToSpawn` (see [`variants`]): one draw among the best candidates.
+        if let Some(v) = variants::select_for(kind, ctx, group, r) {
             m.variant = v;
         }
         m.sound_variant = r.next_int_bounded(sound_variant_count(kind).max(1));

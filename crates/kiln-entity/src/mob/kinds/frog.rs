@@ -168,16 +168,6 @@ pub fn init_memories(m: &mut MobData, r: &mut dyn RandomSource) {
     }
 }
 
-/// `VariantUtils.selectVariantToSpawn` for frogs: the cold or warm variant in their biomes,
-/// else temperate.
-fn spawn_variant(biome: Option<i32>) -> i32 {
-    let name = match biome {
-        Some(b) if species::biome_tag(b, "minecraft:spawns_cold_variant_frogs") => "minecraft:cold",
-        Some(b) if species::biome_tag(b, "minecraft:spawns_warm_variant_frogs") => "minecraft:warm",
-        _ => "minecraft:temperate",
-    };
-    kiln_data::synced_id("minecraft:frog_variant", name).unwrap_or(0)
-}
 
 impl Kind for Frog {
     fn info(&self) -> &'static Info {
@@ -265,9 +255,10 @@ impl Kind for Frog {
     /// `Frog.finalizeSpawn`: the variant of the biome, the first long jump's delay, then the
     /// animal's own.
     fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, group: &mut GroupData) {
-        // `PriorityProvider.pick` draws among the (single) best candidates.
-        let _ = r.next_int_bounded(1);
-        m.variant = spawn_variant(ctx.biome);
+        // `VariantUtils.selectVariantToSpawn`: the cold or warm variant in their biomes, else temperate.
+        if let Some(v) = crate::mob::variants::select_for(MobKind::Frog, ctx, group, r) {
+            m.variant = v;
+        }
         init_memories(m, r);
         ext::ageable_finalize(e, m, r, group, 0.05);
         ext::mob_finalize(m, r);

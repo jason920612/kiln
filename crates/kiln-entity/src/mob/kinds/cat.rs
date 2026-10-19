@@ -206,20 +206,10 @@ impl Kind for Cat {
     fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, group: &mut GroupData) {
         ext::ageable_finalize(e, m, r, group, 0.05);
         ext::mob_finalize(m, r);
-        // `CatVariants`: the ten common cats, and the all-black one under a (nearly) full moon; inside a swamp
-        // hut (`#cats_spawn_as_black`, priority 1) only the all-black one.
-        let full_moon = ctx.moon_brightness >= 0.9;
-        let candidates: Vec<&str> = kiln_data::live::synced()
-            .iter()
-            .find(|(r, _)| *r == "minecraft:cat_variant")
-            .map_or(&[][..], |(_, e)| *e)
-            .iter()
-            .copied()
-            .filter(|v| if group.black_cat { *v == "minecraft:all_black" } else { *v != "minecraft:all_black" || full_moon })
-            .collect();
-        if !candidates.is_empty() {
-            let pick = candidates[r.next_int_bounded(candidates.len() as i32) as usize];
-            m.variant = kiln_data::synced_id("minecraft:cat_variant", pick).unwrap_or(0);
+        // `VariantUtils.selectVariantToSpawn` (`CatVariants`: the ten common cats, and the all-black one inside a
+        // `#cats_spawn_as_black` structure or under a (nearly) full moon).
+        if let Some(v) = crate::mob::variants::select_for(MobKind::Cat, ctx, group, r) {
+            m.variant = v;
         }
         m.sound_variant = r.next_int_bounded(synced_len("minecraft:cat_sound_variant"));
     }
