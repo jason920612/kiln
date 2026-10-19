@@ -762,9 +762,13 @@ mod tests {
         let clear = LevelWeather::default();
         let rain = LevelWeather { rain: 1.0, o_rain: 1.0, ..Default::default() };
         let thunder = LevelWeather { rain: 1.0, o_rain: 1.0, thunder: 1.0, o_thunder: 1.0 };
-        assert_eq!(sky_darken(OVERWORLD_ID, 6000, &clear), 0);
-        assert_eq!(sky_darken(OVERWORLD_ID, 6000, &rain), 3);
-        assert_eq!(sky_darken(OVERWORLD_ID, 6000, &thunder), 5);
-        assert_eq!(sky_darken(OVERWORLD_ID, 18000, &clear), 11);
+        let timelines = crate::timelines::Timelines::load(&[std::path::PathBuf::from("/nonexistent-wp87")]);
+        let darken = |t: i64, w: &LevelWeather| sky_darken_with(&timelines, &["minecraft:day"], &|_| t, w);
+        assert_eq!(darken(6000, &clear), 0);
+        assert_eq!(darken(6000, &rain), 3);
+        assert_eq!(darken(6000, &thunder), 5);
+        assert_eq!(darken(18000, &clear), 11);
+        // A level without a day timeline has none of it.
+        assert_eq!(sky_darken_with(&timelines, &[], &|_| 18000, &clear), 0);
     }
 }
