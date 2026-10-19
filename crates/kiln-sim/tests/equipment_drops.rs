@@ -67,8 +67,8 @@ impl World {
                 "summon minecraft:zombie {} {y} {z} {{NoAI:1b,Health:1.0f,equipment:{{mainhand:{{id:\"minecraft:iron_sword\"}}}},Invulnerable:0b}}",
                 x + 2
             ));
-            self.ticks(25);
-            let id = self.sim.entity_ids_of("minecraft:zombie")[0];
+            self.ticks(2);
+            let id = *self.sim.entity_ids_of("minecraft:zombie").first().unwrap_or_else(|| panic!("no zombie: {:?}", self.sim.entities()));
             assert!(self.sim.step([ToSim::Packet(1, PlayIn::Attack { entity_id: id })]));
             self.ticks(3);
             swords += self.sim.item_stacks().iter().filter(|s| s.item_name() == "minecraft:iron_sword").count();
