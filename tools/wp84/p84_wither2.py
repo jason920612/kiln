@@ -56,8 +56,15 @@ t0 = time.time()
 skulls = {"A": collections.Counter(), "B": collections.Counter()}
 rows = []
 armour_done = False
+seen_ids = set()
+dangerous = collections.Counter()
 while time.time() - t0 < SECS:
-    time.sleep(3.0)
+    for _ in range(30):
+        time.sleep(0.1)
+        for e in a.state(60)["entities"]:
+            if e["t"] not in ("player", "wither", "item") and e["id"] not in seen_ids:
+                seen_ids.add(e["id"])
+                dangerous[(e["t"], round(time.time() - t0) // 20 * 20)] += 1
     row = {"t": round(time.time() - t0)}
     for k, c in (("A", a), ("B", b)):
         try:
@@ -82,6 +89,7 @@ while time.time() - t0 < SECS:
         S("execute in minecraft:overworld run data merge entity @e[type=wither,limit=1] {Health:140f}")
 for k in "AB":
     print(T_, "client", k, "summary", dict(skulls[k]))
+print(T_, "wither skulls seen by A:", len(seen_ids), "per 10 s:", sorted(dangerous.items()))
 S("kill @e[type=!player]")
 OBx(f"tp KilnTest {X} {Y + 5} {Z + 40}")
 OBx(f"tp Obs {X} {Y + 5} {Z + 40}")

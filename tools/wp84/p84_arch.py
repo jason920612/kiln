@@ -29,7 +29,7 @@ for kind in KINDS:
         both = {}
         fly(t, x, y, z)
         time.sleep(1.0)
-    time.sleep(14)  # chunks arrive
+    time.sleep(int(os.environ.get("ARCH_WAIT", "14")))  # chunks arrive
     for t in "KV":
         x, z = loc[t]
         c = cl[t]
