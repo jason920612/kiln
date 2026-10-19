@@ -101,6 +101,7 @@ impl Player {
             movement: self.move_delta,
             movement_block: None,
             on_pos: None,
+            tick_count: self.tick_count,
         }
     }
 

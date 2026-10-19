@@ -37,6 +37,8 @@ pub struct EntityView {
     pub movement_block: Option<[i32; 3]>,
     /// `getOnPos` (the `stepping_on` predicate, true only on the ground).
     pub on_pos: Option<[i32; 3]>,
+    /// `Entity.tickCount` (the `periodic_tick` predicate).
+    pub tick_count: i32,
 }
 
 /// A player's game mode and stats, for `type_specific/player` predicates.
@@ -121,6 +123,10 @@ impl EntityView {
             EntitySubPredicate::Vehicle(v) => v.parts.is_empty() && self.has_vehicle,
             EntitySubPredicate::Other(id, json) if id.as_str() == "minecraft:type_specific/player" => {
                 self.player.as_ref().is_some_and(|p| p.matches(json))
+            }
+            // `PeriodicEntityTickPredicate.matches`: every `ticks` ticks of the entity's life.
+            EntitySubPredicate::Other(id, json) if id.as_str() == "minecraft:periodic_tick" => {
+                json.as_i32().is_some_and(|period| period != 0 && self.tick_count % period == 0)
             }
             // `MovementPredicate.matches(entity)`: the known movement scaled to a second.
             EntitySubPredicate::Other(id, json) if id.as_str() == "minecraft:movement" => {

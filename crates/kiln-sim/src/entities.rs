@@ -3483,7 +3483,7 @@ fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
         .into_iter()
         .map(|ev| {
             let key = match &ev {
-                Event::DeathLoot { entity, .. } | Event::GiftLoot { entity, .. } | Event::ShearLoot { entity, .. } | Event::ItemDrops { entity, .. } | Event::GiftThrow { entity, .. } => (0, *entity as u32 as u64),
+                Event::DeathLoot { entity, .. } | Event::GiftLoot { entity, .. } | Event::InteractLoot { entity, .. } | Event::ShearLoot { entity, .. } | Event::ItemDrops { entity, .. } | Event::GiftThrow { entity, .. } => (0, *entity as u32 as u64),
                 Event::EntityEvent { entity, .. } | Event::MobHurt { entity, .. } => (1, *entity as u32 as u64),
                 Event::Sound { pos, .. } => (2, pos_key(*pos)),
                 Event::EntitySound { entity, .. } => (6, *entity as u32 as u64),
@@ -3774,15 +3774,19 @@ fn carry_out(
                 }
             }
         }
-        Event::GiftLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, table, pos, n, 0.0, None),
-        Event::GiftThrow { entity: id, table, to } => loot_drop(env, list, spawns, id, table, to, n, 0.0, Some(to)),
+        Event::GiftLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, table, pos, n, 0.0, None, None),
+        Event::InteractLoot { entity: id, table, pos, interacting } => {
+            let who = players.iter().find(|p| p.entity_id == interacting).map(|p| p.view());
+            loot_drop(env, list, spawns, id, table, pos, n, 0.0, None, who)
+        }
+        Event::GiftThrow { entity: id, table, to } => loot_drop(env, list, spawns, id, table, to, n, 0.0, Some(to), None),
         Event::ItemDrops { entity: id, pos, stacks } => {
             for (k, stack) in stacks.into_iter().enumerate() {
                 let h = crate::mobs::loot_seed(env.seed, env.game_time, id, (n as u64) << 8 | k as u64 | 0x6368_0000) as u64;
                 spawns.push(crate::mobs::drop_item(stack, arr(pos), h));
             }
         }
-        Event::ShearLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, &table, pos, n, 1.0, None),
+        Event::ShearLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, &table, pos, n, 1.0, None, None),
         // `ThrownEnderpearl.onHit`: its player goes to where the pearl was at the start of the
         // tick, takes 5 `ender_pearl` damage and hears the teleport.
         Event::ProjectileHit { projectile, projectile_type: "minecraft:ender_pearl", owner: Some(owner), .. } => {
@@ -3956,7 +3960,11 @@ pub(crate) fn charged_creeper_stacks(env: &blocks::BlockEnv, victim: &kiln_entit
 
 /// `dropFromGiftLootTable` (`y_off` 0) and `dropFromShearingLootTable` (`y_off` 1, with the shears as the tool): the table rolls with the entity and
 /// its position as the context (`GIFT`, `SHEARING`: no damage source), the items appear at `pos`.
-fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, id: i32, table: &str, pos: Vec3, n: usize, y_off: f64, throw_to: Option<Vec3>) {
+///
+/// `interacting` is the player of an `ENTITY_INTERACT` table (`dropFromEntityInteractLootTable`: `target_entity`, `interacting_entity` and `tool`, with
+/// no `origin` or `this_entity`); the piglins' barter table (`PIGLIN_BARTER`) has `this_entity` alone, no `origin` either.
+#[allow(clippy::too_many_arguments)]
+fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, id: i32, table: &str, pos: Vec3, n: usize, y_off: f64, throw_to: Option<Vec3>, interacting: Option<crate::enchant::EntityView>) {
     let Some(loot) = env.loot.clone() else { return };
     let phys = list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| list[i].phys.as_deref());
     let ctx = crate::mobs::DeathContext {
@@ -3981,6 +3989,8 @@ fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, i
                 None
             },
             no_damage_source: true,
+            no_origin: table == kiln_entity::mob::kinds::piglin::BARTERING_TABLE || interacting.is_some(),
+            interacting,
             ..Default::default()
         },
     };

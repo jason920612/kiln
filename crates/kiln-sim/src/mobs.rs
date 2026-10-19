@@ -397,6 +397,10 @@ pub(crate) struct DeathExtra {
     pub tool: Option<kiln_item::ItemStack>,
     /// The context has no `damage_source` (gifts, shearing, equipment: not a death).
     pub no_damage_source: bool,
+    /// The context has no `origin` (`PIGLIN_BARTER`, `ENTITY_INTERACT`).
+    pub no_origin: bool,
+    /// The `interacting_entity` of an `ENTITY_INTERACT` table: the player.
+    pub interacting: Option<crate::enchant::EntityView>,
 }
 
 /// `EntitySubPredicate`s that depend on the entity's class (`type_specific/sheep`, `type_specific/cube_mob`).
@@ -446,11 +450,14 @@ impl kiln_loot::LootContext for DeathContext {
             kiln_loot::EntityTarget::This => true,
             kiln_loot::EntityTarget::Attacker | kiln_loot::EntityTarget::DirectAttacker => self.killed_by_player || self.attacker.is_some(),
             kiln_loot::EntityTarget::AttackingPlayer => self.killed_by_player,
+            kiln_loot::EntityTarget::InteractingEntity => self.extra.interacting.is_some(),
+            // (`ENTITY_INTERACT` names the mob `target_entity`.)
+            kiln_loot::EntityTarget::TargetEntity => self.extra.interacting.is_some(),
             _ => false,
         }
     }
     fn origin(&self) -> Option<[f64; 3]> {
-        Some(self.origin)
+        (!self.extra.no_origin).then_some(self.origin)
     }
     fn has_damage_source(&self) -> bool {
         !self.extra.no_damage_source
@@ -491,7 +498,10 @@ impl kiln_loot::LootContext for DeathContext {
                 other => a.matches(&kiln_loot::predicate::world::EntityPredicate { parts: vec![other.clone()], json: predicate.json.clone() }),
             });
         }
-        if target != kiln_loot::EntityTarget::This {
+        if target == kiln_loot::EntityTarget::InteractingEntity {
+            return self.extra.interacting.as_ref().is_some_and(|v| v.matches(predicate));
+        }
+        if target != kiln_loot::EntityTarget::This && !(target == kiln_loot::EntityTarget::TargetEntity && self.extra.interacting.is_some()) {
             return false;
         }
         let type_id = kiln_item::registry::ENTITY_TYPE.id(self.type_name).unwrap_or(-1);

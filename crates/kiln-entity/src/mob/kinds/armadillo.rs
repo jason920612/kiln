@@ -213,9 +213,9 @@ impl Kind for Armadillo {
     }
 
     /// A brush takes a scute off an adult (16 durability).
-    fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, _who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
+    fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
         if !stack.is_empty() && mob::item_name(stack) == "minecraft:brush" && !m.baby() {
-            level.emit(Event::GiftLoot { entity: e.id, table: "minecraft:brush/armadillo", pos: e.position() });
+            level.emit(Event::InteractLoot { entity: e.id, table: "minecraft:brush/armadillo", pos: e.position(), interacting: who.id });
             if !e.silent {
                 level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.armadillo.brush", source: "neutral", volume: 1.0, pitch: 1.0 });
             }

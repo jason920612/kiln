@@ -376,6 +376,9 @@ pub enum Event {
     },
     /// `dropFromGiftLootTable` (a chicken's egg).
     GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
+    /// `dropFromEntityInteractLootTable` (a brushed armadillo): the table rolls with the mob as the `target_entity`, the player `interacting` as the
+    /// `interacting_entity` and the brush as the `tool`.
+    InteractLoot { entity: i32, table: &'static str, pos: Vec3, interacting: i32 },
     /// `dropFromGiftLootTable` with `BehaviorUtils.throwItem` as the consumer (a hero-of-the-village gift): each item is thrown from the entity's
     /// eyes towards `to`.
     GiftThrow { entity: i32, table: &'static str, to: Vec3 },
