@@ -351,3 +351,101 @@ fn reload_rereads_the_tags_but_keeps_the_enchantments_the_world_loaded() {
     assert_eq!(break_ice(&mut w, "minecraft:iron_pickaxe[enchantments={\"minecraft:silk_touch\":1}]", 2), "minecraft:air", "silk touch is in the tag now");
     assert_eq!(break_ice(&mut w, "minecraft:iron_pickaxe[enchantments={\"kz:warm\":1}]", 3), "minecraft:water", "kz:warm no longer");
 }
+
+impl World {
+    fn hold(&mut self, slot: i16, item: &str, count: i32) {
+        let id = kiln_data::builtin_id("minecraft:item", item).unwrap();
+        let stack = kiln_proto::packets::ItemStack { item: id, count, added: Vec::new(), removed: Vec::new() };
+        assert!(self.sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot, item: Some(stack) })]));
+    }
+
+    fn use_on(&mut self, pos: [i32; 3]) {
+        let pkt = PlayIn::UseItemOn { hand: 0, pos, face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: 77 };
+        assert!(self.sim.step([ToSim::Packet(1, pkt)]));
+    }
+
+    fn click(&mut self, container_id: i32, slot: i16, input: kiln_inventory::ContainerInput) {
+        let c = kiln_inventory::ContainerClick { container_id, state_id: 0, slot, button: 0, input, changed: Vec::new(), carried: kiln_item::HashedStack::Empty };
+        let mut body = bytes::BytesMut::new();
+        c.write(&mut body);
+        assert!(self.sim.step([ToSim::Packet(1, PlayIn::ContainerClick { body: body.freeze() })]));
+    }
+
+    /// The enchantments (`name`, level) of the items the player carries, named by the item.
+    fn enchanted(&self) -> Vec<(String, String)> {
+        let nbt = self.sim.saved_player_nbt(1).unwrap();
+        let Some(Tag::List(items)) = nbt.get("Inventory") else { return Vec::new() };
+        items
+            .iter()
+            .map(|i| i.unwrap_list_element())
+            .map(|i| (i.get("id").and_then(Tag::as_str).unwrap_or("").to_owned(), format!("{:?}", i.get("components"))))
+            .collect()
+    }
+}
+
+#[test]
+fn enchant_command_follows_the_packs_limits_supported_items_and_exclusive_sets() {
+    let Some(mut w) = World::new("enchant-command", &["kz_table"]) else { return };
+    let has = |w: &World, what: &str| w.enchanted().iter().any(|(_, c)| c.contains(what));
+    w.run("item replace entity Keeper weapon.mainhand with minecraft:diamond_sword");
+    w.ticks(2);
+    // Level 4 is above kz:aura's max_level 3.
+    w.run("enchant Keeper kz:aura 4");
+    assert!(!has(&w, "kz:aura"), "level above max_level");
+    w.run("enchant Keeper kz:aura 3");
+    assert!(has(&w, "kz:aura"), "{:?}", w.enchanted());
+    // kz:spark is in the exclusive set of kz:aura: refused, though the sword supports it.
+    w.run("enchant Keeper kz:spark 1");
+    assert!(!has(&w, "kz:spark"), "exclusive_set");
+    // A pickaxe is not a supported item.
+    w.run("item replace entity Keeper weapon.mainhand with minecraft:diamond_pickaxe");
+    w.ticks(2);
+    w.run("enchant Keeper kz:aura 1");
+    assert!(!w.enchanted().iter().any(|(id, c)| id == "minecraft:diamond_pickaxe" && c.contains("kz:aura")), "supported_items");
+    // A fresh sword takes kz:spark.
+    w.run("item replace entity Keeper weapon.mainhand with minecraft:diamond_sword");
+    w.ticks(2);
+    w.run("enchant Keeper kz:spark 2");
+    assert!(has(&w, "kz:spark"));
+}
+
+#[test]
+fn the_enchanting_table_and_the_anvil_use_the_packs_enchantments() {
+    let Some(mut w) = World::new("table-anvil", &["kz_table"]) else { return };
+    w.run("gamemode creative Keeper");
+    w.ticks(2);
+    let [x, y, z] = w.ground;
+    // `#in_enchanting_table` is kz:aura alone in this pack: a sword comes out with kz:aura and nothing else.
+    let table = [x + 3, y + 1, z - 3];
+    w.run(&format!("setblock {} {} {} minecraft:enchanting_table", table[0], table[1], table[2]));
+    for (dx, dz) in [(-2, -2), (-2, 0), (-2, 2), (0, -2), (0, 2), (2, -2), (2, 0), (2, 2)] {
+        w.run(&format!("setblock {} {} {} minecraft:bookshelf", table[0] + dx, table[1], table[2] + dz));
+    }
+    w.hold(36, "minecraft:diamond_sword", 1);
+    w.use_on(table);
+    assert_eq!(w.sim.open_menu(1).map(|m| m.0), Some("minecraft:enchantment"));
+    w.click(1, 29, kiln_inventory::ContainerInput::QuickMove);
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::ContainerButtonClick { container_id: 1, button_id: 2 })]));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::ContainerClose { container_id: 1 })]));
+    let swords: Vec<String> = w.enchanted().into_iter().filter(|(id, _)| id == "minecraft:diamond_sword").map(|(_, c)| c).collect();
+    assert_eq!(swords.len(), 1, "{swords:?}");
+    assert!(swords[0].contains("kz:aura"), "{swords:?}");
+    assert!(!swords[0].contains("minecraft:"), "only kz:aura is in the table's tag: {swords:?}");
+    // The anvil: two swords with kz:aura 2 make kz:aura 3 (max_level 3 of the pack), not more and not 1.
+    w.run("clear Keeper");
+    w.run("give Keeper minecraft:diamond_sword[enchantments={\"kz:aura\":2}]");
+    w.run("give Keeper minecraft:diamond_sword[enchantments={\"kz:aura\":2}]");
+    let anvil = [x - 3, y + 1, z - 3];
+    w.run(&format!("setblock {} {} {} minecraft:anvil", anvil[0], anvil[1], anvil[2]));
+    w.use_on(anvil);
+    assert_eq!(w.sim.open_menu(1).map(|m| m.0), Some("minecraft:anvil"));
+    // Shift-click both swords in (inventory menu slots 3.. are the player's), then take the result.
+    for slot in [30, 31] {
+        w.click(1, slot, kiln_inventory::ContainerInput::QuickMove);
+    }
+    let (_, slots) = w.sim.open_menu(1).unwrap();
+    assert!(slots[2].is_some(), "a result: {slots:?}");
+    w.click(1, 2, kiln_inventory::ContainerInput::QuickMove);
+    let merged: Vec<String> = w.enchanted().into_iter().filter(|(id, c)| id == "minecraft:diamond_sword" && c.contains("kz:aura")).map(|(_, c)| c).collect();
+    assert!(merged.iter().any(|c| c.contains("Int(3)")), "kz:aura III: {merged:?}");
+}
