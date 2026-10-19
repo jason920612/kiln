@@ -195,7 +195,7 @@ fn a_superflat_dimension_lays_its_layers_in_its_own_height() {
     let at = |w: &World, y| w.sim.block_in(FLAT, 8, y, 8);
     use kiln_data::blocks::default_state as d;
     // From the type's min_y -16: bedrock, three stone, two dirt, grass, one water, then air up to the 64 blocks of height.
-    assert_eq!(at(&w, -17), None, "below the level's height");
+    assert_eq!(at(&w, -17), Some(d::VOID_AIR), "below the level's height");
     assert_eq!(at(&w, -16), Some(d::BEDROCK));
     for y in -15..=-13 {
         assert_eq!(at(&w, y), Some(d::STONE), "y {y}");
@@ -206,7 +206,7 @@ fn a_superflat_dimension_lays_its_layers_in_its_own_height() {
     assert_eq!(at(&w, -9), Some(d::WATER));
     assert_eq!(at(&w, -8), Some(d::AIR));
     assert_eq!(at(&w, 47), Some(d::AIR));
-    assert_eq!(at(&w, 48), None, "above the level's height");
+    assert_eq!(at(&w, 48), Some(d::VOID_AIR), "above the level's height");
     assert_eq!(w.sim.biome_in(FLAT, 8, -16, 8), kiln_data::synced_id("minecraft:worldgen/biome", "minecraft:plains").map(|b| b as u16));
     // The overworld is unchanged: its default terrain here, at its own height.
     w.run("forceload add 0 0 15 15");
@@ -224,10 +224,9 @@ fn a_pack_can_replace_the_geometry_of_a_vanilla_dimension_type() {
     assert!(nether.bed_can_sleep == kiln_data::BedWhen::Always && !nether.respawn_anchor_works && !nether.water_evaporates);
     // The nether's chunks have the new height: loaded from y 16 to 207.
     w.run("execute in minecraft:the_nether run forceload add 0 0 15 15");
-    assert!(w.sim.block_in("minecraft:the_nether", 8, 15, 8).is_none());
-    assert!(w.sim.block_in("minecraft:the_nether", 8, 16, 8).is_some());
-    assert!(w.sim.block_in("minecraft:the_nether", 8, 207, 8).is_some());
-    assert!(w.sim.block_in("minecraft:the_nether", 8, 208, 8).is_none());
+    use kiln_data::blocks::default_state as d;
+    let at = |y| w.sim.block_in("minecraft:the_nether", 8, y, 8);
+    assert_eq!((at(15), at(16), at(207), at(208)), (Some(d::VOID_AIR), Some(d::AIR), Some(d::AIR), Some(d::VOID_AIR)));
     // The registry entry replaces vanilla's: the clients are sent its data.
     let packets = w.sync.registry_packets().unwrap();
     let (_, entries) = packets.iter().map(support::registry_data).find(|(r, _)| r == "minecraft:dimension_type").unwrap();

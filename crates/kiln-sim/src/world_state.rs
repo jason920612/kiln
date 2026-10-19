@@ -571,14 +571,14 @@ impl RandomSequences {
 /// The state above, kept by the [`Sim`].
 pub(crate) struct WorldState {
     /// Each level's border, by [`crate::DimId`].
-    pub borders: [Border; 3],
+    pub borders: Vec<Border>,
     pub tick_rate: TickRate,
     /// Each level's force-loaded chunks.
-    pub forced: [BTreeSet<[i32; 2]>; 3],
+    pub forced: Vec<BTreeSet<[i32; 2]>>,
     /// Each level's other tickets, which time out: portals and ender pearls (`crate::tickets`).
-    pub timed: [crate::tickets::Timed; 3],
+    pub timed: Vec<crate::tickets::Timed>,
     /// Whether a level's `chunk_tickets.dat` holds portal tickets (so it is written again when they are gone).
-    pub timed_saved: [bool; 3],
+    pub timed_saved: Vec<bool>,
     pub sequences: RandomSequences,
     /// The level random `/random` draws from without a sequence.
     pub level_random: XoroshiroRandom,
@@ -600,17 +600,22 @@ pub(crate) struct WorldState {
     pub templates: crate::structure_block::Templates,
 }
 
+/// One default value per level.
+fn per_level<T: Default>() -> Vec<T> {
+    (0..crate::dim_count()).map(|_| T::default()).collect()
+}
+
 impl Default for WorldState {
     fn default() -> Self {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         WorldState {
             feature_hosts: Vec::new(),
             templates: Default::default(),
-            borders: Default::default(),
+            borders: per_level(),
             tick_rate: TickRate::default(),
-            forced: Default::default(),
-            timed: Default::default(),
-            timed_saved: [false; 3],
+            forced: per_level(),
+            timed: per_level(),
+            timed_saved: per_level(),
             sequences: RandomSequences::default(),
             level_random: XoroshiroRandom::new(now.as_nanos() as i64),
             tick_times: vec![0; 100],
