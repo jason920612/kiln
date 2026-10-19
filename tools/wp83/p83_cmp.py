@@ -34,7 +34,6 @@ gifts = [
     'minecraft:iron_chestplate[minecraft:trim={material:"minecraft:iron",pattern:"minecraft:sentry"}]',
     'minecraft:white_banner[minecraft:banner_patterns=[{pattern:"kiln83:zigzag",color:"red"}]]',
     'minecraft:painting[minecraft:painting/variant="kiln83:speck"]',
-    'minecraft:decorated_pot[minecraft:pot_decorations=["minecraft:brick","minecraft:brick","minecraft:brick","minecraft:brick"]]',
 ]
 for g in gifts:
     con(f"give KilnTest {g}", side, 0.3)
