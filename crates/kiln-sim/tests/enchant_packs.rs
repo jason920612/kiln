@@ -441,6 +441,7 @@ fn the_enchanting_table_and_the_anvil_use_the_packs_enchantments() {
     // Shift-click both swords in (inventory menu slots 3.. are the player's), then take the result.
     for slot in [30, 31] {
         w.click(2, slot, kiln_inventory::ContainerInput::QuickMove);
+        eprintln!("DEBUG after click {slot}: {:?}", w.sim.open_menu(1));
     }
     let (_, slots) = w.sim.open_menu(1).unwrap();
     assert!(slots[2].is_some(), "a result: {slots:?}");
