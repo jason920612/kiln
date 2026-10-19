@@ -91,6 +91,7 @@ fn vanillas_block_transformer_files_do_what_the_built_in_rules_do() {
     }
     kiln_sim::testing::use_builtin_block_transformers(false);
     let from_files = outcomes();
+    assert!(kiln_sim::testing::block_transformers_from_files(), "vanilla's hoe, axe and shovel files were not read");
     kiln_sim::testing::use_builtin_block_transformers(true);
     let built_in = outcomes();
     kiln_sim::testing::use_builtin_block_transformers(false);

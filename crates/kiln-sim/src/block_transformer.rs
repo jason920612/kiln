@@ -171,6 +171,11 @@ pub(crate) fn use_builtin_rules(on: bool) {
     BUILTIN_RULES.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Whether the hoe, axe and shovel come from vanilla's own files (found and readable), as opposed to the built-in rules.
+pub(crate) fn vanilla_files_loaded() -> bool {
+    ["minecraft:hoe", "minecraft:axe", "minecraft:shovel"].iter().all(|e| transformers().get(e).is_some_and(|t| t.vanilla))
+}
+
 fn parse_list(entry: &str, json: &Json, strict: bool) -> Option<Vec<Transform>> {
     let list = json.as_array()?;
     let mut transforms = Vec::new();

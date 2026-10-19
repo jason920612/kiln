@@ -421,3 +421,53 @@ pub(crate) fn parse_settings(graph: &mut Graph, json: &Json) -> Result<NoiseSett
         material_rule: parse_rule(graph, field(json, "material_rule")?)?,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(root: &Path, rel: &str, text: &str) {
+        let path = root.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+
+    fn temp(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kiln-datapack-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn a_later_pack_replaces_an_earlier_one_and_entries_follow_the_identifier_order() {
+        let (a, b) = (temp("a"), temp("b"));
+        write(&a, "data/minecraft/worldgen/structure/igloo.json", r#"{"v":"vanilla"}"#);
+        write(&a, "data/minecraft/worldgen/structure/buried_treasure.json", r#"{"v":"vanilla"}"#);
+        write(&b, "data/minecraft/worldgen/structure/igloo.json", r#"{"v":"pack"}"#);
+        write(&b, "data/kiln85/worldgen/structure/hut.json", r#"{"v":"pack"}"#);
+        write(&b, "data/aaa/worldgen/structure/zzz.json", r#"{"v":"pack"}"#);
+        let list = stacked_entries(&[a.clone(), b.clone()], "worldgen/structure").unwrap();
+        let ids: Vec<&str> = list.iter().map(|(i, _)| i.as_str()).collect();
+        // Path first, namespace second (`Identifier.compareTo`): `hut` comes between `buried_treasure` and `igloo`.
+        assert_eq!(ids, ["minecraft:buried_treasure", "kiln85:hut", "minecraft:igloo", "aaa:zzz"]);
+        let igloo = list.iter().find(|(i, _)| i == "minecraft:igloo").unwrap();
+        assert_eq!(igloo.1.get("v").and_then(Json::as_str), Some("pack"), "the later pack's file replaces the earlier one's");
+        let _ = fs::remove_dir_all(a);
+        let _ = fs::remove_dir_all(b);
+    }
+
+    #[test]
+    fn tags_add_up_in_pack_order_and_replace_drops_the_earlier_ones() {
+        let (a, b, c) = (temp("ta"), temp("tb"), temp("tc"));
+        write(&a, "data/minecraft/tags/worldgen/biome/t.json", r#"{"values":["minecraft:plains","minecraft:desert"]}"#);
+        write(&b, "data/minecraft/tags/worldgen/biome/t.json", r#"{"values":["kiln85:crystal",{"id":"minecraft:desert","required":false}]}"#);
+        let tags = stacked_tags(&[a.clone(), b.clone()], "worldgen/biome").unwrap();
+        assert_eq!(tags["minecraft:t"], ["minecraft:plains", "minecraft:desert", "kiln85:crystal", "minecraft:desert"]);
+        write(&c, "data/minecraft/tags/worldgen/biome/t.json", r#"{"replace":true,"values":["minecraft:forest"]}"#);
+        let tags = stacked_tags(&[a.clone(), b.clone(), c.clone()], "worldgen/biome").unwrap();
+        assert_eq!(tags["minecraft:t"], ["minecraft:forest"]);
+        for d in [a, b, c] {
+            let _ = fs::remove_dir_all(d);
+        }
+    }
+}
