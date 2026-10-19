@@ -7,7 +7,7 @@
 //! which the phantom spawner reads.
 
 use crate::blocks::{EntityBox, RegionLevel};
-use crate::{DimId, NETHER_ID, OVERWORLD_ID, Player, Sim};
+use crate::{DimId, Player, Sim};
 use kiln_blocks::{BlockPos, Direction, Effect, Level, flags};
 use kiln_data::block_logic::{self as logic, BlockClass};
 use kiln_data::blocks::default_state as d;
