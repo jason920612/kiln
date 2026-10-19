@@ -48,6 +48,7 @@ impl Reader<'_> {
     }
 }
 
+#[allow(dead_code)]
 struct Target {
     x: i32,
     z: i32,

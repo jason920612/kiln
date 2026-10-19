@@ -3,8 +3,7 @@
 //! tick, sky darkening, precipitation over biome areas, the night skip's clock and weather
 //! reset, and where players stand up from beds. Skipped without the vectors.
 
-use crate::weather::{Climates, LevelWeather, WeatherData, marker_move, sky_darken};
-use crate::OVERWORLD_ID;
+use crate::weather::{Climates, LevelWeather, WeatherData, marker_move_in, sky_darken_with};
 use kiln_blocks::{BlockPos, Direction, Level, TestLevel};
 use kiln_javamath::random::LegacyRandom;
 use serde_json::Value;
@@ -89,11 +88,13 @@ fn weather_parity() {
                 }
             }
         } else if name == "sky" {
+            // (The day timeline is the data pack's, else the built-in one.)
+            let timelines = crate::timelines::Timelines::load(&crate::world_state::worldgen_roots());
             for s in v["samples"].as_array().unwrap() {
                 let s = s.as_array().unwrap();
                 let (t, r, th) = (s[0].as_i64().unwrap(), f32_of(&s[1]), f32_of(&s[2]));
                 let l = LevelWeather { rain: r, o_rain: r, thunder: th, o_thunder: th };
-                let ours = sky_darken(OVERWORLD_ID, t, &l);
+                let ours = sky_darken_with(&timelines, &["minecraft:day"], &|_| t, &l);
                 let theirs = s[3].as_i64().unwrap() as i32;
                 report(&format!("sky {t} {r} {th}"), ours == theirs, format!("ours {ours} vanilla {theirs}"));
             }
@@ -103,7 +104,7 @@ fn weather_parity() {
             for (n, s) in v["samples"].as_array().unwrap().iter().enumerate() {
                 let s = s.as_array().unwrap();
                 let t = s[0].as_i64().unwrap();
-                let moved = marker_move(t, 0);
+                let moved = marker_move_in(t, 0, 24000);
                 let after = moved.unwrap_or(t);
                 let result = if moved.is_some() { "MOVED" } else { "NOT_MOVED" };
                 report(&format!("wake {t}"), after == s[2].as_i64().unwrap() && result == s[1], format!("ours {result} {after} vanilla {} {}", s[1], s[2]));

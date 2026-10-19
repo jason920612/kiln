@@ -206,31 +206,6 @@ pub(crate) fn can_have_weather(dim: crate::DimId) -> bool {
     kind.has_skylight && !kind.has_ceiling && dim != crate::END_ID
 }
 
-/// The overworld `day` timeline's `minecraft:gameplay/sky_light_level` multiplier: 1 by day,
-/// 4/15 at night, linear between the keyframes (the timeline repeats every 24000 ticks).
-fn sky_light_factor(day_time: i64) -> f32 {
-    const KEYS: [(i64, f32); 4] = [(133, 1.0), (11867, 1.0), (13670, 0.26666668), (22330, 0.26666668)];
-    let t = day_time.rem_euclid(24000);
-    for w in 0..KEYS.len() {
-        let (a, b) = (KEYS[w], KEYS[(w + 1) % KEYS.len()]);
-        let bt = if b.0 <= a.0 { b.0 + 24000 } else { b.0 };
-        let tt = if t < a.0 { t + 24000 } else { t };
-        if tt >= a.0 && tt <= bt {
-            let f = (tt - a.0) as f32 / (bt - a.0) as f32;
-            return a.1 + f * (b.1 - a.1);
-        }
-    }
-    1.0
-}
-
-/// The `minecraft:gameplay/sky_light_level` attribute of the overworld: 15 scaled by the day
-/// timeline, then the weather layer (`WeatherAttributes`): rain blends toward 4 with alpha
-/// 0.3125 by the rain level less the thunder level, thunder toward 4 with alpha 0.52734375
-/// by the thunder level.
-pub(crate) fn sky_light_level(day_time: i64, weather: &LevelWeather) -> f32 {
-    weather_layer(15.0 * sky_light_factor(day_time), weather)
-}
-
 /// `WeatherAttributes`: the `sky_light_level` `v` of the timelines changed by the rain and the thunder of the level.
 pub(crate) fn weather_layer(mut v: f32, weather: &LevelWeather) -> f32 {
     let thunder = weather.thunder_level();
@@ -244,13 +219,14 @@ pub(crate) fn weather_layer(mut v: f32, weather: &LevelWeather) -> f32 {
     v
 }
 
-/// `Level.updateSkyBrightness` for level `dim`: `15 - sky light level`; 0 without a clock.
-pub(crate) fn sky_darken(dim: crate::DimId, day_time: i64, weather: &LevelWeather) -> i32 {
-    if !crate::dim_type(dim).has_timeline("minecraft:day") {
-        // No day timeline modifies their sky light level (and the nether has no sky light).
+/// `Level.updateSkyBrightness`: 15 less the `minecraft:gameplay/sky_light_level` the `dimension_timelines` make with the clocks at `total`, then the weather
+/// layer; 0 when none of the timelines sets it (no day timeline modifies the sky light of the nether and the End).
+pub(crate) fn sky_darken_with(timelines: &crate::timelines::Timelines, dimension_timelines: &[&str], total: &dyn Fn(&str) -> i64, weather: &LevelWeather) -> i32 {
+    const SKY: &str = "minecraft:gameplay/sky_light_level";
+    if !timelines.has_track(dimension_timelines, SKY) {
         return 0;
     }
-    (15.0 - sky_light_level(day_time, weather)) as i32
+    (15.0 - weather_layer(timelines.float_attr(dimension_timelines, SKY, 15.0, total), weather)) as i32
 }
 
 /// Biome climates by biome network id, from the datapack's `worldgen/biome`.
@@ -512,12 +488,7 @@ impl ClockRun {
     }
 }
 
-/// `ClockTimeMarker.occursAt` and `resolveTimeToMoveTo` for a marker `ticks` into a timeline of `period` ticks (24000 for the day).
-pub(crate) fn marker_move(total: i64, ticks: i64) -> Option<i64> {
-    marker_move_in(total, ticks, 24000)
-}
-
-/// [`marker_move`] for a timeline that repeats every `period` ticks.
+/// `ClockTimeMarker.occursAt` and `resolveTimeToMoveTo` for a marker `ticks` into a timeline that repeats every `period` ticks (24000 for the day).
 pub(crate) fn marker_move_in(total: i64, ticks: i64, period: i64) -> Option<i64> {
     if total.rem_euclid(period) == ticks {
         return None;
@@ -610,12 +581,8 @@ impl Sim {
     /// `Level.updateSkyBrightness` for level `dim`: 15 less the `minecraft:gameplay/sky_light_level` its timelines make (0 when none of
     /// them sets it: no day timeline modifies the sky light of the nether and the End), then the weather layer.
     pub(crate) fn sky_darken_of(&self, dim: crate::DimId) -> i32 {
-        const SKY: &str = "minecraft:gameplay/sky_light_level";
-        if !self.timelines.has_track(crate::dim_type(dim).timelines, SKY) {
-            return 0;
-        }
-        let level = weather_layer(self.timeline_float(dim, SKY, 15.0), &self.level_weather[dim]);
-        (15.0 - level) as i32
+        let total = |clock: &str| self.clock_total_of(clock).unwrap_or(0);
+        sky_darken_with(&self.timelines, crate::dim_type(dim).timelines, &total, &self.level_weather[dim])
     }
 
     /// The default clock of the level the command's source is in (the overworld's when it has none).
@@ -754,10 +721,10 @@ mod tests {
 
     #[test]
     fn markers_move_to_the_next_occurrence() {
-        assert_eq!(marker_move(23999, 0), Some(24000));
-        assert_eq!(marker_move(24000, 0), None);
-        assert_eq!(marker_move(13000, 1000), Some(25000));
-        assert_eq!(marker_move(500, 1000), Some(1000));
+        assert_eq!(marker_move_in(23999, 0, 24000), Some(24000));
+        assert_eq!(marker_move_in(24000, 0, 24000), None);
+        assert_eq!(marker_move_in(13000, 1000, 24000), Some(25000));
+        assert_eq!(marker_move_in(500, 1000, 24000), Some(1000));
     }
 
     #[test]

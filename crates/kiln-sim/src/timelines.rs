@@ -232,10 +232,6 @@ impl Timelines {
         Arc::new(t)
     }
 
-    pub(crate) fn get(&self, id: &str) -> Option<&Timeline> {
-        self.by_id.get(id)
-    }
-
     /// The ids of the timelines that follow `clock`.
     pub(crate) fn of_clock<'a>(&'a self, clock: &'a str) -> impl Iterator<Item = (&'a str, &'a Timeline)> + 'a {
         self.order.iter().filter_map(|id| self.by_id.get(id).map(|t| (id.as_str(), t))).filter(move |(_, t)| t.clock == clock)
@@ -354,7 +350,9 @@ mod tests {
         t.order.push("kiln:short_day".into());
         t.by_id.insert("kiln:short_day".into(), parse_timeline(&j).unwrap());
         let list = ["kiln:short_day"];
-        let clock = |c: &str, v: i64| move |name: &str| if name == c { v } else { 0 };
+        fn clock(c: &'static str, v: i64) -> impl Fn(&str) -> i64 {
+            move |name: &str| if name == c { v } else { 0 }
+        }
         assert!(!t.bool_attr(&list, "minecraft:gameplay/monsters_burn", true, &clock("kiln:short", 30)));
         assert!(t.bool_attr(&list, "minecraft:gameplay/monsters_burn", false, &clock("kiln:short", 70)));
         // The clock of the overworld does not matter to it.
