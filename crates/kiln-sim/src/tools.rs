@@ -85,7 +85,21 @@ pub(crate) fn item_use_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
     }
     let name = stack.item_name();
     let s = level.block(pos);
-    let used = if name.ends_with("_hoe") {
+    // A data pack that defines `hoe`, `axe` or `shovel` (`minecraft:block_transformer`) decides what they do; without one the rules below are the vanilla ones.
+    let transformer = if name.ends_with("_hoe") {
+        Some("minecraft:hoe")
+    } else if name.ends_with("_shovel") {
+        Some("minecraft:shovel")
+    } else if name.ends_with("_axe") {
+        Some("minecraft:axe")
+    } else {
+        None
+    };
+    let transformed = transformer.and_then(|t| crate::block_transformer::transform(t, p, level, pos, face, off_hand, spawns));
+    let used = if let Some(done) = transformed {
+        // (A shovel that transforms nothing still puts a campfire out.)
+        done || (name.ends_with("_shovel") && extinguish(level, pos, s))
+    } else if name.ends_with("_hoe") {
         till(p, level, pos, face, s, &stack, spawns)
     } else if name.ends_with("_shovel") {
         flatten(p, level, pos, face, s)
@@ -113,7 +127,7 @@ pub(crate) fn item_use_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
     }
     // Tools wear by one use (`hurtAndBreak(1)`); honeycomb, bone meal and fire charges are
     // used up where they are handled.
-    if name.ends_with("_hoe") || name.ends_with("_shovel") || name.ends_with("_axe") || name == "minecraft:shears" || name == "minecraft:flint_and_steel" {
+    if (transformed != Some(true) && (name.ends_with("_hoe") || name.ends_with("_shovel") || name.ends_with("_axe"))) || name == "minecraft:shears" || name == "minecraft:flint_and_steel" {
         p.hurt_and_break(hand_slot(off_hand), 1, None);
     }
     // `ItemStack.useOn` and `ServerPlayerGameMode.useItemOn`.
@@ -179,6 +193,16 @@ fn till(_p: &mut Player, level: &mut RegionLevel, pos: BlockPos, face: Direction
     for item in drops.into_iter().flatten() {
         crate::interact_loot::pop_resource_from_face(level, pos, face, item, spawns);
     }
+    true
+}
+
+/// `ShovelItem.useOn`: a lit campfire is put out.
+fn extinguish(level: &mut RegionLevel, pos: BlockPos, s: u16) -> bool {
+    if !(logic::is_instance(s, C::CampfireBlock) && state::get_bool(s, "lit")) {
+        return false;
+    }
+    level.effect(Effect::ActorLevelEvent { id: 1009, pos, data: 0 });
+    kiln_blocks::set_block(level, pos, state::set_bool(s, "lit", false), flags::ALL_IMMEDIATE);
     true
 }
 

@@ -72,6 +72,7 @@ mod xp;
 mod container;
 mod datapacks;
 mod tags;
+mod block_transformer;
 mod registry_data;
 mod tickets;
 mod zip_pack;
