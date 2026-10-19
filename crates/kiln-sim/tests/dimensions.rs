@@ -325,3 +325,36 @@ fn a_mob_in_a_portal_goes_through_on_the_second_tick() {
     w.ticks(1);
     assert!(in_nether(&w), "the second tick takes it through");
 }
+
+/// wp82 (found with an agent on a vanilla server, `tools/wp82/agent`, after the lock-step samples at (20, -40), (40, 10) and (30, 30) of wp81 and wp82 differed by a
+/// chunk): `TheEndGatewayBlockEntity.findValidSpawnInChunk` keeps the nearest candidate as a reference to `BlockPos.betweenClosed`'s one cursor, so it returns where the cursor ended
+/// up: the far corner of the chunk at the top of its highest section, whichever block was the nearest. Then `findTallestBlock` looks ±16 around THAT.
+#[test]
+fn an_end_gateway_without_an_exit_searches_around_the_far_corner_of_the_chunk_it_found() {
+    let mut w = World::new("creative");
+    w.run("execute in minecraft:the_end run forceload add -32 -1060 64 -980");
+    w.ticks(30);
+    // The chunk (0, -64) holds one end stone block at y 32 near its corner nearest the origin; a taller block stands 30 blocks from it, inside ±16 of the far corner.
+    for c in [
+        "fill -32 0 -1060 31 63 -1020 minecraft:air",
+        "fill -32 0 -1019 31 63 -980 minecraft:air",
+        "fill 32 0 -1060 63 63 -1020 minecraft:air",
+        "fill 32 0 -1019 63 63 -980 minecraft:air",
+        "setblock 1 32 -1023 minecraft:end_stone",
+        "setblock 30 60 -1000 minecraft:end_stone",
+    ] {
+        w.run(&format!("execute in minecraft:the_end run {c}"));
+    }
+    w.run("execute in minecraft:the_end run tp Traveller 0 100 -30");
+    w.ticks(20);
+    w.run("execute in minecraft:the_end run setblock 0 80 -40 minecraft:end_gateway");
+    w.run("execute in minecraft:the_end run summon minecraft:cow 0.5 80 -39.5 {NoAI:1b,PersistenceRequired:1b}");
+    w.ticks(40);
+    let be = w.sim.block_entity_data(END, 0, 80, -40).expect("the gateway");
+    let exit = match be.get("exit_portal") {
+        Some(kiln_proto::nbt::Tag::IntArray(v)) => v.clone(),
+        other => panic!("no exit yet: {other:?} {be:?}"),
+    };
+    // (The far corner of the chunk is (15, 47, -1009): ±16 around it holds both blocks, and the taller one wins; the exit is ten above it.)
+    assert_eq!(exit, vec![30, 70, -1000], "the taller block within 16 of the far corner, not of the nearest block");
+}

@@ -1104,24 +1104,6 @@ impl Sim {
                 }
             }
         }
-        if dist == 16 && allow_bedrock {
-            let mut tops = String::new();
-            for dx in -dist..=dist {
-                for dz in -dist..=dist {
-                    let mut y = max_y;
-                    while y > d.min_y {
-                        let p = BlockPos::new(around.x + dx, y, around.z + dz);
-                        let s = self.block_loading(dim, p);
-                        if kiln_data::block_props::full_collision(s) {
-                            break;
-                        }
-                        y -= 1;
-                    }
-                    tops.push_str(&format!("{},{}={} ", around.x + dx, around.z + dz, y));
-                }
-            }
-            info!("WP82 tallest around {around:?}: result {tallest:?}; tops {tops}");
-        }
         tallest.unwrap_or(around)
     }
 
@@ -1134,12 +1116,10 @@ impl Sim {
         let mut exit = [dir[0] * 1024.0, dir[1] * 1024.0];
         // (`for (int i = 16; !isChunkEmpty(…) && i-- > 0; …)`: up to sixteen steps, the old count is tested.)
         let mut left = 16;
-        info!("WP82 start {exit:?} dir {dir:?}");
         while !self.chunk_empty(exit) && {
             left -= 1;
             left >= 0
         } {
-            info!("WP82 back past nonempty {exit:?}");
             exit = [exit[0] - dir[0] * 16.0, exit[1] - dir[1] * 16.0];
         }
         let mut left = 16;
@@ -1147,12 +1127,10 @@ impl Sim {
             left -= 1;
             left >= 0
         } {
-            info!("WP82 forward past empty {exit:?}");
             exit = [exit[0] + dir[0] * 16.0, exit[1] + dir[1] * 16.0];
         }
         let chunk = ChunkPos::new((exit[0] / 16.0).floor() as i32, (exit[1] / 16.0).floor() as i32);
         let found = self.valid_spawn_in_chunk(chunk);
-        info!("WP82 gateway exit search: tentative {exit:?} chunk {chunk:?} valid spawn {found:?}");
         let at = match found {
             Some(p) => p,
             None => {
@@ -1177,46 +1155,26 @@ impl Sim {
         chunk.sections.iter().all(|s| s.is_empty())
     }
 
-    /// `findValidSpawnInChunk`: end stone with two non-full blocks above, nearest the origin.
+    /// `findValidSpawnInChunk`: the chunk holds end stone with two non-full blocks above (y 30 and up), the nearest to the origin leading. Vanilla then returns
+    /// the NEAREST AS A LIVE REFERENCE TO THE ITERATOR'S CURSOR (`closest = pos`, not `pos.immutable()`; `BlockPos.betweenClosed` hands out one mutable position), which
+    /// has moved on to the last place it visits when the loop is over: the chunk's far corner at the top of its highest section (found on a vanilla server: wp82's
+    /// agent saw `findValidSpawnInChunk` return (687, 63, 687) for a chunk whose nearest candidate was (672, 32, 672)). So the answer is that corner whenever
+    /// there is any candidate.
     fn valid_spawn_in_chunk(&mut self, c: ChunkPos) -> Option<BlockPos> {
         use kiln_world::spawn::LoadChunks;
         let chunk = self.dims[END_ID].load_chunk(c);
         let top = chunk.sections.iter().rposition(|s| !s.is_empty())? as i32 * 16 + chunk.min_y() + 15;
-        if c.x == 29 && c.z == -59 {
-            let mut hist: std::collections::BTreeMap<(String, String), usize> = Default::default();
-            for z in 12..16 {
-                for y in 30..=top {
-                    for x in 0..16 {
-                        if kiln_blocks::state::is(chunk.get(x, y, z), block::END_STONE) {
-                            let a = kiln_data::blocks_types::block_of(chunk.get(x, y + 1, z)).name.to_string();
-                            let b = kiln_data::blocks_types::block_of(chunk.get(x, y + 2, z)).name.to_string();
-                            *hist.entry((a, b)).or_default() += 1;
-                        }
-                    }
-                }
-            }
-            info!("WP82 rows z>=-932 of chunk 29,-59: stone with (above1, above2): {hist:?}");
-        }
-        let mut best: Option<(f64, BlockPos)> = None;
-        for z in 0..16 {
-            for y in 30..=top {
-                for x in 0..16 {
-                    let s = chunk.get(x, y, z);
-                    if !kiln_blocks::state::is(s, block::END_STONE)
-                        || kiln_data::block_props::full_collision(chunk.get(x, y + 1, z))
-                        || kiln_data::block_props::full_collision(chunk.get(x, y + 2, z))
-                    {
-                        continue;
-                    }
-                    let p = BlockPos::new((c.x << 4) + x as i32, y, (c.z << 4) + z as i32);
-                    let d = (p.x as f64 + 0.5).powi(2) + (p.y as f64 + 0.5).powi(2) + (p.z as f64 + 0.5).powi(2);
-                    if best.is_none_or(|(bd, _)| d < bd) {
-                        best = Some((d, p));
-                    }
-                }
-            }
-        }
-        best.map(|(_, p)| p)
+        // (Which candidate is the nearest does not matter: see above.)
+        let any = (0..16).any(|z| {
+            (30..=top).any(|y| {
+                (0..16).any(|x| {
+                    kiln_blocks::state::is(chunk.get(x, y, z), block::END_STONE)
+                        && !kiln_data::block_props::full_collision(chunk.get(x, y + 1, z))
+                        && !kiln_data::block_props::full_collision(chunk.get(x, y + 2, z))
+                })
+            })
+        });
+        any.then(|| BlockPos::new((c.x << 4) + 15, top, (c.z << 4) + 15))
     }
 
     /// `EndGatewayFeature` at `at` with its block entity (`exit`: a known exit and whether it
