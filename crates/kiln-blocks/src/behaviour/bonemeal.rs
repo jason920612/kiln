@@ -236,6 +236,19 @@ pub fn grow<L: Level>(level: &mut L, pos: BlockPos) -> Option<bool> {
             Some(valid)
         }
         // Nylium grows the nether's vegetation on top; netherrack beside nylium turns into nylium (both kinds around: either at random).
+        // A fungus on its own nylium grows into a huge fungus four times in ten.
+        C::NetherFungusBlock => {
+            let (required, feature) = if is_named(s, "minecraft:warped_fungus") {
+                ("minecraft:warped_nylium", "minecraft:warped_fungus_planted")
+            } else {
+                ("minecraft:crimson_nylium", "minecraft:crimson_fungus_planted")
+            };
+            let valid = is_named(level.block(pos.below()), required) && inside_build_height(level, pos.above());
+            if valid && f64::from(level.random().next_float()) < 0.4 {
+                feature_host::place(level, FeatureRef::Configured(feature), pos);
+            }
+            Some(valid)
+        }
         C::NyliumBlock => {
             let valid = is_air(level.block(pos.above())) && inside_build_height(level, pos.above());
             if valid {
