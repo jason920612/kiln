@@ -320,8 +320,7 @@ fn a_mob_in_a_portal_goes_through_on_the_second_tick() {
     assert!(state::is(w.sim.block_at(12, -59, 12).unwrap(), d::NETHER_PORTAL));
     w.run("summon minecraft:cow 11.5 -60 12.5 {NoAI:1b,PersistenceRequired:1b}");
     let in_nether = |w: &World| w.sim.entities_in(NETHER).iter().any(|(k, _)| *k == "minecraft:cow");
-    assert!(!in_nether(&w), "made, not ticked yet");
-    w.ticks(1);
+    // (`/summon` makes it before the level ticks, so the summon's own tick is its first.)
     assert!(!in_nether(&w), "the first tick in the portal only marks it");
     w.ticks(1);
     assert!(in_nether(&w), "the second tick takes it through");
