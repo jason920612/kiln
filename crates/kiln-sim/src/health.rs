@@ -1,22 +1,4 @@
-    /// `recheckStatus` (`now` is the mob's tick count): `Some(duration)` when a fight ended (`onLeaveCombat`: the player is told).
-    pub(crate) fn recheck(&mut self, now: i64, alive: bool) -> Option<i32> {
-        let limit = if self.in_combat { 300 } else { 100 };
-        if self.taking_damage && (!alive || now - self.last_damage_time > limit) {
-            let was = self.in_combat;
-            self.taking_damage = false;
-            self.in_combat = false;
-            self.combat_end = now;
-            self.entries.clear();
-            if was {
-                return Some((self.combat_end - self.combat_start) as i32);
-            }
-        }
-        None
-    }
-
-    /// `recordDamage`: `Some(left)` is the length of a fight the recheck before it ended, and `true` that this hit starts one (`onEnterCombat`).
-    fn record(&mut self, source: &Source, fall_distance: f32, now: i64, alive: bool) -> (Option<i32>, bool) {
-        let left = self.recheck(now, alive);//! Player health, damage, death and respawn (vanilla `ServerPlayer.hurtServer`,
+//! Player health, damage, death and respawn (vanilla `ServerPlayer.hurtServer`,
 //! `Player.hurtServer`/`actuallyHurt`, `LivingEntity.hurtServer`, `CombatTracker`,
 //! `ServerPlayer.die`, `PlayerList.respawn`).
 //!
