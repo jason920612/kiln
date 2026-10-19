@@ -271,17 +271,30 @@ impl Pipeline {
     /// structure's name. `None` when structures are off, none of the names is a structure
     /// that can generate here, or nothing is within `radius`.
     pub fn find_nearest_structure(&self, gs: &mut GenScratch, names: &[String], origin: [i32; 3], radius: i32) -> Option<([i32; 3], String)> {
+        self.find_nearest_structure_claiming(gs, names, origin, radius, &mut |_, _| true)
+    }
+
+    /// [`Self::find_nearest_structure`] for a map that skips known structures: `claim(chunk, structure name)` is `StructureManager.tryAddReference`.
+    pub fn find_nearest_structure_claiming(
+        &self,
+        gs: &mut GenScratch,
+        names: &[String],
+        origin: [i32; 3],
+        radius: i32,
+        claim: &mut dyn FnMut((i32, i32), &str) -> bool,
+    ) -> Option<([i32; 3], String)> {
         let w = &self.world;
         if !w.generate_structures {
             return None;
         }
         let wanted: Vec<usize> = names.iter().filter_map(|n| w.structures.id(n)).collect();
-        let found = w.structures.find_nearest(
+        let found = w.structures.find_nearest_claiming(
             &w.generator,
             &mut |x, z| self.starts.get(&w.structures, &w.generator, &mut gs.structures, x, z),
             &wanted,
             origin,
             radius,
+            &mut |chunk, st| claim(chunk, &w.structures.structures[st].name),
         )?;
         Some((found.pos, w.structures.structures[found.structure].name.clone()))
     }

@@ -280,3 +280,47 @@ fn a_players_pearl_leaves_with_it_and_comes_back() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// wp82 (side by side with a vanilla server, `tools/wp82/ticket82.py`): the portal ticket a mob's trip placed is saved (`chunk_tickets.dat`, with the ticks it has left) and
+/// holds the nether chunks loaded and ticking for the rest of its 300 ticks after a restart, whoever is near.
+#[test]
+fn a_portal_ticket_keeps_its_chunk_loaded_after_a_restart() {
+    let dir = std::env::temp_dir().join(format!("kiln-portal-ticket-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let cows_in_nether = |sim: &Sim| sim.entities_in("minecraft:the_nether").iter().filter(|(k, _)| *k == "minecraft:cow").count();
+    {
+        let mut w = World::new(Some(dir.clone()));
+        w.run("gamemode creative Thrower");
+        w.run("fill 10 -61 12 13 -57 12 minecraft:obsidian");
+        w.run("fill 11 -60 12 12 -58 12 minecraft:air");
+        w.run("setblock 11 -60 12 minecraft:fire");
+        w.run("summon minecraft:cow 11.5 -60 12.5 {NoAI:1b,PersistenceRequired:1b}");
+        w.ticks(6);
+        assert_eq!(cows_in_nether(&w.sim), 1, "the cow went through");
+        w.ticks(40);
+        let (done, _wait) = std::sync::mpsc::channel();
+        assert!(!w.sim.step([ToSim::Shutdown { done }]));
+    }
+    let mut sim = Sim::new(SimConfig::new(2, 2, Some(dir.clone())));
+    let (msg, stats) = join(1, "Thrower", 2);
+    assert!(sim.step([msg]));
+    let mut client = Client::new(1, stats);
+    for _ in 0..30 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    assert_eq!(cows_in_nether(&sim), 1, "the nether chunk is back with the ticket, and the cow with it");
+    let mut tick = |sim: &mut Sim, n: usize| {
+        for _ in 0..n {
+            let mut inbox = Vec::new();
+            client.tick(None, &mut inbox);
+            assert!(sim.step(inbox));
+        }
+    };
+    tick(&mut sim, 100);
+    assert_eq!(cows_in_nether(&sim), 1, "130 ticks after the restart the ticket (about 250 left when it was saved) still holds the chunk");
+    tick(&mut sim, 200);
+    assert_eq!(cows_in_nether(&sim), 0, "and 330 ticks after it is spent: the chunk unloads with the cow");
+    let _ = std::fs::remove_dir_all(&dir);
+}

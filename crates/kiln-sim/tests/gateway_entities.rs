@@ -54,3 +54,41 @@ fn an_item_in_an_end_gateway_goes_to_its_exit() {
     let p = run("summon minecraft:item GX.5 GY GZ.5 {Item:{id:\"minecraft:stone\",count:1},PickupDelay:32767s}", "minecraft:item");
     assert!(at_exit(p), "the item went to the exit: {p:?}");
 }
+
+fn motion_of(sim: &Sim, id: &str) -> Option<[f64; 3]> {
+    let t = sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some(id))?;
+    match t.get("Motion") {
+        Some(Tag::List(l)) if l.len() == 3 => Some([l[0].as_f64()?, l[1].as_f64()?, l[2].as_f64()?]),
+        _ => None,
+    }
+}
+
+/// wp82: `EndGatewayBlock.getPortalDestination` keeps the motion of what goes through (`Relative.DELTA`; an ender pearl, which leaves with none and looking at 0, 0, is not tested here).
+#[test]
+fn a_gateway_keeps_the_motion_of_what_goes_through() {
+    let mut sim = Sim::new(SimConfig::new(4, 4, None));
+    let (msg, stats) = join(1, "Watcher", 2);
+    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into()), ToSim::Console("gamemode creative Watcher".into())]));
+    let mut client = Client::new(1, stats);
+    let mut tick = |sim: &mut Sim, n: usize| {
+        for _ in 0..n {
+            let mut inbox = Vec::new();
+            client.tick(None, &mut inbox);
+            assert!(sim.step(inbox));
+        }
+    };
+    tick(&mut sim, 5);
+    let (gx, gy, gz) = (30, 100, 30);
+    for c in [
+        format!("fill {} {} {} {} {} {} minecraft:air", gx - 4, gy - 3, gz - 4, gx + 25, gy + 6, gz + 4),
+        format!("setblock {gx} {gy} {gz} minecraft:end_gateway{{exit_portal:[I;{},{},{}],ExactTeleport:1b}}", gx + 20, gy + 2, gz),
+    ] {
+        assert!(sim.step([ToSim::Console(c)]));
+    }
+    assert!(sim.step([ToSim::Console(format!("summon minecraft:item {gx}.5 {gy} {gz}.5 {{Item:{{id:\"minecraft:stone\",count:1}},PickupDelay:32767s,Motion:[0.0d,0.4d,0.0d]}}"))]));
+    tick(&mut sim, 3);
+    let m = motion_of(&sim, "minecraft:item").expect("the item");
+    let p = pos_of(&sim, "minecraft:item").expect("the item");
+    assert!((p[0] - 50.5).abs() < 2.0, "it went through: {p:?}");
+    assert!(m[1] > 0.1, "it kept going up: motion {m:?} at {p:?}");
+}

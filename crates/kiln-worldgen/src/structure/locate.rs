@@ -64,6 +64,20 @@ impl Structures {
         origin: [i32; 3],
         radius: i32,
     ) -> Option<Found> {
+        self.find_nearest_claiming(generator, starts, wanted, origin, radius, &mut |_, _| true)
+    }
+
+    /// `findNearestMapStructure(…, skipKnownStructures)`: with `claim` (`tryAddReference`: the start of the structure in the chunk can still be referenced, and
+    /// is, now), a start that was claimed before is passed over for the next structure of its set and the next position.
+    pub fn find_nearest_claiming(
+        &self,
+        generator: &Generator,
+        starts: &mut dyn FnMut(i32, i32) -> Arc<Vec<Start>>,
+        wanted: &[usize],
+        origin: [i32; 3],
+        radius: i32,
+        claim: &mut dyn FnMut((i32, i32), usize) -> bool,
+    ) -> Option<Found> {
         let placements = self.placements_of(wanted);
         if placements.is_empty() {
             return None;
@@ -74,7 +88,7 @@ impl Structures {
         for entry in &placements {
             match &self.sets[entry.0].placement {
                 Placement::ConcentricRings { .. } => {
-                    if let Some(found) = self.nearest_in_rings(generator, starts, entry, origin) {
+                    if let Some(found) = self.nearest_in_rings(generator, starts, entry, origin, claim) {
                         let d = dist_sqr(origin, found.pos);
                         if d < closest_distance {
                             closest_distance = d;
@@ -90,7 +104,7 @@ impl Structures {
             for ring in 0..=radius {
                 let mut hit = false;
                 for entry in &spreads {
-                    if let Some(found) = self.nearest_in_spread_ring(starts, entry, cx, cz, ring) {
+                    if let Some(found) = self.nearest_in_spread_ring(starts, entry, cx, cz, ring, claim) {
                         hit = true;
                         let d = dist_sqr(origin, found.pos);
                         if d < closest_distance {
@@ -109,11 +123,11 @@ impl Structures {
 
     /// `getStructureGeneratingAt`: the first of the entry's structures that has a start in
     /// `chunk`.
-    fn generating_at(&self, starts: &mut dyn FnMut(i32, i32) -> Arc<Vec<Start>>, entry: &(usize, Vec<usize>), chunk: (i32, i32)) -> Option<Found> {
+    fn generating_at(&self, starts: &mut dyn FnMut(i32, i32) -> Arc<Vec<Start>>, entry: &(usize, Vec<usize>), chunk: (i32, i32), claim: &mut dyn FnMut((i32, i32), usize) -> bool) -> Option<Found> {
         let (set, structures) = entry;
         let all = starts(chunk.0, chunk.1);
         for &st in structures {
-            if all.iter().any(|s| s.structure == st) {
+            if all.iter().any(|s| s.structure == st) && claim(chunk, st) {
                 return Some(Found { pos: self.locate_pos(*set, chunk), structure: st });
             }
         }
@@ -127,6 +141,7 @@ impl Structures {
         starts: &mut dyn FnMut(i32, i32) -> Arc<Vec<Start>>,
         entry: &(usize, Vec<usize>),
         origin: [i32; 3],
+        claim: &mut dyn FnMut((i32, i32), usize) -> bool,
     ) -> Option<Found> {
         let positions = self.ring_positions(generator, entry.0)?;
         let mut closest: Option<Found> = None;
@@ -134,7 +149,7 @@ impl Structures {
         for &(cx, cz) in positions {
             let d = dist_sqr([(cx << 4) + 8, 32, (cz << 4) + 8], origin);
             if closest.is_none() || d < closest_distance {
-                if let Some(found) = self.generating_at(starts, entry, (cx, cz)) {
+                if let Some(found) = self.generating_at(starts, entry, (cx, cz), claim) {
                     closest = Some(found);
                     closest_distance = d;
                 }
@@ -152,6 +167,7 @@ impl Structures {
         section_x: i32,
         section_z: i32,
         ring: i32,
+        claim: &mut dyn FnMut((i32, i32), usize) -> bool,
     ) -> Option<Found> {
         let placement = &self.sets[entry.0].placement;
         let Placement::RandomSpread { spacing, .. } = placement else { return None };
@@ -165,7 +181,7 @@ impl Structures {
                 let sx = section_x.wrapping_add(spacing.wrapping_mul(x));
                 let sz = section_z.wrapping_add(spacing.wrapping_mul(z));
                 let Some(chunk) = placement.potential_chunk(self.seed, sx, sz) else { continue };
-                if let Some(found) = self.generating_at(starts, entry, chunk) {
+                if let Some(found) = self.generating_at(starts, entry, chunk, claim) {
                     return Some(found);
                 }
             }

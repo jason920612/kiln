@@ -193,7 +193,11 @@ impl BeKind {
     }
 }
 
-/// Saved fields a container block entity models; the rest of its NBT is kept as is.
+/// The saved fields a container block entity keeps without modelling them: the data components every block entity has, a decorated pot's sherds and a
+/// shelf's alignment, a banner's pattern layers.
+const KEPT: &[&str] = &["components", "patterns", "sherds", "align_items_to_bottom"];
+
+/// Saved fields a container block entity models.
 const MODELED: &[&str] = &[
     "name",
     "author",
@@ -389,8 +393,10 @@ impl ContainerBe {
             Some(Tag::Compound(fields)) => fields.iter().filter_map(|(k, v)| Some((k.clone(), v.as_i64()? as i32))).collect(),
             _ => Vec::new(),
         };
+        // (A block entity reads the fields of its own type and drops the rest: `setblock … {Foo:1b}` and a jukebox's `is_playing` are gone from the saved
+        // form; what Kiln keeps beside the modelled fields is what vanilla's `saveAdditional` writes that Kiln does not model.)
         let mut extra: Vec<(String, Tag)> = match nbt {
-            Tag::Compound(fields) => fields.iter().filter(|(k, _)| !MODELED.contains(&k.as_str())).cloned().collect(),
+            Tag::Compound(fields) => fields.iter().filter(|(k, _)| !MODELED.contains(&k.as_str()) && KEPT.contains(&k.as_str())).cloned().collect(),
             _ => Vec::new(),
         };
         if kind == BeKind::DecoratedPot {
@@ -420,7 +426,8 @@ impl ContainerBe {
         if kind == BeKind::Lectern {
             let mut book = nbt.get("Book").and_then(|t| ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty()).unwrap_or_else(ItemStack::empty);
             resolve_book(&mut book);
-            page = int("Page", 0).clamp(0, (page_count(&book) - 1).max(0));
+            // (`Mth.clamp(page, 0, pageCount - 1)` is `min(max(page, 0), pageCount - 1)`: a book without pages leaves -1.)
+            page = int("Page", 0).max(0).min(page_count(&book) - 1);
             list.stacks = vec![book];
         }
         // `DecoratedPotBlockEntity.loadAdditional`: its one item is saved as `item`.
@@ -831,7 +838,7 @@ impl kiln_inventory::Container for ContainerBe {
     fn set_data(&mut self, index: usize, value: i32) {
         // `LecternBlockEntity.dataAccess` / `setPage`: clamped to the book, the pulse follows a change.
         if self.kind == BeKind::Lectern && index == 0 {
-            let page = value.clamp(0, (page_count(&self.items[0]) - 1).max(0));
+            let page = value.max(0).min(page_count(&self.items[0]) - 1);
             if page != self.page {
                 self.page = page;
                 self.page_turned = true;

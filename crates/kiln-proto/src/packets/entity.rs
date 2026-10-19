@@ -280,6 +280,14 @@ pub fn set_entity_data(entity_id: i32, data: &EntityData) -> Bytes {
     b.freeze()
 }
 
+/// `ClientboundProjectilePowerPacket`: the acceleration power of a hurting projectile (fireballs, skulls, wind charges), sent with its motion.
+pub fn projectile_power(entity_id: i32, acceleration_power: f64) -> Bytes {
+    let mut b = packet(ids::PROJECTILE_POWER);
+    b.put_varint(entity_id);
+    b.put_f64(acceleration_power);
+    b.freeze()
+}
+
 /// Velocity in blocks per tick.
 pub fn set_entity_motion(entity_id: i32, velocity: [f64; 3]) -> Bytes {
     let mut b = packet(ids::SET_ENTITY_MOTION);

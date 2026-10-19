@@ -181,6 +181,9 @@ impl WindCharge {
 }
 
 impl EntityExt for WindCharge {
+    fn acceleration_power(&self) -> Option<f64> {
+        Some(self.acceleration_power)
+    }
     crate::entity_ext_boilerplate!();
 
     /// `AbstractWindCharge.tick` → `AbstractHurtingProjectile.tick` (no acceleration, inertia 1).

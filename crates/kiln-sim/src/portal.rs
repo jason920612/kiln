@@ -41,6 +41,20 @@ pub(crate) enum PortalKind {
     Gateway,
 }
 
+/// A non-player entity in a portal at the end of a tick, with the state it will leave with (`Entity.setAsInsidePortal`; `handlePortal` of the next tick).
+#[derive(Clone, Debug)]
+pub(crate) struct PendingTrip {
+    dim: DimId,
+    id: i32,
+    kind: PortalKind,
+    entry: BlockPos,
+    pos: [f64; 3],
+    rot: [f32; 2],
+    size: [f32; 2],
+    delta: [f64; 3],
+    on_ground: bool,
+}
+
 /// `PortalProcessor`.
 #[derive(Clone, Debug)]
 pub(crate) struct PortalProcess {
@@ -482,7 +496,17 @@ impl Sim {
                                 if d.portal_cooldowns.contains_key(&e.uuid.as_u128()) || phys.portal_cooldown > 0 {
                                     standing.push((dim, e.uuid.as_u128()));
                                 } else {
-                                    trips.push((dim, e.id, kind, BlockPos::new(x, y, z)));
+                                    trips.push(PendingTrip {
+                                        dim,
+                                        id: e.id,
+                                        kind,
+                                        entry: BlockPos::new(x, y, z),
+                                        pos: e.pos,
+                                        rot: [phys.y_rot, phys.x_rot],
+                                        size: [phys.width, phys.height],
+                                        delta: [phys.delta.x, phys.delta.y, phys.delta.z],
+                                        on_ground: phys.on_ground,
+                                    });
                                 }
                                 break 'find;
                             }
@@ -502,20 +526,39 @@ impl Sim {
                 }
             }
         }
+        // `handlePortal` of the trips that waited for the end of the tick (their level ticks after the destination's), then this tick's entries wait for the next.
+        self.run_portal_trips(false);
+        for trip in trips {
+            let to = match trip.kind {
+                PortalKind::Nether => Some(if trip.dim == NETHER_ID { OVERWORLD_ID } else { NETHER_ID }),
+                PortalKind::End => Some(if trip.dim == END_ID { OVERWORLD_ID } else { END_ID }),
+                PortalKind::Gateway => None,
+            };
+            // The levels tick in order: a destination that ticks after the source gets the entity at the start of the next tick, in time for its turn there.
+            if to.is_none_or(|to| to > trip.dim) {
+                self.portal_trips_start.push(trip);
+            } else {
+                self.portal_trips_end.push(trip);
+            }
+        }
+    }
+
+    /// `Entity.handlePortal` for the entities that were in a portal when the last tick ended: `start` is the start of the tick (the ones going into a level
+    /// that ticks later), else its end (the ones going to a level that ticked already: the entity arrives after that level's turn and ticks there from the next
+    /// tick on).
+    pub(crate) fn run_portal_trips(&mut self, start: bool) {
+        const ENTITY_PORTAL_COOLDOWN: i64 = 300;
+        let now = self.game_time;
+        let trips = std::mem::take(if start { &mut self.portal_trips_start } else { &mut self.portal_trips_end });
         // The destination may be a region ticking away (independent mode).
         if !trips.is_empty() {
             self.rendezvous();
         }
-        for (from, id, kind, entry) in trips {
-            let Some((pos, rot, size)) = self.dims[from]
-                .regions
-                .iter()
-                .flat_map(|r| r.part().0.list.iter())
-                .find(|e| e.id == id)
-                .and_then(|e| e.phys.as_deref().map(|p| (e.pos, [p.y_rot, p.x_rot], [p.width, p.height])))
-            else {
+        for PendingTrip { dim: from, id, kind, entry, pos, rot, size, delta, on_ground } in trips {
+            // (The entity may have died or left since.)
+            if !self.dims[from].regions.iter().flat_map(|r| r.part().0.list.iter()).any(|e| e.id == id && !e.removed) {
                 continue;
-            };
+            }
             let dest = match kind {
                 PortalKind::Nether => {
                     let to = if from == NETHER_ID { OVERWORLD_ID } else { NETHER_ID };
@@ -537,8 +580,23 @@ impl Sim {
                 // `EndGatewayBlock.getPortalDestination`: the gateway's exit, in the same level.
                 PortalKind::Gateway => {
                     if let Some(at) = self.gateway_destination(from, entry) {
-                        let uuid = self.dims[from].regions.iter().flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id).map(|e| e.uuid.as_u128());
-                        self.teleport_entity(from, id, from, at, None);
+                        let found = self.dims[from].regions.iter().flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id).map(|e| (e.uuid.as_u128(), e.kind.name == "minecraft:ender_pearl"));
+                        let uuid = found.map(|f| f.0);
+                        // `EndGatewayBlock.getPortalDestination`: a pearl leaves with no motion and looking at 0, 0; everything else keeps its motion and its look
+                        // (`Relative.DELTA`, `Relative.ROTATION`) and is no longer on the ground for it.
+                        let pearl = found.is_some_and(|f| f.1);
+                        self.teleport_entity(from, id, from, at, pearl.then_some([0.0, 0.0]));
+                        if !pearl {
+                            for r in self.dims[from].regions.iter_mut() {
+                                if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.id == id) {
+                                    if let Some(p) = e.phys.as_deref_mut() {
+                                        p.delta = kiln_entity::math::Vec3::new(delta[0], delta[1], delta[2]);
+                                        p.on_ground = on_ground;
+                                    }
+                                    e.sync();
+                                }
+                            }
+                        }
                         self.place_portal_ticket(from, at);
                         if let Some(uuid) = uuid {
                             self.dims[from].portal_cooldowns.insert(uuid, now + ENTITY_PORTAL_COOLDOWN);
@@ -1097,31 +1155,26 @@ impl Sim {
         chunk.sections.iter().all(|s| s.is_empty())
     }
 
-    /// `findValidSpawnInChunk`: end stone with two non-full blocks above, nearest the origin.
+    /// `findValidSpawnInChunk`: the chunk holds end stone with two non-full blocks above (y 30 and up), the nearest to the origin leading. Vanilla then returns
+    /// the NEAREST AS A LIVE REFERENCE TO THE ITERATOR'S CURSOR (`closest = pos`, not `pos.immutable()`; `BlockPos.betweenClosed` hands out one mutable position), which
+    /// has moved on to the last place it visits when the loop is over: the chunk's far corner at the top of its highest section (found on a vanilla server: wp82's
+    /// agent saw `findValidSpawnInChunk` return (687, 63, 687) for a chunk whose nearest candidate was (672, 32, 672)). So the answer is that corner whenever
+    /// there is any candidate.
     fn valid_spawn_in_chunk(&mut self, c: ChunkPos) -> Option<BlockPos> {
         use kiln_world::spawn::LoadChunks;
         let chunk = self.dims[END_ID].load_chunk(c);
         let top = chunk.sections.iter().rposition(|s| !s.is_empty())? as i32 * 16 + chunk.min_y() + 15;
-        let mut best: Option<(f64, BlockPos)> = None;
-        for z in 0..16 {
-            for y in 30..=top {
-                for x in 0..16 {
-                    let s = chunk.get(x, y, z);
-                    if !kiln_blocks::state::is(s, block::END_STONE)
-                        || kiln_data::block_props::full_collision(chunk.get(x, y + 1, z))
-                        || kiln_data::block_props::full_collision(chunk.get(x, y + 2, z))
-                    {
-                        continue;
-                    }
-                    let p = BlockPos::new((c.x << 4) + x as i32, y, (c.z << 4) + z as i32);
-                    let d = (p.x as f64 + 0.5).powi(2) + (p.y as f64 + 0.5).powi(2) + (p.z as f64 + 0.5).powi(2);
-                    if best.is_none_or(|(bd, _)| d < bd) {
-                        best = Some((d, p));
-                    }
-                }
-            }
-        }
-        best.map(|(_, p)| p)
+        // (Which candidate is the nearest does not matter: see above.)
+        let any = (0..16).any(|z| {
+            (30..=top).any(|y| {
+                (0..16).any(|x| {
+                    kiln_blocks::state::is(chunk.get(x, y, z), block::END_STONE)
+                        && !kiln_data::block_props::full_collision(chunk.get(x, y + 1, z))
+                        && !kiln_data::block_props::full_collision(chunk.get(x, y + 2, z))
+                })
+            })
+        });
+        any.then(|| BlockPos::new((c.x << 4) + 15, top, (c.z << 4) + 15))
     }
 
     /// `EndGatewayFeature` at `at` with its block entity (`exit`: a known exit and whether it
@@ -1228,6 +1281,24 @@ impl Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// wp82: `findValidSpawnInChunk` (found with an agent on a vanilla server) returns the far corner of the chunk at the top of its highest section, whichever block
+    /// was the nearest candidate; nothing when the chunk has no end stone with room above it.
+    #[test]
+    fn the_valid_spawn_of_a_chunk_is_its_far_corner_at_the_top_of_its_highest_section() {
+        let mut sim = Sim::new(crate::SimConfig::new(2, 3, None));
+        let far = BlockPos::new(1600, 40, 1600);
+        sim.load_area(END_ID, far, 20);
+        let c = ChunkPos::new(100, 100);
+        assert_eq!(sim.valid_spawn_in_chunk(c), None, "no end stone yet");
+        // One candidate at the corner nearest the origin, at y 32; a block higher up (section 3: y 48 to 63) that is no candidate.
+        sim.set_level_block(END_ID, BlockPos::new(1600, 32, 1600), block::END_STONE, kiln_blocks::flags::ALL);
+        sim.set_level_block(END_ID, BlockPos::new(1605, 50, 1605), block::STONE, kiln_blocks::flags::ALL);
+        assert_eq!(sim.valid_spawn_in_chunk(c), Some(BlockPos::new(1615, 63, 1615)));
+        // Capped: with a full block over it the stone is no candidate.
+        sim.set_level_block(END_ID, BlockPos::new(1600, 33, 1600), block::STONE, kiln_blocks::flags::ALL);
+        assert_eq!(sim.valid_spawn_in_chunk(c), None);
+    }
 
     #[test]
     fn spiral_visits_the_square_ring_by_ring() {

@@ -435,7 +435,10 @@ fn has_chunk_at(d: &Dim, x: i32, z: i32) -> bool {
 
 impl Sim {
     /// The raids of every level, then the overworld's patrol spawner.
-    pub(crate) fn tick_raids(&mut self) {
+    ///
+    /// `normal`: the game is not frozen. `ServerLevel.tick` ticks the raids, and the custom spawners, only while the level runs normally (`/tick freeze` keeps a raid's
+    /// countdown and the wave where they are); what the players and the raiders did while it stood still is taken in all the same.
+    pub(crate) fn tick_raids(&mut self, normal: bool) {
         let raids_rule = self.rule_bool("minecraft:raids");
         for dim in 0..self.dims.len() {
             // Raider news from the regions.
@@ -489,6 +492,10 @@ impl Sim {
                 }
             }
             self.raid_omen_triggers(dim);
+            if !normal {
+                self.dims[dim].raids.refresh_views();
+                continue;
+            }
             let d = &mut self.dims[dim];
             d.raids.tick += 1;
             let ids: Vec<i32> = d.raids.raids.keys().copied().collect();
@@ -507,6 +514,9 @@ impl Sim {
             self.dims[dim].raids.refresh_views();
         }
         // (`ServerLevel.customSpawners`: phantoms, patrols, cats, village sieges, the wandering trader.)
+        if !normal {
+            return;
+        }
         self.tick_patrols();
         self.tick_cat_spawner();
         self.tick_village_siege();
@@ -622,8 +632,9 @@ impl Sim {
                 } else {
                     let cached = raid.wave_spawn_pos.is_some();
                     let mut try_find = !cached && raid.cooldown_ticks % 5 == 0;
+                    // (`!isPositionEntityTicking`: a cached position the players' simulation distance does not reach is looked for again.)
                     if let Some(p) = raid.wave_spawn_pos
-                        && !has_chunk_at(&self.dims[dim], p[0], p[2])
+                        && !self.entity_ticking_chunks(dim).contains(ChunkPos::of_block(p[0], p[2]))
                     {
                         try_find = true;
                     }
@@ -795,13 +806,26 @@ impl Sim {
         }
     }
 
+    /// `ServerLevel.isPositionEntityTicking`: the chunk of the block is within the simulation distance of a player of the level (a spectator counts only
+    /// with `spectators_generate_chunks`: `ChunkMap.skipPlayer`) or of one of its tickets.
+    fn entity_ticking_chunks(&self, dim: DimId) -> crate::blocks::Ticking {
+        let spectators = self.rule_bool("minecraft:spectators_generate_chunks");
+        let holders = self.players.values().filter(|p| p.dim == dim && (p.game_mode != 3 || spectators)).map(|p| p.center);
+        let mut ticking = crate::blocks::Ticking::around(holders, self.config.simulation_distance as i32, self.config.view_distance as i32);
+        for (c, radius) in self.level_tickets(dim) {
+            ticking.add_ticket(c, radius);
+        }
+        ticking
+    }
+
     /// `findRandomSpawnPos`: on a circle around the center shrinking as the countdown runs out,
-    /// outside the village until the last seven seconds, on ground a ravager can stand on.
+    /// outside the village until the last seven seconds, in a chunk whose entities tick (`isPositionEntityTicking`), on ground a ravager can stand on.
     fn find_random_spawn_pos(&mut self, dim: DimId, id: i32, tries: i32) -> Option<[i32; 3]> {
         let (center, cooldown) = {
             let r = &self.dims[dim].raids.raids[&id];
             (r.center, r.cooldown_ticks)
         };
+        let ticking = self.entity_ticking_chunks(dim);
         let seconds = cooldown / 20;
         let how_far = 0.22f32 * seconds as f32 - 0.24;
         let start = self.dims[dim].raids.raids.get_mut(&id).expect("raid").random.next_float() * std::f32::consts::TAU;
@@ -823,7 +847,7 @@ impl Sim {
             }
             let d = &self.dims[dim];
             let loaded = (-10..=10).step_by(10).all(|dx| (-10..=10).step_by(10).all(|dz| has_chunk_at(d, x + dx, z + dz)));
-            if !loaded {
+            if !loaded || !ticking.contains(ChunkPos::of_block(x, z)) {
                 continue;
             }
             let block = |p: [i32; 3]| d.regions.get_block(p[0], p[1], p[2]).unwrap_or(0);

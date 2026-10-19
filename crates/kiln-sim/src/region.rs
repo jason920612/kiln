@@ -961,7 +961,7 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
         p.speed_h = ((p.pos[0] - last[0]).powi(2) + (p.pos[2] - last[2]).powi(2)).sqrt();
         p.speed_pos = Some(p.pos);
     }
-    p.tick_damage(env.game_time);
+    p.tick_damage();
     let mut ctx = damage_ctx(env, &mut t.spawns, &mut t.deaths);
     // What bad omen asks of the level (only looked up while the player has it).
     if p.has_effect("minecraft:bad_omen") {

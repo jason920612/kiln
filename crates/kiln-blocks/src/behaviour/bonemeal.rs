@@ -1,4 +1,4 @@
-//! Bone meal on the `BonemealableBlock`s that grow without a tree or a crop table of their own (wp80): moss and pale moss (a worldgen patch on top), bamboo, the
+//! Bone meal on the `BonemealableBlock`s that grow without a tree or a crop table of their own (wp80, wp82): moss and pale moss (a worldgen patch on top), bamboo, glow lichen and shelf mushrooms, the
 //! little spreaders (bush, firefly bush, dry grass), hanging moss, rooted dirt, seagrass, sea pickles and pitcher plants.
 //!
 //! [`grow`] answers `BoneMealItem.growCrop` for these blocks: `None` when the block at `pos` is none of them, else whether it was a valid target (the bone meal
@@ -9,7 +9,7 @@ use crate::level::{Level, flags};
 use crate::pos::{BlockPos, Direction};
 use crate::state::{self, BlockId};
 use crate::tags;
-use kiln_data::block_logic::{self as logic, BlockClass as C};
+use kiln_data::block_logic::{self as logic, BlockClass as C, FluidKind};
 use kiln_data::blocks_types::is_air;
 use kiln_javamath::random::RandomSource;
 
@@ -52,6 +52,62 @@ fn spread<L: Level>(level: &mut L, pos: BlockPos, plant: u16) -> bool {
         crate::update::set_block_and_update(level, n, plant);
     }
     true
+}
+
+/// `Direction.allShuffled(random)` (`Util.shuffle` of `Direction.values()`).
+fn shuffled_all<L: Level>(level: &mut L) -> [Direction; 6] {
+    let mut dirs = Direction::ALL;
+    let mut i = dirs.len();
+    while i > 1 {
+        let j = level.random().next_int_bounded(i as i32) as usize;
+        dirs.swap(i - 1, j);
+        i -= 1;
+    }
+    dirs
+}
+
+/// `MultifaceSpreader.SpreadConfig.canSpreadInto` of the default config (glow lichen) for the place `at` on `face`: air, the same lichen or a water source
+/// there (`stateCanBeReplaced`), and a face the block can hold (`MultifaceBlock.isValidStateForPlacement`).
+fn lichen_can_spread_into<L: Level>(level: &L, block: u16, at: BlockPos, face: Direction) -> bool {
+    let cur = level.block(at);
+    let replaceable = is_air(cur) || state::is(cur, block) || (is_named(cur, "minecraft:water") && logic::fluid(cur).source);
+    replaceable && !(state::is(cur, block) && state::get_bool(cur, face.name())) && crate::behaviour::growth::acceptable_neighbour(level, at.relative(face), face)
+}
+
+/// `MultifaceSpreader.getSpreadFromFaceTowardDirection` (default config, `canSpreadInto`): from `from` of the lichen at `pos` toward `to`, the first of
+/// `SAME_POSITION`, `SAME_PLANE`, `WRAP_AROUND` that can take a new face.
+fn lichen_spread_pos<L: Level>(level: &L, s: u16, pos: BlockPos, from: Direction, to: Direction) -> Option<(BlockPos, Direction)> {
+    if to.axis() == from.axis() || !state::get_bool(s, from.name()) || state::get_bool(s, to.name()) {
+        return None;
+    }
+    let block = BlockId::of(s).default_state();
+    let beside = pos.relative(to);
+    [(pos, to), (beside, from), (beside.relative(from), to.opposite())].into_iter().find(|&(at, face)| lichen_can_spread_into(level, block, at, face))
+}
+
+/// `GlowLichenBlock.performBonemeal` (`spreadFromRandomFaceTowardRandomDirection`): the faces of the lichen in a shuffled order, each tried toward the
+/// directions in a shuffled order of its own, until one takes a new face.
+fn lichen_spread_random<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    let block = BlockId::of(s).default_state();
+    for from in shuffled_all(level) {
+        if !state::get_bool(s, from.name()) {
+            continue;
+        }
+        for to in shuffled_all(level) {
+            let Some((at, face)) = lichen_spread_pos(level, s, pos, from, to) else { continue };
+            // `MultifaceBlock.getStateForPlacement`: the lichen already there gets the face, else a new lichen (waterlogged in a water source).
+            let cur = level.block(at);
+            let base = if state::is(cur, block) {
+                cur
+            } else if logic::fluid(cur).kind == FluidKind::Water && logic::fluid(cur).source {
+                state::set_bool(block, "waterlogged", true)
+            } else {
+                block
+            };
+            crate::set_block(level, at, state::set_bool(base, face.name(), true), flags::CLIENTS);
+            return;
+        }
+    }
 }
 
 /// `PitcherCropBlock.canGrow`.
@@ -291,6 +347,21 @@ pub fn grow<L: Level>(level: &mut L, pos: BlockPos) -> Option<bool> {
                     "minecraft:crimson_nylium"
                 };
                 crate::update::set_block_and_update(level, pos, named(to));
+            }
+            Some(valid)
+        }
+        C::ShelfMushroomBlock => {
+            // `ShelfMushroomBlock`: ripe at age 1; bone meal ripens it (a plain `setBlock(…, 2)`).
+            let age = state::get_int(s, "age");
+            if age < 1 {
+                crate::set_block(level, pos, state::set_int(s, "age", age + 1), flags::CLIENTS);
+            }
+            Some(age < 1)
+        }
+        C::GlowLichenBlock => {
+            let valid = Direction::ALL.iter().any(|&from| Direction::ALL.iter().any(|&to| lichen_spread_pos(level, s, pos, from, to).is_some()));
+            if valid {
+                lichen_spread_random(level, s, pos);
             }
             Some(valid)
         }

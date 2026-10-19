@@ -345,3 +345,62 @@ fn a_raid_in_progress_survives_a_restart() {
     let later = w.sim.raids("minecraft:overworld");
     assert_eq!(later[0].2, 2, "the second wave: {later:?}");
 }
+
+/// `Raid.findRandomSpawnPos` only takes a place in a chunk whose entities tick (`isPositionEntityTicking`: within the simulation distance of a player),
+/// and a cached wave position that stops being one is looked for again. The wave stood 98 blocks out (the countdown's radius) in a chunk that was only
+/// loaded, where nothing moves and no client sees it, and came into view all at once when the countdown ended; vanilla's raiders appear at the edge of the
+/// simulation distance and walk in (wp80's omen sample: 1 → 2 → 4 → 5 over 17 s).
+#[test]
+fn a_wave_spawns_where_entities_tick() {
+    let mut cfg = SimConfig::new(8, 8, None);
+    cfg.simulation_distance = 3;
+    let mut sim = Sim::new(cfg);
+    let (msg, stats) = join(1, "Hunter", 2);
+    assert!(sim.step([msg]));
+    let mut w = World { sim, clients: vec![Client::new(1, stats)] };
+    w.console("gamerule minecraft:spawn_mobs false");
+    w.console("difficulty normal");
+    w.console("gamemode creative Hunter");
+    w.ticks(5);
+    w.village();
+    w.ticks(40);
+    w.console("gamemode survival Hunter");
+    w.console("effect give Hunter minecraft:bad_omen 100 1");
+    w.ticks(600);
+    w.console("gamemode creative Hunter");
+    w.ticks(305);
+    let raids = w.sim.raids("minecraft:overworld");
+    assert_eq!(raids[0].2, 1, "first wave spawned: {raids:?}");
+    let [px, _, pz] = w.pos();
+    let (pcx, pcz) = (px.div_euclid(16), pz.div_euclid(16));
+    let raiders: Vec<_> = w.sim.mobs().into_iter().filter(|m| matches!(m.1, "minecraft:pillager" | "minecraft:vindicator" | "minecraft:ravager" | "minecraft:evoker" | "minecraft:witch")).collect();
+    assert!(raiders.len() >= 4, "{raiders:?}");
+    for (id, kind, pos, _) in &raiders {
+        let (cx, cz) = ((pos[0].floor() as i32).div_euclid(16), (pos[2].floor() as i32).div_euclid(16));
+        // (A raider may have walked a few blocks into the next chunk since it came: the wave stood 6 chunks out before.)
+        assert!((cx - pcx).abs().max((cz - pcz).abs()) <= 4, "{kind} {id} at {pos:?} stands outside the simulation distance of the player at {:?}", w.pos());
+    }
+}
+
+/// `ServerLevel.tick` ticks the raids only while the level runs normally: a frozen game (`/tick freeze`) keeps the countdown to the first wave where it
+/// stands. Kiln's raids kept ticking on the frozen game's idle ticks, so a lock-step comparison (frozen, `tick step`) saw the next wave 170 ticks early.
+#[test]
+fn a_frozen_game_does_not_run_the_raid_countdown() {
+    let mut w = World::new();
+    w.village();
+    w.ticks(40);
+    w.console("gamemode survival Hunter");
+    w.console("effect give Hunter minecraft:bad_omen 100 1");
+    w.ticks(2);
+    w.ticks(600);
+    w.console("gamemode creative Hunter");
+    assert_eq!(w.sim.raids("minecraft:overworld").len(), 1, "the raid has started");
+    w.console("tick freeze");
+    w.ticks(400);
+    let raids = w.sim.raids("minecraft:overworld");
+    assert_eq!(raids[0].2, 0, "no wave while the game stands still: {raids:?}");
+    w.console("tick unfreeze");
+    w.ticks(305);
+    let raids = w.sim.raids("minecraft:overworld");
+    assert_eq!(raids[0].2, 1, "the countdown went on from where it was: {raids:?}");
+}
