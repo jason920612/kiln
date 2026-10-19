@@ -1969,6 +1969,12 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
                 crate::inside::Action::FireHurt(damage) => {
                     hurt(e, m, level, DamageSource::of(DamageKind::InFire), damage);
                 }
+                crate::inside::Action::HotFloor => {
+                    hurt(e, m, level, DamageSource::of(DamageKind::HotFloor), 1.0);
+                }
+                crate::inside::Action::CactusHurt => {
+                    hurt(e, m, level, DamageSource::of(DamageKind::Cactus), 1.0);
+                }
                 crate::inside::Action::CampfireHurt(damage) => {
                     hurt(e, m, level, DamageSource::of(DamageKind::of_type("minecraft:campfire")), damage);
                 }
