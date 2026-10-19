@@ -463,7 +463,7 @@ pub(crate) fn projectile_spawned(
     let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     let facts = WorldFacts {
         probe: &probe,
-        dim: crate::DIMENSIONS[level.env.dim].0,
+        dim: crate::dim_key(level.env.dim),
         raining: level.env.weather.weather.raining,
         thundering: level.env.weather.weather.thundering,
     };

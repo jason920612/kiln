@@ -169,6 +169,11 @@ public final class CheckRegistries {
                     continue;
                 }
                 Tag again = codec.encodeStart(layers.compositeAccess().createSerializationContext(NbtOps.INSTANCE), decoded.result().get()).getOrThrow();
+                // (An environment attribute map of the entry that holds nothing the network syncs is `{}` on vanilla's side and decodes to the shared empty map, which encodes to nothing.)
+                if (vd instanceof net.minecraft.nbt.CompoundTag vc && vc.get("attributes") instanceof net.minecraft.nbt.CompoundTag ac && ac.isEmpty()) {
+                    vd = vc.copy();
+                    ((net.minecraft.nbt.CompoundTag) vd).remove("attributes");
+                }
                 if (!again.equals(vd)) {
                     System.out.println("DATA differs for " + reg.getKey() + " " + vn.get(i) + "\n  vanilla: " + vd + "\n  kiln->vanilla codec: " + again + "\n  kiln: " + kd);
                     problems++;

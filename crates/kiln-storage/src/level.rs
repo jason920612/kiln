@@ -191,6 +191,15 @@ impl LevelStore {
         self.world_gen.as_ref()?.get("data")?.get("seed")?.as_i64()
     }
 
+    /// The level stems the save lists (`world_gen_settings.dat`, `dimensions`): dimension key and
+    /// stem (`type` and `generator`).
+    pub fn dimensions(&self) -> Vec<(String, Tag)> {
+        match self.world_gen.as_ref().and_then(|w| w.get("data")?.get("dimensions")) {
+            Some(Tag::Compound(fields)) => fields.clone(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Gives a world that has no `world_gen_settings.dat` this seed with the next save (a seed
     /// the world has is never replaced).
     pub fn set_seed_if_missing(&mut self, seed: i64) {

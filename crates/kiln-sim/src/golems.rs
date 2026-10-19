@@ -127,7 +127,7 @@ fn build_copper(p: Option<&mut Player>, level: &mut RegionLevel, pos: BlockPos, 
     if let Some(p) = p
         && (0..3).all(|k| (p.pos[k] - at[k]).abs() <= 5.0 + if k == 1 { 0.98 } else { 0.245 })
     {
-        let dim = crate::DIMENSIONS[level.env.dim].0;
+        let dim = crate::dim_key(level.env.dim);
         let subject = crate::advancements::triggers::seen_subject(&seen, dim);
         p.fire_conds("minecraft:summoned_entity", None, |c, ok, _| c.cap("entity").is_none_or(|cap| ok(cap, &subject)));
     }
@@ -173,7 +173,7 @@ fn build(p: Option<&mut Player>, level: &mut RegionLevel, kind: MobKind, blocks:
     if let Some(p) = p
         && (0..3).all(|k| (p.pos[k] - at[k]).abs() <= 5.0 + if k == 1 { height } else { 0.7 })
     {
-        let dim = crate::DIMENSIONS[level.env.dim].0;
+        let dim = crate::dim_key(level.env.dim);
         let subject = crate::advancements::triggers::seen_subject(&seen, dim);
         p.fire_conds("minecraft:summoned_entity", None, |c, ok, _| c.cap("entity").is_none_or(|cap| ok(cap, &subject)));
     }

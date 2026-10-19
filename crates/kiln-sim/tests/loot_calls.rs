@@ -305,3 +305,22 @@ fn shearing_a_sheep_rolls_the_shearing_table_with_the_shears_as_the_tool() {
     assert_eq!(items.get("minecraft:diamond"), Some(&1), "the shears are the tool of the context: {items:?}");
     assert!(!items.contains_key("minecraft:white_wool"), "{items:?}");
 }
+
+#[test]
+fn brushing_an_armadillo_rolls_its_table_with_the_brush_as_the_tool() {
+    // A diamond only if the context has the brush as its `tool`, an emerald whatever the tool.
+    let tool = r#"{"rolls":1,"entries":[{"type":"minecraft:item","name":"minecraft:diamond","condition":{"type":"minecraft:match_tool","predicate":{"items":"minecraft:brush"}}}]}"#;
+    let t = table("entity_interact", &[tool.to_owned(), pool(&[item("emerald", 1)])]);
+    let mut w = World::new("brush", &[("brush/armadillo", &t)]);
+    let [x, y, z] = w.at(1, 1, 0);
+    w.run(&format!("summon minecraft:armadillo {x} {y} {z} {{NoAI:1b}}"));
+    w.ticks(2);
+    let id = w.sim.entity_ids_of("minecraft:armadillo")[0];
+    w.hold("minecraft:brush", 1);
+    let pkt = PlayIn::Interact { entity_id: id, hand: kiln_proto::packets::serverbound::Hand::Main, location: [0.0, 0.5, 0.0], sneaking: false };
+    assert!(w.sim.step([ToSim::Packet(1, pkt)]));
+    w.ticks(2);
+    let items = w.items();
+    assert_eq!(items.get("minecraft:emerald"), Some(&1), "the pack's table: {items:?}");
+    assert_eq!(items.get("minecraft:diamond"), Some(&1), "the brush is the tool of the context: {items:?}");
+}

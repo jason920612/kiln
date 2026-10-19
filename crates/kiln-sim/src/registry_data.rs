@@ -73,6 +73,19 @@ pub(crate) fn load(roots: &[PathBuf]) -> Loaded {
                             error!("Failed to load {registry}/{name}: missing required fields {}", missing.join(", "));
                             continue;
                         }
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}'))
+                            && let Err(e) = crate::registry_schema::validate(registry, &value)
+                        {
+                            error!("Failed to load {registry}/{name}: {e}");
+                            continue;
+                        }
+                        if *registry == "minecraft:dimension_type" {
+                            let checked = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string()).and_then(|v| crate::dimensions::dimension_type_from_json(&name, &v, &|_| Vec::new()));
+                            if let Err(e) = checked {
+                                error!("Failed to load {registry}/{name}: {e}");
+                                continue;
+                            }
+                        }
                     }
                 }
                 from_packs.insert(name, text);
@@ -131,6 +144,7 @@ fn required(registry: &str) -> &'static [&'static str] {
         "minecraft:cat_variant" | "minecraft:pig_variant" | "minecraft:cow_variant" | "minecraft:chicken_variant" => &["asset_id", "baby_asset_id", "spawn_conditions"],
         "minecraft:frog_variant" | "minecraft:zombie_nautilus_variant" => &["asset_id", "spawn_conditions"],
         "minecraft:chat_type" => &["chat", "narration"],
+        "minecraft:dimension_type" => &["has_skylight", "has_ceiling", "has_ender_dragon_fight", "coordinate_scale", "min_y", "height", "logical_height", "infiniburn", "ambient_light"],
         "minecraft:dialog" => &["type"],
         _ => &[],
     }
@@ -151,12 +165,31 @@ fn omitted(registry: &str) -> &'static [&'static str] {
     }
 }
 
+/// The environment attributes the network codec of a biome or a dimension type sends (`EnvironmentAttribute.syncable`);
+/// the rest (`gameplay/natural_mob_spawns`, `bed_rule`, `respawn_anchor_works`...) stays on the server.
+const SYNCED_ATTRIBUTES: &[&str] = &[
+    "visual/fog_color", "visual/fog_start_distance", "visual/fog_end_distance", "visual/sky_fog_end_distance", "visual/cloud_fog_end_distance",
+    "visual/water_fog_color", "visual/water_fog_start_distance", "visual/water_fog_end_distance", "visual/sky_color", "visual/sunrise_sunset_color",
+    "visual/cloud_color", "visual/cloud_height", "visual/sun_angle", "visual/moon_angle", "visual/star_angle", "visual/moon_phase",
+    "visual/star_brightness", "visual/block_light_tint", "visual/sky_light_color", "visual/sky_light_factor", "visual/night_vision_color",
+    "visual/ambient_light_color", "visual/default_dripstone_particle", "visual/ambient_particles", "audio/background_music", "audio/music_volume",
+    "audio/ambient_sounds", "audio/firefly_bush_sounds", "gameplay/sky_light_level", "gameplay/water_evaporates", "gameplay/fast_lava",
+    "gameplay/piglins_zombify", "gameplay/creaking_active",
+];
+
 /// An entry as the network sends it.
 pub(crate) fn network_entry(registry: &str, json: &Json) -> Tag {
     let mut tag = json_to_nbt(json);
     if let Tag::Compound(fields) = &mut tag {
         let skip = omitted(registry);
         fields.retain(|(k, _)| !skip.contains(&k.as_str()));
+        if matches!(registry, "minecraft:worldgen/biome" | "minecraft:dimension_type") {
+            for (k, v) in fields.iter_mut() {
+                if let (true, Tag::Compound(attributes)) = (k == "attributes", v) {
+                    attributes.retain(|(name, _)| SYNCED_ATTRIBUTES.iter().any(|a| name.strip_prefix("minecraft:") == Some(a)));
+                }
+            }
+        }
     }
     tag
 }
@@ -262,6 +295,28 @@ mod tests {
         assert_eq!(f.len(), 1);
         let Tag::Compound(f) = network_entry("minecraft:painting_variant", &j) else { panic!() };
         assert_eq!(f.len(), 2);
+    }
+
+    /// Vanilla's loader refuses some entries of `tools/wp85/packs/kiln85_bad` and loads others (`tools/wp85/schema_accepted.txt`, made by running a
+    /// vanilla server on the pack): Kiln leaves out the same ones, so that no client is sent an entry it cannot decode.
+    #[test]
+    fn the_entries_vanilla_refuses_are_left_out_and_the_others_kept() {
+        let tools = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/wp85");
+        let expected = std::fs::read_to_string(tools.join("schema_accepted.txt")).unwrap();
+        let loaded = load(&[tools.join("packs/kiln85_bad")]);
+        let mut checked = 0;
+        for line in expected.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+            let [verdict, registry, name] = line.split_whitespace().collect::<Vec<_>>()[..] else { panic!("{line}") };
+            let registry = format!("minecraft:{registry}");
+            // (A registry no entry of the pack got into keeps vanilla's entries.)
+            let present = match loaded.names.iter().find(|(r, _)| *r == registry) {
+                Some((_, names)) => names.iter().any(|n| n == name),
+                None => false,
+            };
+            assert_eq!(present, verdict == "accepted", "{registry} {name}: vanilla {verdict}");
+            checked += 1;
+        }
+        assert!(checked > 50, "{checked}");
     }
 
     #[test]

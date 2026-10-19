@@ -12,7 +12,7 @@
 //! unseeded); spawned wave riders stand next to their ravager and mount it once both exist;
 //! raiders' spawn equipment enchantments are rolled but not applied.
 
-use crate::{DIMENSIONS, Dim, DimId, Sim, entities, player_stats, poi};
+use crate::{Dim, DimId, Sim, dim_key, entities, player_stats, poi};
 use kiln_entity::level::{RaidEvent, RaidView};
 use kiln_entity::mob::kinds::raider;
 use kiln_entity::mob::{self, MobKind};
@@ -1174,7 +1174,7 @@ impl Sim {
     /// `Raids.createOrExtendRaid`: a raid centered on the occupied village points of interest
     /// within 64 (or the omen's position), created or joined, absorbs the player's omen.
     pub(crate) fn create_or_extend_raid(&mut self, dim: DimId, conn: kiln_link::ConnId, pos: [i32; 3], amplifier: i32) -> Option<i32> {
-        if !self.rule_bool("minecraft:raids") || DIMENSIONS[dim].0 == "minecraft:the_nether" {
+        if !self.rule_bool("minecraft:raids") || !crate::dim_type(dim).can_start_raid {
             return None;
         }
         let village = poi::kinds_of(&["#minecraft:village"]);
@@ -1335,7 +1335,7 @@ impl Sim {
         let Some(dir) = self.storage.as_ref().map(|s| s.dir.clone()) else { return };
         let seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
         for (dim, d) in self.dims.iter_mut().enumerate() {
-            if let Some(data) = kiln_storage::saved_data::read(&dir.join(crate::dimension_dir(DIMENSIONS[dim].0)), "raids") {
+            if let Some(data) = kiln_storage::saved_data::read(&dir.join(crate::dimension_dir(dim_key(dim))), "raids") {
                 d.raids = Raids::from_nbt(&data, seed);
             }
         }
@@ -1347,8 +1347,8 @@ impl Sim {
             if d.raids.raids.is_empty() && d.raids.next_id <= 1 {
                 continue;
             }
-            if let Err(e) = kiln_storage::saved_data::write(&dir.join(crate::dimension_dir(DIMENSIONS[dim].0)), "raids", d.raids.to_nbt()) {
-                tracing::warn!("failed to save the raids of {}: {e}", DIMENSIONS[dim].0);
+            if let Err(e) = kiln_storage::saved_data::write(&dir.join(crate::dimension_dir(dim_key(dim))), "raids", d.raids.to_nbt()) {
+                tracing::warn!("failed to save the raids of {}: {e}", dim_key(dim));
             }
         }
     }

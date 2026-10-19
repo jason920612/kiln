@@ -2964,6 +2964,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
             continue;
         }
         let preserved = chance > 1.0;
+        let chance = level.equipment_drop_chance(source.attacker, e.id, chance);
         if (killed_by_player || preserved) && e.random.next_float() < chance {
             let mut stack = std::mem::replace(&mut m.equipment[i], ItemStack::empty());
             if !preserved && stack.is_damageable_item() {
@@ -2982,6 +2983,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
                 continue;
             }
             let preserved = chance > 1.0;
+            let chance = level.equipment_drop_chance(source.attacker, e.id, chance);
             if (killed_by_player || preserved) && e.random.next_float() < chance {
                 if !preserved && stack.is_damageable_item() {
                     let max = stack.max_damage();

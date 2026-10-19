@@ -128,7 +128,7 @@ pub(crate) fn try_spawn(level: &mut RegionLevel, pos: BlockPos, p: &mut Player, 
     let pb = kiln_entity::math::Aabb::new(p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + 1.8, p.pos[2] + 0.3);
     if bb.intersects(&pb) {
         let criterion = kiln_entity::level::Criterion::SummonedEntity { entity: kiln_entity::level::Seen::of(&golem) };
-        p.entity_criterion(crate::DIMENSIONS[level.env.dim].0, &criterion);
+        p.entity_criterion(crate::dim_key(level.env.dim), &criterion);
     }
     let kind_t = kiln_data::entities::by_name(kind.type_name()).expect("golem type");
     let pos3 = golem.position();

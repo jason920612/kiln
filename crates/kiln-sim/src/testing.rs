@@ -146,6 +146,16 @@ impl Sink for TestSink {
     }
 }
 
+/// Makes the hoe, axe and shovel use Kiln's built-in rules instead of vanilla's `block_transformer` files (to compare the two).
+pub fn use_builtin_block_transformers(on: bool) {
+    crate::block_transformer::use_builtin_rules(on);
+}
+
+/// Whether the hoe, axe and shovel run vanilla's `block_transformer` files (they are found and read), not the built-in rules.
+pub fn block_transformers_from_files() -> bool {
+    crate::block_transformer::vanilla_files_loaded()
+}
+
 /// A join message for a player named `name` (UUID derived from `conn`), and the stats of its
 /// connection.
 pub fn join(conn: ConnId, name: &str, view_distance: u8) -> (ToSim, Arc<SinkStats>) {

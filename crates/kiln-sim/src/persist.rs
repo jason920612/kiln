@@ -313,15 +313,15 @@ impl Sim {
         data.rot = Some(p.rot);
         data.on_ground = p.on_ground;
         data.game_mode = Some(p.game_mode);
-        data.dimension = Some(crate::DIMENSIONS[p.dim].0.to_owned());
+        data.dimension = Some(crate::dim_key(p.dim).to_owned());
         data.selected_slot = p.inv.selected as u8;
         data.respawn = p.respawn;
-        data.respawn_dimension = Some(crate::DIMENSIONS[p.respawn_dim].0.to_owned());
+        data.respawn_dimension = Some(crate::dim_key(p.respawn_dim).to_owned());
         let mut nbt = data.to_nbt(p.uuid);
         // `ServerPlayer.RespawnConfig`: the facing and whether the point is forced.
         if let (Some(pos), Tag::Compound(fields)) = (p.respawn, &mut nbt) {
             let mut r = vec![
-                ("dimension".into(), Tag::String(crate::DIMENSIONS[p.respawn_dim].0.into())),
+                ("dimension".into(), Tag::String(crate::dim_key(p.respawn_dim).into())),
                 ("pos".into(), Tag::IntArray(pos.to_vec())),
                 ("yaw".into(), Tag::Float(p.respawn_angle)),
                 ("pitch".into(), Tag::Float(p.respawn_pitch)),
@@ -704,7 +704,7 @@ impl Sim {
                     let Some(who) = t.owner.filter(|o| owners.contains_key(o)) else { continue };
                     let mut tag = entities::save_in(list, i, &owner);
                     if let Tag::Compound(fields) = &mut tag {
-                        fields.push(("ender_pearl_dimension".to_owned(), Tag::String(crate::DIMENSIONS[dim].0.to_owned())));
+                        fields.push(("ender_pearl_dimension".to_owned(), Tag::String(crate::dim_key(dim).to_owned())));
                     }
                     out.entry(who).or_default().push((e.id, tag));
                 }
@@ -759,7 +759,7 @@ impl Sim {
                     }
                     self.dims[pearl.dim].spawns.push(spawn);
                 }
-                Err(e) => warn!("Failed to spawn player ender pearl in level ({}): {e:?}", crate::DIMENSIONS[pearl.dim].0),
+                Err(e) => warn!("Failed to spawn player ender pearl in level ({}): {e:?}", crate::dim_key(pearl.dim)),
             }
         }
     }

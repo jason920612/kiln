@@ -70,7 +70,28 @@ pub fn builtin_entries(registry: &str) -> Option<&'static [&'static str]> {
 #[path = "gen/dimension_types.rs"]
 pub mod dimension_types;
 
-/// A built-in dimension type (`minecraft:dimension_type`): what the server simulates with.
+/// When a `bed_rule` lets a player sleep or set the respawn point (`BedRule.Rule`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BedWhen {
+    Always,
+    /// The sky is dark outside (`Level.isDarkOutside`).
+    WhenDark,
+    Never,
+}
+
+impl BedWhen {
+    /// The name in the dimension type JSON (`always`, `when_dark`, `never`).
+    pub fn parse(name: &str) -> Option<BedWhen> {
+        match name {
+            "always" => Some(BedWhen::Always),
+            "when_dark" => Some(BedWhen::WhenDark),
+            "never" => Some(BedWhen::Never),
+            _ => None,
+        }
+    }
+}
+
+/// A dimension type (`minecraft:dimension_type`): what the server simulates with.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DimensionType {
     pub name: &'static str,
@@ -97,12 +118,40 @@ pub struct DimensionType {
     /// Using a bed destroys it (`bed_rule.destroy_on_use`: it explodes).
     pub bed_explodes: bool,
     pub monster_spawn_block_light_limit: i64,
+    /// `bed_rule.can_sleep` and `bed_rule.can_set_spawn`.
+    pub bed_can_sleep: BedWhen,
+    pub bed_can_set_spawn: BedWhen,
+    /// `bed_rule.error_message`'s translation key, shown when sleeping is not possible.
+    pub bed_error: Option<&'static str>,
+    /// `minecraft:gameplay/piglins_zombify` (true unless a type says false).
+    pub piglins_zombify: bool,
+    /// `minecraft:gameplay/can_start_raid` (true unless a type says false).
+    pub can_start_raid: bool,
+    /// `minecraft:gameplay/nether_portal_spawns_piglin`.
+    pub nether_portal_spawns_piglin: bool,
+    /// The ids of the `timelines` of the type (the tag expanded): the overworld's `minecraft:day` and the others drive
+    /// what depends on the time of day.
+    pub timelines: &'static [&'static str],
 }
 
-/// A built-in dimension type by name, e.g. `minecraft:the_nether`.
-pub fn dimension_type(name: &str) -> Option<&'static DimensionType> {
-    dimension_types::DIMENSION_TYPES.iter().find(|d| d.name == name)
+impl DimensionType {
+    /// Whether timeline `id` applies to levels of this type.
+    pub fn has_timeline(&self, id: &str) -> bool {
+        self.timelines.contains(&id)
+    }
+
+    /// Whether the type's default clock is the overworld's.
+    pub fn overworld_clock(&self) -> bool {
+        self.default_clock == Some("minecraft:overworld")
+    }
 }
+
+/// A dimension type by name, e.g. `minecraft:the_nether`: the loaded data packs' (see [`levels`]), else vanilla's.
+pub fn dimension_type(name: &str) -> Option<&'static DimensionType> {
+    levels::find_type(name)
+}
+
+pub mod levels;
 
 #[path = "gen/map_colors.rs"]
 #[allow(dead_code, reason = "generated: the count of colours is part of the table")]

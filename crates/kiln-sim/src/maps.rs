@@ -395,7 +395,7 @@ impl MapData {
                 self.remove_decoration(&name);
             } else if let Some(o) = &other
                 && frame.is_none()
-                && DIM_NAMES.get(o.dim).copied() == Some(self.dimension.as_str())
+                && kiln_data::levels::levels().get(o.dim).map(|l| l.key) == Some(self.dimension.as_str())
                 && self.tracking_position
             {
                 self.add_decoration(PLAYER, Some(game_time), &name, o.pos[0], o.pos[2], o.yaw as f64, None);
@@ -615,7 +615,7 @@ impl MapData {
 
     /// `MapItem.update`: `viewer` holds the map in a hand; redraws the columns it is due.
     pub(crate) fn update(&mut self, world: &dyn MapWorld, viewer: &Viewer) {
-        if DIM_NAMES.get(viewer.dim).copied() != Some(self.dimension.as_str()) {
+        if kiln_data::levels::levels().get(viewer.dim).map(|l| l.key) != Some(self.dimension.as_str()) {
             return;
         }
         let sb = 1i32 << self.scale;
@@ -740,9 +740,6 @@ impl Frame {
         frame_id(self.pos)
     }
 }
-
-/// The names of the levels, by [`crate::DimId`].
-const DIM_NAMES: [&str; 3] = ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"];
 
 /// `isInsideMap`.
 fn inside(x: f32, z: f32) -> bool {

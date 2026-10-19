@@ -369,10 +369,10 @@ fn generated_path(world: &std::path::Path, id: &str) -> Option<std::path::PathBu
 fn fallback_generator(dim: DimId) -> Option<&'static kiln_worldgen::Generator> {
     use kiln_worldgen::generator::BiomeSourceKind;
     static GENERATORS: [std::sync::OnceLock<Option<kiln_worldgen::Generator>>; 3] = [std::sync::OnceLock::new(), std::sync::OnceLock::new(), std::sync::OnceLock::new()];
-    GENERATORS[dim]
+    GENERATORS[dim.min(2)]
         .get_or_init(|| {
             let pack = kiln_worldgen::Datapack::load(&crate::datapack_dir(None)).ok()?;
-            match dim {
+            match dim.min(2) {
                 crate::NETHER_ID => kiln_worldgen::Generator::for_dimension(&pack, "minecraft:nether", BiomeSourceKind::MultiNoise("minecraft:nether"), "minecraft:the_nether", 0).ok(),
                 crate::END_ID => kiln_worldgen::Generator::for_dimension(&pack, "minecraft:end", BiomeSourceKind::TheEnd, "minecraft:the_end", 0).ok(),
                 _ => kiln_worldgen::Generator::new(&pack, "minecraft:overworld", "minecraft:overworld", 0).ok(),

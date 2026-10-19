@@ -1028,6 +1028,28 @@ fn section_key(e: &kiln_entity::Entity) -> (i32, i64) {
 }
 
 impl EntityLevel for SimLevel<'_, '_, '_> {
+    fn equipment_drop_chance(&mut self, attacker: Option<i32>, _victim: i32, chance: f32) -> f32 {
+        use kiln_loot::effects::Target;
+        let Some(id) = attacker else { return chance };
+        let Some(loot) = self.level.env().loot.clone() else { return chance };
+        let Some(p) = self.players.iter().find(|p| p.entity_id == id) else { return chance };
+        // (`damageContext(level, victim, source)`: the requirements of the vanilla effect only look at the attacker.)
+        let attacker = p.as_attacker();
+        let view = attacker.view.clone();
+        let source = crate::health::Source { cause: crate::health::Cause::PlayerAttack, attacker: Some(attacker), direct: None, weapon: None, position: None };
+        let mut rng = LegacyRandom::new(i64::from(id));
+        let mut value = chance;
+        loot.for_each_equipped_enchantment(&p.equipment(), |e, level, _slot, _stack| {
+            let ctx = crate::enchant::DamageContext { level, this: &view, source: &source };
+            for t in &e.effects.equipment_drops {
+                if t.enchanted == Target::Attacker && t.matches(&loot, &ctx, &mut rng) {
+                    value = t.effect.process(level, &mut rng, value);
+                }
+            }
+        });
+        value
+    }
+
     fn find_nearest_map_structure(&self, tag: &str, pos: BlockPos, radius: i32) -> Option<BlockPos> {
         let explorer = self.level.env().loot.as_deref()?.explorer.as_ref()?;
         let names = crate::world_state::worldgen_tag("worldgen/structure", tag)?;
@@ -1040,7 +1062,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn piglins_zombify(&self) -> bool {
-        !self.level.env().rules.fast_lava
+        crate::dim_type(self.level.env().dim).piglins_zombify
     }
 
     fn snow_golem_melts(&self, pos: Vec3) -> bool {
@@ -2942,7 +2964,7 @@ pub(crate) fn stab_mob(
         p.last_hurt_mob = Some((stab.target, level.env.game_time));
         // `PlayerHurtEntityTrigger` (dealt before armor and effects, taken after).
         let taken = health_before.zip(health_after).map_or(stab.amount, |(b, a)| b - a);
-        let subject = crate::advancements::triggers::seen_subject(&victim, crate::DIMENSIONS[level.env.dim].0);
+        let subject = crate::advancements::triggers::seen_subject(&victim, crate::dim_key(level.env.dim));
         p.player_hurt_entity(&subject, stab.amount, taken, stab.kind.type_name(), true);
     }
     for (n, event) in keyed(events) {
@@ -3270,14 +3292,14 @@ pub(crate) fn interact_mob(
     // `PlayerInteractTrigger`: the item as it was when the interaction used it.
     if let Some(seen) = seen.as_ref() {
         let used = if out.held == kiln_entity::mob::interact::HeldChange::None { kiln_item::ItemStack::empty() } else { stack.clone() };
-        let subject = crate::advancements::triggers::seen_subject(seen, crate::DIMENSIONS[level.env.dim].0);
+        let subject = crate::advancements::triggers::seen_subject(seen, crate::dim_key(level.env.dim));
         p.fire_conds("minecraft:player_interacted_with_entity", None, |c, ok, loot| {
             c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, &used)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
         });
     }
     // `Mob.shearItem`: `PlayerShearedEquipmentTrigger` with the piece that came off.
     if let (Some(seen), Some(worn)) = (&seen, &out.sheared) {
-        let subject = crate::advancements::triggers::seen_subject(seen, crate::DIMENSIONS[level.env.dim].0);
+        let subject = crate::advancements::triggers::seen_subject(seen, crate::dim_key(level.env.dim));
         p.fire_conds("minecraft:player_sheared_equipment", None, |c, ok, loot| {
             c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, worn)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
         });
@@ -3740,7 +3762,7 @@ fn carry_out(
         Event::Killed { entity, entity_type, credit, kind, attacker, direct, equipment } => {
             if let Some(p) = credit.and_then(|k| players.iter_mut().find(|p| p.entity_id == k)) {
                 p.killed_entity(entity_type);
-                let dim = crate::DIMENSIONS[env.dim].0;
+                let dim = crate::dim_key(env.dim);
                 if let Some(e) = list.binary_search_by_key(&entity, |e| e.id).ok().and_then(|i| list[i].phys.as_deref()) {
                     let mut subject = crate::advancements::triggers::mob_subject(e, dim);
                     // `minecraft:equipment` as the mob wore it when it died (a captain's banner).
@@ -3823,7 +3845,7 @@ fn carry_out(
         }
         Event::Criterion { player, criterion } => {
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == player) {
-                p.entity_criterion(crate::DIMENSIONS[env.dim].0, &criterion);
+                p.entity_criterion(crate::dim_key(env.dim), &criterion);
             }
         }
         Event::DragonFight(ev) => {
@@ -3946,7 +3968,18 @@ fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, i
         attacker: None,
         components: phys.and_then(kiln_entity::mob::data).map(kiln_entity::mob::variant_components).unwrap_or_default(),
         specific: crate::mobs::TypeSpecific::of(phys.and_then(kiln_entity::mob::data)),
-        extra: crate::mobs::DeathExtra { tool: (y_off != 0.0).then(|| kiln_item::ItemStack::of("minecraft:shears", 1)).flatten(), no_damage_source: true, ..Default::default() },
+        // Shearing has the shears as its `tool`, and so does the `ENTITY_INTERACT` table of a brushed armadillo (the brush); the other tables have none.
+        extra: crate::mobs::DeathExtra {
+            tool: if y_off != 0.0 {
+                kiln_item::ItemStack::of("minecraft:shears", 1)
+            } else if table == "minecraft:brush/armadillo" {
+                kiln_item::ItemStack::of("minecraft:brush", 1)
+            } else {
+                None
+            },
+            no_damage_source: true,
+            ..Default::default()
+        },
     };
     let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6966 ^ n as u64);
     for (k, stack) in crate::mobs::roll(&loot, table, &ctx, seed).into_iter().enumerate() {
@@ -4141,7 +4174,7 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
         players[i].award_stat(crate::player_stats::Stat::item(crate::player_stats::PICKED_UP, picked), taken);
         // `ServerPlayer.onItemPickup`: the thrower is told to the `thrown_item_picked_up_by_player` trigger.
         if let Some((_, owner)) = item.thrower.and_then(|t| owners.iter().find(|(u, _)| *u == t)) {
-            let subject = crate::advancements::triggers::seen_subject(owner, crate::DIMENSIONS[players[i].dim].0);
+            let subject = crate::advancements::triggers::seen_subject(owner, crate::dim_key(players[i].dim));
             let left = item.stack.clone();
             players[i].fire_conds("minecraft:thrown_item_picked_up_by_player", None, |c, ok, loot| {
                 c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, &left)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))

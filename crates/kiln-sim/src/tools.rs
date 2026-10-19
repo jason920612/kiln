@@ -151,7 +151,7 @@ fn lodestone_compass(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: 
         1.0,
         1.0,
     );
-    let Some(dimension) = kiln_item::Identifier::parse(crate::DIMENSIONS[level.env.dim].0) else { return true };
+    let Some(dimension) = kiln_item::Identifier::parse(crate::dim_key(level.env.dim)) else { return true };
     let tracker = LodestoneTracker { target: Some(GlobalPos { dimension, pos: [pos.x, pos.y, pos.z] }), tracked: true };
     let i = p.hand_index(off_hand);
     let infinite = p.infinite_materials();

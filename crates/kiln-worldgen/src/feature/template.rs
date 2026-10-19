@@ -161,5 +161,5 @@ impl Fossil {
 
 /// The template manager features use (loaded next to the datapack).
 pub fn manager(l: &Loader) -> Arc<TemplateManager> {
-    Arc::new(TemplateManager::near(&l.pack.root))
+    Arc::new(TemplateManager::near_stack(&l.pack.roots))
 }

@@ -23,11 +23,11 @@ pub(crate) struct EditBatch {
     /// Open block commands.
     commands: u32,
     /// Each level's environment while a block command is open.
-    envs: [Option<BlockEnv>; 3],
+    envs: Vec<Option<BlockEnv>>,
     /// Positions set with `UPDATE_CLIENTS`, in order (may repeat), by level.
-    changed: [Vec<[i32; 3]>; 3],
+    changed: Vec<Vec<[i32; 3]>>,
     /// Positions whose new state may change light that is not worked out yet, by level.
-    unlit: [Vec<[i32; 3]>; 3],
+    unlit: Vec<Vec<[i32; 3]>>,
 }
 
 impl EditBatch {
@@ -35,7 +35,17 @@ impl EditBatch {
         self.depth > 0
     }
 
+    /// Room for every level's lists.
+    fn levels(&mut self, dim: DimId) {
+        if self.envs.len() <= dim {
+            self.envs.resize_with(dim + 1, || None);
+            self.changed.resize_with(dim + 1, Vec::new);
+            self.unlit.resize_with(dim + 1, Vec::new);
+        }
+    }
+
     pub(crate) fn add(&mut self, dim: DimId, changed: &mut Vec<[i32; 3]>, unlit: Option<Vec<[i32; 3]>>) {
+        self.levels(dim);
         self.changed[dim].append(changed);
         if let Some(mut u) = unlit {
             self.unlit[dim].append(&mut u);
@@ -76,6 +86,7 @@ impl Sim {
 
     /// The environment of block work in level `dim`: a block command's, or a new one.
     pub(crate) fn take_block_env(&mut self, dim: DimId) -> BlockEnv {
+        self.world.edits.levels(dim);
         match self.world.edits.envs[dim].take() {
             Some(env) => env,
             None => self.block_env(dim),
@@ -85,6 +96,7 @@ impl Sim {
     /// Gives back what [`Self::take_block_env`] lent, if a block command keeps it.
     pub(crate) fn return_block_env(&mut self, dim: DimId, env: BlockEnv) {
         if self.world.edits.commands > 0 {
+            self.world.edits.levels(dim);
             self.world.edits.envs[dim] = Some(env);
         }
     }
@@ -92,6 +104,7 @@ impl Sim {
     /// The light of the batch's changes, then the changes to the players who have their chunks.
     fn flush_edits(&mut self) {
         for dim in 0..self.dims.len() {
+            self.world.edits.levels(dim);
             let unlit = std::mem::take(&mut self.world.edits.unlit[dim]);
             let changed = std::mem::take(&mut self.world.edits.changed[dim]);
             if unlit.is_empty() && changed.is_empty() {

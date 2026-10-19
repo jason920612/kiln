@@ -885,13 +885,13 @@ impl Level for RegionLevel<'_> {
 
     /// `gameplay/eyeblossom_open`: the overworld's timeline, open from 12600 to 23401.
     fn eyeblossom_open(&self, _pos: BlockPos) -> Option<bool> {
-        (self.env.dim == crate::OVERWORLD_ID).then(|| (12600..23401).contains(&self.env.mobs.day_time.rem_euclid(24000)))
+        crate::dim_type(self.env.dim).has_timeline("minecraft:day").then(|| (12600..23401).contains(&self.env.mobs.day_time.rem_euclid(24000)))
     }
 
     /// `gameplay/turtle_egg_hatch_chance`: certain for 843 ticks around dawn in the overworld,
     /// otherwise the default 1/500.
     fn turtle_egg_hatch_chance(&self, _pos: BlockPos) -> f32 {
-        let dawn = self.env.dim == crate::OVERWORLD_ID && (21062..21905).contains(&self.env.mobs.day_time.rem_euclid(24000));
+        let dawn = crate::dim_type(self.env.dim).has_timeline("minecraft:day") && (21062..21905).contains(&self.env.mobs.day_time.rem_euclid(24000));
         if dawn { 1.0 } else { 0.002 }
     }
 
@@ -928,7 +928,7 @@ impl Level for RegionLevel<'_> {
 
     fn portal_piglins_possible(&self, _pos: BlockPos) -> bool {
         // `isSpawningMonsters`, not peaceful, and the overworld's `nether_portal_spawns_piglin` attribute.
-        self.env.dim == crate::OVERWORLD_ID && self.env.mobs.spawn_monsters && self.env.mobs.difficulty != 0
+        crate::dim_type(self.env.dim).nether_portal_spawns_piglin && self.env.mobs.spawn_monsters && self.env.mobs.difficulty != 0
     }
 
     fn portal_piglin_spot(&self, pos: BlockPos) -> Option<BlockPos> {

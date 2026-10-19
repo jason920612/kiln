@@ -91,15 +91,10 @@ pub(crate) fn fortress_enemies() -> &'static [SpawnerData] {
 }
 
 impl StructureSpawns {
-    /// Reads `worldgen/structure/*.json` of the datapack at `dir`.
-    pub fn load(dir: &std::path::Path) -> StructureSpawns {
+    /// Reads `worldgen/structure/*.json` of the data packs `roots` (vanilla's first).
+    pub fn load(roots: &[std::path::PathBuf]) -> StructureSpawns {
         let mut t = StructureSpawns::default();
-        let Ok(entries) = std::fs::read_dir(dir.join("data/minecraft/worldgen/structure")) else { return t };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(name) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        for (name, json) in crate::world_state::stacked_json(roots, "worldgen/structure") {
             let Some(overrides) = json["spawn_overrides"].as_object() else { continue };
             let mut list = Vec::new();
             for (category, o) in overrides {
@@ -112,7 +107,7 @@ impl StructureSpawns {
             if !list.is_empty() {
                 list.sort_by(|a, b| a.0.cmp(&b.0));
                 let inflated = json["terrain_adaptation"].as_str().is_some_and(|a| a != "none");
-                t.by_structure.insert(format!("minecraft:{name}"), Overrides { inflated, by_category: list });
+                t.by_structure.insert(name, Overrides { inflated, by_category: list });
             }
         }
         t
@@ -280,7 +275,7 @@ mod tests {
             eprintln!("structure spawns: no vectors or datapack (tools/spawn_vectors.py); skipped");
             return;
         }
-        let table = SpawnTable::load(&pack).expect("the spawn table");
+        let table = SpawnTable::load(std::slice::from_ref(&pack)).expect("the spawn table");
         let text = std::fs::read_to_string(&path).unwrap();
         let mut lines = text.lines();
         let head: Value = serde_json::from_str(lines.next().unwrap()).unwrap();

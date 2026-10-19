@@ -124,7 +124,7 @@ fn sound(players: &mut [&mut Player], env: &crate::blocks::BlockEnv, at: [f64; 3
 /// hooked item, 1 for a catch, 2 from the ground, else 0); the bobber goes.
 fn retrieve(entities: &mut Entities, level: &mut RegionLevel, players: &mut [&mut Player], i: usize, idx: usize, rod: &ItemStack, spawns: &mut Vec<Spawn>) -> i32 {
     let env = level.env;
-    let dim = crate::DIMENSIONS[env.dim].0;
+    let dim = crate::dim_key(env.dim);
     let Some(phys) = entities.list[idx].phys.as_deref() else { return 0 };
     let Some(hook) = fishing_hook::get(phys).cloned() else { return 0 };
     let hook_pos = phys.position();

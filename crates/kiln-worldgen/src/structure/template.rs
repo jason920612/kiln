@@ -875,6 +875,13 @@ impl TemplateManager {
     /// jar), the pack's own `data/*/structure`, then `../versions/*/server-*.jar` (the work
     /// directory layout).
     pub fn near(root: &Path) -> TemplateManager {
+        Self::near_stack(&[root.to_path_buf()])
+    }
+
+    /// [`TemplateManager::near`] over a stack of pack roots (the bottom one, vanilla's data, first):
+    /// the packs' own `data/*/structure` come before everything else, the last pack first, since a
+    /// later pack's template replaces an earlier one's.
+    pub fn near_stack(roots: &[PathBuf]) -> TemplateManager {
         let mut sources = Vec::new();
         let mut add = |p: PathBuf| {
             if p.is_dir() {
@@ -885,9 +892,13 @@ impl TemplateManager {
                 sources.push(Source::Jar { path: p, entries });
             }
         };
+        for pack in roots.iter().skip(1).rev() {
+            add(pack.clone());
+        }
         if let Some(p) = std::env::var_os("KILN_TEMPLATES") {
             add(PathBuf::from(p));
         }
+        let Some(root) = roots.first() else { return TemplateManager { sources, cache: Mutex::new(HashMap::new()) } };
         add(root.to_path_buf());
         if let Some(parent) = root.parent()
             && let Ok(dirs) = std::fs::read_dir(parent.join("versions"))

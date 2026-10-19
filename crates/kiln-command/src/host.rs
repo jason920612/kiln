@@ -61,7 +61,7 @@ pub trait Source {
     }
     /// Dimension ids, for suggestions.
     fn dimensions(&self) -> Vec<String> {
-        ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"].map(String::from).to_vec()
+        kiln_data::levels::levels().iter().map(|l| l.key.to_owned()).collect()
     }
     /// The `max_command_forks` game rule: sources one modifier stage may produce.
     fn fork_limit(&self) -> usize {
@@ -336,9 +336,9 @@ impl<S: Source> SourceStack<S> {
     }
 }
 
-/// `DimensionType.coordinateScale` of the vanilla dimension types.
+/// `DimensionType.coordinateScale` of the type of level `dimension`.
 pub fn coordinate_scale(dimension: &str) -> f64 {
-    if dimension == "minecraft:the_nether" { 8.0 } else { 1.0 }
+    kiln_data::levels::level_type(dimension).map_or(1.0, |t| t.coordinate_scale)
 }
 
 /// A player identity (`NameAndId`), as `op` and `deop` take it.

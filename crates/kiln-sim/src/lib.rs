@@ -71,9 +71,11 @@ mod stacks;
 mod xp;
 mod container;
 mod datapacks;
+mod dimensions;
 mod tags;
 mod block_transformer;
 mod registry_data;
+mod registry_schema;
 mod tickets;
 mod zip_pack;
 pub mod lobby;
@@ -367,21 +369,32 @@ impl SimConfig {
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(30);
 const OVERWORLD: &str = "minecraft:overworld";
-/// Index of a dimension in `Sim::dims` (the order of [`DIMENSIONS`]).
+/// Index of a dimension in `Sim::dims` (the order of [`kiln_data::levels::levels`]: the overworld, the nether and the
+/// end first, then the data packs' dimensions).
 pub(crate) type DimId = usize;
 pub(crate) const OVERWORLD_ID: DimId = 0;
 pub(crate) const NETHER_ID: DimId = 1;
 pub(crate) const END_ID: DimId = 2;
-/// The levels a server runs, by [`DimId`]: level key (also its dimension type's name) and the
-/// biome of chunks nothing generated.
-pub(crate) const DIMENSIONS: [(&str, &str); 3] = [
-    ("minecraft:overworld", "minecraft:plains"),
-    ("minecraft:the_nether", "minecraft:nether_wastes"),
-    ("minecraft:the_end", "minecraft:the_end"),
-];
+/// The key of level `dim`.
+pub(crate) fn dim_key(dim: DimId) -> &'static str {
+    kiln_data::levels::levels()[dim].key
+}
 
-/// `sea_level` of each level's noise settings, by [`DimId`].
-const SEA_LEVELS: [i32; 3] = [63, 32, 0];
+/// The biome chunks nothing generated in level `dim` are filled with.
+pub(crate) fn dim_biome(dim: DimId) -> &'static str {
+    kiln_data::levels::levels()[dim].biome
+}
+
+/// The number of levels the server runs.
+pub(crate) fn dim_count() -> usize {
+    kiln_data::levels::levels().len()
+}
+
+/// The dimension type of level `dim`.
+pub(crate) fn dim_type(dim: DimId) -> &'static kiln_data::DimensionType {
+    let name = kiln_data::levels::levels()[dim].dimension_type;
+    kiln_data::dimension_type(name).expect("the dimension type of a level")
+}
 
 /// A level's directory in a 26.x world save (`dimensions/<namespace>/<path>`).
 fn dimension_dir(key: &str) -> String {
@@ -391,7 +404,7 @@ fn dimension_dir(key: &str) -> String {
 
 /// A level key's [`DimId`].
 pub(crate) fn dim_id(key: &str) -> Option<DimId> {
-    DIMENSIONS.iter().position(|(k, _)| *k == key)
+    kiln_data::levels::level_id(key)
 }
 const MAX_UNACKED_BATCHES: u32 = 10;
 /// Save changed chunks every 5 minutes.
@@ -936,6 +949,10 @@ struct Dim {
     key: &'static str,
     /// The level's dimension type.
     kind: &'static kiln_data::DimensionType,
+    /// The level's sea level (`ChunkGenerator.getSeaLevel`).
+    sea_level: i32,
+    /// `ServerLevel.isFlat`: a superflat generator.
+    flat: bool,
     provider: ChunkProvider,
     regions: Regions<Cell, (entities::Entities, blocks::RegionBlocks)>,
     regionizer: Regionizer,
@@ -1034,8 +1051,10 @@ impl Dim {
         game_time: i64,
         world: Option<&std::path::Path>,
         native: Option<std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>>,
+        sea_level: i32,
+        flat: bool,
     ) -> Dim {
-        let kind = kiln_data::dimension_type(key).expect("vanilla dimension type");
+        let kind = kiln_data::levels::level_type(key).expect("the dimension type of a level");
         let generation = provider.fork_generator().map(|g| generation::GenPool::new(g.as_ref(), provider.dimension, threads));
         let mut provider = provider;
         // With chunks generated in the background, storage reads and writes go there too
@@ -1065,6 +1084,8 @@ impl Dim {
         Dim {
             key,
             kind,
+            sea_level,
+            flat,
             provider,
             regions: Regions::new(),
             regionizer: Regionizer::new(policy),
@@ -1543,7 +1564,7 @@ pub struct Sim {
     /// The server-wide weather counters (`weather.dat`).
     weather: weather::WeatherData,
     /// Each level's rain and thunder levels, by [`DimId`].
-    level_weather: [weather::LevelWeather; 3],
+    level_weather: Vec<weather::LevelWeather>,
     /// Stand-in for the overworld's level random (weather cycle, `/weather` durations).
     weather_random: kiln_javamath::random::LegacyRandom,
     /// Biome climates from the datapack (precipitation, `isRainingAt`).
@@ -1553,9 +1574,9 @@ pub struct Sim {
     /// Rate, fraction and pause of the overworld and End clocks.
     clock_runs: [weather::ClockRun; 2],
     /// Each level's sleeping players (`ServerLevel.sleepStatus`).
-    sleep_status: [sleep::SleepStatus; 3],
+    sleep_status: Vec<sleep::SleepStatus>,
     /// Each level's locator bar waypoints (`ServerWaypointManager`).
-    waypoints: [waypoints::WaypointManager; 3],
+    waypoints: Vec<waypoints::WaypointManager>,
     /// Advancements of the enabled data packs.
     advancements: std::sync::Arc<advancements::Advancements>,
     plugins: Option<plugins::SimPlugins>,
@@ -1660,24 +1681,56 @@ impl Sim {
             .iter()
             .find(|(r, _)| *r == "minecraft:worldgen/biome")
             .map_or(0, |(_, e)| e.len());
-        let pack = config.noise.as_ref().and_then(|n| {
-            kiln_worldgen::Datapack::load(&n.datapack)
-                .map_err(|e| warn!("cannot load the datapack at {}: {e}", n.datapack.display()))
+        // World generation reads the vanilla data with the enabled packs laid over it.
+        let mut roots = vec![vanilla_pack.clone()];
+        roots.extend(packs.extra_roots());
+        world_state::set_worldgen_roots(roots.clone());
+        // The dimensions: the save's level stems with the packs' stems over them, and the dimension types of the packs.
+        dimensions::install_types();
+        let stems = dimensions::stems(&storage.as_ref().map(|s| s.level.dimensions()).unwrap_or_default(), &roots);
+        kiln_data::levels::install_levels(&dimensions::levels(&stems));
+        let mut pack = config.noise.as_ref().and_then(|_| {
+            kiln_worldgen::Datapack::load_stack(&roots)
+                .map_err(|e| warn!("cannot load the datapack at {}: {e}", vanilla_pack.display()))
                 .ok()
         });
-        // Vanilla generation per level, when a datapack is configured.
-        let generator = |id: DimId| -> Option<kiln_worldgen::FullChunks> {
-            let (pack, n) = (pack.as_ref()?, config.noise.as_ref()?);
-            let key = DIMENSIONS[id].0;
-            let world = match id {
-                OVERWORLD_ID => kiln_worldgen::Worldgen::overworld(pack, n.seed, true),
-                NETHER_ID => kiln_worldgen::Worldgen::nether(pack, n.seed, true),
-                _ => kiln_worldgen::Worldgen::end(pack, n.seed, true),
+        // What generates each level's chunks, from its stem.
+        let mut made = |id: DimId| -> Made {
+            let key = dim_key(id);
+            let Some(stem) = stems.iter().find(|s| s.key == key) else { return Made::Nothing };
+            let parsed = match pack.as_mut() {
+                Some(pack) => pack.parse_stem(key, &stem.json),
+                None => kiln_worldgen::stem::parse_stem_without_pack(&stem.json),
             };
-            let world = world.map_err(|e| warn!("cannot set up {key} generation: {e}")).ok()?;
-            info!("{key} generation: seed {}, {} threads, features and structures", n.seed, n.threads);
-            let pipeline = std::sync::Arc::new(kiln_worldgen::Pipeline::new(std::sync::Arc::new(world)));
-            Some(kiln_worldgen::FullChunks::new(pipeline))
+            let stem = match parsed {
+                Ok(stem) => stem,
+                Err(e) => {
+                    warn!("cannot read the generator of {key}: {e}");
+                    return Made::Nothing;
+                }
+            };
+            match &stem.generator {
+                kiln_worldgen::stem::StemGenerator::Flat(flat) => {
+                    let biome = kiln_data::synced_id("minecraft:worldgen/biome", &flat.biome).unwrap_or(0) as u16;
+                    info!("{key} generation: flat, {} layers", flat.layers.len());
+                    Made::Flat(kiln_worldgen::stem::FlatChunks::new(flat, biome))
+                }
+                kiln_worldgen::stem::StemGenerator::Noise { .. } => {
+                    let (Some(pack), Some(n)) = (pack.as_ref(), config.noise.as_ref()) else { return Made::Nothing };
+                    let world = match kiln_worldgen::Worldgen::from_stem(pack, &stem, n.seed, true) {
+                        Ok(Some(world)) => world,
+                        Ok(None) => return Made::Nothing,
+                        Err(e) => {
+                            warn!("cannot set up {key} generation: {e}");
+                            return Made::Nothing;
+                        }
+                    };
+                    info!("{key} generation: seed {}, {} threads, features and structures", n.seed, n.threads);
+                    let pipeline = std::sync::Arc::new(kiln_worldgen::Pipeline::new(std::sync::Arc::new(world)));
+                    Made::Noise(kiln_worldgen::FullChunks::new(pipeline))
+                }
+                kiln_worldgen::stem::StemGenerator::Debug => Made::Nothing,
+            }
         };
         let mut spawn = None;
         let format = config.world.as_deref().map(|d| kiln_storage::WorldFormat::resolve(d, config.world_format));
@@ -1688,14 +1741,18 @@ impl Sim {
         let mut native_stores: Vec<Option<std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>>> = Vec::new();
         // Each level's generation pipeline, for `/locate` and `/place`.
         let mut pipelines: Vec<Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>>> = Vec::new();
-        let providers: Vec<ChunkProvider> = (0..DIMENSIONS.len())
+        let mut sea_levels: Vec<i32> = Vec::new();
+        let mut flats: Vec<bool> = Vec::new();
+        let providers: Vec<ChunkProvider> = (0..crate::dim_count())
             .map(|id| {
-                let (key, biome_name) = DIMENSIONS[id];
-                let kind = kiln_data::dimension_type(key).expect("vanilla dimension type");
+                let key = dim_key(id);
+                let kind = dim_type(id);
                 let dimension = Dimension { min_y: kind.min_y, height: kind.height };
-                let biome = kiln_data::synced_id("minecraft:worldgen/biome", biome_name).expect("default biome") as u16;
-                let generator = generator(id);
-                pipelines.push(generator.as_ref().map(|g| g.pipeline().clone()));
+                let biome = kiln_data::synced_id("minecraft:worldgen/biome", dim_biome(id)).expect("default biome") as u16;
+                let generator = made(id);
+                pipelines.push(generator.pipeline());
+                sea_levels.push(generator.sea_level(id));
+                flats.push(matches!(generator, Made::Flat(_)));
                 match &config.world {
                     Some(dir) => {
                         let source: Box<dyn kiln_world::ChunkSource> = if format == Some(kiln_storage::WorldFormat::Native) {
@@ -1714,25 +1771,22 @@ impl Sim {
                         if id == OVERWORLD_ID {
                             // A world without a saved spawn (a new directory) starts where the
                             // generator would put it, not inside whatever terrain is at (0, 64, 0).
-                            let s = kiln_storage::read_spawn(dir)
-                                .or_else(|| generator.as_ref().map(|g| initial_spawn(g.pipeline())))
-                                .unwrap_or([0, 64, 0]);
+                            let s = kiln_storage::read_spawn(dir).or_else(|| generator.spawn(dimension)).unwrap_or([0, 64, 0]);
                             info!("loaded world {} (spawn {s:?})", dir.display());
                             spawn = Some(s);
                         }
-                        match generator {
-                            Some(g) => provider.with_generator(Box::new(g)),
+                        match generator.into_generator() {
+                            Some(g) => provider.with_generator(g),
                             None => provider,
                         }
                     }
-                    None => match generator {
-                        Some(g) => {
+                    None => match generator.spawn(dimension) {
+                        Some(s) => {
                             if id == OVERWORLD_ID {
-                                let s = initial_spawn(g.pipeline());
                                 info!("world spawn {s:?}");
                                 spawn = Some(s);
                             }
-                            ChunkProvider::flat(dimension, biome, biome_count).with_generator(Box::new(g))
+                            ChunkProvider::flat(dimension, biome, biome_count).with_generator(generator.into_generator().expect("a generator"))
                         }
                         None => {
                             let provider = ChunkProvider::flat(dimension, biome, biome_count);
@@ -1771,7 +1825,7 @@ impl Sim {
             .enumerate()
             .map(|(id, provider)| {
                 let native = native_stores.get_mut(id).and_then(Option::take);
-                Dim::new(DIMENSIONS[id].0, provider, policy, threads, game_time, config.world.as_deref(), native)
+                Dim::new(dim_key(id), provider, policy, threads, game_time, config.world.as_deref(), native, sea_levels[id], flats[id])
             })
             .collect();
         info!(
@@ -1790,7 +1844,7 @@ impl Sim {
             .map(|p| kiln_loot::ExplorerHandle(std::sync::Arc::new(maps::Explorer::new(maps.clone(), p))));
         let map_explorer = explorer.clone();
         let loot = load_loot(datapack, explorer);
-        let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
+        let spawn_table = spawner::SpawnTable::load(&roots).map(std::sync::Arc::new);
         let mut sim = Sim {
             rules,
             trial_configs: std::sync::Arc::new(mob_spawner::TrialConfigs::load(&vanilla_pack)),
@@ -1816,13 +1870,13 @@ impl Sim {
             dragon_fight: dragon_fight::DragonFight::load(None, seed),
             commands: commands::CommandState::new(ops_from_env()),
             weather: Default::default(),
-            level_weather: Default::default(),
+            level_weather: vec![Default::default(); dim_count()],
             weather_random: kiln_javamath::random::LegacyRandom::new(seed ^ 0x7765_6174_6865_72),
-            climates: weather::Climates::load(&vanilla_pack).map(std::sync::Arc::new),
+            climates: weather::Climates::load(&roots).map(std::sync::Arc::new),
             zoom_seed: kiln_worldgen::generator::obfuscate_seed(seed),
             clock_runs: Default::default(),
-            sleep_status: Default::default(),
-            waypoints: Default::default(),
+            sleep_status: world_state::per_level(),
+            waypoints: world_state::per_level(),
             advancements: Default::default(),
             plugins: None,
             independent: Default::default(),
@@ -2177,6 +2231,11 @@ impl Sim {
         (self.is_raining(OVERWORLD_ID), self.is_thundering(OVERWORLD_ID), w.rain_level(), w.thunder_level())
     }
 
+    /// Whether it rains in the level `dimension` (for tests): only levels with sky light and no ceiling (not the End) have weather.
+    pub fn is_raining_in(&self, dimension: &str) -> bool {
+        dim_id(dimension).is_some_and(|d| self.is_raining(d))
+    }
+
     /// The weather counters: (clear time, rain time, thunder time, raining, thundering).
     pub fn weather_counters(&self) -> (i32, i32, i32, bool, bool) {
         let w = &self.weather;
@@ -2190,7 +2249,7 @@ impl Sim {
 
     /// A player's respawn point and level.
     pub fn respawn_point(&self, conn: ConnId) -> Option<(Option<[i32; 3]>, &'static str)> {
-        self.players.get(&conn).map(|p| (p.respawn, DIMENSIONS[p.respawn_dim].0))
+        self.players.get(&conn).map(|p| (p.respawn, dim_key(p.respawn_dim)))
     }
 
     /// What the player's data file would hold now (`ServerPlayer.saveWithoutId`).
@@ -2300,9 +2359,42 @@ impl Sim {
         self.dims[dim_id(dimension)?].regions.get_block(x, y, z)
     }
 
+    /// The natural spawn list of `biome` for the spawning category `category` (`monster`, `creature`...): entity type names (for tests).
+    pub fn spawn_list(&self, biome: &str, category: &str) -> Vec<&'static str> {
+        use kiln_entity::mob::Category;
+        let (Some(table), Some(id), Some(cat)) = (
+            self.spawn_table.as_ref(),
+            kiln_data::synced_id("minecraft:worldgen/biome", biome),
+            Category::SPAWNING.into_iter().find(|c| c.name() == category),
+        ) else {
+            return Vec::new();
+        };
+        table.list(id as u16, cat).iter().map(|s| s.type_name).collect()
+    }
+
+    /// The nearest start of any structure in `names` near `origin` in level `dimension`, with its id (`/locate structure`; for tests).
+    pub fn locate_structure_near(&mut self, dimension: &str, origin: [i32; 3], names: &[&str]) -> Option<([i32; 3], String)> {
+        let dim = dim_id(dimension)?;
+        let names: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+        self.locate_structure(dim, origin, &names)
+    }
+
+    /// The stored biome (its network id) of the 4x4x4 cell holding a position of the level `dimension`, if its chunk is
+    /// loaded (for tests and tools).
+    pub fn biome_in(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u16> {
+        let dim = dim_id(dimension)?;
+        let chunk = self.dims[dim].regions.chunk(ChunkPos::of_block(x, z))?;
+        let rel = y - self.dims[dim].provider.dimension.min_y;
+        let section = chunk.sections.get((rel >> 4).max(0) as usize)?;
+        Some(match &section.biomes {
+            kiln_world::section::Biomes::Single(b) => *b,
+            kiln_world::section::Biomes::Cells(cells) => cells[(((rel & 15) >> 2) as usize) << 4 | (((z & 15) >> 2) as usize) << 2 | ((x & 15) >> 2) as usize],
+        })
+    }
+
     /// The level a player is in, and where (for tests and tools).
     pub fn player_level(&self, conn: ConnId) -> Option<(&'static str, [f64; 3])> {
-        self.players.get(&conn).map(|p| (DIMENSIONS[p.dim].0, p.pos))
+        self.players.get(&conn).map(|p| (dim_key(p.dim), p.pos))
     }
 
     /// Generated chunks in regions that wait for their region's next run to be lit (for tests).
@@ -2762,7 +2854,7 @@ impl Sim {
                 day_time: self.day_time,
                 sky_darken: weather::sky_darken(dim, self.day_time, &self.level_weather[dim]),
                 monsters_burn: mobs::monsters_burn(self.day_time),
-                creaking_active: dim == OVERWORLD_ID && mobs::creaking_active(self.day_time),
+                creaking_active: dim_type(dim).has_timeline("minecraft:day") && mobs::creaking_active(self.day_time),
                 griefing: self.rule_bool("minecraft:mob_griefing"),
                 drops: self.rule_bool("minecraft:mob_drops"),
                 entity_drops: self.rule_bool("minecraft:entity_drops"),
@@ -2799,7 +2891,7 @@ impl Sim {
                 },
                 climates: self.climates.clone(),
                 zoom_seed: self.zoom_seed,
-                sea_level: SEA_LEVELS[dim],
+                sea_level: self.dims[dim].sea_level,
             },
             fire_spread_radius: self.rule_int("minecraft:fire_spread_radius_around_player"),
             send_command_feedback: self.rule_bool("minecraft:send_command_feedback"),
@@ -3473,7 +3565,7 @@ impl Sim {
         }
         if !placed {
             let item = kiln_proto::nbt::Tag::Compound(vec![("id".into(), kiln_proto::nbt::Tag::String("minecraft:wither_rose".into())), ("count".into(), kiln_proto::nbt::Tag::Int(1))]);
-            self.spawn_item_nbt(DIMENSIONS[dim].0, at, &item);
+            self.spawn_item_nbt(dim_key(dim), at, &item);
         }
     }
 
@@ -3982,7 +4074,7 @@ impl Sim {
         let view_distance = (j.client.view_distance as i32).min(self.config.view_distance as i32);
         let move_state = packets::entity::MoveState { pos: spawn, yaw, pitch, head_yaw: yaw, on_ground: true };
         let dim = joining.dim;
-        let dimension_type = kiln_data::synced_id("minecraft:dimension_type", DIMENSIONS[dim].0).expect("dimension type");
+        let dimension_type = kiln_data::synced_id("minecraft:dimension_type", dim_type(dim).name).expect("dimension type");
         let region = self.dims[dim].regions.owner(player_chunk(spawn).cell()).unwrap_or(WAITING);
         let mut recipe_book = recipe_book::RecipeBook::load(joining.saved.raw().get("recipeBook"));
         let shoulders = [shoulder::load(joining.saved.raw(), "ShoulderEntityLeft"), shoulder::load(joining.saved.raw(), "ShoulderEntityRight")];
@@ -4215,15 +4307,15 @@ impl Sim {
 
         player.send(packets::play_login(&packets::Login {
             entity_id,
-            dimensions: &DIMENSIONS.map(|(k, _)| k),
+            dimensions: &kiln_data::levels::levels().iter().map(|l| l.key).collect::<Vec<_>>(),
             max_players: self.config.max_players as i32,
             view_distance: self.config.view_distance as i32,
             simulation_distance: self.config.simulation_distance as i32,
             dimension_type,
-            dimension: DIMENSIONS[dim].0,
+            dimension: dim_key(dim),
             game_mode: player.game_mode,
             is_flat: self.is_flat(dim),
-            sea_level: SEA_LEVELS[dim],
+            sea_level: self.dims[dim].sea_level,
             online_mode: self.config.online_mode,
             hashed_seed: self.zoom_seed,
             hardcore: self.storage.as_ref().is_some_and(|s| s.level.hardcore()),
@@ -4276,23 +4368,23 @@ impl Sim {
 
     /// `ServerLevel.isFlat` (a superflat generator): Kiln's test worlds' overworld.
     fn is_flat(&self, dim: DimId) -> bool {
-        dim == OVERWORLD_ID && self.config.world.is_none() && self.config.noise.is_none()
+        self.dims[dim].flat || (dim == OVERWORLD_ID && self.config.world.is_none() && self.config.noise.is_none())
     }
 
     /// `ServerPlayer.createCommonSpawnInfo` for the level `dim`.
     pub(crate) fn spawn_info(&self, dim: DimId, p: &Player) -> packets::player::SpawnInfo<'static> {
-        let key = DIMENSIONS[dim].0;
+        let key = dim_key(dim);
         packets::player::SpawnInfo {
-            dimension_type: kiln_data::synced_id("minecraft:dimension_type", key).expect("dimension type"),
+            dimension_type: kiln_data::synced_id("minecraft:dimension_type", dim_type(dim).name).expect("dimension type"),
             dimension: key,
             hashed_seed: self.zoom_seed,
             game_mode: p.game_mode,
             previous_game_mode: None,
             is_debug: false,
             is_flat: self.is_flat(dim),
-            death_location: p.death_location.map(|d| (DIMENSIONS[p.death_dim].0, d)),
+            death_location: p.death_location.map(|d| (dim_key(p.death_dim), d)),
             portal_cooldown: p.portal_cooldown,
-            sea_level: SEA_LEVELS[dim],
+            sea_level: self.dims[dim].sea_level,
         }
     }
 
@@ -4372,6 +4464,50 @@ impl Sim {
 /// The world spawn of a new generated world (`MinecraftServer.setInitialSpawn`): the
 /// generator's origin chunk (`NoiseSpawnFinder`), then the first standable column spiralling
 /// over the chunks around it.
+/// What generates a level's missing chunks.
+enum Made {
+    /// Vanilla's noise generation with features and structures.
+    Noise(kiln_worldgen::FullChunks),
+    /// Superflat layers.
+    Flat(kiln_worldgen::stem::FlatChunks),
+    Nothing,
+}
+
+impl Made {
+    fn pipeline(&self) -> Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>> {
+        match self {
+            Made::Noise(g) => Some(g.pipeline().clone()),
+            _ => None,
+        }
+    }
+
+    /// `ChunkGenerator.getSeaLevel` of the level (the noise settings' `sea_level`, -63 for superflat), else the vanilla level's.
+    fn sea_level(&self, dim: DimId) -> i32 {
+        match self {
+            Made::Noise(g) => g.pipeline().world().generator.sea_level,
+            Made::Flat(_) => -63,
+            Made::Nothing => [63, 32, 0].get(dim).copied().unwrap_or(63),
+        }
+    }
+
+    /// Where the world starts when this generates the overworld.
+    fn spawn(&self, dimension: Dimension) -> Option<[i32; 3]> {
+        match self {
+            Made::Noise(g) => Some(initial_spawn(g.pipeline())),
+            Made::Flat(f) => Some([8, f.spawn_height(dimension), 8]),
+            Made::Nothing => None,
+        }
+    }
+
+    fn into_generator(self) -> Option<Box<dyn kiln_world::ChunkGenerator>> {
+        match self {
+            Made::Noise(g) => Some(Box::new(g)),
+            Made::Flat(f) => Some(Box::new(f)),
+            Made::Nothing => None,
+        }
+    }
+}
+
 fn initial_spawn(pipeline: &kiln_worldgen::Pipeline) -> [i32; 3] {
     let mut gs = kiln_worldgen::GenScratch::default();
     let origin = pipeline.world().generator.spawn_origin(&mut gs);

@@ -13,7 +13,7 @@
 //! has no effect).
 
 use crate::commands::CommandSource;
-use crate::{DIMENSIONS, DimId, Sim, dim_id};
+use crate::{DimId, Sim, dim_id, dim_key};
 use kiln_command::host::{TestCommand, TestSelection};
 use kiln_command::{GameRuleValue, Host, Identifier, Text, TimeAction, UpdateFlags, Weather, tr};
 use kiln_loot::Json;
@@ -671,7 +671,7 @@ impl Sim {
     /// and the entities in it (players excepted) gone.
     fn clear_space(&mut self, dim: DimId, bounds: Bounds) {
         let floor = bounds.min[1] + 1;
-        let dimension = DIMENSIONS[dim].0;
+        let dimension = dim_key(dim);
         let flags = UpdateFlags::placement(true);
         for p in bounds.positions() {
             let state = if p[1] < floor { kiln_data::blocks::default_state::STONE } else { kiln_data::blocks::default_state::AIR };
@@ -759,7 +759,7 @@ impl Sim {
             None => self.commands.stack.position,
         };
         let [x, _, z] = at.map(|v| v.floor() as i32);
-        let surface = Host::height(self, DIMENSIONS[dim].0, kiln_command::Heightmap::WorldSurface, x, z);
+        let surface = Host::height(self, dim_key(dim), kiln_command::Heightmap::WorldSurface, x, z);
         ([x, 384, z], surface)
     }
 

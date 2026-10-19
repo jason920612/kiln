@@ -3,7 +3,7 @@
 
 use crate::Error;
 use crate::aquifer::{Aquifer, AquiferFunctions, FluidPicker, NoiseAquifer};
-use crate::biome::{BiomeInfo, LastResult, Parameter, ParameterList, target};
+use crate::biome::{BiomeInfo, LastResult, Parameter, ParameterList, ParameterSpace, target};
 use crate::blocks::{has_fluid, is_block, state};
 use crate::carver::{Carver, CarvingMask, GenContext};
 pub use crate::proto::ProtoChunk;
@@ -167,6 +167,12 @@ pub enum BiomeSourceKind<'a> {
     MultiNoise(&'a str),
     /// `TheEndBiomeSource`.
     TheEnd,
+    /// `MultiNoiseBiomeSource` with the parameter list written out in the biome source (`biomes`).
+    Inline(&'a [(ParameterSpace, String)]),
+    /// `FixedBiomeSource`.
+    Fixed(&'a str),
+    /// `CheckerboardColumnBiomeSource` with its biomes and `scale`.
+    Checkerboard(&'a [String], i32),
 }
 
 /// A generator's biome source.
@@ -175,6 +181,10 @@ pub enum BiomeSource {
     /// `TheEndBiomeSource`: `the_end` within 64 chunks of the origin, elsewhere chosen by the
     /// router's erosion (the end islands function) at the section's center column.
     TheEnd { end: u16, highlands: u16, midlands: u16, islands: u16, barrens: u16 },
+    /// `FixedBiomeSource`.
+    Fixed(u16),
+    /// `CheckerboardColumnBiomeSource`: quart `(x, z)` takes biome `((x >> shift) + (z >> shift)) mod n`.
+    Checkerboard { biomes: Vec<u16>, shift: i32 },
 }
 
 impl BiomeSource {
@@ -191,6 +201,16 @@ impl BiomeSource {
                 order
             }
             BiomeSource::TheEnd { end, highlands, midlands, islands, barrens } => vec![*end, *highlands, *midlands, *islands, *barrens],
+            BiomeSource::Fixed(b) => vec![*b],
+            BiomeSource::Checkerboard { biomes, .. } => {
+                let mut order: Vec<u16> = Vec::new();
+                for b in biomes {
+                    if !order.contains(b) {
+                        order.push(*b);
+                    }
+                }
+                order
+            }
         }
     }
 }
@@ -275,6 +295,18 @@ impl Generator {
                     .ok_or_else(|| Error::Invalid(format!("no parameter list {id} (reports/biome_parameters missing?)")))?;
                 let values = list.iter().map(|(space, b)| Ok((*space, biome(b)?))).collect::<Result<Vec<_>, Error>>()?;
                 BiomeSource::MultiNoise(ParameterList::new(values)?)
+            }
+            BiomeSourceKind::Inline(list) => {
+                let values = list.iter().map(|(space, b)| Ok((*space, biome(b)?))).collect::<Result<Vec<_>, Error>>()?;
+                BiomeSource::MultiNoise(ParameterList::new(values)?)
+            }
+            BiomeSourceKind::Fixed(b) => BiomeSource::Fixed(biome(&crate::function::qualify(b))?),
+            BiomeSourceKind::Checkerboard(list, scale) => {
+                let biomes = list.iter().map(|b| biome(&crate::function::qualify(b))).collect::<Result<Vec<_>, Error>>()?;
+                if biomes.is_empty() {
+                    return Err(Error::Invalid("a checkerboard biome source needs biomes".into()));
+                }
+                BiomeSource::Checkerboard { biomes, shift: scale + 2 }
             }
             BiomeSourceKind::TheEnd => BiomeSource::TheEnd {
                 end: biome("minecraft:the_end")?,
@@ -415,7 +447,7 @@ impl Generator {
     pub fn parameters(&self) -> Option<&ParameterList<u16>> {
         match &self.source {
             BiomeSource::MultiNoise(list) => Some(list),
-            BiomeSource::TheEnd { .. } => None,
+            _ => None,
         }
     }
 
@@ -579,7 +611,7 @@ impl Generator {
     fn find(&self, t: &crate::biome::Target, last: &mut LastResult) -> u16 {
         match &self.source {
             BiomeSource::MultiNoise(list) => *list.find(t, last),
-            BiomeSource::TheEnd { .. } => panic!("the end biome source has no parameter list"),
+            _ => panic!("this biome source has no parameter list"),
         }
     }
 
@@ -602,6 +634,13 @@ impl Generator {
     /// `createUncachedResolver`); `TheEndBiomeSource.getNoiseBiome` for the end.
     pub fn point_biome(&self, s: &mut Scratch, last: &mut LastResult, qx: i32, qy: i32, qz: i32) -> u16 {
         let (x, y, z) = (qx << 2, qy << 2, qz << 2);
+        match &self.source {
+            BiomeSource::Fixed(b) => return *b,
+            BiomeSource::Checkerboard { biomes, shift } => {
+                return biomes[(((qx >> shift) + (qz >> shift)).rem_euclid(biomes.len() as i32)) as usize];
+            }
+            _ => {}
+        }
         if let BiomeSource::TheEnd { end, highlands, midlands, islands, barrens } = self.source {
             let (sx, sz) = (x >> 4, z >> 4);
             if (sx as i64) * (sx as i64) + (sz as i64) * (sz as i64) <= 4096 {

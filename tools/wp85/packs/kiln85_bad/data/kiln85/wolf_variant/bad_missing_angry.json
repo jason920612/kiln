@@ -1,0 +1,12 @@
+{
+  "assets": {
+    "wild": "kiln85:w",
+    "tame": "kiln85:t"
+  },
+  "baby_assets": {
+    "wild": "kiln85:w",
+    "tame": "kiln85:t",
+    "angry": "kiln85:a"
+  },
+  "spawn_conditions": []
+}

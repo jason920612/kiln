@@ -69,98 +69,93 @@ pub struct Datapack {
     pub registries: HashMap<String, Vec<(String, Json)>>,
     /// `dimension_type` entries: (`min_y`, `height`), the level geometry chunks are built in.
     pub dimension_types: HashMap<String, (i32, i32)>,
-    /// The directory the pack was loaded from (structure templates are looked up near it).
+    /// `dimension/*.json` entries (`LevelStem`s the packs define), sorted by id.
+    pub dimensions: Vec<(String, Json)>,
+    /// The bottom pack root (vanilla's data): structure templates are looked up near it.
     pub root: PathBuf,
+    /// Every pack root loaded, the bottom one first.
+    pub roots: Vec<PathBuf>,
 }
 
 impl Datapack {
-    /// Loads every namespace under `root/data/*/worldgen`.
+    /// Loads every namespace under `root/data/*/worldgen` (the data of one pack).
     pub fn load(root: &Path) -> Result<Datapack, Error> {
+        Self::load_stack(&[root.to_path_buf()])
+    }
+
+    /// Loads a stack of pack roots, vanilla's data at the bottom and the world's enabled packs
+    /// above it in load order (`roots[0]` first). As in vanilla's resource manager a later pack's
+    /// file replaces an earlier one's with the same id, and tags merge (`TagLoader`: entries add up
+    /// in pack order, `replace` drops what the earlier packs listed). A root without `data/` is a
+    /// pack with no data (the bottom root needs it).
+    pub fn load_stack(roots: &[PathBuf]) -> Result<Datapack, Error> {
+        let Some(bottom) = roots.first() else { return Err(Error::Invalid("no data pack".into())) };
+        let data = bottom.join("data");
+        if !data.is_dir() {
+            return Err(Error::from(std::io::Error::from(std::io::ErrorKind::NotFound)).context(data.display().to_string()));
+        }
         let mut graph = Graph::default();
         let mut settings = HashMap::new();
         let mut rules = HashMap::new();
         let mut conditions = HashMap::new();
-        let mut biomes = Vec::new();
-        let mut carvers = HashMap::new();
         let mut parameter_lists = HashMap::new();
-        let mut block_tags = HashMap::new();
-        let mut tags: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
-        let mut features = Vec::new();
-        let mut placed_features = Vec::new();
-        let mut state_providers = HashMap::new();
         let mut registries: HashMap<String, Vec<(String, Json)>> = HashMap::new();
         let mut dimension_types = HashMap::new();
-        let data = root.join("data");
-        let mut namespaces: Vec<_> = fs::read_dir(&data)
-            .map_err(|e| Error::from(e).context(data.display().to_string()))?
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.join("worldgen").is_dir())
-            .collect();
-        namespaces.sort();
-        for ns_dir in &namespaces {
-            let ns = ns_dir.file_name().unwrap().to_string_lossy().into_owned();
-            let worldgen = ns_dir.join("worldgen");
-            for (id, json) in entries(&worldgen.join("noise"), &ns)? {
-                let params = parse_noise(&json).map_err(|e| e.context(&id))?;
-                graph.add_noise(&id, params);
-            }
-            for (id, json) in entries(&worldgen.join("density_function"), &ns)? {
-                graph.add_function(&id, &json)?;
+        let mut tags: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
+        let entries = |sub: &str| stacked_entries(roots, sub);
+        for (id, json) in entries("worldgen/noise")? {
+            let params = parse_noise(&json).map_err(|e| e.context(&id))?;
+            graph.add_noise(&id, params);
+        }
+        for (id, json) in entries("worldgen/density_function")? {
+            graph.add_function(&id, &json)?;
+        }
+        for (id, json) in entries("worldgen/noise_settings")? {
+            let s = parse_settings(&mut graph, &json).map_err(|e| e.context(&id))?;
+            settings.insert(id, s);
+        }
+        for (id, json) in entries("worldgen/material_rule")? {
+            let r = parse_rule(&mut graph, &json).map_err(|e| e.context(&id))?;
+            rules.insert(id, r);
+        }
+        for (id, json) in entries("worldgen/material_condition")? {
+            let c = parse_condition(&json).map_err(|e| e.context(&id))?;
+            conditions.insert(id, c);
+        }
+        let biomes = entries("worldgen/biome")?;
+        let carvers: HashMap<String, Json> = entries("worldgen/carver")?.into_iter().collect();
+        for (id, json) in entries("worldgen/multi_noise_biome_source_parameter_list")? {
+            let preset = field(&json, "preset")?.as_str().map(qualify).ok_or_else(|| Error::Invalid("bad preset".into()))?;
+            let (pns, path) = preset.split_once(':').expect("qualified");
+            // The presets are built in code in vanilla; the data generator's report holds their lists.
+            let report = roots
+                .iter()
+                .rev()
+                .map(|r| r.join("reports").join("biome_parameters").join(pns).join(format!("{path}.json")))
+                .find(|p| p.is_file());
+            if let Some(report) = report {
+                let json = Json::parse(&fs::read_to_string(&report)?)?;
+                parameter_lists.insert(id.clone(), parse_parameter_list(&json).map_err(|e| e.context(&id))?);
             }
         }
-        for ns_dir in &namespaces {
-            let ns = ns_dir.file_name().unwrap().to_string_lossy().into_owned();
-            let worldgen = ns_dir.join("worldgen");
-            for (id, json) in entries(&worldgen.join("noise_settings"), &ns)? {
-                let s = parse_settings(&mut graph, &json).map_err(|e| e.context(&id))?;
-                settings.insert(id, s);
-            }
-            for (id, json) in entries(&worldgen.join("material_rule"), &ns)? {
-                let r = parse_rule(&mut graph, &json).map_err(|e| e.context(&id))?;
-                rules.insert(id, r);
-            }
-            for (id, json) in entries(&worldgen.join("material_condition"), &ns)? {
-                let c = parse_condition(&json).map_err(|e| e.context(&id))?;
-                conditions.insert(id, c);
-            }
-            biomes.extend(entries(&worldgen.join("biome"), &ns)?);
-            carvers.extend(entries(&worldgen.join("carver"), &ns)?);
-            for (id, json) in entries(&worldgen.join("multi_noise_biome_source_parameter_list"), &ns)? {
-                let preset = field(&json, "preset")?.as_str().map(qualify).ok_or_else(|| Error::Invalid("bad preset".into()))?;
-                let (pns, path) = preset.split_once(':').expect("qualified");
-                let report = root.join("reports").join("biome_parameters").join(pns).join(format!("{path}.json"));
-                if report.is_file() {
-                    let json = Json::parse(&fs::read_to_string(&report)?)?;
-                    parameter_lists.insert(id.clone(), parse_parameter_list(&json).map_err(|e| e.context(&id))?);
-                }
-            }
-            features.extend(entries(&worldgen.join("feature"), &ns)?);
-            placed_features.extend(entries(&worldgen.join("placed_feature"), &ns)?);
-            state_providers.extend(entries(&worldgen.join("block_state_provider"), &ns)?);
-            for dir in ["structure", "structure_set", "template_pool", "processor_list"] {
-                registries.entry(dir.to_string()).or_default().extend(entries(&worldgen.join(dir), &ns)?);
-            }
-            for (id, json) in entries(&ns_dir.join("dimension_type"), &ns)? {
-                let geometry = (i32_of(&json, "min_y")?, i32_of(&json, "height")?);
-                dimension_types.insert(id, geometry);
-            }
-            for (id, json) in entries(&ns_dir.join("tags").join("block"), &ns)? {
-                block_tags.insert(id, tag_values(&json)?);
-            }
-            for dir in ["fluid", "worldgen/biome", "worldgen/structure", "worldgen/feature"] {
-                for (id, json) in entries(&ns_dir.join("tags").join(dir), &ns)? {
-                    tags.entry(dir.to_string()).or_default().insert(id, tag_values(&json)?);
-                }
-            }
+        let features = entries("worldgen/feature")?;
+        let placed_features = entries("worldgen/placed_feature")?;
+        let state_providers: HashMap<String, Json> = entries("worldgen/block_state_provider")?.into_iter().collect();
+        for dir in ["structure", "structure_set", "template_pool", "processor_list"] {
+            registries.insert(dir.to_string(), entries(&format!("worldgen/{dir}"))?);
         }
-        biomes.sort_by(|a, b| a.0.cmp(&b.0));
-        features.sort_by(|a, b| a.0.cmp(&b.0));
-        placed_features.sort_by(|a, b| a.0.cmp(&b.0));
-        for list in registries.values_mut() {
-            list.sort_by(|a, b| a.0.cmp(&b.0));
+        for (id, json) in entries("dimension_type")? {
+            let geometry = (i32_of(&json, "min_y")?, i32_of(&json, "height")?);
+            dimension_types.insert(id, geometry);
+        }
+        let dimensions = entries("dimension")?;
+        let block_tags = stacked_tags(roots, "block")?;
+        for dir in ["fluid", "worldgen/biome", "worldgen/structure", "worldgen/feature"] {
+            tags.insert(dir.to_string(), stacked_tags(roots, dir)?);
         }
         Ok(Datapack {
-            root: root.to_path_buf(),
+            root: bottom.clone(),
+            roots: roots.to_vec(),
             graph,
             settings,
             rules,
@@ -175,6 +170,7 @@ impl Datapack {
             state_providers,
             registries,
             dimension_types,
+            dimensions,
         })
     }
 
@@ -225,6 +221,63 @@ impl Datapack {
 
 fn i32_of(json: &Json, key: &str) -> Result<i32, Error> {
     field(json, key)?.as_i32().ok_or_else(|| Error::Invalid(format!("{key} must be an integer")))
+}
+
+/// The entries of tag directory `dir` (`block`, `worldgen/biome`...) over the stack: `TagLoader` adds
+/// a pack's entries to the earlier packs' and `replace` drops what came before.
+fn stacked_tags(roots: &[PathBuf], dir: &str) -> Result<HashMap<String, Vec<String>>, Error> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for root in roots {
+        for ns_dir in namespaces(root) {
+            let ns = ns_dir.file_name().unwrap().to_string_lossy().into_owned();
+            for (id, json) in entries(&ns_dir.join("tags").join(dir), &ns)? {
+                let values = tag_values(&json)?;
+                let replace = matches!(json.get("replace"), Some(Json::Bool(true)));
+                let list = out.entry(id).or_default();
+                if replace {
+                    list.clear();
+                }
+                list.extend(values);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The `dimension/*.json` stems of the pack roots (a later root's replacing an earlier one's), sorted by id.
+pub fn pack_dimensions(roots: &[PathBuf]) -> Result<Vec<(String, Json)>, Error> {
+    stacked_entries(roots, "dimension")
+}
+
+/// `data/*` of one pack root, sorted.
+fn namespaces(root: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = fs::read_dir(root.join("data"))
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir())
+        .collect();
+    dirs.sort();
+    dirs
+}
+
+/// The entries `data/<namespace>/<sub>/**.json` over the stack of pack roots, a later root's entry
+/// replacing an earlier one's with the same id, in the order vanilla registers them: sorted by identifier,
+/// which compares the path first and the namespace second (`Identifier.compareTo`). The order matters: it numbers
+/// the structures a decoration run seeds, the order structure sets are tried in and the biome order the feature
+/// sorter starts from.
+fn stacked_entries(roots: &[PathBuf], sub: &str) -> Result<Vec<(String, Json)>, Error> {
+    let mut merged: std::collections::BTreeMap<(String, String), Json> = std::collections::BTreeMap::new();
+    for root in roots {
+        for ns_dir in namespaces(root) {
+            let ns = ns_dir.file_name().unwrap().to_string_lossy().into_owned();
+            for (id, json) in entries(&ns_dir.join(sub), &ns)? {
+                let path = id.split_once(':').map_or(id.clone(), |(_, p)| p.to_owned());
+                merged.insert((path, ns.clone()), json);
+            }
+        }
+    }
+    Ok(merged.into_iter().map(|((path, ns), json)| (format!("{ns}:{path}"), json)).collect())
 }
 
 /// A tag's `values`: plain ids or `{"id", "required"}` entries.
@@ -327,7 +380,7 @@ pub(crate) fn parse_noise(json: &Json) -> Result<NormalNoiseParams, Error> {
     Ok(NormalNoiseParams { base_amplitude, base_octave, octave_count, normalize, amplitude_modifiers })
 }
 
-fn parse_settings(graph: &mut Graph, json: &Json) -> Result<NoiseSettings, Error> {
+pub(crate) fn parse_settings(graph: &mut Graph, json: &Json) -> Result<NoiseSettings, Error> {
     let noise = field(json, "noise")?;
     let int = |j: &Json, k: &str| -> Result<i32, Error> {
         field(j, k)?.as_i32().ok_or_else(|| Error::Invalid(format!("{k} must be an integer")))
@@ -367,4 +420,54 @@ fn parse_settings(graph: &mut Graph, json: &Json) -> Result<NoiseSettings, Error
         default_fluid: parse_block_state(field(json, "default_fluid")?)?,
         material_rule: parse_rule(graph, field(json, "material_rule")?)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(root: &Path, rel: &str, text: &str) {
+        let path = root.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+
+    fn temp(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kiln-datapack-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn a_later_pack_replaces_an_earlier_one_and_entries_follow_the_identifier_order() {
+        let (a, b) = (temp("a"), temp("b"));
+        write(&a, "data/minecraft/worldgen/structure/igloo.json", r#"{"v":"vanilla"}"#);
+        write(&a, "data/minecraft/worldgen/structure/buried_treasure.json", r#"{"v":"vanilla"}"#);
+        write(&b, "data/minecraft/worldgen/structure/igloo.json", r#"{"v":"pack"}"#);
+        write(&b, "data/kiln85/worldgen/structure/hut.json", r#"{"v":"pack"}"#);
+        write(&b, "data/aaa/worldgen/structure/zzz.json", r#"{"v":"pack"}"#);
+        let list = stacked_entries(&[a.clone(), b.clone()], "worldgen/structure").unwrap();
+        let ids: Vec<&str> = list.iter().map(|(i, _)| i.as_str()).collect();
+        // Path first, namespace second (`Identifier.compareTo`): `hut` comes between `buried_treasure` and `igloo`.
+        assert_eq!(ids, ["minecraft:buried_treasure", "kiln85:hut", "minecraft:igloo", "aaa:zzz"]);
+        let igloo = list.iter().find(|(i, _)| i == "minecraft:igloo").unwrap();
+        assert_eq!(igloo.1.get("v").and_then(Json::as_str), Some("pack"), "the later pack's file replaces the earlier one's");
+        let _ = fs::remove_dir_all(a);
+        let _ = fs::remove_dir_all(b);
+    }
+
+    #[test]
+    fn tags_add_up_in_pack_order_and_replace_drops_the_earlier_ones() {
+        let (a, b, c) = (temp("ta"), temp("tb"), temp("tc"));
+        write(&a, "data/minecraft/tags/worldgen/biome/t.json", r#"{"values":["minecraft:plains","minecraft:desert"]}"#);
+        write(&b, "data/minecraft/tags/worldgen/biome/t.json", r#"{"values":["kiln85:crystal",{"id":"minecraft:desert","required":false}]}"#);
+        let tags = stacked_tags(&[a.clone(), b.clone()], "worldgen/biome").unwrap();
+        assert_eq!(tags["minecraft:t"], ["minecraft:plains", "minecraft:desert", "kiln85:crystal", "minecraft:desert"]);
+        write(&c, "data/minecraft/tags/worldgen/biome/t.json", r#"{"replace":true,"values":["minecraft:forest"]}"#);
+        let tags = stacked_tags(&[a.clone(), b.clone(), c.clone()], "worldgen/biome").unwrap();
+        assert_eq!(tags["minecraft:t"], ["minecraft:forest"]);
+        for d in [a, b, c] {
+            let _ = fs::remove_dir_all(d);
+        }
+    }
 }

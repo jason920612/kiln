@@ -189,7 +189,7 @@ impl Structures {
             by_step[s.step].push(i);
         }
         let rings = placement::Rings::new(&sets, &structures, &possible_biomes);
-        let templates = Arc::new(template::TemplateManager::near(&l.pack.root));
+        let templates = Arc::new(template::TemplateManager::near_stack(&l.pack.roots));
         Ok(Structures { structures, ids, sets, possible, by_step, seed: generator.seed, gaps, rings, templates })
     }
 

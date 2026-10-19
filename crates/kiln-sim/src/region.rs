@@ -980,7 +980,7 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     let fx = crate::enchant_fx::FxWorld {
         block: &block,
         probe: &fx_probe,
-        dim: crate::DIMENSIONS[env.dim].0,
+        dim: crate::dim_key(env.dim),
         raining: env.blocks.weather.weather.raining,
         thundering: env.blocks.weather.weather.thundering,
     };
@@ -1017,7 +1017,7 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     // The server's body moves on its own (gravity, drag, a ladder's grip) and the blocks it
     // passes through take effect, then the connection puts the position back (`doTick`).
     let snap = p.pos;
-    p.phantom_travel(cells, pistons, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
+    p.phantom_travel(cells, pistons, env.game_time, env.min_y, crate::dim_type(env.dim).fast_lava);
     // (`checkFallDamage` in the move: a landing runs them as well.)
     p.landed_location_changed(&fx, &mut ctx);
     let (_, h, _) = p.dimensions();
@@ -1900,7 +1900,7 @@ fn handle_move(
         p.server_jump(from, world, env.game_time, env.min_y);
     }
     let moves_before = p.movements.len();
-    let end = p.server_packet_move(from, d, was_on_ground, world, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
+    let end = p.server_packet_move(from, d, was_on_ground, world, env.game_time, env.min_y, crate::dim_type(env.dim).fast_lava);
     // The claim against where the body got (the vertical part never counts: vanilla zeroes it), outside creative and
     // spectator mode.
     let (dx, dz) = (to[0] - end[0], to[2] - end[2]);

@@ -164,7 +164,7 @@ impl Sim {
                 if let Some(data) = self.test_block_data(dim, block) {
                     let layout = self.layout_of(block, &data);
                     self.clear_space(dim, layout.test_bounds());
-                    Host::destroy_block(self, DIMENSIONS[dim].0, block, false);
+                    Host::destroy_block(self, dim_key(dim), block, false);
                 }
             }
         }
@@ -268,7 +268,7 @@ impl Sim {
             let info = &r.infos[i];
             (info.dim, info.block.expect("a position"), info.test.clone(), info.extra_rotation)
         };
-        let dimension = DIMENSIONS[dim].0;
+        let dimension = dim_key(dim);
         self.dims[dim].load_chunk(kiln_world::ChunkPos::of_block(block[0], block[2]));
         self.set_block(dimension, block, TEST_INSTANCE_BLOCK, None, UpdateFlags(3));
         let Some(def) = self.commands.gametests.defs.tests.get(&test).cloned() else { return false };
@@ -322,7 +322,7 @@ impl Sim {
     }
 
     fn encase_structure(&mut self, dim: DimId, layout: &Layout, sky_access: bool) {
-        let dimension = DIMENSIONS[dim].0;
+        let dimension = dim_key(dim);
         for p in Self::boundary(layout, sky_access) {
             if Host::block_state(self, dimension, p) != TEST_INSTANCE_BLOCK {
                 self.set_block(dimension, p, BARRIER, None, UpdateFlags(3));
@@ -331,7 +331,7 @@ impl Sim {
     }
 
     pub(super) fn remove_barriers(&mut self, dim: DimId, layout: &Layout, sky_access: bool) {
-        let dimension = DIMENSIONS[dim].0;
+        let dimension = dim_key(dim);
         for p in Self::boundary(layout, sky_access) {
             if Host::block_state(self, dimension, p) == BARRIER {
                 self.set_block(dimension, p, kiln_data::blocks::default_state::AIR, None, UpdateFlags(3));
@@ -544,7 +544,7 @@ impl Sim {
 
     fn block_based_start(&mut self, r: &mut Runner, i: usize) {
         let (dim, block) = (r.infos[i].dim, r.infos[i].block.expect("a block"));
-        let dimension = DIMENSIONS[dim].0;
+        let dimension = dim_key(dim);
         let Some(data) = self.test_block_data(dim, block) else { return };
         let bounds = self.layout_of(block, &data).structure_bounds();
         let mut found = Vec::new();
@@ -571,7 +571,7 @@ impl Sim {
     /// `hasNeighborSignal` for a test block: a powered start block or a redstone block next
     /// to it (there is no redstone circuit to carry anything further).
     fn has_neighbor_signal(&mut self, dim: DimId, starts: &[Pos], p: Pos) -> bool {
-        let dimension = DIMENSIONS[dim].0;
+        let dimension = dim_key(dim);
         NEIGHBORS.iter().any(|d| {
             let n = [p[0] + d[0], p[1] + d[1], p[2] + d[2]];
             starts.contains(&n) || Host::block_state(self, dimension, n) == REDSTONE_BLOCK

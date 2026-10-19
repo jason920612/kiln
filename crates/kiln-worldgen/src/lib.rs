@@ -45,6 +45,7 @@ pub mod sets;
 pub mod simplex;
 pub mod spawn;
 pub mod spline;
+pub mod stem;
 pub mod state;
 pub mod state_provider;
 pub mod structure;

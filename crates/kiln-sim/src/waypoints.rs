@@ -1021,7 +1021,7 @@ impl Sim {
         let interval = i64::from(self.config.locator_interval.max(1));
         let turns = !on || self.game_time % interval == 0;
         if on && turns {
-            let mut moved: [Vec<ConnId>; 3] = Default::default();
+            let mut moved: Vec<Vec<ConnId>> = vec![Vec::new(); self.dims.len()];
             for &(conn, dim, _, _, _, mover) in &looked {
                 if mover {
                     moved[dim].push(conn);
