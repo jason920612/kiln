@@ -125,18 +125,22 @@ fn check(name: &str, dimension: &str, packs: &[&str]) {
             if ours != theirs {
                 block_diffs += 1;
                 chunk_bad = true;
+                let (s, k) = (i >> 12, i & 4095);
+                let line = format!(
+                    "chunk {},{} block ({}, {}, {}): kiln {} vanilla {}",
+                    t.x,
+                    t.z,
+                    t.x * 16 + (k & 15) as i32,
+                    min_y + (s * 16 + (k >> 8)) as i32,
+                    t.z * 16 + ((k >> 4) & 15) as i32,
+                    state_name(ours),
+                    state_name(theirs)
+                );
+                if std::env::var_os("KILN_PACK_ALL").is_some() {
+                    eprintln!("  {line}");
+                }
                 if first.len() < 12 {
-                    let (s, k) = (i >> 12, i & 4095);
-                    first.push(format!(
-                        "chunk {},{} block ({}, {}, {}): kiln {} vanilla {}",
-                        t.x,
-                        t.z,
-                        t.x * 16 + (k & 15) as i32,
-                        min_y + (s * 16 + (k >> 8)) as i32,
-                        t.z * 16 + ((k >> 4) & 15) as i32,
-                        state_name(ours),
-                        state_name(theirs)
-                    ));
+                    first.push(line);
                 }
             }
         }
