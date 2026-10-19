@@ -74,6 +74,8 @@ pub struct ServerInfo {
     pub version_name: String,
     /// Mojang's public keys (X.509 DER) that sign players' chat keys; empty until fetched (online mode).
     pub services_keys: std::sync::RwLock<Vec<Vec<u8>>>,
+    /// When the next tick is due (Unix milliseconds; 0 until the simulation ticks): what the watchdog of `max-tick-time` watches.
+    pub next_tick_due_ms: std::sync::atomic::AtomicU64,
 }
 
 impl ServerInfo {
@@ -87,6 +89,7 @@ impl ServerInfo {
             level_name: level_name.to_owned(),
             version_name: kiln_data::version::NAME.to_owned(),
             services_keys: Default::default(),
+            next_tick_due_ms: Default::default(),
         }
     }
 

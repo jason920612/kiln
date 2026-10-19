@@ -292,6 +292,9 @@ fn main() -> Result<()> {
         }
     })?;
 
+    // `DedicatedServer.initServer`: the watchdog of `max-tick-time`.
+    let _watchdog = kiln_server::watchdog::start(shared.info.clone(), props.max_tick_time, 50);
+
     // `DedicatedServer.initServer`: Query, then RCON, once the server is up.
     let host_ip = match props.server_ip.trim() {
         "" | "0.0.0.0" => kiln_server::query::local_host_address().unwrap_or_else(|| "0.0.0.0".to_owned()),

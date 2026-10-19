@@ -1277,10 +1277,12 @@ impl Host for Sim {
             let mut access = self.config.access.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             let key = profile.uuid.to_string();
             if op {
+                // `op-permission-level`: what `/op` grants.
+                let level = self.config.server.op_permission_level;
                 self.commands.ops.insert(profile.name.clone());
-                self.commands.op_levels.remove(&profile.name);
+                self.commands.op_levels.insert(profile.name.clone(), level);
                 let user = kiln_link::access::NameAndId { uuid: profile.uuid, name: profile.name.clone() };
-                access.op_list.put(key, kiln_link::access::OpEntry { user, level: 4, bypasses_player_limit: false });
+                access.op_list.put(key, kiln_link::access::OpEntry { user, level, bypasses_player_limit: false });
             } else {
                 self.commands.ops.remove(&profile.name);
                 self.commands.op_levels.remove(&profile.name);

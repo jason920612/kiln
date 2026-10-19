@@ -1730,12 +1730,22 @@ fn ops_from_env() -> HashSet<String> {
         .unwrap_or_default()
 }
 
+/// Tells the watchdog when the next tick is due, as a wall-clock time.
+fn publish_next_tick(info: &kiln_link::ServerInfo, next_tick: Instant) {
+    let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+    let now = Instant::now();
+    let offset = if next_tick >= now { (next_tick - now).as_millis() as i64 } else { -((now - next_tick).as_millis() as i64) };
+    info.next_tick_due_ms.store((unix_now + offset).max(1) as u64, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
     let mut sim = Sim::new(config);
     sim.sync_ops();
     let mut next_tick = Instant::now();
     let mut inbox = Vec::new();
+    let info = sim.config.info.clone();
     loop {
+        publish_next_tick(&info, next_tick);
         loop {
             match rx.try_recv() {
                 Ok(msg) => inbox.push(msg),
