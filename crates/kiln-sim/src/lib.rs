@@ -653,6 +653,8 @@ struct Player {
     /// World effects the enchantments asked for this tick, run with the region's blocks; functions
     /// they asked to run (name, position).
     fx_jobs: Vec<enchant_fx::LevelJob>,
+    /// The `explode` effects the enchantments asked for (effect, enchantment level, position), carried out in the entities' turn.
+    explosions: Vec<(kiln_loot::effects::EntityEffect, i32, [f64; 3])>,
     function_requests: Vec<(String, [f64; 3])>,
     /// The move since the last tick (`Entity.getKnownMovement` for the `movement` predicate).
     move_delta: [f64; 3],
@@ -4252,6 +4254,7 @@ impl Sim {
             loc_active: Vec::new(),
             loc_modifiers: Vec::new(),
             fx_jobs: Vec::new(),
+            explosions: Vec::new(),
             function_requests: Vec::new(),
             move_delta: [0.0; 3],
             block_edits: Vec::new(),

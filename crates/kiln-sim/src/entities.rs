@@ -2233,7 +2233,11 @@ pub(crate) fn tick(
     any_player: bool,
     ctx: &kiln_sched::Ctx<'_>,
 ) {
-    if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) && level.blocks.hearts.is_empty() && (level.blocks.spawners.is_empty() || players.is_empty()) {
+    if entities.list.is_empty()
+        && players.iter().all(|p| p.vehicle.is_none() && p.explosions.is_empty())
+        && level.blocks.hearts.is_empty()
+        && (level.blocks.spawners.is_empty() || players.is_empty())
+    {
         return;
     }
     // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
@@ -2317,6 +2321,7 @@ pub(crate) fn tick(
     // Creakings that lost their heart in the block phase go before the entities tick.
     crate::heart::process_released(&mut sim);
     process_pending_kills(&mut sim);
+    player_explosions(&mut sim);
     if !islands::tick_islands(&mut sim, ticking, any_player, ctx) && !spec::tick_speculative(&mut sim, pace, ticking, any_player, ctx) {
         tick_list(&mut sim, ticking, any_player, &mut |_, _| true);
     }
@@ -2446,6 +2451,22 @@ fn tick_turn(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_player
             // waiting for its id) ticks in this very tick, as `tickPassenger` does for what
             // joined the level meanwhile.
             tick_new_passenger(sim, id, i);
+        }
+    }
+}
+
+/// `ExplodeEffect.apply` for the `explode` effects the players' enchantments asked for this tick (outside a blow: in `tick`, `location_changed`,
+/// `hit_block`...): the explosion hurts and pushes the entities around, so it happens in the entities' turn.
+fn player_explosions(sim: &mut SimLevel) {
+    for k in 0..sim.players.len() {
+        if sim.players[k].explosions.is_empty() {
+            continue;
+        }
+        let id = sim.players[k].entity_id;
+        for (effect, enchant_level, at) in std::mem::take(&mut sim.players[k].explosions) {
+            (sim.current, sim.seeds) = (id, 0x6578_706c);
+            sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time ^ 0x6578_706c, id);
+            kiln_entity::enchanting::explode_effect(sim, Some(id), &effect, enchant_level, at);
         }
     }
 }
@@ -3601,6 +3622,31 @@ fn carry_out(
                 p.explosion_hit(cause);
             }
         }
+        // `SpawnParticlesEffect.apply`: `sendParticles` with a count of 0, to the players within 32 blocks.
+        Event::FxParticles { particle, pos, velocity, speed } => {
+            use kiln_proto::packets::world_fx;
+            let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", particle) else { return };
+            let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+                particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
+                override_limiter: false,
+                always_show: false,
+                pos,
+                offset: [velocity[0] as f32, velocity[1] as f32, velocity[2] as f32],
+                max_speed: [speed as f32; 3],
+                count: 0,
+                randomization: world_fx::ParticleRandomization::Alternative,
+            });
+            for p in players.iter_mut().filter(|p| dist2(p.pos, pos) < 32.0 * 32.0) {
+                p.send(pkt.clone());
+            }
+        }
+        // `SummonEntityEffect.apply`.
+        Event::FxSummon { entity, at, owner } => {
+            let seed = crate::mobs::loot_seed(env.seed, env.game_time, owner.unwrap_or(0), 0x7375_6d6d);
+            let _ = crate::mobs::summon(spawns, entity, arr(at), None, true, env.mobs.difficulty, env.game_time, 0, seed);
+        }
+        // `replace_block`, `replace_disk`, `set_block_properties` of an enchantment effect.
+        Event::BlockFx { effect, level: enchant_level, at } => crate::enchant_fx::run_level_effect(level, &effect.0, enchant_level, at),
         Event::ItemParticles { item, pos, count, spread, speed } => {
             if let Some((at, range, pkt)) = item_packet(item, pos, count, spread, speed) {
                 for p in players.iter_mut().filter(|p| dist2(p.pos, at) < range * range) {

@@ -19,6 +19,7 @@ pub mod control;
 pub mod dispense;
 pub mod convert;
 pub mod effects;
+pub mod enchant_fx;
 pub mod goals;
 pub mod gossip;
 pub mod interact;
@@ -663,6 +664,8 @@ pub struct MobData {
     pub hurt_by: Option<(DamageKind, Option<i32>, Option<i32>)>,
     /// The attribute modifiers the equipment added (`collectEquipmentChanges`).
     pub equip_mods: Vec<(Attr, String)>,
+    /// The enchantments' `tick` and `location_changed` effects running for the equipment (see [`enchant_fx`]).
+    pub fx: Option<Box<enchant_fx::Fx>>,
     /// `activeEffects` (see [`effects`]).
     pub effects: crate::effect::Effects,
     /// The `Brain` of brain-driven types (taken out of the mob while it ticks).
@@ -821,6 +824,7 @@ impl MobData {
             air_supply_max: 300,
             hurt_by: None,
             equip_mods: Vec::new(),
+            fx: None,
             effects: crate::effect::Effects::new(),
             brain: None,
             brain_random: kiln_javamath::random::LegacyRandom::new(0),
@@ -1563,6 +1567,7 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if let Some(k) = m.kind.ext() {
         k.detect_equipment_updates(e, m, level);
     }
+    enchant_fx::equipment_changed(e, m, level);
     if !e.is_removed() {
         crate::prof!("mob", "ai_step");
         ai_step(e, m, level);
@@ -1663,6 +1668,8 @@ fn increase_air(m: &MobData, current: i32) -> i32 {
 
 /// `Mob.baseTick` → `LivingEntity.baseTick` → `Entity.baseTick`.
 fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    // `LivingEntity.baseTick` starts with the enchantments' `tick` effects.
+    enchant_fx::tick(e, m, level);
     let air_before = e.air_supply;
     e.compute_speed();
     e.was_in_powder_snow = e.is_in_powder_snow;
@@ -1719,6 +1726,8 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         } else if e.air_supply < m.air_supply_max {
             e.air_supply = increase_air(m, e.air_supply);
         }
+        // A new block position runs the location-changed enchantments (`onChangedBlock`).
+        enchant_fx::block_changed(e, m, level);
     }
     if m.hurt_time > 0 {
         m.hurt_time -= 1;
@@ -1934,6 +1943,8 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         travel(e, m, level, input);
     }
     if let Some((fall, state, at)) = e.landing.take() {
+        // `LivingEntity.checkFallDamage`: a landing runs the location-changed enchantments first.
+        enchant_fx::landed(e, m, level);
         landing_dust(e, m, level, fall, state, at);
     }
     if let Some((distance, multiplier)) = e.pending_fall.take() {

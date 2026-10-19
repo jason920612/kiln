@@ -453,7 +453,6 @@ impl kiln_loot::LootContext for DeathContext {
             kiln_loot::EntityTarget::InteractingEntity => self.extra.interacting.is_some(),
             // (`ENTITY_INTERACT` names the mob `target_entity`.)
             kiln_loot::EntityTarget::TargetEntity => self.extra.interacting.is_some(),
-            _ => false,
         }
     }
     fn origin(&self) -> Option<[f64; 3]> {

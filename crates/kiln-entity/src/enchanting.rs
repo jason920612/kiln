@@ -222,7 +222,7 @@ pub fn with_loot<R>(f: impl FnOnce(&kiln_loot::LootData) -> R) -> Option<R> {
 }
 
 /// The blocks and sky of an [`crate::level::EntityLevel`], for the location predicates of enchantment requirements.
-struct LevelProbe<'a>(&'a dyn crate::level::EntityLevel);
+pub(crate) struct LevelProbe<'a>(pub(crate) &'a dyn crate::level::EntityLevel);
 
 impl kiln_loot::probe::WorldProbe for LevelProbe<'_> {
     fn block(&self, pos: [i32; 3]) -> Option<u16> {
@@ -303,20 +303,25 @@ pub fn run_projectile_effects(
         match action {
             Action::Ignite { seconds } => e.ignite_for_seconds(seconds),
             Action::Impulse { delta } => e.delta = e.delta.add(delta[0], delta[1], delta[2]),
-            other => level_action(level, owner, other),
+            other => level_action(level, owner, "neutral", other),
         }
     }
 }
 
-/// What a resolved action does to the level (a sound, a lightning bolt); the rest is the caller's.
-fn level_action(level: &mut dyn crate::level::EntityLevel, owner: Option<i32>, action: kiln_loot::fx::Action) {
+/// What a resolved action does to the level: a sound (heard in the sound `source` of the entity the effect belongs to), particles, a summoned
+/// entity (a lightning bolt credits the player who shot the projectile), blocks replaced or an explosion; the rest is the caller's.
+pub(crate) fn level_action(level: &mut dyn crate::level::EntityLevel, owner: Option<i32>, source: &'static str, action: kiln_loot::fx::Action) {
+    use crate::level::Event;
+    use kiln_loot::effects::EntityEffect;
     use kiln_loot::fx::Action;
     match action {
         Action::Sound { sound, volume, pitch, at } => {
             let sound = kiln_data::live::leak_str(sound.as_str());
-            level.emit(crate::level::Event::Sound { pos: crate::math::Vec3::new(at[0], at[1], at[2]), sound, source: "neutral", volume, pitch });
+            level.emit(Event::Sound { pos: crate::math::Vec3::new(at[0], at[1], at[2]), sound, source, volume, pitch });
         }
-        // `SummonEntityEffect`: a lightning bolt credits the player who shot the projectile.
+        Action::Particles { particle, has_options: false, pos, velocity, speed } => {
+            level.emit(Event::FxParticles { particle: kiln_data::live::leak_str(particle.as_str()), pos, velocity, speed });
+        }
         Action::Summon { entity, at, .. } if entity.as_str() == "minecraft:lightning_bolt" => {
             let (id, seed) = (level.next_entity_id(), level.fresh_seed());
             let pos = crate::math::Vec3::new(at[0], at[1], at[2]);
@@ -326,7 +331,17 @@ fn level_action(level: &mut dyn crate::level::EntityLevel, owner: Option<i32>, a
             };
             level.add_entity(bolt);
         }
-        // (The other effects need the server's level, or are the shooter's.)
+        Action::Summon { entity, at, .. } => {
+            level.emit(Event::FxSummon { entity: kiln_data::live::leak_str(entity.as_str()), at: crate::math::Vec3::new(at[0], at[1], at[2]), owner });
+        }
+        Action::Level { effect, level: enchant_level, at } => {
+            if matches!(effect, EntityEffect::Explode { .. }) {
+                explode_effect(level, owner, &effect, enchant_level, at);
+            } else {
+                level.emit(Event::BlockFx { effect: crate::level::BlockFx(std::sync::Arc::new(effect)), level: enchant_level, at });
+            }
+        }
+        // (The rest belongs to whoever the effect is done to: an ignition, an effect, damage, an impulse.)
         _ => {}
     }
 }
@@ -380,8 +395,48 @@ pub fn run_projectile_post_attack(
                     Target::DamagingEntity => e.ignite_for_seconds(seconds),
                     Target::Attacker => {}
                 },
-                other => level_action(level, owner, other),
+                other => level_action(level, owner, "neutral", other),
             }
         }
     }
+}
+
+/// `ExplodeEffect.apply` for the entity `user` (the explosion's source when the effect has `attribute_to_user`) at `at` (the position the effect
+/// happens at): the explosion `ServerLevel.explode` makes with a `SimpleExplosionDamageCalculator` (blocks explode with an interaction other than
+/// `none`, entities are hurt when there is a damage type, `knockback_multiplier` scales the push, `immune_blocks` shield what they list) and the
+/// effect's own particles and sound.
+pub fn explode_effect(level: &mut dyn crate::level::EntityLevel, user: Option<i32>, effect: &kiln_loot::effects::EntityEffect, enchant_level: i32, at: [f64; 3]) {
+    use crate::explosion::{BlockRules, Interaction, explode_ruled};
+    use kiln_loot::effects::EntityEffect;
+    let EntityEffect::Explode { attribute_to_user, has_damage_type, knockback_multiplier, immune_blocks, offset, radius, create_fire, interaction, small_particle, large_particle, sound } = effect else {
+        return;
+    };
+    let center = crate::math::Vec3::new(at[0] + offset[0], at[1] + offset[1], at[2] + offset[2]);
+    let interaction = match interaction.strip_prefix("minecraft:").unwrap_or(interaction) {
+        "none" => Interaction::Keep,
+        "block" => Interaction::Block,
+        "mob" => if level.mob_griefing() { Interaction::Mob } else { Interaction::Keep },
+        "tnt" => Interaction::Tnt,
+        "trigger" => Interaction::TriggerBlock,
+        _ => Interaction::Keep,
+    };
+    let immune = immune_blocks.as_deref().map(|t| format!("minecraft:{}", t.trim_start_matches('#').trim_start_matches("minecraft:")));
+    // `SimpleExplosionDamageCalculator.getBlockExplosionResistance`: with immune blocks, 3600000 for them and none (rays go through) for the rest.
+    let resist = |state: u16, _above: u16, res: f32| match &immune {
+        Some(tag) => if crate::mob::kinds::wolf::block_in_tag(state, tag) { 3600000.0 } else { -0.3 },
+        None => res,
+    };
+    let fx = crate::level::ExplosionFx {
+        small_particle: kiln_data::live::leak_str(small_particle),
+        large_particle: kiln_data::live::leak_str(large_particle),
+        sound: kiln_data::live::leak_str(sound.as_str()),
+    };
+    let rules = BlockRules {
+        resistance: immune.is_some().then_some(&resist as &dyn Fn(u16, u16, f32) -> f32),
+        knockback: knockback_multiplier.as_ref().map(|m| m.calculate(enchant_level)),
+        fx: Some(fx),
+        ..Default::default()
+    };
+    let source = attribute_to_user.then_some(user).flatten();
+    explode_ruled(level, source, center, radius.calculate(enchant_level).max(0.0), *create_fire, interaction, rules, *has_damage_type);
 }
