@@ -3209,7 +3209,7 @@ pub(crate) fn interact_mob(
             attacker: None,
             components: kiln_entity::mob::data(&phys).map(kiln_entity::mob::variant_components).unwrap_or_default(),
             specific: crate::mobs::TypeSpecific::of(kiln_entity::mob::data(&phys)),
-            extra: crate::mobs::DeathExtra::default(),
+            extra: crate::mobs::DeathExtra { tool: Some(stack.clone()), no_damage_source: true, ..Default::default() },
         };
         let seed = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_6561);
         let mut k = 0u64;
@@ -3455,7 +3455,7 @@ fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
         .into_iter()
         .map(|ev| {
             let key = match &ev {
-                Event::DeathLoot { entity, .. } | Event::GiftLoot { entity, .. } | Event::ShearLoot { entity, .. } | Event::ItemDrops { entity, .. } => (0, *entity as u32 as u64),
+                Event::DeathLoot { entity, .. } | Event::GiftLoot { entity, .. } | Event::ShearLoot { entity, .. } | Event::ItemDrops { entity, .. } | Event::GiftThrow { entity, .. } => (0, *entity as u32 as u64),
                 Event::EntityEvent { entity, .. } | Event::MobHurt { entity, .. } => (1, *entity as u32 as u64),
                 Event::Sound { pos, .. } => (2, pos_key(*pos)),
                 Event::EntitySound { entity, .. } => (6, *entity as u32 as u64),
@@ -3696,6 +3696,7 @@ fn carry_out(
                     loot: Some(loot.clone()),
                     rules: Some(env.menus.clone()),
                     vehicle_type: phys.vehicle.and_then(|v| list.binary_search_by_key(&v, |e| e.id).ok()).and_then(|j| list[j].phys.as_deref()).map(|p| p.type_name),
+                    ..Default::default()
                 },
             };
             let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174);
@@ -3742,14 +3743,15 @@ fn carry_out(
                 }
             }
         }
-        Event::GiftLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, table, pos, n, 0.0),
+        Event::GiftLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, table, pos, n, 0.0, None),
+        Event::GiftThrow { entity: id, table, to } => loot_drop(env, list, spawns, id, table, to, n, 0.0, Some(to)),
         Event::ItemDrops { entity: id, pos, stacks } => {
             for (k, stack) in stacks.into_iter().enumerate() {
                 let h = crate::mobs::loot_seed(env.seed, env.game_time, id, (n as u64) << 8 | k as u64 | 0x6368_0000) as u64;
                 spawns.push(crate::mobs::drop_item(stack, arr(pos), h));
             }
         }
-        Event::ShearLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, &table, pos, n, 1.0),
+        Event::ShearLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, &table, pos, n, 1.0, None),
         // `ThrownEnderpearl.onHit`: its player goes to where the pearl was at the start of the
         // tick, takes 5 `ender_pearl` damage and hears the teleport.
         Event::ProjectileHit { projectile, projectile_type: "minecraft:ender_pearl", owner: Some(owner), .. } => {
@@ -3894,7 +3896,7 @@ pub(crate) fn equipment_stacks(env: &blocks::BlockEnv, mob: &kiln_entity::Entity
         attacker: None,
         components: m.map(kiln_entity::mob::variant_components).unwrap_or_default(),
         specific: crate::mobs::TypeSpecific::of(m),
-        extra: crate::mobs::DeathExtra { loot: Some(loot.clone()), rules: Some(env.menus.clone()), vehicle_type: None },
+        extra: crate::mobs::DeathExtra { loot: Some(loot.clone()), rules: Some(env.menus.clone()), vehicle_type: None, no_damage_source: true, ..Default::default() },
     };
     crate::mobs::roll(&loot, table, &ctx, crate::mobs::loot_seed(env.seed, env.game_time, mob.id, 0x6571_7569))
 }
@@ -3916,17 +3918,19 @@ pub(crate) fn charged_creeper_stacks(env: &blocks::BlockEnv, victim: &kiln_entit
         attacker: Some(crate::mobs::AttackerView { type_name: "minecraft:creeper", components: Vec::new() }),
         components: m.map(kiln_entity::mob::variant_components).unwrap_or_default(),
         specific: crate::mobs::TypeSpecific::of(m),
-        extra: crate::mobs::DeathExtra { loot: Some(loot.clone()), rules: Some(env.menus.clone()), vehicle_type: None },
+        extra: crate::mobs::DeathExtra { loot: Some(loot.clone()), rules: Some(env.menus.clone()), vehicle_type: None, ..Default::default() },
     };
     crate::mobs::roll(&loot, "minecraft:charged_creeper/root", &ctx, crate::mobs::loot_seed(env.seed, env.game_time, victim.id, 0x6368_6172))
 }
 
-fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, id: i32, table: &str, pos: Vec3, n: usize, y_off: f64) {
+/// `dropFromGiftLootTable` (`y_off` 0) and `dropFromShearingLootTable` (`y_off` 1, with the shears as the tool): the table rolls with the entity and
+/// its position as the context (`GIFT`, `SHEARING`: no damage source), the items appear at `pos`.
+fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, id: i32, table: &str, pos: Vec3, n: usize, y_off: f64, throw_to: Option<Vec3>) {
     let Some(loot) = env.loot.clone() else { return };
     let phys = list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| list[i].phys.as_deref());
     let ctx = crate::mobs::DeathContext {
         type_name: phys.map_or("minecraft:chicken", |e| e.type_name),
-        origin: arr(pos),
+        origin: phys.map_or(arr(pos), |e| arr(e.position())),
         on_fire: false,
         baby: false,
         killed_by_player: false,
@@ -3936,12 +3940,19 @@ fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, i
         attacker: None,
         components: phys.and_then(kiln_entity::mob::data).map(kiln_entity::mob::variant_components).unwrap_or_default(),
         specific: crate::mobs::TypeSpecific::of(phys.and_then(kiln_entity::mob::data)),
-        extra: crate::mobs::DeathExtra::default(),
+        extra: crate::mobs::DeathExtra { tool: (y_off != 0.0).then(|| kiln_item::ItemStack::of("minecraft:shears", 1)).flatten(), no_damage_source: true, ..Default::default() },
     };
     let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6966 ^ n as u64);
     for (k, stack) in crate::mobs::roll(&loot, table, &ctx, seed).into_iter().enumerate() {
         let h = crate::mobs::loot_seed(env.seed, env.game_time, id, (n as u64) << 8 | k as u64) as u64;
-        spawns.push(crate::mobs::drop_item(stack, [pos.x, pos.y + y_off, pos.z], h));
+        let mut spawn = crate::mobs::drop_item(stack, [pos.x, pos.y + y_off, pos.z], h);
+        // `BehaviorUtils.throwItem`: from the thrower's eyes, 0.3 blocks a tick towards the target.
+        if let (Some(to), Some(thrower)) = (throw_to, phys) {
+            let d = (to - thrower.position()).normalize();
+            spawn.pos = [thrower.x(), thrower.eye_y() - 0.30000001192092896, thrower.z()];
+            spawn.vel = [d.x * 0.30000001192092896, d.y * 0.30000001192092896, d.z * 0.30000001192092896];
+        }
+        spawns.push(spawn);
     }
 }
 

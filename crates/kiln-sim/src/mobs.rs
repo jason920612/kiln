@@ -387,6 +387,10 @@ pub(crate) struct DeathExtra {
     pub vehicle_type: Option<&'static str>,
     /// The recipes (`furnace_smelt` cooks the meat of a mob that burned or was killed with fire aspect).
     pub rules: Option<std::sync::Arc<kiln_inventory::Rules>>,
+    /// The `tool` parameter, for the tables that have one (shearing: the shears).
+    pub tool: Option<kiln_item::ItemStack>,
+    /// The context has no `damage_source` (gifts, shearing, equipment: not a death).
+    pub no_damage_source: bool,
 }
 
 /// `EntitySubPredicate`s that depend on the entity's class (`type_specific/sheep`, `type_specific/cube_mob`).
@@ -443,7 +447,10 @@ impl kiln_loot::LootContext for DeathContext {
         Some(self.origin)
     }
     fn has_damage_source(&self) -> bool {
-        true
+        !self.extra.no_damage_source
+    }
+    fn tool(&self) -> Option<&kiln_item::ItemStack> {
+        self.extra.tool.as_ref()
     }
     /// `furnace_smelt`: the first smelting recipe that takes the item (`RecipeManager.getRecipeFor(SMELTING)` and `assemble`).
     fn smelt(&self, input: &kiln_item::ItemStack) -> Option<kiln_item::ItemStack> {

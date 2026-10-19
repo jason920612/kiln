@@ -373,6 +373,9 @@ pub enum Event {
     },
     /// `dropFromGiftLootTable` (a chicken's egg).
     GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
+    /// `dropFromGiftLootTable` with `BehaviorUtils.throwItem` as the consumer (a hero-of-the-village gift): each item is thrown from the entity's
+    /// eyes towards `to`.
+    GiftThrow { entity: i32, table: &'static str, to: Vec3 },
     /// A splash potion (`minecraft:` potion id) reached player `target` at `scale` of its full
     /// strength (`ThrownSplashPotion.onHitAsPotion`); `owner` threw it.
     PotionSplash { target: i32, potion: &'static str, scale: f64, owner: Option<i32> },
