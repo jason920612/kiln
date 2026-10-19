@@ -278,6 +278,25 @@ mod tests {
         assert_eq!(f.len(), 2);
     }
 
+    /// Vanilla's loader refuses some entries of `tools/wp85/packs/kiln85_bad` and loads others (`tools/wp85/schema_accepted.txt`, made by running a
+    /// vanilla server on the pack): Kiln leaves out the same ones, so that no client is sent an entry it cannot decode.
+    #[test]
+    fn the_entries_vanilla_refuses_are_left_out_and_the_others_kept() {
+        let tools = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/wp85");
+        let expected = std::fs::read_to_string(tools.join("schema_accepted.txt")).unwrap();
+        let loaded = load(&[tools.join("packs/kiln85_bad")]);
+        let mut checked = 0;
+        for line in expected.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+            let [verdict, registry, name] = line.split_whitespace().collect::<Vec<_>>()[..] else { panic!("{line}") };
+            let registry = format!("minecraft:{registry}");
+            let (_, names) = loaded.names.iter().find(|(r, _)| *r == registry).unwrap_or_else(|| panic!("no entries in {registry}"));
+            let present = names.iter().any(|n| n == name);
+            assert_eq!(present, verdict == "accepted", "{registry} {name}: vanilla {verdict}");
+            checked += 1;
+        }
+        assert!(checked > 50, "{checked}");
+    }
+
     #[test]
     fn entries_the_codec_rejects_are_left_out() {
         let dir = std::env::temp_dir().join(format!("kiln-regdata-{}", std::process::id()));
