@@ -1134,10 +1134,12 @@ impl Sim {
         let mut exit = [dir[0] * 1024.0, dir[1] * 1024.0];
         // (`for (int i = 16; !isChunkEmpty(…) && i-- > 0; …)`: up to sixteen steps, the old count is tested.)
         let mut left = 16;
+        info!("WP82 start {exit:?} dir {dir:?}");
         while !self.chunk_empty(exit) && {
             left -= 1;
             left >= 0
         } {
+            info!("WP82 back past nonempty {exit:?}");
             exit = [exit[0] - dir[0] * 16.0, exit[1] - dir[1] * 16.0];
         }
         let mut left = 16;
@@ -1145,6 +1147,7 @@ impl Sim {
             left -= 1;
             left >= 0
         } {
+            info!("WP82 forward past empty {exit:?}");
             exit = [exit[0] + dir[0] * 16.0, exit[1] + dir[1] * 16.0];
         }
         let chunk = ChunkPos::new((exit[0] / 16.0).floor() as i32, (exit[1] / 16.0).floor() as i32);
