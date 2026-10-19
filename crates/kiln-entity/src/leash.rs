@@ -89,6 +89,8 @@ pub fn can_be_leashed_mob(m: &MobData, level: &dyn EntityLevel) -> bool {
         // Ambient, fish and the like.
         Bat | Cod | Salmon | TropicalFish | Pufferfish | Tadpole | Turtle | Panda | Villager => false,
         Squid | GlowSquid | Axolotl | Hoglin | Zoglin => true,
+        // Not `Enemy` in vanilla (`Mob.canBeLeashed`): the undead mounts.
+        ZombieHorse | CamelHusk | ZombieNautilus => true,
         // `Wolf.canBeLeashed`: not while angry.
         Wolf => !mob::kinds::wolf::is_angry(m, level),
         k => k.category() != mob::Category::Monster,

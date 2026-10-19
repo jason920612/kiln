@@ -828,7 +828,8 @@ impl Kind for Equine {
         }
         // `stack.interactLivingEntity`: `Equippable.equipOnTarget` of a saddle (`canUseSlot`: alive, grown and
         // tame; a llama is not in `#can_equip_saddle`, so the saddle does not go on it).
-        if st(m).tamed && st(m).saddle.is_empty() && crate::mob::is_alive(e, m)
+        // (`SkeletonHorse.canUseSlot` is true for every slot: its saddle goes on untamed.)
+        if (st(m).tamed || m.kind == MobKind::SkeletonHorse) && st(m).saddle.is_empty() && crate::mob::is_alive(e, m)
             && let Some(one) = super::steering::equip_on_target(e, level, stack, kiln_item::component::EquipmentSlot::Saddle, Some("minecraft:entity.horse.saddle"))
         {
             let s = st_mut(m);

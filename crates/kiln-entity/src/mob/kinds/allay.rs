@@ -309,8 +309,10 @@ impl Kind for Allay {
     /// amethyst while it dances.
     fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
         let held = m.equipment[mob::MAINHAND].clone();
+        // (`Level.playSound(player, this, sound, NEUTRAL, 2, 1)`: an entity sound for everyone but the player.)
+        let who_id = who.id;
         let sound = |level: &mut dyn EntityLevel, e: &Entity, s: &'static str| {
-            level.emit(Event::Sound { pos: e.position(), sound: s, source: "neutral", volume: 2.0, pitch: 1.0 });
+            level.emit(Event::EntitySoundExcept { except: who_id, entity: e.id, pos: e.position(), sound: s, source: "neutral", volume: 2.0, pitch: 1.0 });
         };
         if st(m).dancing && !stack.is_empty() && mob::item_tag(stack.item(), "minecraft:duplicates_allays") && st(m).duplication_cooldown == 0 {
             duplicate(e, m, level);
