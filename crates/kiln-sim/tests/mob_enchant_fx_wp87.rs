@@ -234,3 +234,20 @@ fn an_arrow_from_an_enchanted_bow_runs_its_block_effects() {
     let hit = w.sim.block_at(at[0].floor() as i32, w.ground[1], at[2].floor() as i32).expect("loaded");
     assert_eq!(hit, kiln_blocks::state::parse_state("minecraft:gold_block").unwrap(), "the block the arrow hit turned to gold");
 }
+
+#[test]
+fn dbg_equipment() {
+    let stride = enchantment(
+        BOOTS_SLOT,
+        r#""minecraft:location_changed": [{"effect": {"type": "minecraft:attribute", "amount": 1.0, "attribute": "minecraft:movement_efficiency", "id": "kiln87:stride", "operation": "add_value"}}]"#,
+    );
+    let mut w = World::new("dbg", &[("stride", stride)]);
+    let at = w.spot(3.0);
+    let nbt = format!("{{NoAI:1b,PersistenceRequired:1b,{}}}", worn("husk", "feet", "golden_boots", "stride"));
+    let id = w.summon("husk", at, &nbt);
+    w.ticks(4);
+    for t in w.sim.entity_nbt() {
+        eprintln!("{t:?}");
+    }
+    eprintln!("state {:?}", w.sim.mob_state(id));
+}
