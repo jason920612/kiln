@@ -277,7 +277,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 結構（16 種 StructureType、52 個 JSON） | A | overworld 1,234 個 start；nether／end 另計 | `features.rs --structures` | 8 個 abandoned_camp 變體未被取樣；結構內實體與方塊實體 NBT（箱子戰利品種子、spawner）無向量 |
 | 出生點、基礎高度 | A | 6 seed／約 4,000 欄 | `tests/spawn.rs`、`heights.rs` | seed 12345 差 1 格（MC-55596） |
 | 生成期光照、dimension types | C／B | – | – | 光照無原版比對；dimension types 由 registry 解碼（wp85，見 6.28：7 個測試，條目驗證與 vanilla 的載入器 50／13 逐條相同） |
-| worldgen 資料包（群系、噪音設定、地物、結構、結構集、模板池、處理器、維度類型、維度） | A（生成）／B（維度執行期） | 6 個案例共約 700 chunk 與 vanilla 逐方塊、群系格、結構 start NBT 相同 | `kiln-worldgen/tests/packs.rs`、`kiln-sim/tests/dp_worldgen.rs`、`dp_dimensions.rs`、`wp85_vanilla.rs` | wp85，見 6.28；平坦維度無結構與地物；自訂時鐘不支援 |
+| worldgen 資料包（群系、噪音設定、地物、結構、結構集、模板池、處理器、維度類型、維度） | A（生成）／B（維度執行期） | 5 個案例共 676 chunk 與 vanilla 逐方塊、群系格、結構 start NBT 相同 | `kiln-worldgen/tests/packs.rs`、`kiln-sim/tests/dp_worldgen.rs`、`dp_dimensions.rs`、`wp85_vanilla.rs` | wp85，見 6.28；平坦維度無結構與地物；自訂時鐘不支援 |
 | 世界初始動物、bonus chest、blending、舊世界升級 | D | 0 | – | – |
 | 天氣週期、天空暗度、降水結冰降雪、睡眠起床 | A | 515 tick／112／8 區域／12 | `weather_parity.rs` | 隨機源是 stand-in |
 | 雷擊、避雷針、骷髏陷阱、`/time`、睡眠 | C | 0 | `tests/weather.rs` | – |
@@ -968,7 +968,7 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 客戶端 codec | `check_registries85.sh`:五個 wp85 資料包,32 個 registry、帶資料的 5 個條目(覆寫的沙漠、新群系、自己的維度類型…)經 vanilla 的 network codec 解碼再編回與 vanilla 相同、774 個 tag 逐個相同,**0 問題**。**修**(找到的):群系與維度類型的 `attributes` 只送 `syncable` 的(`gameplay/natural_mob_spawns`、`bed_rule`、`respawn_anchor_works` 留在伺服器端) |
 | wp83 尾巴 | **補**:鋤/斧/鏟讀 vanilla 的 `block_transformer/*.json`(`transformer_parity.rs`:47,480 個有變化的組合與內建規則逐項相同)、沙漠水井(查證是舊註記有誤,26.3 的地物都已實作)、刷子的 `tool`(`brush/armadillo`)、附魔 `equipment_drops`(`equipment_drops.rs`:+1.0 的資料包附魔,12/12 掉,普通劍 8.5%) |
 | 沒做 | loot `random_sequence`(vanilla 是伺服器全域序列,Kiln 區域平行 tick 共用會破壞決定性);生物端附魔的 `tick`/`location_changed`、`explode`(`post_attack` 以外)、`hit_block` 其他效果;`brush/armadillo` 的 `interacting_entity`;`piglin_bartering` 多給的 `origin`;自訂維度的自訂時鐘(只有 overworld/the_end 的時鐘);平坦維度沒有結構與地物;wp82 的 MONSTER 生怪比例(項目 7) |
-| 驗證與效能 | 見 `docs/wp85.md` §7 |
+| 驗證與效能 | workspace 測試 1570 通過／0 失敗（有無 vanilla 資料各一次）；`parity_suites.py` 113/113；`command_diff.py` 4 次中 3 次 1957/1957、1 次 `waypoint list` 順序差 2 行（實體 id 雜湊的既有偶發）；`neg85.py` 15/15；`check_registries85.sh` 0 問題；`sim_load` 8 對交替看不出退步（VM 共用、±2 ms 雜訊）；細節見 `docs/wp85.md` §7 |
 
 ## 7. 重跑
 
