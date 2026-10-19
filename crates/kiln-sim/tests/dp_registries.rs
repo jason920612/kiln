@@ -86,7 +86,7 @@ fn clients_get_the_data_of_the_entries_they_cannot_take_from_a_pack_they_know() 
     // New entries and the overridden vanilla one carry their data; the rest comes from `minecraft:core`.
     assert_eq!(with_data("minecraft:painting_variant"), ["minecraft:aztec", "kiln83:speck", "kiln83:sunrise_wide"]);
     assert_eq!(with_data("minecraft:damage_type"), ["kiln83:acid", "minecraft:cactus", "kiln83:mild"]);
-    assert_eq!(with_data("minecraft:cow_sound_variant"), Vec::<&str>::new());
+    assert_eq!(with_data("minecraft:chicken_sound_variant"), Vec::<&str>::new());
     assert_eq!(with_data("minecraft:enchantment"), Vec::<&str>::new());
     let entry = |registry: &str, name: &str| get(registry).iter().find(|(n, _)| n == name).unwrap().1.clone().unwrap();
     let sunrise = entry("minecraft:painting_variant", "kiln83:sunrise_wide");
