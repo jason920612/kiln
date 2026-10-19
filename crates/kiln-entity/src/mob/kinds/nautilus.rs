@@ -115,9 +115,27 @@ fn snd(m: &MobData, what: &str) -> &'static str {
     mob::sound_event(&format!("minecraft:entity.{name}.{what}"))
 }
 
-/// The sound with `_on_land` after it when the mob is not under water.
+/// The sound's name out of water: `ambient_land`, `hurt_land` ... (the constants are `*_ON_LAND`, the ids end in `_land`).
+fn on_land(what: &str) -> String {
+    format!("{what}_land")
+}
+
+/// The sound with `_land` after it when the mob is not under water.
 fn snd_wet(m: &MobData, what: &str) -> &'static str {
-    if st(m).under_water { snd(m, what) } else { snd(m, &format!("{what}_on_land")) }
+    if st(m).under_water { snd(m, what) } else { snd(m, &on_land(what)) }
+}
+
+#[cfg(test)]
+mod land_sounds {
+    #[test]
+    fn the_land_sounds_are_registered() {
+        for who in ["nautilus", "zombie_nautilus"] {
+            for what in ["ambient", "hurt", "death", "dash", "dash_ready"] {
+                let id = format!("minecraft:entity.{who}.{}", super::on_land(what));
+                assert!(kiln_data::builtin_id("minecraft:sound_event", &id).is_some(), "{id} is a sound event");
+            }
+        }
+    }
 }
 
 /// `playEatingSound`.
