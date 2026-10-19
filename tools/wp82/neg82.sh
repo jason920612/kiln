@@ -5,7 +5,7 @@ export PATH="$HOME/.cargo/bin:$PATH" KILN_WORK="$HOME/kiln/work" KILN_DATAPACK="
 cd "$HOME/wt/wp82-gaps" || exit 2
 declare -A FILE EDIT TEST
 add() { FILE[$1]=$2; EDIT[$1]=$3; TEST[$1]=$4; ORDER+=("$1"); }
-add raidtick   crates/kiln-sim/src/raid.rs        's~if !loaded \|\| !ticking\.contains\(ChunkPos::of_block\(x, z\)\) \{~if !loaded {~' "-p kiln-sim --test raids a_wave_spawns_where"
+add raidtick   crates/kiln-sim/src/raid.rs        's~if !loaded \|\| !ticking\.contains\(ChunkPos::of_block\(x, z\)\) \{~if !loaded {~; s~&& !self\.entity_ticking_chunks\(dim\)\.contains\(ChunkPos::of_block\(p\[0\], p\[2\]\)\)~\&\& !has_chunk_at(\&self.dims[dim], p[0], p[2])~' "-p kiln-sim --test raids a_wave_spawns_where"
 add raidfrozen crates/kiln-sim/src/lib.rs         's~self\.tick_raids\(normal\);~self.tick_raids(true);~' "-p kiln-sim --test raids a_frozen_game"
 add carrots    crates/kiln-sim/src/tools.rs       's~C::CropBlock \| C::CarrotBlock \| C::PotatoBlock \|~C::CropBlock |~g' "-p kiln-sim --test bone_meal_wp82 bone_meal_ages_carrots"
 add stem      crates/kiln-sim/src/tools.rs       's~if age == 7 \{~if false {~' "-p kiln-sim --test bone_meal_wp82 bone_meal_that_ripens_a_stem"
