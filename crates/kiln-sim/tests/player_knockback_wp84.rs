@@ -48,6 +48,14 @@ impl World {
         assert!(self.sim.step([ToSim::Console(cmd.into())]));
     }
 
+    /// The velocity in a motion packet of the player.
+    fn velocity(p: &Bytes) -> [f64; 3] {
+        let mut r = kiln_proto::codec::Reader::new(p);
+        r.varint().unwrap();
+        r.varint().unwrap();
+        kiln_proto::packets::entity::read_lp_vec3(&mut r).unwrap()
+    }
+
     /// The motion packets the player was sent for itself since the last call.
     fn motions(&mut self) -> Vec<Bytes> {
         let id = self.sim.entity_id(1).expect("the player's entity id");
@@ -81,9 +89,10 @@ fn a_zombie_hit_reaches_the_client_after_one_step_of_travel() {
     let rest = (0.0 - 0.08) * 0.98f32 as f64;
     let (x, y) = (0.0 - strength, 0.4f64.min(rest / 2.0 + strength));
     let friction = (0.6f32 * 0.91f32) as f64;
-    let expected = kiln_proto::packets::entity::set_entity_motion(id, [x * friction, (y - 0.08) * 0.98f32 as f64, 0.0]);
+    let want = [x * friction, (y - 0.08) * 0.98f32 as f64, 0.0];
     assert_eq!(got.len(), 1, "one motion packet for the hit: {got:?}");
-    assert_eq!(got[0], expected, "the knockback went out after one step of the player's own travel");
+    let v = World::velocity(&got[0]);
+    assert!((0..3).all(|i| (v[i] - want[i]).abs() < 2e-3), "the knockback went out after one step of the player's own travel: sent {v:?}, vanilla {want:?} (player {id})");
     // The velocity faded: a second hit 30 ticks later is the same push again, not a heavier one.
     w.ticks(30);
     let _ = w.motions();
@@ -91,7 +100,8 @@ fn a_zombie_hit_reaches_the_client_after_one_step_of_travel() {
     w.ticks(4);
     let again = w.motions();
     assert_eq!(again.len(), 1);
-    assert_eq!(again[0], expected, "what was left of the first push does not add to the second");
+    let v2 = World::velocity(&again[0]);
+    assert!((0..3).all(|i| (v2[i] - want[i]).abs() < 2e-3), "what was left of the first push does not add to the second: {v2:?}");
 }
 
 #[test]

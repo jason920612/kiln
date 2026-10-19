@@ -3070,7 +3070,10 @@ impl Sim {
         for conn in conns {
             let p = self.players.get_mut(&conn).unwrap();
             let t = region::player_tick(p, &no_blocks, &no_pistons, &envs[&p.dim], false);
-            p.decay_velocity();
+            // (A player whose body travels - `player_tick` did it, against void air - has had its velocity moved.)
+            if !p.phantom_travels() {
+                p.decay_velocity();
+            }
             let mut out = RegionOut { spawns: t.spawns, deaths: t.deaths, portals: t.portals, ..Default::default() };
             out.saved_entities.append(&mut p.released_shoulders);
             outs.push((p.dim, out));
