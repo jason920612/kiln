@@ -27,6 +27,7 @@ fn have_datapack() -> bool {
 struct World {
     sim: Sim,
     client: Client,
+    stats: std::sync::Arc<kiln_sim::testing::SinkStats>,
 }
 
 impl World {
@@ -34,6 +35,8 @@ impl World {
         have_datapack();
         let mut sim = Sim::new(SimConfig::new(4, 4, None));
         let (msg, stats) = join(1, "Farmer", 2);
+        *stats.log.lock().unwrap() = Some(Vec::new());
+        let keep = stats.clone();
         assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into()), ToSim::Console("gamemode survival Farmer".into())]));
         let mut client = Client::new(1, stats);
         for _ in 0..5 {
@@ -41,7 +44,7 @@ impl World {
             client.tick(None, &mut inbox);
             assert!(sim.step(inbox));
         }
-        World { sim, client }
+        World { sim, client, stats: keep }
     }
 
     fn ticks(&mut self, n: usize) {
@@ -98,4 +101,41 @@ fn a_ghastling_from_saved_data_follows_a_snowball_like_a_baby() {
     let (dx, dz) = (at[0].as_f64().unwrap() - p[0], at[2].as_f64().unwrap() - p[2]);
     let d = (dx * dx + dz * dz).sqrt();
     assert!(d < 4.5, "the ghastling came to the player holding a snowball: {d:.2} blocks away ({at:?} / player {p:?})");
+}
+
+/// The sounds (by registry name) among the packets the player was sent.
+fn sounds_heard(w: &World) -> Vec<i32> {
+    let log = w.stats.log.lock().unwrap().clone().unwrap();
+    let mut out = Vec::new();
+    for p in &log {
+        let mut r = kiln_proto::codec::Reader::new(p);
+        if r.varint().ok() == Some(kiln_data::packets::play::clientbound::SOUND) {
+            if let Ok(holder) = r.varint() {
+                out.push(holder - 1);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn a_harnessed_happy_ghast_plays_its_goggles_when_the_first_rider_boards_and_the_last_leaves() {
+    let mut w = World::new();
+    let p = w.client.pos;
+    w.run(&format!(
+        "summon minecraft:happy_ghast {} {} {} {{NoAI:1b,PersistenceRequired:1b,equipment:{{body:{{id:\"minecraft:blue_harness\",count:1}}}}}}",
+        p[0] + 1.0,
+        p[1] + 1.0,
+        p[2] + 6.0
+    ));
+    w.ticks(3);
+    let down = kiln_data::builtin_id("minecraft:sound_event", "minecraft:entity.happy_ghast.harness_goggles_down").expect("sound");
+    let up = kiln_data::builtin_id("minecraft:sound_event", "minecraft:entity.happy_ghast.harness_goggles_up").expect("sound");
+    assert!(!sounds_heard(&w).contains(&down), "nothing yet");
+    w.run("ride Farmer mount @e[type=happy_ghast,limit=1]");
+    w.ticks(3);
+    assert_eq!(sounds_heard(&w).iter().filter(|s| **s == down).count(), 1, "goggles down once the first rider boards");
+    w.run("ride Farmer dismount");
+    w.ticks(3);
+    assert_eq!(sounds_heard(&w).iter().filter(|s| **s == up).count(), 1, "goggles up once the last rider left");
 }
