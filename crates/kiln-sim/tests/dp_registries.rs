@@ -485,3 +485,23 @@ fn a_shovel_mines_stone_when_the_pack_tags_it_mineable_with_a_shovel() {
     assert_eq!(items, ["minecraft:cobblestone"], "and it was the right tool for the drops");
     g.cleanup();
 }
+
+#[test]
+fn sound_variants_of_the_pack_bring_their_sounds() {
+    use kiln_entity::mob::{self, MobKind};
+    let _x = kiln_data::live::exclusive();
+    let (sim, dir, _) = start("sound-variants");
+    let mut pig = mob::new(MobKind::Pig, 1, 0, 5);
+    mob::data_mut(&mut pig).unwrap().sound_variant = kiln_data::synced_id("minecraft:pig_sound_variant", "kiln83:hisser").unwrap();
+    let m = mob::data(&pig).unwrap();
+    assert_eq!(mob::variant_voice(m, "ambient"), Some("minecraft:entity.cat.hiss"));
+    assert_eq!(mob::variant_voice(m, "hurt"), Some("minecraft:entity.cat.hurt"));
+    let mut cow = mob::new(MobKind::Cow, 2, 0, 5);
+    mob::data_mut(&mut cow).unwrap().sound_variant = kiln_data::synced_id("minecraft:cow_sound_variant", "kiln83:bleater").unwrap();
+    assert_eq!(mob::variant_voice(mob::data(&cow).unwrap(), "death"), Some("minecraft:entity.goat.death"));
+    // The vanilla classic variant keeps the type's own voice.
+    mob::data_mut(&mut cow).unwrap().sound_variant = kiln_data::synced_id("minecraft:cow_sound_variant", "minecraft:classic").unwrap();
+    assert_eq!(mob::variant_voice(mob::data(&cow).unwrap(), "death"), None);
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}

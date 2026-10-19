@@ -56,10 +56,16 @@ fn is_cat_food(item: i32) -> bool {
     item_tag(item, "minecraft:cat_food")
 }
 
-/// The `CatSoundSet` sound `what`.
+/// The `CatSoundSet` sound `what`: the sound variant's own when a data pack defines it.
 fn sound(m: &MobData, what: &str) -> &'static str {
+    if let Some(s) = crate::mob::variants::pack_sound("minecraft:cat_sound_variant", m.sound_variant, m.baby(), &format!("{what}_sound")) {
+        return s;
+    }
     let v = synced_name("minecraft:cat_sound_variant", m.sound_variant).unwrap_or("minecraft:classic");
-    let set = if v == "minecraft:classic" { "cat".to_owned() } else { format!("cat_{}", &v[10..]) };
+    let set = match v.strip_prefix("minecraft:") {
+        Some("classic") | None => "cat".to_owned(),
+        Some(short) => format!("cat_{short}"),
+    };
     crate::mob::sound_event(&format!("minecraft:entity.{set}.{what}"))
 }
 

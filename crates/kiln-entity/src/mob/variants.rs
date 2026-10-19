@@ -194,6 +194,23 @@ pub fn select(registry: &'static str, at: &Where, r: &mut dyn RandomSource) -> O
     (!picked.is_empty()).then(|| picked[r.next_int_bounded(picked.len() as i32) as usize])
 }
 
+/// A sound of the sound variant `id` of `registry` (`minecraft:wolf_sound_variant`, `cat_`, `pig_`, `cow_`, `chicken_`) when a
+/// data pack defines or overrides the entry: `key` is `ambient_sound`, `hurt_sound`... in its `adult_sounds` (or
+/// `baby_sounds` for a baby; a cow's sounds are flat). `None` when the entry is vanilla's, whose sounds the callers know
+/// by the naming of the game's sound events, or lacks the sound.
+pub fn pack_sound(registry: &str, id: i32, baby: bool, key: &str) -> Option<&'static str> {
+    let name = kiln_data::live::synced_name(registry, id)?;
+    let json = Json::parse(kiln_data::live::entry_data(registry, name)?).ok()?;
+    let set = match json.get("adult_sounds") {
+        Some(adult) if baby => json.get("baby_sounds").unwrap_or(adult),
+        Some(adult) => adult,
+        None => &json,
+    };
+    let sound = set.get(key)?.as_str()?;
+    let sound = if sound.contains(':') { sound.to_owned() } else { format!("minecraft:{sound}") };
+    kiln_data::builtin_entries("minecraft:sound_event")?.iter().find(|s| **s == sound).copied()
+}
+
 /// [`select`] for the animal `kind` spawning in `ctx` (`None` for a kind without variants).
 pub fn select_for(kind: super::MobKind, ctx: &super::SpawnContext, group: &super::GroupData, r: &mut dyn RandomSource) -> Option<i32> {
     let registry = registry_of(kind)?;

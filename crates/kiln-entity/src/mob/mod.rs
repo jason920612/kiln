@@ -2791,8 +2791,15 @@ pub fn variant_voice(m: &MobData, what: &str) -> Option<&'static str> {
         MobKind::Chicken if !m.baby() => ("chicken", &["ambient", "death", "hurt"]),
         _ => return None,
     };
+    if !own.contains(&what) {
+        return None;
+    }
+    // A sound variant a data pack defines brings its sounds.
+    if let Some(s) = variants::pack_sound(&format!("minecraft:{ty}_sound_variant"), m.sound_variant, false, &format!("{what}_sound")) {
+        return Some(s);
+    }
     let variant = kinds::wolf::synced_name(&format!("minecraft:{ty}_sound_variant"), m.sound_variant)?.strip_prefix("minecraft:")?;
-    if variant == "classic" || !own.contains(&what) {
+    if variant == "classic" {
         return None;
     }
     Some(sound_event(&format!("minecraft:entity.{ty}_{variant}.{what}")))

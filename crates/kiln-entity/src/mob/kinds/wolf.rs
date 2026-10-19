@@ -180,10 +180,17 @@ fn spawn_variant(ctx: &SpawnContext, group: &GroupData, r: &mut dyn RandomSource
     crate::mob::variants::select_for(MobKind::Wolf, ctx, group, r).unwrap_or(0)
 }
 
-/// The wolf's `WolfSoundSet` sound `what` (ambient, growl, pant, whine, hurt, death).
+/// The wolf's `WolfSoundSet` sound `what` (ambient, growl, pant, whine, hurt, death): the sound variant's own when a data pack
+/// defines it, else the game's `entity.wolf[_<variant>].<what>`.
 fn sound(m: &MobData, what: &str) -> &'static str {
+    if let Some(s) = crate::mob::variants::pack_sound("minecraft:wolf_sound_variant", m.sound_variant, m.baby(), &format!("{what}_sound")) {
+        return s;
+    }
     let v = synced_name("minecraft:wolf_sound_variant", m.sound_variant).unwrap_or("minecraft:classic");
-    let set = if v == "minecraft:classic" { "wolf".to_owned() } else { format!("wolf_{}", &v[10..]) };
+    let set = match v.strip_prefix("minecraft:") {
+        Some("classic") | None => "wolf".to_owned(),
+        Some(short) => format!("wolf_{short}"),
+    };
     crate::mob::sound_event(&format!("minecraft:entity.{set}.{what}"))
 }
 
