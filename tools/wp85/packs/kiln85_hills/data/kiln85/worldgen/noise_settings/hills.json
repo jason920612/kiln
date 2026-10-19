@@ -1,10 +1,8 @@
 {
-  "default_block": {
-    "Name": "minecraft:stone"
-  },
+  "default_block": "minecraft:stone",
   "default_fluid": {
-    "Name": "minecraft:water",
-    "Properties": {
+    "id": "minecraft:water",
+    "properties": {
       "level": "0"
     }
   },

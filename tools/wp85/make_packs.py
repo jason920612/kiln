@@ -32,7 +32,7 @@ def mcmeta(pack, text):
 def simple_block(pack, name, block, count, step_note=""):
     write(pack, f"data/kiln85/worldgen/feature/{name}.json", {
         "type": "minecraft:simple_block",
-        "to_place": {"type": "minecraft:simple_state_provider", "state": {"Name": block}},
+        "to_place": {"type": "minecraft:simple_state_provider", "state": block},
     })
     write(pack, f"data/kiln85/worldgen/placed_feature/{name}.json", {
         "feature": f"kiln85:{name}",
@@ -153,8 +153,8 @@ def hills():
         "right": {"type": "minecraft:beardifier"},
     }
     write(pack, "data/kiln85/worldgen/noise_settings/hills.json", {
-        "default_block": {"Name": "minecraft:stone"},
-        "default_fluid": {"Name": "minecraft:water", "Properties": {"level": "0"}},
+        "default_block": "minecraft:stone",
+        "default_fluid": {"id": "minecraft:water", "properties": {"level": "0"}},
         "disable_mob_generation": False,
         "legacy_random_source": False,
         "material_rule": "minecraft:overworld",
@@ -241,7 +241,7 @@ def structure():
             "rules": [{
                 "input_predicate": {"predicate_type": "minecraft:random_block_match", "block": "minecraft:cobblestone", "probability": 0.5},
                 "location_predicate": {"predicate_type": "minecraft:always_true"},
-                "output_state": {"Name": "minecraft:mossy_cobblestone"},
+                "output_state": "minecraft:mossy_cobblestone",
             }],
         }]
     })
