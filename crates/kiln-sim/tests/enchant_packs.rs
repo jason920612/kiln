@@ -264,10 +264,9 @@ fn a_spears_stab_burns_for_as_long_as_the_packs_fire_aspect_says() {
 /// Breaks the block under the player's feet + (dx, 0, dz) by hand and with `tool`, in survival, and returns what is at its place.
 fn break_ice(w: &mut World, tool: &str, dx: i32) -> &'static str {
     let [x, y, z] = w.ground;
-    let ice = [x + dx, y, z];
+    // On the platform, beside the player: the dirt below is what the water melts onto.
+    let ice = [x + dx, y + 1, z];
     w.run(&format!("setblock {} {} {} minecraft:ice", ice[0], ice[1], ice[2]));
-    // Something solid below, so the water has somewhere to stay.
-    w.run(&format!("setblock {} {} {} minecraft:stone", ice[0], ice[1] - 1, ice[2]));
     w.equip("weapon.mainhand", tool);
     w.ticks(2);
     assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 0, pos: ice, face: 1, sequence: 10 + dx })]));
