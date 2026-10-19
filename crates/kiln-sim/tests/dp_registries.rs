@@ -85,7 +85,7 @@ fn clients_get_the_data_of_the_entries_they_cannot_take_from_a_pack_they_know() 
     let with_data = |registry: &str| -> Vec<&str> { get(registry).iter().filter(|(_, d)| d.is_some()).map(|(n, _)| n.as_str()).collect() };
     // New entries and the overridden vanilla one carry their data; the rest comes from `minecraft:core`.
     assert_eq!(with_data("minecraft:painting_variant"), ["minecraft:aztec", "kiln83:speck", "kiln83:sunrise_wide"]);
-    assert_eq!(with_data("minecraft:damage_type"), ["minecraft:cactus", "kiln83:acid", "kiln83:mild"]);
+    assert_eq!(with_data("minecraft:damage_type"), ["kiln83:acid", "minecraft:cactus", "kiln83:mild"]);
     assert_eq!(with_data("minecraft:cow_sound_variant"), Vec::<&str>::new());
     assert_eq!(with_data("minecraft:enchantment"), Vec::<&str>::new());
     let entry = |registry: &str, name: &str| get(registry).iter().find(|(n, _)| n == name).unwrap().1.clone().unwrap();
@@ -141,7 +141,7 @@ fn the_tags_of_the_packs_reach_the_game_logic_and_the_clients() {
     assert!(tag_ids(&tags, "minecraft:block", "minecraft:climbable").unwrap().contains(&block("minecraft:stone")));
     assert_eq!(tag_ids(&tags, "minecraft:block", "kiln83:pebbles"), None);
     // The synchronized registries' tags use the numbering of the registries.
-    let placeable = tag_ids(&tags, "minecraft:painting_variant", "minecraft:painting_variant/placeable").unwrap();
+    let placeable = tag_ids(&tags, "minecraft:painting_variant", "minecraft:placeable").unwrap();
     let id = |name: &str| kiln_data::synced_id("minecraft:painting_variant", name).unwrap();
     assert_eq!(placeable, [id("kiln83:speck"), id("kiln83:sunrise_wide"), id("minecraft:aztec")], "`replace` dropped the vanilla entries; the file's order is kept");
     let acid = kiln_data::synced_id("minecraft:damage_type", "kiln83:acid").unwrap();
