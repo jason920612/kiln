@@ -103,5 +103,6 @@ for dx, kind in enumerate(("stone", "gravel", "grass_block")):
     line("hoe on", kind, "->", c.block(tx + dx, y, tz))
     line("hoe item", c.cmd(f"comps inv {slot}"))
 items = [e for e in c.state(40)["entities"] if e["t"] == "item"]
-line("item entities near", len(items))
+flint = sorted(int(m.group(1)) for e in items for m in [re.search(r"8=(\d+) minecraft:flint", c.cmd(f"entdata {e['id']}"))] if m)
+line("flint stacks", flint)
 out.close()
