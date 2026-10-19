@@ -499,7 +499,18 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         if hurt {
             match victim {
                 Victim::Player(t) => self.with_ctx(|players, ctx| crate::combat::post_attack(players, a, t, source, ctx)),
-                Victim::Entity(id) => self.post_attack_entity(a, id, source),
+                Victim::Entity(id) => {
+                    let mut blow = crate::melee::Work {
+                        entities: &mut *self.entities,
+                        level: &mut *self.level,
+                        players: &mut *self.players,
+                        spawns: &mut *self.spawns,
+                        deaths: &mut *self.deaths,
+                        rng: self.rng.take(),
+                    };
+                    blow.post_attack_entity(a, id, source);
+                    self.rng = blow.rng.take();
+                }
             }
         }
         // `damageStatsAndHearts`.
