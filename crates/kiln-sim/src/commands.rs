@@ -114,7 +114,8 @@ impl PlayerRef {
         Self {
             conn,
             uuid: p.uuid,
-            name: Named::Player(p.name.clone(), scoreboard.player_display_name(&p.name)),
+            // (`Player.getDisplayName`: the team's formatting, and the events chat names carry.)
+            name: Named::Player(p.name.clone(), crate::chat_flow::decorate_player_name(scoreboard.player_display_name(&p.name), &p.name, p.uuid)),
             pos: p.pos,
             rot: p.rot,
             dim: crate::dim_key(p.dim),

@@ -36,7 +36,7 @@ impl Sim {
     fn chat_name(&self, name: &Text) -> Text {
         let plain = name.to_plain();
         match self.players.values().find(|p| p.name == plain) {
-            Some(p) if name.style == Default::default() && name.extra.is_empty() => decorate_player_name(name.clone(), &p.name, p.uuid),
+            Some(p) if name.style.hover_entity.is_none() => decorate_player_name(name.clone(), &p.name, p.uuid),
             _ => name.clone(),
         }
     }
