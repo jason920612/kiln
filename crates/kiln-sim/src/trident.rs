@@ -20,18 +20,15 @@ fn next_damage_will_break(s: &ItemStack) -> bool {
     s.is_damageable_item() && s.damage() >= s.max_damage() - 1
 }
 
-/// `EnchantmentHelper.getTridentSpinAttackStrength` (riptide).
+/// `EnchantmentHelper.getTridentSpinAttackStrength` (riptide): every enchantment's `trident_spin_attack_strength` applied in turn.
 fn spin_strength(p: &Player, stack: &ItemStack) -> f32 {
-    let Some(loot) = p.loot.clone() else { return 0.0 };
-    let mut best: Option<(i32, &kiln_loot::effects::ValueEffect)> = None;
-    loot.for_each_enchantment(stack, |e, lvl| {
-        if let Some(effect) = &e.effects.trident_spin_attack_strength
-            && best.is_none_or(|(l, _)| lvl > l)
-        {
-            best = Some((lvl, effect));
-        }
-    });
-    best.map_or(0.0, |(lvl, effect)| effect.process(lvl, &mut kiln_javamath::random::LegacyRandom::new(0), 0.0))
+    p.loot.as_deref().map_or(0.0, |loot| loot.trident_spin_attack_strength(stack, &mut kiln_javamath::random::LegacyRandom::new(0)))
+}
+
+/// `pickHighestLevel(stack, TRIDENT_SOUND).orElse(THROW)`: the sound of the enchantment with the highest level, at that level.
+fn trident_sound(p: &Player, stack: &ItemStack) -> String {
+    let picked = p.loot.as_deref().and_then(|loot| loot.pick_highest_level(stack, |e| e.trident_sound.as_slice()));
+    picked.map_or_else(|| "minecraft:item.trident.throw".to_owned(), |s| s.as_str().to_owned())
 }
 
 /// `Entity.isInWaterOrRain` (Kiln's view: water at the feet or rain on the player).
@@ -49,7 +46,7 @@ pub(crate) fn use_item(p: &mut Player, level: &mut RegionLevel, off_hand: bool) 
     if next_damage_will_break(&stack) {
         return;
     }
-    if spin_strength(p, &stack) > 0.0 && !in_water_or_rain(p, level) {
+    if spin_strength(p, &stack) > 0.0 && (!in_water_or_rain(p, level) || p.vehicle.is_some()) {
         return;
     }
     p.start_using(off_hand, &stack, 72000);
@@ -61,18 +58,10 @@ pub(crate) fn release(p: &mut Player, level: &mut RegionLevel, off_hand: bool, s
         return;
     }
     let spin = spin_strength(p, stack);
-    if spin > 0.0 && !in_water_or_rain(p, level) || next_damage_will_break(stack) {
+    if spin > 0.0 && (!in_water_or_rain(p, level) || p.vehicle.is_some()) || next_damage_will_break(stack) {
         return;
     }
-    let sound = if spin > 0.0 {
-        match (riptide_level(p, stack)).min(3) {
-            1 => "minecraft:item.trident.riptide_1",
-            2 => "minecraft:item.trident.riptide_2",
-            _ => "minecraft:item.trident.riptide_3",
-        }
-    } else {
-        "minecraft:item.trident.throw"
-    };
+    let sound = trident_sound(p, stack);
     p.award_stat(Stat::item(player_stats::USED, stack.item()), 1);
     // `hurtWithoutBreaking(1)`.
     let slot = if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand };
@@ -85,12 +74,11 @@ pub(crate) fn release(p: &mut Player, level: &mut RegionLevel, off_hand: bool, s
             p.inv.times_changed += 1;
         }
         let loyalty = crate::ranged::weapon_value(p, &thrown, &thrown, ValueComponent::TridentReturnAcceleration, 0.0).clamp(0.0, 127.0) as u8;
-        let channeling = has_enchantment(&thrown, "minecraft:channeling");
         // (Impaling and the like read the target: applied when the trident hits.)
         let bonus = 0.0;
         let pos = Vec3::new(p.pos[0], p.eye_position()[1] - 0.10000000149011612, p.pos[2]);
         let seed = crate::container::pos_random(level, kiln_blocks::BlockPos::new(p.entity_id, p.tick_count, 7), 0x7472_6964).next_long();
-        let mut e = kiln_entity::ext_entity::trident::thrown_by_player(pos, p.entity_id, thrown, loyalty, channeling, bonus, p.infinite_materials(), seed);
+        let mut e = kiln_entity::ext_entity::trident::thrown_by_player(pos, p.entity_id, thrown, loyalty, bonus,p.infinite_materials(), seed);
         crate::ranged::shoot_from_rotation(&mut e, p, p.rot[1], p.rot[0], 0.0, 2.5, 1.0);
         let (at, vel) = (e.position(), e.delta);
         spawns.push(Spawn {
@@ -99,7 +87,7 @@ pub(crate) fn release(p: &mut Player, level: &mut RegionLevel, off_hand: bool, s
             vel: [vel.x, vel.y, vel.z],
             body: Body::Ready(Box::new(e)),
         });
-        p.sound_for_all(sound, SoundSource::Players, 1.0, 1.0);
+        p.sound_for_all(&sound, SoundSource::Players, 1.0, 1.0);
         return;
     }
     // Riptide: `Player.push` along the view (the strength spread over its three components),
@@ -125,7 +113,7 @@ pub(crate) fn release(p: &mut Player, level: &mut RegionLevel, off_hand: bool, s
     if p.on_ground {
         lift(p, level);
     }
-    p.sound_for_all(sound, SoundSource::Players, 1.0, 1.0);
+    p.sound_for_all(&sound, SoundSource::Players, 1.0, 1.0);
 }
 
 /// `player.move(MoverType.SELF, new Vec3(0.0, 1.1999999284744263, 0.0))`.
@@ -153,14 +141,4 @@ fn lift(p: &mut Player, level: &RegionLevel) {
         // `Block.updateEntityMovementAfterFallOn`: a vertical collision stops the vertical motion.
         p.vel[1] *= 0.0;
     }
-}
-
-fn has_enchantment(s: &ItemStack, name: &str) -> bool {
-    let Some(id) = kiln_item::registry::ENCHANTMENT.id(name) else { return false };
-    s.get(kiln_item::keys::ENCHANTMENTS).is_some_and(|e| e.level(id) > 0)
-}
-
-fn riptide_level(_p: &Player, s: &ItemStack) -> i32 {
-    let Some(id) = kiln_item::registry::ENCHANTMENT.id("minecraft:riptide") else { return 1 };
-    s.get(kiln_item::keys::ENCHANTMENTS).map_or(1, |e| e.level(id).max(1))
 }

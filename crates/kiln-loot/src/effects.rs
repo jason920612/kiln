@@ -1095,3 +1095,12 @@ mod tests {
         assert_eq!(e.process(3, &mut a, 2.0), expected);
     }
 }
+
+impl LootData {
+    /// `EnchantmentHelper.getTridentReturnToOwnerAcceleration` of a thrown trident's item: the `trident_return_acceleration` effects
+    /// applied to 0 (loyalty's level), at least 0.
+    pub fn trident_return_acceleration(&self, stack: &ItemStack) -> i32 {
+        let mut rng = kiln_javamath::random::LegacyRandom::new(0);
+        self.modify_item_value(stack, ValueComponent::TridentReturnAcceleration, &mut rng, 0.0, |level| ItemContext { tool: stack, level }).max(0.0) as i32
+    }
+}

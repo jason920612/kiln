@@ -443,3 +443,77 @@ pub(crate) fn block_predicate(level: &RegionLevel, pos: BlockPos, j: &Json) -> b
         _ => false,
     }
 }
+
+/// `Projectile.applyOnProjectileSpawned`: the `projectile_spawned` effects of the ammunition's enchantments, then of the
+/// weapon's (an arrow remembers the weapon; when it is another item than the ammunition), done to the arrow `e`.
+pub(crate) fn projectile_spawned(
+    p: &mut Player,
+    level: &RegionLevel,
+    e: &mut kiln_entity::Entity,
+    ammo: &kiln_item::ItemStack,
+    weapon: &kiln_item::ItemStack,
+    spawns: &mut Vec<crate::entities::Spawn>,
+) {
+    use crate::entities::{Body, Spawn};
+    let Some(loot) = p.loot.clone() else { return };
+    let mut stacks = vec![ammo];
+    if !weapon.is_empty() && weapon.item() != ammo.item() {
+        stacks.push(weapon);
+    }
+    if stacks.iter().all(|s| s.get(kiln_item::keys::ENCHANTMENTS).is_none_or(|e| e.is_empty())) {
+        return;
+    }
+    let pos = e.position();
+    let at = [pos.x, pos.y, pos.z];
+    let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
+    let facts = WorldFacts {
+        probe: &probe,
+        dim: crate::DIMENSIONS[level.env.dim].0,
+        raining: level.env.weather.weather.raining,
+        thundering: level.env.weather.weather.thundering,
+    };
+    let this = EntityView {
+        type_id: kiln_item::registry::ENTITY_TYPE.id(e.type_name).unwrap_or(-1),
+        pos: at,
+        in_water: e.is_in_water(),
+        movement: [e.delta.x, e.delta.y, e.delta.z],
+        ..EntityView::default()
+    };
+    let subject = Subject { pos: at, rot: [e.y_rot, e.x_rot], width: e.width, height: e.height, movement: [e.delta.x, e.delta.y, e.delta.z], silent: e.silent, living: false };
+    let mut actions = Vec::new();
+    for stack in stacks {
+        let mut found = Vec::new();
+        loot.projectile_spawned_effects(stack, &mut p.level_rng, |l| FxContext::entity(l, &this, at, Some(facts)), |effect, l| found.push((effect, l)));
+        for (effect, l) in found {
+            kiln_loot::fx::resolve(effect, l, at, &subject, &mut e.random, &mut p.level_rng, &mut actions);
+        }
+    }
+    for action in actions {
+        match action {
+            Action::Ignite { seconds } => e.ignite_for_seconds(seconds),
+            Action::Impulse { delta } => e.delta = e.delta.add(delta[0], delta[1], delta[2]),
+            Action::Sound { sound, volume, pitch, at } => p.sound_at(sound.as_str(), at, volume, pitch),
+            Action::Summon { entity, at, .. } if entity.as_str() == "minecraft:lightning_bolt" => {
+                let seed = e.random.next_long();
+                let bolt = kiln_entity::ext_entity::lightning::channeled(0, 0, kiln_entity::math::Vec3::new(at[0], at[1], at[2]), p.entity_id, seed);
+                spawns.push(Spawn { kind: &kiln_data::entities::types::LIGHTNING_BOLT, pos: at, vel: [0.0; 3], body: Body::Ready(Box::new(bolt)) });
+            }
+            // (Blocks, functions and the like happen where a player's own effects do: see `Player::apply_fx`.)
+            other => {
+                let _ = other;
+            }
+        }
+    }
+}
+
+impl Player {
+    /// `ServerLevel.playSound(null, x, y, z, sound, PLAYERS, volume, pitch)`: the player and everyone near hear it.
+    pub(crate) fn sound_at(&mut self, sound: &str, at: [f64; 3], volume: f32, pitch: f32) {
+        use kiln_proto::packets::world_fx;
+        let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound) else { return };
+        let seed = self.sound_seed.next_long();
+        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), world_fx::SoundSource::Players, at, volume, pitch, seed);
+        self.send(pkt.clone());
+        self.pending_sounds.push(pkt);
+    }
+}
