@@ -1,0 +1,38 @@
+{
+ "anvil_cost": 2,
+ "weight": 10,
+ "min_cost": {
+  "base": 1,
+  "per_level_above_first": 8
+ },
+ "max_cost": {
+  "base": 30,
+  "per_level_above_first": 8
+ },
+ "description": {
+  "text": "Miner"
+ },
+ "supported_items": "#minecraft:enchantable/mining",
+ "max_level": 2,
+ "slots": [
+  "mainhand"
+ ],
+ "effects": {
+  "minecraft:block_experience": [
+   {
+    "effect": {
+     "type": "minecraft:add",
+     "value": 5.0
+    }
+   }
+  ],
+  "minecraft:repair_with_xp": [
+   {
+    "effect": {
+     "type": "minecraft:multiply",
+     "factor": 4.0
+    }
+   }
+  ]
+ }
+}

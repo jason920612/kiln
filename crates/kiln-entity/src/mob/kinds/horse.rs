@@ -789,6 +789,16 @@ impl Kind for Equine {
         }
         // `SkeletonHorse.mobInteract`: a wild one ignores everybody.
         if self.0 == Which::Skeleton && !st(m).tamed {
+            // (The saddle is put on first, by `stack.interactLivingEntity`: `SkeletonHorse.canUseSlot` is true for every slot.)
+            if st(m).saddle.is_empty()
+                && crate::mob::is_alive(e, m)
+                && let Some(one) = super::steering::equip_on_target(e, level, stack, kiln_item::component::EquipmentSlot::Saddle, Some("minecraft:entity.horse.saddle"))
+            {
+                let s = st_mut(m);
+                s.saddle = one;
+                s.saddle_drop = 2.0;
+                return Some(Outcome::success(HeldChange::Consume(1)));
+            }
             return Some(Outcome::PASS);
         }
         let vehicle = !e.passengers.is_empty();
@@ -828,7 +838,8 @@ impl Kind for Equine {
         }
         // `stack.interactLivingEntity`: `Equippable.equipOnTarget` of a saddle (`canUseSlot`: alive, grown and
         // tame; a llama is not in `#can_equip_saddle`, so the saddle does not go on it).
-        if st(m).tamed && st(m).saddle.is_empty() && crate::mob::is_alive(e, m)
+        // (`SkeletonHorse.canUseSlot` is true for every slot: its saddle goes on untamed.)
+        if (st(m).tamed || m.kind == MobKind::SkeletonHorse) && st(m).saddle.is_empty() && crate::mob::is_alive(e, m)
             && let Some(one) = super::steering::equip_on_target(e, level, stack, kiln_item::component::EquipmentSlot::Saddle, Some("minecraft:entity.horse.saddle"))
         {
             let s = st_mut(m);

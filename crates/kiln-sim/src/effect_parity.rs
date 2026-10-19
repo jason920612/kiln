@@ -205,7 +205,7 @@ fn run_scenario(line: &Value) -> Vec<String> {
         p.fall_distance = 0.0;
         p.main_supporting_block = None;
         // The body of vanilla's fresh mock player has not moved yet (this one stood on the ground).
-        p.server_delta = [0.0; 3];
+        p.vel = [0.0; 3];
         p.on_ground_no_blocks = false;
         p.was_touching_water = false;
         p.starting_to_fall = None;

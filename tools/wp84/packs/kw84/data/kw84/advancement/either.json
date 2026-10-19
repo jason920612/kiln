@@ -1,0 +1,47 @@
+{
+ "parent": "kw84:root",
+ "display": {
+  "icon": {
+   "id": "minecraft:diamond"
+  },
+  "title": {
+   "text": "Either or"
+  },
+  "description": {
+   "text": "Hold a stick or a bone"
+  },
+  "show_toast": true,
+  "announce_to_chat": true
+ },
+ "criteria": {
+  "a": {
+   "trigger": "minecraft:inventory_changed",
+   "conditions": {
+    "items": [
+     {
+      "items": "minecraft:stick"
+     }
+    ]
+   }
+  },
+  "b": {
+   "trigger": "minecraft:inventory_changed",
+   "conditions": {
+    "items": [
+     {
+      "items": "minecraft:bone"
+     }
+    ]
+   }
+  }
+ },
+ "requirements": [
+  [
+   "a",
+   "b"
+  ]
+ ],
+ "rewards": {
+  "experience": 2
+ }
+}

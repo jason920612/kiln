@@ -642,7 +642,13 @@ fn encode_movement(target: &mut Player) -> Encoded {
     if std::mem::take(&mut target.push_sync) {
         packets.push(entity::set_entity_motion(target.entity_id, target.vel));
     }
-    if std::mem::take(&mut target.sync_velocity) {
+    // `ServerEntity.sendChanges` runs at the start of a tick, the player's own `travel` (its `doTick`) at the end of the one
+    // before: a knockback from the entities' turn is sent after one step of its velocity (a zombie's hit reaches the client
+    // as 0.22 sideways and 0.275 up, not as 0.4). Our player phase comes first in the tick, so the packet waits for the next.
+    if target.sync_velocity && target.phantom_travels() && !target.sync_deferred {
+        target.sync_deferred = true;
+    } else if std::mem::take(&mut target.sync_velocity) {
+        target.sync_deferred = false;
         let motion = entity::set_entity_motion(target.entity_id, target.vel);
         to_self.push(motion.clone());
         packets.push(motion);

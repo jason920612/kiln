@@ -3579,7 +3579,10 @@ fn carry_out(
             send_sound(players, env, n, arr(pos), sound, source_of(source), volume, pitch);
         }
         Event::EntitySound { entity, pos, sound, source, volume, pitch } => {
-            send_entity_sound(players, env, n, entity, arr(pos), sound, source_of(source), volume, pitch);
+            send_entity_sound(players, env, n, entity, arr(pos), sound, source_of(source), volume, pitch, None);
+        }
+        Event::EntitySoundExcept { except, entity, pos, sound, source, volume, pitch } => {
+            send_entity_sound(players, env, n, entity, arr(pos), sound, source_of(source), volume, pitch, Some(except));
         }
         Event::TakeItem { item, collector, amount } => {
             // `LivingEntity.take`: whoever tracks the item entity sees it fly to the collector.
@@ -4099,6 +4102,7 @@ fn send_entity_sound(
     source: world_fx::SoundSource,
     volume: f32,
     pitch: f32,
+    except: Option<i32>,
 ) {
     let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound) else { return };
     let mut seed = (env.game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ env.seed as u64;
@@ -4108,7 +4112,7 @@ fn send_entity_sound(
     }
     let pkt = world_fx::sound_entity(&world_fx::Sound::Registered(id), source, entity, volume, pitch, seed as i64);
     let range = 16.0 * volume.max(1.0) as f64;
-    for p in players.iter_mut().filter(|p| dist2(p.pos, at) < range * range) {
+    for p in players.iter_mut().filter(|p| dist2(p.pos, at) < range * range && Some(p.entity_id) != except) {
         p.send(pkt.clone());
     }
 }

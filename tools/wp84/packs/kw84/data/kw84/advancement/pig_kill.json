@@ -1,0 +1,34 @@
+{
+ "parent": "kw84:nuggets",
+ "display": {
+  "icon": {
+   "id": "minecraft:porkchop"
+  },
+  "title": {
+   "text": "Pig slayer"
+  },
+  "description": {
+   "text": "Kill a pig holding gold"
+  },
+  "show_toast": true,
+  "announce_to_chat": true
+ },
+ "criteria": {
+  "kill": {
+   "trigger": "minecraft:player_killed_entity",
+   "conditions": {
+    "player": "kw84:holding_gold",
+    "entity": {
+     "type": "minecraft:entity_properties",
+     "entity": "this",
+     "predicate": {
+      "minecraft:entity_type": "minecraft:pig"
+     }
+    }
+   }
+  }
+ },
+ "rewards": {
+  "experience": 11
+ }
+}

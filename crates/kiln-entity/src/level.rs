@@ -304,6 +304,9 @@ pub enum Event {
     /// `Level.playSound(null, entity, sound, source, volume, pitch)`: a sound that follows an entity (an entity sound packet;
     /// `pos` is where the entity is, for who hears it).
     EntitySound { entity: i32, pos: Vec3, sound: &'static str, source: &'static str, volume: f32, pitch: f32 },
+    /// `Level.playSound(player, entity, sound, source, volume, pitch)`: an entity sound for everyone but `except`, whose own client plays it
+    /// (an allay's item given and taken).
+    EntitySoundExcept { except: i32, entity: i32, pos: Vec3, sound: &'static str, source: &'static str, volume: f32, pitch: f32 },
     /// `LivingEntity.take(item, amount)`: the item entity `item` flies to `collector` (a `take_item_entity` packet to who tracks the item).
     TakeItem { item: i32, collector: i32, amount: i32 },
     /// `Level.levelEvent` (block break particles 2001, fizz 1501, ...).

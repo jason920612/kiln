@@ -216,7 +216,8 @@ fn err<T>(m: impl Into<String>) -> PResult<T> {
 /// `this`).
 fn cap(p: &Parser, j: &Json) -> PResult<Cap> {
     match j {
-        Json::Arr(_) => Condition::parse_list(p, j),
+        // (A string is a reference to a predicate file: `LootItemCondition.CODEC` is `either(holder, direct)`.)
+        Json::Arr(_) | Json::Str(_) => Condition::parse_list(p, j),
         _ if j.get("type").is_some() => Ok(vec![Ref::direct(Condition::parse(p, j)?)]),
         _ => {
             let e = EntityPredicate::parse(p, j)?;

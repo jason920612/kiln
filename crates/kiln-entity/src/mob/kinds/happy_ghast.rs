@@ -49,6 +49,8 @@ pub struct State {
     /// The harness (`EquipmentSlot.BODY`) and the chance it drops.
     pub body: ItemStack,
     pub body_drop: f32,
+    /// The riders last tick: `addPassenger` / `removePassenger` of the vehicle are seen as the count changes.
+    pub riders: usize,
 }
 
 fn st(m: &MobData) -> &State {
@@ -162,7 +164,7 @@ impl Kind for HappyGhast {
     }
 
     fn new_state(&self, _m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
-        Some(Box::new(State { float_duration: 0, still_timeout: 0, leash_holder_time: 0, body: ItemStack::empty(), body_drop: 0.085 }))
+        Some(Box::new(State { float_duration: 0, still_timeout: 0, leash_holder_time: 0, body: ItemStack::empty(), body_drop: 0.085, riders: 0 }))
     }
 
     /// `HappyGhast.registerGoals`: float (3), tempt by snowballs (4), float around (5).
@@ -224,6 +226,29 @@ impl Kind for HappyGhast {
         if st(m).still_timeout > 0 {
             if e.tick_count > 60 {
                 st_mut(m).still_timeout -= 1;
+            }
+        }
+        let riders = e.passengers.len();
+        let before = st(m).riders;
+        if riders != before {
+            st_mut(m).riders = riders;
+            if riders > before {
+                // `addPassenger`: the goggles come down for the first rider; nobody on its back (the rider apart) lets it move again.
+                if before == 0 {
+                    e.play_sound(level, "minecraft:entity.happy_ghast.harness_goggles_down", 1.0, 1.0);
+                }
+                if !scan_player_above(e, &*level) {
+                    st_mut(m).still_timeout = 0;
+                } else if st(m).still_timeout > 10 {
+                    st_mut(m).still_timeout = 10;
+                }
+            } else {
+                // `removePassenger`: it stays still for half a second; with the last rider gone the goggles go up and it forgets its home.
+                st_mut(m).still_timeout = 10;
+                if riders == 0 {
+                    m.home = None;
+                    e.play_sound(level, "minecraft:entity.happy_ghast.harness_goggles_up", 1.0, 1.0);
+                }
             }
         }
         if scan_player_above(e, &*level) {
@@ -378,7 +403,9 @@ impl Kind for HappyGhast {
             out.ride = e.passengers.len() < 4;
             return Some(out);
         }
-        Some(interact::animal_interact(e, m, level, who, stack))
+        // `super.mobInteract` (`Animal.mobInteract`): a grown one never `canFallInLove` and only a baby takes food to grow up, so the
+        // snowball stays in the hand.
+        Some(Outcome::PASS)
     }
 
     /// Whether a player riding first steers it: harnessed, grown, and not standing still (`getControllingPassenger`).
@@ -422,6 +449,11 @@ impl Kind for HappyGhast {
     }
 
     fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
+        // `AgeableMob.readAdditionalSaveData` -> `setAge` crosses zero for a saved ghastling: `ageBoundaryReached` -> `babyGhastSetup`
+        // (no goals, the flying move control; the brain steers it), before `still_timeout` is read.
+        if m.baby() {
+            self.baby_setup(m);
+        }
         let still = r.int_or("still_timeout", 0);
         let body = match r.get("equipment") {
             Some(Tag::Compound(eq)) => eq.iter().find(|(k, _)| k == "body").and_then(|(_, v)| ItemStack::from_nbt(v).ok()),

@@ -264,7 +264,10 @@ impl Player {
                 if let kiln_item::Holder::Reference(id) = sound
                     && let Some(name) = kiln_item::registry::SOUND_EVENT.name(*id)
                 {
-                    self.queue_sound(name, 1.0, 1.0);
+                    // `PlaySoundConsumeEffect.apply`: `level.playSound(null, blockPosition, sound, soundSource, 1, 1)` - everyone hears it, the
+                    // drinker too (the ominous bottle's dispose sound).
+                    let at = [self.pos[0].floor() + 0.5, self.pos[1].floor() + 0.5, self.pos[2].floor() + 0.5];
+                    self.queue_sound_for_all_at(at, name, kiln_proto::packets::world_fx::SoundSource::Players, 1.0, 1.0);
                 }
                 true
             }
