@@ -3946,7 +3946,18 @@ fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, i
         attacker: None,
         components: phys.and_then(kiln_entity::mob::data).map(kiln_entity::mob::variant_components).unwrap_or_default(),
         specific: crate::mobs::TypeSpecific::of(phys.and_then(kiln_entity::mob::data)),
-        extra: crate::mobs::DeathExtra { tool: (y_off != 0.0).then(|| kiln_item::ItemStack::of("minecraft:shears", 1)).flatten(), no_damage_source: true, ..Default::default() },
+        // Shearing has the shears as its `tool`, and so does the `ENTITY_INTERACT` table of a brushed armadillo (the brush); the other tables have none.
+        extra: crate::mobs::DeathExtra {
+            tool: if y_off != 0.0 {
+                kiln_item::ItemStack::of("minecraft:shears", 1)
+            } else if table == "minecraft:brush/armadillo" {
+                kiln_item::ItemStack::of("minecraft:brush", 1)
+            } else {
+                None
+            },
+            no_damage_source: true,
+            ..Default::default()
+        },
     };
     let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6966 ^ n as u64);
     for (k, stack) in crate::mobs::roll(&loot, table, &ctx, seed).into_iter().enumerate() {
