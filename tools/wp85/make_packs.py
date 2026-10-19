@@ -210,7 +210,7 @@ def hut_template():
     def compound(parts):
         return b"".join(parts) + b"\x00"
 
-    pal = list_(10, [compound([tag(8, "Name", nbt_string(n))]) for n in palette])
+    pal = list_(10, [compound([tag(8, "id", nbt_string(n))]) for n in palette])
     blks = []
     for x, y, z, s in blocks:
         parts = [tag(9, "pos", list_(3, [int_(x), int_(y), int_(z)])), tag(3, "state", int_(s))]
