@@ -349,3 +349,37 @@ fn trims_of_the_pack_are_smithed_and_numbered_by_the_registry() {
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn looms_offer_the_banner_patterns_of_the_pack() {
+    use kiln_inventory::click::handle_container_button_click;
+    use kiln_inventory::{ContainerInput, Env, Menu, NoWorld, PlayerFlags, PlayerInventory, Rules};
+    use kiln_item::ItemStack;
+    let _x = kiln_data::live::exclusive();
+    let (sim, dir, _) = start("loom");
+    let rules = Rules::with_recipes(Default::default());
+    let (mut inv, mut world, mut out) = (PlayerInventory::new(), NoWorld, Vec::new());
+    inv.set_item(0, ItemStack::of("minecraft:white_banner", 1).unwrap());
+    inv.set_item(1, ItemStack::of("minecraft:red_dye", 1).unwrap());
+    macro_rules! env {
+        () => {
+            Env { inventory: &mut inv, block: None, player: PlayerFlags::default(), rules: &rules, world: &mut world, out: &mut out }
+        };
+    }
+    let mut menu = Menu::loom(1);
+    menu.open(&mut env!());
+    // The inventory slots 0 and 1 are menu slots 31 and 32 (after the 4 loom slots and 27 inventory slots).
+    menu.clicked(&mut env!(), 31, 0, ContainerInput::QuickMove).unwrap();
+    menu.clicked(&mut env!(), 32, 0, ContainerInput::QuickMove).unwrap();
+    // Without a pattern item the buttons are `#minecraft:no_item_required`, in the tag's order, the pack's addition last.
+    let ids = kiln_data::live::tag("minecraft:banner_pattern", "minecraft:no_item_required").expect("tag");
+    let zigzag = kiln_data::synced_id("minecraft:banner_pattern", "kiln83:zigzag").unwrap();
+    let button = ids.iter().position(|&i| i == zigzag).expect("the pack's pattern is in the tag");
+    assert_eq!(button, ids.len() - 1);
+    assert!(handle_container_button_click(&mut menu, &mut env!(), button as i32, 0, true), "the button of the pack's pattern");
+    let result = menu.items(&env!())[3].clone();
+    let layers = result.get(kiln_item::keys::BANNER_PATTERNS).expect("a patterned banner");
+    assert_eq!(layers.0[0].pattern, kiln_item::Holder::Reference(zigzag));
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}
