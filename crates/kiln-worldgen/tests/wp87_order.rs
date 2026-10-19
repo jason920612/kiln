@@ -4,7 +4,7 @@
 //! decoration order is decided by thread timing, Kiln's is fixed, so first the harness shows what the same chunks are in Kiln's order
 //! (this test: no difference) and then in other orders vanilla can take (`tools/wp87/order87.py`, see docs/wp87.md).
 //!
-//! Skipped without the vanilla data and the dump (`$KILN_WP87_DUMP`, default `<work>/wp87/vectors/seed84_canonical.bin`).
+//! Skipped without the vanilla data and the dump (`$KILN_WP87_DUMP`, default `<work>/wp87/vectors/pack_seed84_canonical.bin`).
 
 use kiln_worldgen::generator::GenScratch;
 use kiln_worldgen::{Datapack, Pipeline, Worldgen};
@@ -117,7 +117,7 @@ fn state_name(s: u16) -> String {
 fn compare(name: &str) {
     let work = work_dir();
     let generated = work.join("generated");
-    let file = std::env::var_os("KILN_WP87_DUMP").map(PathBuf::from).unwrap_or_else(|| work.join("wp87/vectors").join(format!("{name}.bin")));
+    let file = std::env::var_os("KILN_WP87_DUMP").map(PathBuf::from).unwrap_or_else(|| work.join("wp87/vectors").join(format!("pack_{name}.bin")));
     if !generated.join("reports/biome_parameters").is_dir() || !file.is_file() {
         eprintln!("skipped {name}: need {} and {} (python3 tools/wp87/order87.py {name} ...)", generated.display(), file.display());
         return;
