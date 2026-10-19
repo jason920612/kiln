@@ -2,8 +2,10 @@
 //!
 //! In 26.3 what a hoe, an axe and a shovel do to the block they are used on is data: a list of transforms, each with a block state provider
 //! (`rule_based` rules over block predicates, `copy_properties`, a plain state), the faces it does not work on, the item damage, the sound, the
-//! particle event, an optional loot table and how its items pop out (`BlockTransformer.transformBlock`). Kiln's built-in rules for the vanilla
-//! entries are in `tools.rs`; when a pack defines or overrides `hoe`, `axe` or `shovel` its transforms run instead, as the game runs them.
+//! particle event, an optional loot table and how its items pop out (`BlockTransformer.transformBlock`). The vanilla entries are vanilla's own
+//! `data/minecraft/block_transformer/{hoe,axe,shovel}.json` when the vanilla data is there (Kiln's built-in rules in `tools.rs` stand in
+//! without it, and for a file whose transforms Kiln cannot read); when a pack defines or overrides `hoe`, `axe` or `shovel` its transforms
+//! run instead, as the game runs them.
 //!
 //! Supported: providers `rule_based` (rules, `fallback`), `copy_properties`, a state (`{"id":…,"properties":{…}}`, also as
 //! `simple_state_provider`); predicates `matching_blocks`, `matching_block_tag`, `all_of`, `any_of`, `not`, `true`, with `offset`. A transform
@@ -155,22 +157,53 @@ fn parse_transform(j: &Json) -> Option<Transform> {
     })
 }
 
-/// The transformers a data pack defines or overrides, by entry name.
-fn transformers() -> &'static HashMap<&'static str, Vec<Transform>> {
-    static ALL: Cached<HashMap<&'static str, Vec<Transform>>, true> = Cached::new();
+/// A transformer: its transforms in order, and whether it is vanilla's own file (not a pack's).
+struct Transformer {
+    transforms: Vec<Transform>,
+    vanilla: bool,
+}
+
+/// Tests: the built-in rules run instead of vanilla's files (to compare the two).
+static BUILTIN_RULES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Makes the vanilla transformers `hoe`, `axe` and `shovel` come from Kiln's built-in rules (`tools.rs`) instead of vanilla's files (for tests).
+pub(crate) fn use_builtin_rules(on: bool) {
+    BUILTIN_RULES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn parse_list(entry: &str, json: &Json, strict: bool) -> Option<Vec<Transform>> {
+    let list = json.as_array()?;
+    let mut transforms = Vec::new();
+    for (i, t) in list.iter().enumerate() {
+        match parse_transform(t) {
+            Some(t) => transforms.push(t),
+            None if strict => {
+                warn!("block_transformer {entry}: transform {i} uses something Kiln does not know; Kiln's built-in rules do it");
+                return None;
+            }
+            None => warn!("block_transformer {entry}: transform {i} uses something Kiln does not know; left out"),
+        }
+    }
+    Some(transforms)
+}
+
+/// The transformers: vanilla's `hoe`, `axe` and `shovel` files when the vanilla data has them, and what the data packs define or override.
+fn transformers() -> &'static HashMap<&'static str, Transformer> {
+    static ALL: Cached<HashMap<&'static str, Transformer>, true> = Cached::new();
     ALL.get(|| {
         let mut out = HashMap::new();
+        let vanilla = crate::world_state::worldgen_roots().into_iter().next();
+        for (entry, file) in [("minecraft:hoe", "hoe"), ("minecraft:axe", "axe"), ("minecraft:shovel", "shovel")] {
+            let Some(root) = &vanilla else { break };
+            let Ok(text) = std::fs::read_to_string(root.join(format!("data/minecraft/block_transformer/{file}.json"))) else { continue };
+            if let Some(transforms) = Json::parse(&text).ok().and_then(|json| parse_list(entry, &json, true)) {
+                out.insert(entry, Transformer { transforms, vanilla: true });
+            }
+        }
         for entry in kiln_data::live::custom_entries("minecraft:block_transformer") {
             let Some(json) = kiln_data::live::entry_data("minecraft:block_transformer", entry).and_then(|t| Json::parse(t).ok()) else { continue };
-            let Some(list) = json.as_array() else { continue };
-            let mut transforms = Vec::new();
-            for (i, t) in list.iter().enumerate() {
-                match parse_transform(t) {
-                    Some(t) => transforms.push(t),
-                    None => warn!("block_transformer {entry}: transform {i} uses something Kiln does not know; left out"),
-                }
-            }
-            out.insert(entry, transforms);
+            let Some(transforms) = parse_list(entry, &json, false) else { continue };
+            out.insert(entry, Transformer { transforms, vanilla: false });
         }
         out
     })
@@ -210,9 +243,9 @@ impl Provider {
     }
 }
 
-/// `BlockTransformer.transformBlock` for the item in `off_hand`'s hand used on `pos`, when a data pack defines the transformer `entry`
-/// (`minecraft:hoe`, `axe` or `shovel`): `None` when it does not (the built-in rules apply), else whether the item did something. The item
-/// takes its damage here.
+/// `BlockTransformer.transformBlock` for the item in `off_hand`'s hand used on `pos`, when the transformer `entry` (`minecraft:hoe`, `axe` or
+/// `shovel`) is known (vanilla's file or a pack's): `None` when it is not (the built-in rules apply), else whether the item did something.
+/// The item takes its damage here.
 pub(crate) fn transform(
     entry: &str,
     p: &mut Player,
@@ -222,7 +255,11 @@ pub(crate) fn transform(
     off_hand: bool,
     spawns: &mut Vec<Spawn>,
 ) -> Option<bool> {
-    let transforms = transformers().get(entry)?;
+    let transformer = transformers().get(entry)?;
+    if transformer.vanilla && BUILTIN_RULES.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    let transforms = &transformer.transforms;
     // `playerHasBlockingItemUseIntent`: a shield in the off hand about to be raised.
     if !off_hand && p.inv.equipped(kiln_item::component::EquipmentSlot::OffHand).get(kiln_item::keys::BLOCKS_ATTACKS).is_some() && !p.sneaking {
         return Some(false);
