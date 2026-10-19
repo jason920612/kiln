@@ -698,8 +698,13 @@ struct Player {
     equipment_sent: Vec<kiln_item::ItemStack>,
     /// The server's `deltaMovement` of the player (knockback builds on it): its body's, which [`phantom`] travels each tick.
     vel: [f64; 3],
-    /// A velocity packet for the knockback waits one tick (see `players::encode_movement`).
-    sync_deferred: bool,
+    /// The player's own `travel` has run since `sync_velocity` was set: a hit of the entities' turn waits for it (see `players::encode_movement`).
+    sync_stepped: bool,
+    /// The velocity packet of the hit in `sync_velocity` was held back for that step.
+    sync_held: bool,
+    /// The velocity a hit outside the level's tick (a command, a function, a command block, a chat command) left: vanilla's `sendChanges`
+    /// follows it at once, before the player's `travel` has moved it, so the client is told this value and not the stepped one.
+    sync_raw: Option<[f64; 3]>,
     /// The parity harnesses replay vanilla's recorded hit with no player tick of its own: such a player's velocity is not travelled.
     untravelled: bool,
     /// `syncVelocity`: a hit this tick; the velocity goes to the client and its viewers.
@@ -2048,6 +2053,7 @@ impl Sim {
         self.deliver_plugin_messages();
         lap(&mut self.stats, "global");
 
+        self.freeze_unstepped_hits();
         // The entities that were in a portal when the last tick ended go through it now, at the start of their turn (`Entity.handlePortal` in `baseTick`),
         // into a level that ticks after theirs.
         if self.world.tick_rate.runs_normally() {
@@ -2114,6 +2120,8 @@ impl Sim {
             self.entity_portals(looked.then_some((&portal_candidates[..], first_new)));
         }
         self.materialize_spawns();
+        // (Command blocks and enchantment functions ran after the regions; vanilla runs them as the next tick's scheduled block ticks.)
+        self.freeze_unstepped_hits();
         lap(&mut self.stats, "regions");
         // CPU time summed over regions (the "regions" phase is wall time).
         for (name, d) in region::SUB_PHASES.iter().zip(times) {
@@ -3413,6 +3421,18 @@ impl Sim {
     /// After the serial phases: players whose chunk is not loaded (teleported into the gap
     /// between regions, or into another level) get it loaded and a region now, like joining
     /// players, so every player ticks in the region of its position whatever the topology.
+    /// `ServerEntity.sendChanges` follows a hit from outside the level's tick (a console or chat command, a function, a command block: scheduled
+    /// block ticks run before the chunk source) at once, before the player's own `travel` has moved its velocity: the client is told the value
+    /// the hit left. Hits of the entities' turn wait for the step instead (`players::encode_movement`).
+    fn freeze_unstepped_hits(&mut self) {
+        for p in self.players.values_mut() {
+            if p.sync_velocity && !p.sync_held && p.phantom_travels() {
+                p.sync_raw = Some(p.vel);
+                p.sync_velocity = false;
+            }
+        }
+    }
+
     fn settle_teleported(&mut self) {
         let mut stray: Vec<(DimId, ChunkPos)> = self
             .players
@@ -3721,6 +3741,8 @@ impl Sim {
         }
         p.vel = [0.0; 3];
         p.sync_velocity = false;
+        p.sync_held = false;
+        p.sync_raw = None;
         p.sent_chunks.clear();
         p.load_checked = None;
         p.unacked_batches = 0;
@@ -4249,7 +4271,9 @@ impl Sim {
             equipment_seen: vec![kiln_item::ItemStack::empty(); combat::SLOTS.len()],
             equipment_sent: vec![kiln_item::ItemStack::empty(); combat::SLOTS.len()],
             vel: [0.0; 3],
-            sync_deferred: false,
+            sync_stepped: false,
+            sync_held: false,
+            sync_raw: None,
             untravelled: false,
             sync_velocity: false,
             push_sync: false,

@@ -1048,6 +1048,10 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     p.tick_honey_slide(&block, env.game_time);
     p.sync_health();
     p.sync_experience();
+    // (A hit of this `doTick` is told after it: the body's step is behind it.)
+    if p.sync_velocity {
+        p.sync_stepped = true;
+    }
     t
 }
 
