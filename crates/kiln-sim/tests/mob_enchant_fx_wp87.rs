@@ -292,7 +292,7 @@ fn boots_with_a_damage_immunity_protect_a_mob_on_magma() {
     let _x = kiln_data::live::exclusive();
     let cool = enchantment(
         BOOTS_SLOT,
-        r#""minecraft:damage_immunity": [{"effect": {}, "requirements": {"type": "minecraft:damage_source_properties", "predicate": {"tags": [{"id": "#minecraft:burn_from_stepping", "expected": true}]}}}]"#,
+        r##""minecraft:damage_immunity": [{"effect": {}, "requirements": {"type": "minecraft:damage_source_properties", "predicate": {"tags": [{"id": "#minecraft:burn_from_stepping", "expected": true}]}}}]"##,
     );
     let mut w = World::new("cool", &[("cool", cool)]);
     let g = w.ground;
