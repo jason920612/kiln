@@ -621,7 +621,6 @@ struct Player {
     /// The server's own body of the player (see [`phantom`]): its velocity, its stuck
     /// multiplier (`makeStuckInBlock`) and the movements of the tick.
     phantom: Option<Box<kiln_entity::entity::Entity>>,
-    server_delta: [f64; 3],
     stuck_speed: [f64; 3],
     movements: Vec<phantom::Mv>,
     /// `isEyeInFluid(WATER)` as the last fluid update left it.
@@ -684,8 +683,10 @@ struct Player {
     equipment_seen: Vec<kiln_item::ItemStack>,
     /// Equipment as viewers last got it (Set Equipment).
     equipment_sent: Vec<kiln_item::ItemStack>,
-    /// The server's view of the player's velocity (knockback builds on it).
+    /// The server's `deltaMovement` of the player (knockback builds on it): its body's, which [`phantom`] travels each tick.
     vel: [f64; 3],
+    /// A velocity packet for the knockback waits one tick (see `players::encode_movement`).
+    sync_deferred: bool,
     /// `syncVelocity`: a hit this tick; the velocity goes to the client and its viewers.
     sync_velocity: bool,
     /// `Entity.needsSync` after a `push` (a riptide): the tracking players, not the pushed
@@ -920,7 +921,7 @@ impl Player {
         self.first_good = pos;
         // A teleport is not movement through blocks, and it ends the server body's momentum.
         self.movements.clear();
-        self.server_delta = [0.0; 3];
+        self.vel = [0.0; 3];
         self.teleport_id += 1;
         self.awaiting_teleport = Some(self.teleport_id);
         self.teleport_sent = now;
@@ -4119,7 +4120,6 @@ impl Sim {
             on_ground_no_blocks: false,
             was_touching_water: false,
             phantom: None,
-            server_delta: [0.0; 3],
             stuck_speed: [0.0; 3],
             movements: Vec::new(),
             was_eye_in_water: false,
@@ -4150,6 +4150,7 @@ impl Sim {
             equipment_seen: vec![kiln_item::ItemStack::empty(); combat::SLOTS.len()],
             equipment_sent: vec![kiln_item::ItemStack::empty(); combat::SLOTS.len()],
             vel: [0.0; 3],
+            sync_deferred: false,
             sync_velocity: false,
             push_sync: false,
             shoulders,

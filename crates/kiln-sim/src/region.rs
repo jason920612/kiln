@@ -610,7 +610,8 @@ impl RegionWork<'_> {
         let dt = std::time::Instant::now();
         crate::players::broadcast_movement(&mut self.players, ctx);
         let dt = crate::diag::lap("mv.broadcast", dt);
-        for p in self.players.iter_mut() {
+        // (A player whose server body travels has its velocity moved by the tick's `travel`.)
+        for p in self.players.iter_mut().filter(|p| !p.phantom_travels()) {
             p.decay_velocity();
         }
         let dt = crate::diag::lap("mv.decay", dt);

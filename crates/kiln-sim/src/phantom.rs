@@ -146,7 +146,7 @@ impl Player {
     pub(crate) fn seed_body_random(&mut self, seed: i64) {
         let mut e = self.phantom.take().unwrap_or_else(|| self.new_body());
         e.random = LegacyRandom::new(seed);
-        self.server_delta = [0.0; 3];
+        self.vel = [0.0; 3];
         self.phantom = Some(e);
     }
 
@@ -158,7 +158,7 @@ impl Player {
         e.width = w;
         e.height = h;
         e.eye_height = eye;
-        e.delta = vec(self.server_delta);
+        e.delta = vec(self.vel);
         let (sound, volume, pitch) = e.water_splash_draws();
         self.phantom = Some(e);
         self.queue_sound_at(self.pos, sound, volume, pitch);
@@ -174,7 +174,7 @@ impl Player {
         e.set_pos(vec(self.pos));
         e.on_ground = self.on_ground;
         e.fall_distance = self.fall_distance;
-        e.delta = vec(self.server_delta);
+        e.delta = vec(self.vel);
         e.shift_key_down = self.sneaking;
         e.main_supporting_block_pos = self.main_supporting_block;
         e.stuck_speed_multiplier = vec(self.stuck_speed);
@@ -202,7 +202,7 @@ impl Player {
         } else {
             self.fall_distance = e.fall_distance;
         }
-        self.server_delta = [e.delta.x, e.delta.y, e.delta.z];
+        self.vel = [e.delta.x, e.delta.y, e.delta.z];
         self.stuck_speed = [e.stuck_speed_multiplier.x, e.stuck_speed_multiplier.y, e.stuck_speed_multiplier.z];
         self.movements.extend(e.drain_movements().into_iter().map(Mv::from));
         self.phantom = Some(e);
@@ -215,13 +215,19 @@ impl Player {
         }
     }
 
+    /// Whether the server's body of this player travels (`LivingEntity.travel` with no input): not a spectator, a flyer, a glider,
+    /// a rider, a sleeper or a dead player.
+    pub(crate) fn phantom_travels(&self) -> bool {
+        !(self.game_mode == 3 || self.flying || self.fall_flying || self.vehicle.is_some() || self.dead || self.sleep.pos.is_some())
+    }
+
     /// `LivingEntity.travel` for the server's body of this player (see the module docs). The
     /// player's position is left where the body went; the caller puts it back after the
     /// tick's block effects.
     pub(crate) fn phantom_travel(&mut self, cells: &CellSet<Cell>, pistons: &kiln_blocks::MovingPistons, game_time: i64, min_y: i32, fast_lava: bool) {
-        // Spectators, flying players, gliders, riders and the dead are not moved this way.
-        if self.game_mode == 3 || self.flying || self.fall_flying || self.vehicle.is_some() || self.dead || self.sleep.pos.is_some() {
-            self.server_delta = [0.0; 3];
+        // Spectators, flying players, gliders, riders and the dead are not moved this way (what a hit left in their velocity
+        // fades by [`Player::decay_velocity`]).
+        if !self.phantom_travels() {
             return;
         }
         let mut level = PhantomLevel::new(cells, game_time, min_y, fast_lava);
@@ -301,11 +307,11 @@ impl Player {
         let boost = self.effect_amplifier("minecraft:jump_boost").map_or(0.0f32, |a| 0.1f32 * (a + 1) as f32);
         let power = self.attribute(crate::combat::JUMP_STRENGTH) as f32 * factor + boost;
         if power > 1.0e-5 {
-            self.server_delta[1] = (power as f64).max(self.server_delta[1]);
+            self.vel[1] = (power as f64).max(self.vel[1]);
             if self.sprinting {
                 let f = self.rot[0] * 0.017453292;
-                self.server_delta[0] += (-kiln_entity::mob::mth::sin(f as f64) * 0.2) as f64;
-                self.server_delta[2] += (kiln_entity::mob::mth::cos(f as f64) * 0.2) as f64;
+                self.vel[0] += (-kiln_entity::mob::mth::sin(f as f64) * 0.2) as f64;
+                self.vel[2] += (kiln_entity::mob::mth::cos(f as f64) * 0.2) as f64;
             }
         }
         self.phantom = Some(e);
