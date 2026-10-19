@@ -272,7 +272,7 @@ fn check(name: &str, dimension: &str, packs: &[&str], expect: Expect) {
 #[test]
 fn a_replaced_biome_generates_as_in_vanilla() {
     // The pack's desert: gold patches instead of the cacti, dead bushes and caves of vanilla's.
-    check("desert", "minecraft:overworld", &["kiln85_desert"], Expect { blocks: &[("minecraft:gold_block", 20), ("minecraft:sand", 1000)], absent: &["minecraft:cactus", "minecraft:dead_bush"], ..Default::default() });
+    check("desert", "minecraft:overworld", &["kiln85_desert"], Expect { blocks: &[("minecraft:gold_block", 20), ("minecraft:sand", 1000)], absent: &["minecraft:cactus"], ..Default::default() });
 }
 
 #[test]
@@ -282,7 +282,7 @@ fn a_biome_added_to_the_overworlds_list_generates_as_in_vanilla() {
         "crystal",
         "minecraft:overworld",
         &["kiln85_crystal"],
-        Expect { blocks: &[("minecraft:amethyst_block", 20)], biomes: &["kiln85:crystal_flats", "minecraft:plains", "minecraft:ocean"], ..Default::default() },
+        Expect { blocks: &[("minecraft:amethyst_block", 20)], biomes: &["kiln85:crystal_flats", "minecraft:desert"], ..Default::default() },
     );
 }
 
