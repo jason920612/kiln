@@ -15,9 +15,22 @@ neg() {
   fi
   git checkout -- "$@"
 }
+# negsed "<name>" "<test args>" file 'sed expression': edit one line, run, require FAIL, restore
+negsed() {
+  local name="$1" tests="$2" f="$3" expr="$4"
+  sed -i "$expr" "$f"
+  if git diff --quiet -- "$f"; then echo "SED CHANGED NOTHING (bad): $name"; fails=$((fails + 1)); git checkout -- "$f"; return; fi
+  if cargo test --release $tests > /tmp/neg80.out 2>&1; then
+    echo "NOT FAILING (bad): $name"; fails=$((fails + 1))
+  elif grep -q "^error" /tmp/neg80.out && ! grep -q "^test .* FAILED" /tmp/neg80.out; then echo "BUILD ERROR (bad): $name"; fails=$((fails + 1))
+  else echo "fails without the fix (good): $name"; fi
+  git checkout -- "$f"
+}
 neg "players are pushed and tilted by projectiles" "-p kiln-sim --test player_hurt_animation" 3ff235c6 crates/kiln-sim/src/health.rs crates/kiln-sim/src/entities.rs
-neg "landing dust" "-p kiln-sim --test landing_dust" 1b3391db crates/kiln-entity/src/entity.rs crates/kiln-entity/src/mob/mod.rs
-neg "eyeblossoms follow the night" "-p kiln-sim --test eyeblossom" b5e1cb23 crates/kiln-blocks/src/behaviour/mod.rs
+# (one-line edits where a whole-file revert would drop later work)
+negsed "landing dust" "-p kiln-sim --test landing_dust" crates/kiln-entity/src/mob/mod.rs '/landing_dust(e, m, level, fall, state, at);/d'
+negsed "eyeblossoms follow the night" "-p kiln-sim --test eyeblossom" crates/kiln-blocks/src/behaviour/mod.rs '/C::EyeblossomBlock => misc::eyeblossom/d'
+negsed "eyeblossoms (random ticks too)" "-p kiln-sim --test eyeblossom" crates/kiln-sim/src/blocks.rs 's/(self.env.dim == crate::OVERWORLD_ID).then(/(false).then(/' 
 neg "bone meal (dispenser)" "-p kiln-sim --test bone_meal_dispenser" 1b3391db crates/kiln-sim/src/tools.rs
 neg "beacon levels in data get block" "-p kiln-sim --test beacon_pyramids data_get_block_shows" 0849149f crates/kiln-sim/src/container/mod.rs
 neg "crafter fields from a command-placed block" "-p kiln-sim --test beacon_pyramids crafter" bf89e37e crates/kiln-sim/src/container/mod.rs
