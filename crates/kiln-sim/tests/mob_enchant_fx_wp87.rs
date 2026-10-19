@@ -138,14 +138,18 @@ fn a_location_effect_replaces_the_block_a_mob_stands_on() {
         r#""minecraft:location_changed": [{"effect": {"type": "minecraft:replace_block", "offset": [0, -1, 0], "block_state": {"Name": "minecraft:ice"}, "predicate": {"type": "minecraft:matching_blocks", "blocks": "minecraft:stone"}}, "requirements": {"type": "minecraft:entity_properties", "entity": "this", "predicate": {"minecraft:flags": {"is_on_ground": true}}}}]"#,
     );
     let mut w = World::new("frost", &[("frost", frost)]);
-    let at = w.spot(3.0);
-    let nbt = format!("{{NoAI:1b,PersistenceRequired:1b,{}}}", worn("husk", "feet", "golden_boots", "frost"));
+    let mut at = w.spot(3.0);
+    // (A husk that is not at rest on the ground does not freeze anything: it falls 1.5 blocks, and the landing runs the effect.)
+    at[1] += 1.5;
+    let nbt = format!("{{PersistenceRequired:1b,attributes:[{{id:\"minecraft:movement_speed\",base:0.0d}}],{}}}", worn("husk", "feet", "golden_boots", "frost"));
     w.summon("husk", at, &nbt);
-    w.ticks(4);
-    let under = w.sim.block_at(at[0].floor() as i32, w.ground[1], at[2].floor() as i32).expect("loaded");
+    let (x, z) = (at[0].floor() as i32, at[2].floor() as i32);
+    assert_eq!(w.sim.block_at(x, w.ground[1], z), kiln_blocks::state::parse_state("minecraft:stone"), "stone before");
+    w.ticks(20);
+    let under = w.sim.block_at(x, w.ground[1], z).expect("loaded");
     assert_eq!(under, kiln_blocks::state::parse_state("minecraft:ice").unwrap(), "the stone under the husk turned to ice");
     // (A block the husk is not standing on is left alone.)
-    let next = w.sim.block_at(at[0].floor() as i32 + 2, w.ground[1], at[2].floor() as i32).expect("loaded");
+    let next = w.sim.block_at(x + 2, w.ground[1], z).expect("loaded");
     assert_eq!(next, kiln_blocks::state::parse_state("minecraft:stone").unwrap());
 }
 
