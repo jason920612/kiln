@@ -1,24 +1,26 @@
-//! Vanilla block and fluid tags as compiled into `kiln-data`, for block behaviour that names
-//! tags in code (`BlockTags.SUPPORTS_VEGETATION`...).
+//! Block and fluid tags of the running server (`kiln_data::live`: the enabled data packs' tags, the vanilla ones before
+//! they load), for block behaviour that names tags in code (`BlockTags.SUPPORTS_VEGETATION`...).
 
 use crate::block_facts::{Fluid, FluidKind};
 use crate::sets::BlockSet;
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 fn tag_ids(registry: &str, tag: &str) -> &'static [i32] {
-    kiln_data::registries::TAGS
-        .iter()
-        .find(|(r, _)| *r == registry)
-        .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
-        .map_or(&[][..], |(_, ids)| *ids)
+    kiln_data::live::tag(registry, tag).unwrap_or(&[])
 }
 
-/// The states of a vanilla block tag (`minecraft:` prefix optional).
+/// The states of a block tag (`minecraft:` prefix optional).
 pub fn block_tag(tag: &str) -> &'static BlockSet {
-    static CACHE: OnceLock<Mutex<HashMap<String, &'static BlockSet>>> = OnceLock::new();
+    // The sets built so far, dropped when the tags change.
+    static CACHE: Mutex<Option<(u64, HashMap<String, &'static BlockSet>)>> = Mutex::new(None);
     let key = if tag.contains(':') { tag.to_string() } else { format!("minecraft:{tag}") };
-    let mut cache = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+    let mut guard = CACHE.lock().unwrap();
+    let generation = kiln_data::live::generation();
+    let cache = match &mut *guard {
+        Some((g, map)) if *g == generation => map,
+        slot => &mut slot.insert((generation, HashMap::new())).1,
+    };
     if let Some(s) = cache.get(&key) {
         return s;
     }
@@ -34,13 +36,13 @@ pub fn block_tag(tag: &str) -> &'static BlockSet {
     set
 }
 
-/// Whether a state is in a vanilla block tag.
+/// Whether a state is in a block tag.
 #[inline]
 pub fn is(state: u16, tag: &str) -> bool {
     block_tag(tag).contains(state)
 }
 
-/// Whether a fluid state's type is in a vanilla fluid tag.
+/// Whether a fluid state's type is in a fluid tag.
 pub fn fluid_is(f: Fluid, tag: &str) -> bool {
     let key = if tag.contains(':') { tag.to_string() } else { format!("minecraft:{tag}") };
     let names = kiln_data::builtin_entries("minecraft:fluid").unwrap_or(&[]);
