@@ -1041,9 +1041,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let mut value = chance;
         loot.for_each_equipped_enchantment(&p.equipment(), |e, level, _slot, _stack| {
             let ctx = crate::enchant::DamageContext { level, this: &view, source: &source };
-            eprintln!("DEBUG ench level {level} effects {}", e.effects.equipment_drops.len());
             for t in &e.effects.equipment_drops {
-                eprintln!("DEBUG matches {}", t.matches(&loot, &ctx, &mut rng));
                 if t.enchanted == Target::Attacker && t.matches(&loot, &ctx, &mut rng) {
                     value = t.effect.process(level, &mut rng, value);
                 }

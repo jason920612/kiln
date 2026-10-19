@@ -39,6 +39,12 @@ impl World {
         std::fs::write(pack.join("data/kiln85/enchantment/plunder.json"), PLUNDER).unwrap();
         std::fs::write(pack.join("pack.mcmeta"), r#"{"pack":{"description":"p85","min_format":121,"max_format":121}}"#).unwrap();
         let mut sim = Sim::new(SimConfig::new(4, 3, Some(dir.clone())));
+        assert!(sim.step([]));
+        sim.console_now("reload");
+        sim.console_now("datapack enable \"file/p85\"");
+        for _ in 0..3 {
+            assert!(sim.step([]));
+        }
         let (msg, stats) = join(1, "User", 2);
         assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
         let mut w = World { sim, client: Client::new(1, stats), dir };
