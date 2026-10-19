@@ -84,3 +84,72 @@ pub fn update_tags(p: &Bytes) -> Vec<(String, Vec<(String, Vec<i32>)>)> {
 pub fn tag_ids<'a>(tags: &'a [(String, Vec<(String, Vec<i32>)>)], registry: &str, tag: &str) -> Option<&'a [i32]> {
     tags.iter().find(|(r, _)| r == registry)?.1.iter().find(|(t, _)| t == tag).map(|(_, ids)| ids.as_slice())
 }
+
+/// A world with the test packs and one player, for tests that play.
+pub struct Game {
+    pub sim: kiln_sim::Sim,
+    pub client: kiln_sim::testing::Client,
+    pub dir: PathBuf,
+    pub sync: std::sync::Arc<kiln_link::DataSync>,
+}
+
+impl Game {
+    /// The player `name` (connection 1) in survival, spawn mobs off, after a few ticks.
+    pub fn new(tag: &str, packs: &[&str], name: &str) -> Game {
+        let dir = pack_world(tag, packs);
+        let config = kiln_sim::SimConfig::new(4, 4, Some(dir.clone()));
+        let sync = config.data_sync.clone();
+        let mut sim = kiln_sim::Sim::new(config);
+        let (msg, stats) = kiln_sim::testing::join(1, name, 2);
+        *stats.log.lock().unwrap() = Some(Vec::new());
+        assert!(sim.step([msg]));
+        let mut game = Game { sim, client: kiln_sim::testing::Client::new(1, stats), dir, sync };
+        game.console("gamerule minecraft:spawn_mobs false");
+        game.console(&format!("gamemode survival {name}"));
+        game.ticks(5);
+        game
+    }
+
+    pub fn ticks(&mut self, n: usize) {
+        for _ in 0..n {
+            let mut inbox = Vec::new();
+            self.client.tick(None, &mut inbox);
+            assert!(self.sim.step(inbox));
+        }
+    }
+
+    pub fn console(&mut self, cmd: &str) {
+        assert!(self.sim.step([kiln_link::ToSim::Console(cmd.into())]), "{cmd}");
+    }
+
+    /// The packets sent since the last call.
+    pub fn log(&mut self) -> Vec<Bytes> {
+        std::mem::take(self.client.stats.log.lock().unwrap().as_mut().unwrap())
+    }
+
+    /// The block position next to the player, `dx` east.
+    pub fn spot(&self, dx: i32) -> [i32; 3] {
+        let p = self.client.pos;
+        [p[0].floor() as i32 + dx, p[1].floor() as i32, p[2].floor() as i32]
+    }
+
+    pub fn cleanup(self) {
+        let dir = self.dir.clone();
+        drop(self);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// The `(event, data)` of the Level Event packets in `log`.
+pub fn level_events(log: &[Bytes]) -> Vec<(i32, i32)> {
+    log.iter()
+        .filter_map(|p| {
+            let mut r = Reader::new(p);
+            (r.varint().ok()? == kiln_data::packets::play::clientbound::LEVEL_EVENT).then(|| {
+                let event = r.i32().unwrap();
+                let _pos = r.i64().unwrap();
+                (event, r.i32().unwrap())
+            })
+        })
+        .collect()
+}

@@ -265,3 +265,32 @@ fn damage_types_of_the_pack_scale_and_name_the_death() {
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_disc_of_a_song_of_the_pack_plays_for_its_length_and_the_comparator_reads_it() {
+    use support::{Game, level_events};
+    let _x = kiln_data::live::exclusive();
+    let mut g = Game::new("jukebox", &["kiln_wp83"], "Dj");
+    let [x, y, z] = g.spot(2);
+    let song = kiln_data::synced_id("minecraft:jukebox_song", "kiln83:tune").unwrap();
+    g.console(&format!("setblock {x} {y} {z} minecraft:jukebox"));
+    g.console(&format!("setblock {} {y} {z} minecraft:comparator[facing=east]", x + 1));
+    g.console(r#"give Dj minecraft:stick[minecraft:jukebox_playable="kiln83:tune"]"#);
+    g.ticks(2);
+    g.log();
+    let pkt = kiln_link::PlayIn::UseItemOn { hand: 0, pos: [x, y, z], face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: 0 };
+    assert!(g.sim.step([ToSim::Packet(1, pkt)]));
+    let events = level_events(&g.log());
+    assert!(events.contains(&(1010, song)), "the clients play the pack's song: {events:?} (song id {song})");
+    g.ticks(10);
+    // The comparator reads the song's `comparator_output` (7).
+    let nbt = g.sim.block_entity_nbt(x + 1, y, z).expect("comparator");
+    assert_eq!(nbt.get("OutputSignal").and_then(|t| t.as_i64()), Some(7), "{nbt:?}");
+    // 12.5 seconds = 250 ticks and a second more.
+    g.ticks(230);
+    assert!(g.sim.block_entity_nbt(x, y, z).unwrap().get("ticks_since_song_started").is_some(), "still playing after 240 ticks");
+    g.ticks(40);
+    assert!(g.sim.block_entity_nbt(x, y, z).unwrap().get("ticks_since_song_started").is_none(), "over after 270 ticks");
+    assert!(level_events(&g.log()).iter().any(|e| e.0 == 1011), "the clients are told to stop");
+    g.cleanup();
+}
