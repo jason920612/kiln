@@ -353,7 +353,7 @@ fn trims_of_the_pack_are_smithed_and_numbered_by_the_registry() {
 #[test]
 fn looms_offer_the_banner_patterns_of_the_pack() {
     use kiln_inventory::click::handle_container_button_click;
-    use kiln_inventory::{ContainerInput, Env, Menu, NoWorld, PlayerFlags, PlayerInventory, Rules};
+    use kiln_inventory::{Container, ContainerInput, Env, Menu, NoWorld, PlayerFlags, PlayerInventory, Rules};
     use kiln_item::ItemStack;
     let _x = kiln_data::live::exclusive();
     let (sim, dir, _) = start("loom");
