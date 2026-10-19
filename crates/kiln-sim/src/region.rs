@@ -1194,10 +1194,7 @@ pub(crate) fn player_packet(
                 // `handlePlayerKnownMovement`.
                 p.known_movement = d;
                 p.moved_this_tick = true;
-                // `Block.updateEntityMovementAfterFallOn`: landing stops the fall.
-                if on_ground {
-                    p.vel[1] = 0.0;
-                }
+                // (`Block.updateEntityMovementAfterFallOn`: landing stops the fall - the server body's own `move` does that.)
                 // `jumpFromGround` (when the server holds the player on the ground; a body that
                 // bounced off slime or a bed is not), then the fall, then `checkMovementStatistics`.
                 if was_on_ground && !on_ground && d[1] > 0.0 {
