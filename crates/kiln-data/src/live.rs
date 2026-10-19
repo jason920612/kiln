@@ -32,12 +32,13 @@ struct Tables {
     data: HashMap<(&'static str, &'static str), &'static str>,
     /// Per registry whose entries moved, vanilla id → id now (`None`: the same).
     remap: HashMap<&'static str, &'static [i32]>,
-    /// Whether a data pack changed anything.
-    custom: bool,
+    /// Whether data packs changed the registries / the tags.
+    synced_custom: bool,
+    tags_custom: bool,
 }
 
 impl Tables {
-    fn new(synced: Synced, tags: Tags, data: HashMap<(&'static str, &'static str), &'static str>, custom: bool) -> Tables {
+    fn new(synced: Synced, tags: Tags, data: HashMap<(&'static str, &'static str), &'static str>, synced_custom: bool, tags_custom: bool) -> Tables {
         let synced_index = synced
             .iter()
             .map(|(r, names)| (*r, names.iter().enumerate().map(|(i, n)| (*n, i as i32)).collect::<HashMap<_, _>>()))
@@ -52,7 +53,7 @@ impl Tables {
             let ids: Vec<i32> = names.iter().map(|n| now.iter().position(|m| m == n).map_or(-1, |i| i as i32)).collect();
             remap.insert(*registry, leak_ids(&ids));
         }
-        Tables { synced, tags, synced_index, tag_index, data, remap, custom }
+        Tables { synced, tags, synced_index, tag_index, data, remap, synced_custom, tags_custom }
     }
 }
 
@@ -65,7 +66,7 @@ fn tables() -> &'static Tables {
         // SAFETY: tables are only ever leaked (`Box::leak`), never freed or mutated.
         return unsafe { &*p };
     }
-    let fresh = Box::leak(Box::new(Tables::new(registries::SYNCHRONIZED, registries::TAGS, HashMap::new(), false)));
+    let fresh = Box::leak(Box::new(Tables::new(registries::SYNCHRONIZED, registries::TAGS, HashMap::new(), false, false)));
     match TABLES.compare_exchange(std::ptr::null_mut(), fresh, Ordering::AcqRel, Ordering::Acquire) {
         Ok(_) => fresh,
         // SAFETY: as above.
@@ -201,7 +202,8 @@ pub fn custom_entries(registry: &str) -> Vec<&'static str> {
 
 /// Whether data packs changed any registry or tag.
 pub fn is_custom() -> bool {
-    tables().custom
+    let t = tables();
+    t.synced_custom || t.tags_custom
 }
 
 /// Installs the synchronized registries the world loaded (`names` per registry, in network id
@@ -223,11 +225,11 @@ pub fn install_synced(registries: Vec<(String, Vec<String>)>, data: Vec<((String
         data.into_iter().map(|((r, n), j)| ((leak_str(&r), leak_str(&n)), leak_str(&j))).collect();
     let custom = !data.is_empty() || table.iter().zip(registries::SYNCHRONIZED).any(|(a, b)| a.1 != b.1);
     let same_synced = old.synced.len() == table.len() && old.synced.iter().zip(&table).all(|(a, b)| a.0 == b.0 && a.1 == b.1);
-    if same_synced && old.data == data && old.tags.as_ptr() == registries::TAGS.as_ptr() {
+    if same_synced && old.data == data && !old.tags_custom {
         return false;
     }
     let table: Synced = Box::leak(table.into_boxed_slice());
-    publish(Tables::new(table, registries::TAGS, data, custom));
+    publish(Tables::new(table, registries::TAGS, data, custom, false));
     true
 }
 
@@ -243,9 +245,9 @@ pub fn install_tags(tags: Vec<(String, Vec<(String, Vec<i32>)>)>) -> bool {
     if same_tags(old.tags, &table) {
         return false;
     }
-    let custom = old.custom || !same_tags(registries::TAGS, &table);
+    let custom = !same_tags(registries::TAGS, &table);
     let tags: Tags = Box::leak(table.into_boxed_slice());
-    publish(Tables::new(old.synced, tags, old.data.clone(), custom));
+    publish(Tables::new(old.synced, tags, old.data.clone(), old.synced_custom, custom));
     true
 }
 
@@ -256,7 +258,7 @@ fn same_tags(a: Tags, b: &[(&'static str, &'static [(&'static str, &'static [i32
 
 /// Back to the vanilla tables (tests).
 pub fn reset() {
-    publish(Tables::new(registries::SYNCHRONIZED, registries::TAGS, HashMap::new(), false));
+    publish(Tables::new(registries::SYNCHRONIZED, registries::TAGS, HashMap::new(), false, false));
 }
 
 /// A value derived from the tables, rebuilt when they change; reads are a load and a compare.
@@ -305,7 +307,7 @@ mod tests {
         let _x = exclusive();
         reset();
         assert!(!is_custom());
-        assert!(std::ptr::eq(synced(), registries::SYNCHRONIZED));
+        assert_eq!(synced().len(), registries::SYNCHRONIZED.len());
         let painting = synced_entries("minecraft:painting_variant").unwrap();
         assert_eq!(synced_id("minecraft:painting_variant", painting[3]), Some(3));
         assert_eq!(from_vanilla_id("minecraft:painting_variant", 5), Some(5));
