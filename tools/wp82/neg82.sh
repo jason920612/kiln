@@ -8,6 +8,8 @@ add() { FILE[$1]=$2; EDIT[$1]=$3; TEST[$1]=$4; ORDER+=("$1"); }
 add raidtick   crates/kiln-sim/src/raid.rs        's~if !loaded \|\| !ticking\.contains\(ChunkPos::of_block\(x, z\)\) \{~if !loaded {~' "-p kiln-sim --test raids a_wave_spawns_where"
 add raidfrozen crates/kiln-sim/src/lib.rs         's~self\.tick_raids\(normal\);~self.tick_raids(true);~' "-p kiln-sim --test raids a_frozen_game"
 add carrots    crates/kiln-sim/src/tools.rs       's~C::CropBlock \| C::CarrotBlock \| C::PotatoBlock \|~C::CropBlock |~g' "-p kiln-sim --test bone_meal_wp82 bone_meal_ages_carrots"
+add stem      crates/kiln-sim/src/tools.rs       's~if age == 7 \{~if false {~' "-p kiln-sim --test bone_meal_wp82 bone_meal_that_ripens_a_stem"
+add validspawn crates/kiln-sim/src/portal.rs      's~any\.then\(\|\| BlockPos::new\(\(c\.x << 4\) \+ 15, top, \(c\.z << 4\) \+ 15\)\)~any.then(|| BlockPos::new(c.x << 4, 30, c.z << 4))~' "-p kiln-sim --lib portal::tests::the_valid_spawn"
 add shelf      crates/kiln-blocks/src/behaviour/bonemeal.rs 's~(C::ShelfMushroomBlock => \{)~$1 return None;~' "-p kiln-sim --test bone_meal_wp82 bone_meal_ripens_a_shelf"
 add lichen     crates/kiln-blocks/src/behaviour/bonemeal.rs 's~(C::GlowLichenBlock => \{)~$1 return None;~' "-p kiln-sim --test bone_meal_wp82 bone_meal_spreads_glow_lichen"
 add combat     crates/kiln-sim/src/health.rs      's~self\.send\(packets::player::player_combat_enter\(\)\);~();~' "-p kiln-sim --test combat_packets a_hit_from"

@@ -63,9 +63,9 @@ fn motion_of(sim: &Sim, id: &str) -> Option<[f64; 3]> {
     }
 }
 
-/// wp82: `EndGatewayBlock.getPortalDestination` keeps the motion of what goes through (`Relative.DELTA`) except an ender pearl, which leaves with none.
+/// wp82: `EndGatewayBlock.getPortalDestination` keeps the motion of what goes through (`Relative.DELTA`; an ender pearl, which leaves with none and looking at 0, 0, is not tested here).
 #[test]
-fn a_gateway_keeps_the_motion_of_what_goes_through_but_not_of_a_pearl() {
+fn a_gateway_keeps_the_motion_of_what_goes_through() {
     let mut sim = Sim::new(SimConfig::new(4, 4, None));
     let (msg, stats) = join(1, "Watcher", 2);
     assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into()), ToSim::Console("gamemode creative Watcher".into())]));
