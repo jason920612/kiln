@@ -376,7 +376,7 @@ fn looms_offer_the_banner_patterns_of_the_pack() {
     let zigzag = kiln_data::synced_id("minecraft:banner_pattern", "kiln83:zigzag").unwrap();
     let button = ids.iter().position(|&i| i == zigzag).expect("the pack's pattern is in the tag");
     assert_eq!(button, ids.len() - 1);
-    assert!(handle_container_button_click(&mut menu, &mut env!(), button as i32, 0, true), "the button of the pack's pattern");
+    assert!(handle_container_button_click(&mut menu, &mut env!(), 1, button as i32, true), "the button of the pack's pattern");
     let result = menu.items(&env!())[3].clone();
     let layers = result.get(kiln_item::keys::BANNER_PATTERNS).expect("a patterned banner");
     assert_eq!(layers.0[0].pattern, kiln_item::Holder::Reference(zigzag));
