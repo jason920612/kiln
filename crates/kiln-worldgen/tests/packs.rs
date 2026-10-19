@@ -144,6 +144,18 @@ fn check(name: &str, dimension: &str, packs: &[&str]) {
                 }
             }
         }
+        if let Some(b) = std::env::var("KILN_PACK_BOX").ok().and_then(|v| v.split(',').map(|n| n.parse::<i32>().ok()).collect::<Option<Vec<_>>>()).filter(|v| v.len() == 6) {
+            for y in b[1]..=b[4] {
+                for z in b[2]..=b[5] {
+                    for x in b[0]..=b[3] {
+                        if (x >> 4, z >> 4) == (t.x, t.z) {
+                            let i = (((y - min_y) as usize >> 4) << 12) | (((y - min_y) as usize & 15) << 8) | (((z & 15) as usize) << 4) | (x & 15) as usize;
+                            eprintln!("  box ({x}, {y}, {z}): kiln {} vanilla {}", state_name(p.blocks[i]), state_name(t.blocks[i]));
+                        }
+                    }
+                }
+            }
+        }
         for (i, theirs) in t.biomes.iter().enumerate() {
             let ours = &generator.biomes[p.biomes[i] as usize].name;
             if ours != theirs {
