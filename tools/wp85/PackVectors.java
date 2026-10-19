@@ -1011,12 +1011,24 @@ public class PackVectors {
                     w.write(blocks.get(i));
                     w.writeInt(Integer.reverseBytes(cells.get(i).length));
                     w.write(cells.get(i));
-                    // The structure starts of the chunk (ids), sorted.
-                    List<String> starts = new ArrayList<>();
-                    for (var e : chunk.getAllStarts().entrySet()) starts.add(structureRegistry.getKey(e.getKey()).toString());
-                    starts.sort(null);
-                    w.writeInt(Integer.reverseBytes(starts.size()));
-                    for (String s : starts) str(w, s);
+                    // The structure starts of the chunk (id and saved NBT), sorted by id.
+                    var context = net.minecraft.world.level.levelgen.structure.pieces.StructurePieceSerializationContext.fromLevel(level);
+                    List<String> ids = new ArrayList<>();
+                    Map<String, byte[]> startTags = new HashMap<>();
+                    for (var e : chunk.getAllStarts().entrySet()) {
+                        String id = structureRegistry.getKey(e.getKey()).toString();
+                        ByteArrayOutputStream nbt = new ByteArrayOutputStream();
+                        net.minecraft.nbt.NbtIo.write(e.getValue().createTag(context, chunk.getPos()), new DataOutputStream(nbt));
+                        ids.add(id);
+                        startTags.put(id, nbt.toByteArray());
+                    }
+                    ids.sort(null);
+                    w.writeInt(Integer.reverseBytes(ids.size()));
+                    for (String id : ids) {
+                        str(w, id);
+                        w.writeInt(Integer.reverseBytes(startTags.get(id).length));
+                        w.write(startTags.get(id));
+                    }
                 }
                 OUT.printf("  window %d,%d %dx%d: %d decorated, %d terrain chunks%n", win[0], win[1], win[2], win[3], order.size(), chunks.size());
             }

@@ -53,7 +53,8 @@ struct Target {
     z: i32,
     blocks: Vec<u16>,
     biomes: Vec<String>,
-    starts: Vec<String>,
+    /// Vanilla's structure starts: id and saved NBT, by id.
+    starts: Vec<(String, kiln_proto::nbt::Tag)>,
 }
 
 struct Dump {
@@ -78,11 +79,30 @@ fn read_dump(path: &Path) -> Dump {
             let (x, z) = (r.i32(), r.i32());
             let blocks = r.blob();
             let biomes = r.blob().into_iter().map(|i| names[i as usize].clone()).collect();
-            let starts = (0..r.i32()).map(|_| r.str()).collect();
+            let starts = (0..r.i32())
+                .map(|_| {
+                    let id = r.str();
+                    let n = r.i32() as usize;
+                    (id, canonical(kiln_proto::nbt::read_named(r.take(n)).expect("vanilla start NBT").1))
+                })
+                .collect();
             targets.push(Target { x, z, blocks, biomes, starts });
         }
     }
     Dump { seed, structures, targets }
+}
+
+/// A tag with the fields of every compound in name order (vanilla and Kiln write them in different orders).
+fn canonical(t: kiln_proto::nbt::Tag) -> kiln_proto::nbt::Tag {
+    use kiln_proto::nbt::Tag;
+    match t {
+        Tag::Compound(mut f) => {
+            f.sort_by(|a, b| a.0.cmp(&b.0));
+            Tag::Compound(f.into_iter().map(|(k, v)| (k, canonical(v))).collect())
+        }
+        Tag::List(l) => Tag::List(l.into_iter().map(canonical).collect()),
+        t => t,
+    }
 }
 
 fn state_name(s: u16) -> String {
@@ -167,23 +187,20 @@ fn check(name: &str, dimension: &str, packs: &[&str]) {
             }
         }
         let data = pipeline.structure_data(&mut gs, t.x, t.z);
-        if std::env::var_os("KILN_PACK_STARTS").is_some()
-            && let Some(kiln_proto::nbt::Tag::Compound(starts)) = data.get("starts")
-        {
-            for (id, start) in starts {
-                eprintln!("  start {id} in chunk {},{}: {start:?}", t.x, t.z);
-            }
-        }
-        let mut ours: Vec<String> = match data.get("starts") {
-            Some(kiln_proto::nbt::Tag::Compound(starts)) => starts.iter().map(|(k, _)| k.clone()).collect(),
+        let mut ours: Vec<(String, kiln_proto::nbt::Tag)> = match data.get("starts") {
+            Some(kiln_proto::nbt::Tag::Compound(starts)) => starts.iter().map(|(k, v)| (k.clone(), canonical(v.clone()))).collect(),
             _ => Vec::new(),
         };
-        ours.sort();
+        ours.sort_by(|a, b| a.0.cmp(&b.0));
         if ours != t.starts {
             start_diffs += 1;
             chunk_bad = true;
             if first.len() < 12 {
-                first.push(format!("chunk {},{} structure starts: kiln {ours:?} vanilla {:?}", t.x, t.z, t.starts));
+                let ids = |l: &[(String, kiln_proto::nbt::Tag)]| l.iter().map(|(i, _)| i.clone()).collect::<Vec<_>>();
+                let detail = ours.iter().zip(&t.starts).find(|(a, b)| a != b).map(|(a, b)| format!("
+    kiln    {:?}
+    vanilla {:?}", a.1, b.1)).unwrap_or_default();
+                first.push(format!("chunk {},{} structure starts: kiln {:?} vanilla {:?}{detail}", t.x, t.z, ids(&ours), ids(&t.starts)));
             }
         }
         bad_chunks += usize::from(chunk_bad);
