@@ -60,9 +60,20 @@ pub(crate) fn load(roots: &[PathBuf]) -> Loaded {
                         continue;
                     }
                 };
-                if let Err(e) = Json::parse(text.trim_start_matches('\u{feff}')) {
-                    error!("Failed to parse {registry}/{name}: {e}");
-                    continue;
+                match Json::parse(text.trim_start_matches('\u{feff}')) {
+                    Err(e) => {
+                        error!("Failed to parse {registry}/{name}: {e}");
+                        continue;
+                    }
+                    Ok(json) => {
+                        // Vanilla stops loading on an entry its codec rejects; a client that gets one disconnects. Entries
+                        // without the fields the codec requires are left out here, with the same kind of message.
+                        let missing: Vec<&str> = required(registry).iter().copied().filter(|k| json.get(k).is_none()).collect();
+                        if !missing.is_empty() {
+                            error!("Failed to load {registry}/{name}: missing required fields {}", missing.join(", "));
+                            continue;
+                        }
+                    }
                 }
                 from_packs.insert(name, text);
             }
@@ -103,6 +114,26 @@ pub(crate) fn load(roots: &[PathBuf]) -> Loaded {
             .collect();
     }
     out
+}
+
+/// The fields a registry's codec requires of every entry (`fieldOf`, not `optionalFieldOf`), for the registries Kiln reads.
+fn required(registry: &str) -> &'static [&'static str] {
+    match registry {
+        "minecraft:painting_variant" => &["asset_id", "width", "height"],
+        "minecraft:damage_type" => &["message_id", "scaling", "exhaustion"],
+        "minecraft:jukebox_song" => &["sound_event", "description", "length_in_seconds", "comparator_output"],
+        "minecraft:instrument" => &["sound_event", "use_duration", "range", "description"],
+        "minecraft:trim_pattern" => &["asset_id", "description"],
+        "minecraft:trim_material" => &["description"],
+        "minecraft:banner_pattern" => &["asset_id", "translation_key"],
+        "minecraft:decorated_pot_pattern" => &["asset_id"],
+        "minecraft:wolf_variant" => &["assets", "baby_assets", "spawn_conditions"],
+        "minecraft:cat_variant" | "minecraft:pig_variant" | "minecraft:cow_variant" | "minecraft:chicken_variant" => &["asset_id", "baby_asset_id", "spawn_conditions"],
+        "minecraft:frog_variant" | "minecraft:zombie_nautilus_variant" => &["asset_id", "spawn_conditions"],
+        "minecraft:chat_type" => &["chat", "narration"],
+        "minecraft:dialog" => &["type"],
+        _ => &[],
+    }
 }
 
 /// The fields a registry's network codec leaves out (`NETWORK_CODEC` against `DIRECT_CODEC`).
@@ -231,5 +262,21 @@ mod tests {
         assert_eq!(f.len(), 1);
         let Tag::Compound(f) = network_entry("minecraft:painting_variant", &j) else { panic!() };
         assert_eq!(f.len(), 2);
+    }
+
+    #[test]
+    fn entries_the_codec_rejects_are_left_out() {
+        let dir = std::env::temp_dir().join(format!("kiln-regdata-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let paintings = dir.join("data/t/painting_variant");
+        std::fs::create_dir_all(&paintings).unwrap();
+        std::fs::write(paintings.join("good.json"), r#"{"asset_id":"t:good","width":1,"height":1}"#).unwrap();
+        std::fs::write(paintings.join("no_width.json"), r#"{"asset_id":"t:bad","height":1}"#).unwrap();
+        std::fs::write(paintings.join("not_json.json"), "{").unwrap();
+        let loaded = load(std::slice::from_ref(&dir));
+        let (_, names) = loaded.names.iter().find(|(r, _)| r == "minecraft:painting_variant").unwrap();
+        assert!(names.contains(&"t:good".to_owned()));
+        assert!(!names.contains(&"t:no_width".to_owned()) && !names.contains(&"t:not_json".to_owned()));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
