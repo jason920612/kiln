@@ -1,0 +1,187 @@
+//! wp83: a server running data packs has the registries and tags of the packs. The test pack
+//! `tools/wp83/packs/kiln_wp83` defines entries of its own in many data-driven registries, overrides
+//! a few vanilla ones and changes tags; these tests check the numbering of the registries (vanilla
+//! sorts entries by path, then namespace), the `Registry Data` and `Update Tags` the clients get,
+//! and that the game logic reads the tags of the packs (and re-reads them on `/reload`, while the
+//! registries stay as the world loaded them).
+//!
+//! The registries and tags are process-wide: every test takes `live::exclusive()`.
+
+mod support;
+
+use kiln_link::ToSim;
+use kiln_sim::testing::join;
+use kiln_sim::{Sim, SimConfig};
+use std::path::PathBuf;
+use std::sync::Arc;
+use support::{pack_world, registry_data, tag_ids, update_tags};
+
+fn start(tag: &str) -> (Sim, PathBuf, Arc<kiln_link::DataSync>) {
+    let dir = pack_world(tag, &["kiln_wp83"]);
+    let config = SimConfig::new(8, 2, Some(dir.clone()));
+    let sync = config.data_sync.clone();
+    (Sim::new(config), dir, sync)
+}
+
+/// The entries of a vanilla registry plus `extra`, in the order vanilla numbers them.
+fn numbered(registry: &str, extra: &[&str]) -> Vec<String> {
+    let mut names: Vec<String> = kiln_data::registries::SYNCHRONIZED
+        .iter()
+        .find(|(r, _)| *r == registry)
+        .map(|(_, e)| e.iter().map(|s| (*s).to_owned()).collect())
+        .unwrap();
+    names.extend(extra.iter().map(|s| (*s).to_owned()));
+    let key = |s: &str| {
+        let (ns, path) = s.split_once(':').unwrap();
+        (path.to_owned(), ns.to_owned())
+    };
+    names.sort_by_key(|n| key(n));
+    names
+}
+
+#[test]
+fn entries_are_numbered_the_way_vanilla_sorts_them() {
+    let _x = kiln_data::live::exclusive();
+    let (sim, dir, _) = start("numbering");
+    let paintings = numbered("minecraft:painting_variant", &["kiln83:speck", "kiln83:sunrise_wide"]);
+    let live: Vec<&str> = kiln_data::live::synced_entries("minecraft:painting_variant").unwrap().to_vec();
+    assert_eq!(live, paintings);
+    // The two new paintings are sorted among the vanilla ones by path, and shift the ids after them.
+    let speck = kiln_data::synced_id("minecraft:painting_variant", "kiln83:speck").unwrap();
+    assert_eq!(live[speck as usize - 1], "minecraft:skull_and_roses");
+    assert_eq!(live[speck as usize + 1], "minecraft:stage");
+    let vanilla = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:painting_variant").unwrap().1;
+    let vanilla_stage = vanilla.iter().position(|n| *n == "minecraft:stage").unwrap();
+    assert_eq!(kiln_data::synced_id("minecraft:painting_variant", "minecraft:stage").unwrap() as usize, vanilla_stage + 1);
+    assert_eq!(kiln_item::registry::PAINTING_VARIANT.id("kiln83:speck"), Some(speck));
+    // Other registries too.
+    for (registry, extra) in [
+        ("minecraft:damage_type", &["kiln83:acid", "kiln83:mild"][..]),
+        ("minecraft:wolf_variant", &["kiln83:azure"]),
+        ("minecraft:jukebox_song", &["kiln83:tune"]),
+        ("minecraft:instrument", &["kiln83:horn"]),
+        ("minecraft:chat_type", &["kiln83:shout"]),
+    ] {
+        let live: Vec<&str> = kiln_data::live::synced_entries(registry).unwrap().to_vec();
+        assert_eq!(live, numbered(registry, extra), "{registry}");
+    }
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn clients_get_the_data_of_the_entries_they_cannot_take_from_a_pack_they_know() {
+    let _x = kiln_data::live::exclusive();
+    let (sim, dir, sync) = start("registry-data");
+    let packets = sync.registry_packets().expect("a pack changes the registries");
+    assert_eq!(packets.len(), kiln_data::registries::SYNCHRONIZED.len());
+    let decoded: Vec<_> = packets.iter().map(registry_data).collect();
+    for ((registry, entries), (want, _)) in decoded.iter().zip(kiln_data::registries::SYNCHRONIZED) {
+        assert_eq!(registry, want, "registries are sent in vanilla's order");
+        let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, kiln_data::live::synced_entries(registry).unwrap(), "{registry}: entry order is the numbering");
+    }
+    let get = |registry: &str| &decoded.iter().find(|(r, _)| r == registry).unwrap().1;
+    let with_data = |registry: &str| -> Vec<&str> { get(registry).iter().filter(|(_, d)| d.is_some()).map(|(n, _)| n.as_str()).collect() };
+    // New entries and the overridden vanilla one carry their data; the rest comes from `minecraft:core`.
+    assert_eq!(with_data("minecraft:painting_variant"), ["minecraft:aztec", "kiln83:speck", "kiln83:sunrise_wide"]);
+    assert_eq!(with_data("minecraft:damage_type"), ["minecraft:cactus", "kiln83:acid", "kiln83:mild"]);
+    assert_eq!(with_data("minecraft:cow_sound_variant"), Vec::<&str>::new());
+    assert_eq!(with_data("minecraft:enchantment"), Vec::<&str>::new());
+    let entry = |registry: &str, name: &str| get(registry).iter().find(|(n, _)| n == name).unwrap().1.clone().unwrap();
+    let sunrise = entry("minecraft:painting_variant", "kiln83:sunrise_wide");
+    assert_eq!(sunrise.get("width").and_then(|t| t.as_i64()), Some(3));
+    assert_eq!(sunrise.get("height").and_then(|t| t.as_i64()), Some(2));
+    assert_eq!(sunrise.get("asset_id").and_then(|t| t.as_str()), Some("kiln83:sunrise_wide"));
+    assert_eq!(entry("minecraft:painting_variant", "minecraft:aztec").get("width").and_then(|t| t.as_i64()), Some(2));
+    // A variant's network form has no spawn conditions (`NETWORK_CODEC`); a damage type's has everything.
+    let azure = entry("minecraft:wolf_variant", "kiln83:azure");
+    assert!(azure.get("assets").is_some() && azure.get("baby_assets").is_some());
+    assert!(azure.get("spawn_conditions").is_none());
+    let acid = entry("minecraft:damage_type", "kiln83:acid");
+    assert_eq!(acid.get("scaling").and_then(|t| t.as_str()), Some("always"));
+    assert_eq!(acid.get("exhaustion").and_then(|t| t.as_f64()), Some(0.7));
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_login_of_a_server_without_packs_is_the_vanilla_one() {
+    let _x = kiln_data::live::exclusive();
+    let config = SimConfig::new(8, 2, None);
+    let sync = config.data_sync.clone();
+    let sim = Sim::new(config);
+    assert!(sync.registry_packets().is_none(), "the built-in packets (names only) are sent");
+    assert!(!kiln_data::live::is_custom());
+    for (registry, names) in kiln_data::registries::SYNCHRONIZED {
+        assert_eq!(kiln_data::live::synced_entries(registry).unwrap(), *names);
+    }
+    drop(sim);
+}
+
+#[test]
+fn the_tags_of_the_packs_reach_the_game_logic_and_the_clients() {
+    let _x = kiln_data::live::exclusive();
+    let (sim, dir, sync) = start("tags");
+    let stone = kiln_data::blocks::default_state::STONE;
+    // Game logic: block tags (`BlockState.is`), the entity crate's flags, the inventory crate's tags.
+    assert!(kiln_blocks::tags::is(stone, "minecraft:climbable"));
+    assert!(kiln_entity::blocks::has_tag(stone, kiln_entity::blocks::Tag::Climbable));
+    assert!(kiln_blocks::tags::is(stone, "minecraft:mineable/shovel"));
+    assert!(kiln_blocks::tags::is(kiln_data::blocks::default_state::LADDER, "minecraft:climbable"), "the pack adds to the vanilla tag");
+    let block = |name: &str| kiln_data::builtin_id("minecraft:block", name).unwrap();
+    // A new tag: entries in order, nested tags expanded in place, optional entries skipped, a tag with a missing required entry dropped.
+    assert_eq!(kiln_inventory::tags::entries("minecraft:block", "kiln83:pebbles"), None, "kiln83:pebbles names #kiln83:nope, which does not exist");
+    let softer = kiln_inventory::tags::entries("minecraft:block", "kiln83:softer").unwrap();
+    assert_eq!(softer, [block("minecraft:dirt"), block("minecraft:sand")]);
+    assert_eq!(kiln_inventory::tags::entries("minecraft:block", "kiln83:broken"), None);
+    // The login gets the same.
+    let tags = update_tags(&sync.config_tags().expect("tags of the packs"));
+    assert_eq!(tag_ids(&tags, "minecraft:block", "kiln83:softer"), Some(&softer[..]));
+    assert!(tag_ids(&tags, "minecraft:block", "minecraft:climbable").unwrap().contains(&block("minecraft:stone")));
+    assert_eq!(tag_ids(&tags, "minecraft:block", "kiln83:pebbles"), None);
+    // The synchronized registries' tags use the numbering of the registries.
+    let placeable = tag_ids(&tags, "minecraft:painting_variant", "minecraft:painting_variant/placeable").unwrap();
+    let id = |name: &str| kiln_data::synced_id("minecraft:painting_variant", name).unwrap();
+    assert_eq!(placeable, [id("kiln83:speck"), id("kiln83:sunrise_wide"), id("minecraft:aztec")], "`replace` dropped the vanilla entries; the file's order is kept");
+    let acid = kiln_data::synced_id("minecraft:damage_type", "kiln83:acid").unwrap();
+    assert!(tag_ids(&tags, "minecraft:damage_type", "minecraft:bypasses_armor").unwrap().contains(&acid));
+    assert!(tag_ids(&tags, "minecraft:damage_type", "minecraft:is_fire").is_some(), "vanilla tags are still there");
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn reload_rereads_the_tags_but_not_the_registries() {
+    let _x = kiln_data::live::exclusive();
+    let (mut sim, dir, sync) = start("reload");
+    let (msg, stats) = join(1, "Reloader", 2);
+    *stats.log.lock().unwrap() = Some(Vec::new());
+    assert!(sim.step([msg]));
+    let stone = kiln_data::blocks::default_state::STONE;
+    let dirt = kiln_data::blocks::default_state::DIRT;
+    assert!(kiln_blocks::tags::is(stone, "minecraft:climbable") && !kiln_blocks::tags::is(dirt, "minecraft:climbable"));
+    let before = kiln_data::live::synced_entries("minecraft:painting_variant").unwrap().to_vec();
+    let pack = dir.join("datapacks/kiln_wp83/data");
+    std::fs::write(pack.join("minecraft/tags/block/climbable.json"), r#"{"replace":true,"values":["minecraft:dirt"]}"#).unwrap();
+    std::fs::create_dir_all(pack.join("kiln83/painting_variant")).unwrap();
+    std::fs::write(pack.join("kiln83/painting_variant/late.json"), r#"{"asset_id":"kiln83:late","width":1,"height":1}"#).unwrap();
+    stats.log.lock().unwrap().as_mut().unwrap().clear();
+    assert!(sim.step([ToSim::Console("reload".into())]));
+    assert!(!kiln_blocks::tags::is(stone, "minecraft:climbable"), "the new tag file replaced the pack's");
+    assert!(kiln_blocks::tags::is(dirt, "minecraft:climbable"));
+    assert!(!kiln_blocks::tags::is(kiln_data::blocks::default_state::LADDER, "minecraft:climbable"), "`replace` dropped the vanilla entries too");
+    assert_eq!(kiln_data::live::synced_entries("minecraft:painting_variant").unwrap(), &before[..], "registries are loaded with the world");
+    assert_eq!(kiln_data::synced_id("minecraft:painting_variant", "kiln83:late"), None);
+    // The players got the tags again, with the numbering the world has; logins from now on get them too.
+    let log = stats.log.lock().unwrap().clone().unwrap();
+    let id = |p: &bytes::Bytes| kiln_proto::Reader::new(p).varint().ok();
+    let packet = log.iter().find(|p| id(p) == Some(kiln_data::packets::play::clientbound::UPDATE_TAGS)).expect("update tags");
+    let tags = update_tags(packet);
+    let dirt_id = kiln_data::builtin_id("minecraft:block", "minecraft:dirt").unwrap();
+    assert_eq!(tag_ids(&tags, "minecraft:block", "minecraft:climbable"), Some(&[dirt_id][..]));
+    let config = update_tags(&sync.config_tags().unwrap());
+    assert_eq!(tag_ids(&config, "minecraft:block", "minecraft:climbable"), tag_ids(&tags, "minecraft:block", "minecraft:climbable"));
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}
