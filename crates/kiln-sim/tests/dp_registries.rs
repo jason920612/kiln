@@ -459,3 +459,25 @@ fn paintings_take_the_placeable_variants_of_the_pack_and_summon_any_entry() {
     assert_eq!(painting.get("variant").and_then(|v| v.as_str()), Some("kiln83:speck"));
     g.cleanup();
 }
+
+#[test]
+fn a_shovel_mines_stone_when_the_pack_tags_it_mineable_with_a_shovel() {
+    use support::Game;
+    let _x = kiln_data::live::exclusive();
+    let mut g = Game::new("shovel", &["kiln_wp83"], "Digger");
+    let [x, y, z] = g.spot(2);
+    g.console("give Digger minecraft:diamond_shovel");
+    g.console(&format!("setblock {x} {y} {z} minecraft:stone"));
+    g.ticks(2);
+    let dig = |g: &mut Game, sequence: i32| {
+        assert!(g.sim.step([ToSim::Packet(1, kiln_link::PlayIn::PlayerAction { action: 0, pos: [x, y, z], face: 1, sequence })]));
+    };
+    dig(&mut g, 1);
+    // 8 (diamond) / 1.5 (hardness) / 30 per tick: broken within ten ticks; by hand or without the tag it takes 100+.
+    g.ticks(12);
+    assert_eq!(kiln_blocks::state::state_string(g.sim.block_at(x, y, z).unwrap()), "minecraft:air", "the shovel broke the stone");
+    g.ticks(3);
+    let items: Vec<String> = g.sim.entity_nbt().iter().filter_map(|t| t.get("Item")?.get("id")?.as_str().map(str::to_owned)).collect();
+    assert_eq!(items, ["minecraft:cobblestone"], "and it was the right tool for the drops");
+    g.cleanup();
+}
