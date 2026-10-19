@@ -44,6 +44,31 @@ elif scene == "beacon":
     time.sleep(14)
     look(X + 0.5, Y + 6, Z + 0.5)
     time.sleep(2)
+elif scene == "pale_moss":
+    X, Y, Z = 30, 160, 30
+    both_("time set 6000")
+    OB(f"fill {X - 9} {Y - 1} {Z - 9} {X + 9} {Y + 4} {Z + 9} minecraft:air")
+    OB(f"fill {X - 9} {Y - 1} {Z - 9} {X + 9} {Y - 1} {Z + 9} minecraft:grass_block")
+    both_("tick freeze")
+    time.sleep(0.5)
+    time.sleep(1)
+    for i, dx in enumerate((-6, -2, 2, 6)):
+        kind = "pale_moss_block" if i % 2 == 0 else "moss_block"
+        OB(f"setblock {X + dx} {Y - 1} {Z} minecraft:{kind}")
+        OB(f"setblock {X + dx - 1} {Y - 1} {Z} minecraft:dispenser[facing=east]{{Items:[{{Slot:0b,id:\"minecraft:bone_meal\",count:64}}]}}")
+        OB(f"setblock {X + dx - 1} {Y} {Z} minecraft:redstone_block")
+    both_("tick unfreeze")
+    time.sleep(2)
+    # a second round of bone meal for a bigger carpet
+    for dx in (-6, -2, 2, 6):
+        OB(f"setblock {X + dx - 1} {Y} {Z} minecraft:air")
+    time.sleep(1)
+    for dx in (-6, -2, 2, 6):
+        OB(f"setblock {X + dx - 1} {Y} {Z} minecraft:redstone_block")
+    time.sleep(3)
+    OB(f"tp KilnTest {X}.5 {Y + 5} {Z + 9}.5")
+    look(X + 0.5, Y, Z)
+    time.sleep(3)
 elif scene == "guardian":
     X, Y, Z = 30, 160, 30
     both_("time set 6000")
