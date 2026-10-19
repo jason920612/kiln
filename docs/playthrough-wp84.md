@@ -119,6 +119,11 @@
 
 `docs/wp84/ghast_pot_KV.jpg`:傍晚,掛具的快樂恐魔、一隻幼體與一個裝了 20 個紫水晶碎片的裝飾陶罐(Kiln 大視窗、vanilla 小視窗疊在上面);右邊的計分板是資料包 `kw84` 的 `#minecraft:tick` 函式在加的分數(兩邊都是 106 左右)。
 
-## 驗證(VM,最後一個程式碼 commit `wp84: nautilus sounds out of water are *_land`;之後只改文件與腳本)
+## 驗證(VM,最後一個程式碼 commit `wp84: parity harness players are not travelled`;之後只改文件)
 
-見 `docs/parity-coverage.md` §6.27 的最後一段(數字在那裡)。
+* `cargo check --workspace --all-targets`:沒有警告。
+* `cargo test --release --workspace --no-fail-fast`(`tools/wp84/verify84.sh`):**不帶**與**帶** `KILN_DATAPACK=/home/test/kiln/work/generated` 各一次,都是 **1552 通過、0 失敗、23 個本來就 ignore**(wp83 是 1519,新增 33 個);含 `determinism.rs`(6 個)、`mob_parity`(`mobs_match_vanilla`,全部案例)、`crowd_golden`(4 個)。
+* `tools/parity_suites.py --skip-workspace`:**113 個步驟全部 exit 0**(含 `combat`/`melee`(690)/`spear`(148)/`combat75`)。第一次跑時這四個套件失敗:它們重播 vanilla 記下的一擊(沒有玩家 tick),新的玩家速度模型讓封包晚一刻、多走一步;parity 的玩家標 `untravelled`(速度照舊衰減)後全過。
+* `crowd_golden` **沒有重錄**:狀態雜湊與封包摘要都沒變(玩家只走路;雜湊只含水平分量)。第一次的版本讓其中一個摘要變了(兩個玩家的位置同步封包變成相對移動封包),原因是 `region.rs` 的「著地時 `vel[1] = 0`」現在會碰到伺服器身體,拿掉它(身體自己著地)就回到原值。
+* 沒有新增向量檔(`work/wp84/` 空;`work/m6-mobs2/vectors.jsonl` 沒動)。證據是真客戶端並排與鎖步。
+* 負向檢查(`tools/wp84/neg84.sh`,把修正退回,對應的測試必須失敗):快樂恐魔(吃雪球、載入的幼體、護目鏡音、繩子 12)、消耗品音效、擊退(封包不等一刻、身體不 travel)、陶罐比較器、騎乘矩陣(繩、鞍、悅靈音、哞菇粒子)、進度述詞參照、鸚鵡螺離水音:**14 項全部失敗(good)**。

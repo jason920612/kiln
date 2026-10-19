@@ -970,7 +970,7 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 不祥試煉 | 喝瓶 → Bad Omen → Trial Omen(20 刻)→ 刷怪籠不祥化 → 物品生成器 → 保險庫與不祥鑰匙:相同 |
 | 考古 | 四種結構的 `locate`、可疑沙/礫/陶罐/箱子的位置與 `LootTable` 相同;**記錄(世界產生,wp85)**:沙漠神殿下 K 多一個地牢、暖海遺跡多 6 塊可疑沙 |
 | 沒做 | 重錘空中一擊的並排傷害(驅動打不到)、監守者潛行與被打斷的傳送門(wp78 做過)、`/damage` 指令的擊退封包(vanilla 在實體階段外是原始值)、四點彈簧、`data merge` 陶罐不更新比較器、沒有新的向量檔(`work/wp84/` 空;`work/m6-mobs2/vectors.jsonl` 沒動) |
-| 驗證 | VERIF |
+| 驗證 | `cargo check --workspace --all-targets` 沒有警告;`cargo test --release --workspace --no-fail-fast`:**不帶**與**帶** `KILN_DATAPACK=/home/test/kiln/work/generated` 各一次,都是 **1552 通過、0 失敗、23 個本來就 ignore**(wp83 是 1519;含 `determinism.rs` 六個、`crowd_golden` 四個(沒重錄)、`mob_parity`(`mobs_match_vanilla`,`work/m6-mobs2/vectors.jsonl` 全部案例));`tools/parity_suites.py --skip-workspace`:**113 個步驟全部 exit 0**;負向檢查 `tools/wp84/neg84.sh`:**14 項全部失敗(good)** |
 
 ## 7. 重跑
 
