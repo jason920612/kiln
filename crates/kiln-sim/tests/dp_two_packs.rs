@@ -32,3 +32,32 @@ fn a_later_pack_overrides_an_earlier_one_and_namespaces_sort_by_path_first() {
     drop(sim);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_biome_of_a_pack_is_numbered_and_found_by_the_commands() {
+    let _x = kiln_data::live::exclusive();
+    let dir = pack_world("two-packs-biome", &["kiln_wp83", "kiln_wp83b"]);
+    let mut sim = Sim::new(SimConfig::new(4, 4, Some(dir.clone())));
+    let names: Vec<&str> = kiln_data::live::synced_entries("minecraft:worldgen/biome").unwrap().to_vec();
+    let glade = names.iter().position(|n| *n == "kiln83:glade").expect("the pack's biome is a registry entry");
+    // Sorted by path among vanilla's (`glade` sits between `frozen_river` and `grove`), the biomes after it moved up by one.
+    assert_eq!((names[glade - 1], names[glade + 1]), ("minecraft:frozen_river", "minecraft:grove"));
+    let vanilla = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome").unwrap().1;
+    assert_eq!(kiln_data::synced_id("minecraft:worldgen/biome", "minecraft:plains"), vanilla.iter().position(|n| *n == "minecraft:plains").map(|i| i as i32 + 1));
+    assert!(sim.step([]));
+    sim.capture_console();
+    sim.console_now("forceload add 0 0");
+    for _ in 0..40 {
+        assert!(sim.step([]));
+    }
+    sim.take_console();
+    sim.console_now("fillbiome 0 -60 0 15 -50 15 kiln83:glade");
+    let said = sim.take_console().join("\n");
+    assert!(said.contains("commands.fillbiome.success"), "{said}");
+    sim.console_now("execute if biome 8 -55 8 kiln83:glade");
+    assert!(sim.take_console().join("\n").contains("conditional.pass"));
+    sim.console_now("execute if biome 8 -55 8 minecraft:plains");
+    assert!(!sim.take_console().join("\n").contains("conditional.pass"));
+    drop(sim);
+    let _ = std::fs::remove_dir_all(dir);
+}
