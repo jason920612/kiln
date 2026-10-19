@@ -1,17 +1,4 @@
-//! Mobs: vanilla's `LivingEn    // (Dropped when the tags change.)
-    thread_local! {
-        static TAGS: std::cell::RefCell<(u64, std::collections::HashMap<String, std::rc::Rc<Vec<bool>>>)> = Default::default();
-    }
-    let flags = TAGS.with(|t| {
-        let generation = kiln_data::live::generation();
-        {
-            let mut t = t.borrow_mut();
-            if t.0 != generation {
-                *t = (generation, Default::default());
-            }
-        }
-        let mut t = std::cell::RefMut::map(t.borrow_mut(), |t| &mut t.1);
-        if let Some(f) = t.get(tag) {ity` / `Mob` / `PathfinderMob` behaviour for the types Kiln
+//! Mobs: vanilla's `LivingEntity` / `Mob` / `PathfinderMob` behaviour for the types Kiln
 //! simulates (pig, cow, sheep, chicken, zombie, skeleton, creeper, spider).
 //!
 //! A mob is an [`Entity`] whose kind is [`EntityKind::Mob`] holding a [`MobData`]: health and

@@ -5,7 +5,6 @@ use crate::ident::Identifier;
 use crate::value::{DataError, DataResult, Value};
 use kiln_proto::{DecodeError, Reader, WriteExt};
 use std::collections::HashMap;
-use std::sync::OnceLock;
 
 /// FNV-1a for the name indexes: names are looked up per entity and tick (attributes, effects),
 /// and SipHash's protection against crafted keys is wasted on the game's own names.
