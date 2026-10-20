@@ -19,7 +19,7 @@ stop() {
 }
 if [ $cmd = stop ]; then stop; exit 0; fi
 stop
-if [ $cmd = fresh ]; then rm -rf $D/world $D/trace.out; fi
+if [ $cmd = fresh ]; then rm -rf $D/world $D/trace.out $D/wither.out $D/agent.out; fi
 cd $D
 rm -f console; mkfifo console
 sleep 100000000 > console 2>/dev/null </dev/null &
@@ -27,6 +27,7 @@ echo $! > keeper.pid
 if [ $who = K ]; then
   cp -f $HOME/wt/wp87-gaps/target/release/kiln $D/kiln-run87
   export KILN_VIEW_DISTANCE=$view KILN_SIMULATION_DISTANCE=$sim KILN_PORT=25599 KILN_GENERATOR=noise KILN_SEED=$seed KILN_DATAPACK=$HOME/kiln/work/generated KILN_WORLD=$D/world KILN_ENABLE_COMMAND_BLOCK=true KILN_OPS=${OPS:-W0} KILN_WORK=$HOME/kiln/work RUST_LOG=info
+  [ -n "$WITHER" ] && export KILN_WITHER_TRACE=$D/wither.out
   [ -n "$COUNTERS" ] && export KILN_SPAWN_TRACE=$D/trace.out KILN_SPAWN_COUNTERS=$D/counters.out KILN_SPAWN_BOX=${BOX:-0,0,0,0,0,0}
   nohup $D/kiln-run87 < console > server.log 2>&1 &
   echo $! > server.pid
