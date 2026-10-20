@@ -103,9 +103,19 @@ impl SourceSpec {
 pub struct FlatSettings {
     pub biome: String,
     pub layers: Vec<u16>,
-    /// Decoration of the biome (`features`) and lakes: not generated.
+    /// `features`: the biome's decoration is placed (the underground and surface structure steps and, with `lakes`, the biome's lakes excepted).
     pub features: bool,
+    /// `lakes`: lava lakes (`FlatLevelGeneratorSettings.createLakesList`) instead of the biome's.
     pub lakes: bool,
+    /// `structure_overrides`: the structure sets that generate (`#tag`s and ids as written); `None` is every set (`FlatLevelSource.createState`).
+    pub structure_overrides: Option<Vec<String>>,
+}
+
+impl FlatSettings {
+    /// Whether anything but the layers generates: the biome's features, lakes, or structures.
+    pub fn needs_pipeline(&self) -> bool {
+        self.features || self.lakes || self.structure_overrides.as_ref().is_none_or(|l| !l.is_empty())
+    }
 }
 
 impl Datapack {
@@ -195,7 +205,13 @@ fn parse_flat(json: &Json) -> Result<FlatSettings, Error> {
     // (Saved stems come from NBT, where a boolean is a byte.)
     let flag = |k: &str| json.get(k).is_some_and(|v| matches!(v, Json::Bool(true)) || matches!(v, Json::Number(n) if n == "1"));
     let biome = json.get("biome").and_then(Json::as_str).map_or_else(|| "minecraft:plains".to_owned(), qualify);
-    Ok(FlatSettings { biome, layers, features: flag("features"), lakes: flag("lakes") })
+    let structure_overrides = match json.get("structure_overrides") {
+        None => None,
+        Some(Json::String(s)) => Some(vec![s.clone()]),
+        Some(Json::Array(items)) => Some(items.iter().filter_map(|i| i.as_str().map(str::to_owned)).collect()),
+        Some(_) => None,
+    };
+    Ok(FlatSettings { biome, layers, features: flag("features"), lakes: flag("lakes"), structure_overrides })
 }
 
 /// A `ChunkGenerator` for `FlatLevelSource`: the layers from the level's bottom up, one biome.

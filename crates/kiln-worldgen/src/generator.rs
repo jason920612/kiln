@@ -251,9 +251,29 @@ pub struct Generator {
     uncarvable: HashSet<u16>,
     /// `spawn_target` points: (density function, climate parameter) pairs.
     pub(crate) spawn_target: Vec<Vec<(SamplerRef, Parameter)>>,
+    /// `FlatLevelSource`: the layers from the level's bottom up (`AIR` where nothing is placed), when the generator is a flat one; it has no density,
+    /// no surface rules and no carvers (the rest of the generator is then only what decoration and structures read: biomes, geometry, seed).
+    flat: Option<Vec<u16>>,
 }
 
 impl Generator {
+    /// The generator of a `minecraft:flat` level: `layers` (a state per block from the level's bottom, `AIR` for none) of the single `biome`, in a
+    /// level of `dimension_type`. The noise settings of the overworld stand behind it for what flat generation does not replace (the region random,
+    /// the biome list); its sea level is `FlatLevelSource.getSeaLevel`, -63.
+    pub fn for_flat(pack: &Datapack, biome: &str, layers: Vec<u16>, dimension_type: &str, seed: i64) -> Result<Generator, Error> {
+        let mut g = Self::for_dimension(pack, "minecraft:overworld", BiomeSourceKind::Fixed(biome), dimension_type, seed)?;
+        g.gen_min_y = g.min_y;
+        g.gen_height = g.height;
+        g.sea_level = -63;
+        g.flat = Some(layers);
+        Ok(g)
+    }
+
+    /// Whether this is a flat generator.
+    pub fn is_flat(&self) -> bool {
+        self.flat.is_some()
+    }
+
     /// The generator for `noise_settings` entry `settings` with the multi-noise biome source
     /// `biome_source` (a `multi_noise_biome_source_parameter_list` id), seeded with `seed`,
     /// building chunks as tall as the noise settings (the overworld's geometry).
@@ -426,6 +446,7 @@ impl Generator {
             uniform_carvers,
             uncarvable,
             spawn_target,
+            flat: None,
             final_density,
             default_block,
             fluid_picker: FluidPicker::new(s.sea_level, default_fluid),
@@ -535,6 +556,20 @@ impl Generator {
 
     /// Runs the TERRAIN steps on a chunk that passed BIOMES, calling `after` after each.
     pub fn run_steps(&self, gs: &mut GenScratch, chunk: &mut ProtoChunk, after: &mut dyn FnMut(Step, &ProtoChunk)) {
+        if let Some(layers) = &self.flat {
+            // `FlatLevelSource.buildTerrain`: each layer that is not air over the whole chunk; no surface, no carvers.
+            for (i, &layer) in layers.iter().enumerate().take(self.height as usize) {
+                if layer != state::AIR {
+                    for z in 0..16 {
+                        for x in 0..16 {
+                            chunk.set(x, self.min_y + i as i32, z, layer);
+                        }
+                    }
+                }
+            }
+            after(Step::Fill, chunk);
+            return;
+        }
         let vol = Volume::blocks([16, self.gen_height, 16], [chunk.x << 4, self.gen_min_y, chunk.z << 4]);
         // The NoiseChunk: a fresh caching context, then the aquifer (whose constructor samples
         // the surface level).
@@ -568,6 +603,14 @@ impl Generator {
     /// before surface rules, carvers and structures. States from `gen_min_y` up (the
     /// generation depth; vanilla's `NoiseColumn` reads air outside it).
     pub fn base_column(&self, s: &mut Scratch, x: i32, z: i32) -> Vec<u16> {
+        if let Some(layers) = &self.flat {
+            // `FlatLevelSource.getBaseColumn`: the layers (air for none), as far as the level goes.
+            let mut out = vec![state::AIR; self.gen_height as usize];
+            for (slot, &layer) in out.iter_mut().zip(layers) {
+                *slot = layer;
+            }
+            return out;
+        }
         let vol = Volume::blocks([1, self.gen_height, 1], [x, self.gen_min_y, z]);
         s.reset_caches();
         let mut aquifer = match &self.aquifer {

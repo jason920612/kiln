@@ -143,6 +143,24 @@ pub struct Structures {
 
 impl Structures {
     pub fn load(generator: &Generator, l: &Loader) -> Result<Structures, Error> {
+        Self::load_only(generator, l, None)
+    }
+
+    /// [`Structures::load`] with only the structure sets named in `only` (ids; `#tag`s of `worldgen/structure_set` expanded) generating: a flat level's
+    /// `structure_overrides` (`FlatLevelSource.createState`). `None` is every set.
+    pub fn load_only(generator: &Generator, l: &Loader, only: Option<&[String]>) -> Result<Structures, Error> {
+        let allowed: Option<std::collections::HashSet<String>> = only.map(|list| {
+            let mut out = std::collections::HashSet::new();
+            for name in list {
+                match name.strip_prefix('#') {
+                    Some(tag) => out.extend(l.pack.tag("worldgen/structure_set", &crate::function::qualify(tag)).unwrap_or_default()),
+                    None => {
+                        out.insert(crate::function::qualify(name));
+                    }
+                }
+            }
+            out
+        });
         let empty = Vec::new();
         let structure_json = l.pack.registries.get("structure").unwrap_or(&empty);
         let mut gaps: Vec<(String, AtomicU64)> = Vec::new();
@@ -180,6 +198,7 @@ impl Structures {
             possible_biomes[b as usize] = true;
         }
         let possible: Vec<usize> = (0..sets.len())
+            .filter(|&i| allowed.as_ref().is_none_or(|a| a.contains(&sets[i].name)))
             .filter(|&i| {
                 sets[i].structures.iter().any(|&(s, _)| (0..generator.biomes.len()).any(|b| possible_biomes[b] && structures[s].biomes.contains(b as u16)))
             })

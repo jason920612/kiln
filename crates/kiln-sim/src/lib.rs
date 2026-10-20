@@ -1722,6 +1722,24 @@ impl Sim {
                 }
             };
             match &stem.generator {
+                kiln_worldgen::stem::StemGenerator::Flat(flat) if flat.needs_pipeline() && pack.is_some() && config.noise.is_some() => {
+                    let (pack, n) = (pack.as_ref().expect("pack"), config.noise.as_ref().expect("noise"));
+                    match kiln_worldgen::Worldgen::from_stem(pack, &stem, n.seed, true) {
+                        Ok(Some(world)) => {
+                            info!("{key} generation: flat, {} layers, features {}, lakes {}, structure sets {:?}", flat.layers.len(), flat.features, flat.lakes, flat.structure_overrides);
+                            let dimension_type = kiln_data::dimension_type(&stem.dimension_type);
+                            let (min_y, height) = dimension_type.map_or((-64, 384), |t| (t.min_y, t.height));
+                            let spawn_y = min_y + height.min(flat.layers.len() as i32);
+                            let pipeline = std::sync::Arc::new(kiln_worldgen::Pipeline::new(std::sync::Arc::new(world)));
+                            Made::FlatFull(kiln_worldgen::FullChunks::new(pipeline), spawn_y)
+                        }
+                        Ok(None) => Made::Nothing,
+                        Err(e) => {
+                            warn!("cannot set up {key} generation: {e}");
+                            Made::Nothing
+                        }
+                    }
+                }
                 kiln_worldgen::stem::StemGenerator::Flat(flat) => {
                     let biome = kiln_data::synced_id("minecraft:worldgen/biome", &flat.biome).unwrap_or(0) as u16;
                     info!("{key} generation: flat, {} layers", flat.layers.len());
@@ -1764,7 +1782,7 @@ impl Sim {
                 let generator = made(id);
                 pipelines.push(generator.pipeline());
                 sea_levels.push(generator.sea_level(id));
-                flats.push(matches!(generator, Made::Flat(_)));
+                flats.push(matches!(generator, Made::Flat(_) | Made::FlatFull(..)));
                 match &config.world {
                     Some(dir) => {
                         let source: Box<dyn kiln_world::ChunkSource> = if format == Some(kiln_storage::WorldFormat::Native) {
@@ -4544,13 +4562,16 @@ enum Made {
     Noise(kiln_worldgen::FullChunks),
     /// Superflat layers.
     Flat(kiln_worldgen::stem::FlatChunks),
+    /// A superflat level that also decorates and has structures (the flat settings' `features`, `lakes` and `structure_overrides`), and where its
+    /// spawn is (`FlatLevelSource.getSpawnHeight`).
+    FlatFull(kiln_worldgen::FullChunks, i32),
     Nothing,
 }
 
 impl Made {
     fn pipeline(&self) -> Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>> {
         match self {
-            Made::Noise(g) => Some(g.pipeline().clone()),
+            Made::Noise(g) | Made::FlatFull(g, _) => Some(g.pipeline().clone()),
             _ => None,
         }
     }
@@ -4558,7 +4579,7 @@ impl Made {
     /// `ChunkGenerator.getSeaLevel` of the level (the noise settings' `sea_level`, -63 for superflat), else the vanilla level's.
     fn sea_level(&self, dim: DimId) -> i32 {
         match self {
-            Made::Noise(g) => g.pipeline().world().generator.sea_level,
+            Made::Noise(g) | Made::FlatFull(g, _) => g.pipeline().world().generator.sea_level,
             Made::Flat(_) => -63,
             Made::Nothing => [63, 32, 0].get(dim).copied().unwrap_or(63),
         }
@@ -4569,13 +4590,14 @@ impl Made {
         match self {
             Made::Noise(g) => Some(initial_spawn(g.pipeline())),
             Made::Flat(f) => Some([8, f.spawn_height(dimension), 8]),
+            Made::FlatFull(_, y) => Some([8, *y, 8]),
             Made::Nothing => None,
         }
     }
 
     fn into_generator(self) -> Option<Box<dyn kiln_world::ChunkGenerator>> {
         match self {
-            Made::Noise(g) => Some(Box::new(g)),
+            Made::Noise(g) | Made::FlatFull(g, _) => Some(Box::new(g)),
             Made::Flat(f) => Some(Box::new(f)),
             Made::Nothing => None,
         }
