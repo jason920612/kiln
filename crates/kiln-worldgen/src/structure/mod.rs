@@ -420,6 +420,11 @@ pub struct GenCtx<'a> {
 }
 
 impl GenCtx<'_> {
+    /// `ChunkGenerator.getMinY` (a flat generator's is 0, whatever the level's minimum is), as mineshafts, strongholds and ruined portals ask it.
+    pub fn generator_min_y(&self) -> i32 {
+        if self.generator.is_flat() { 0 } else { self.generator.min_y }
+    }
+
     pub fn min_y(&self) -> i32 {
         self.generator.min_y
     }

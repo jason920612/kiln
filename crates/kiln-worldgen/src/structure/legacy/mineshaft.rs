@@ -91,7 +91,7 @@ impl Kind for Mineshaft {
             offset_vertically(&mut pieces, dy);
             dy
         } else {
-            let min_y = ctx.min_y();
+            let min_y = ctx.generator_min_y();
             move_below_sea_level(&mut pieces, sea, min_y, &mut ctx.random, 10)
         };
         Some(Stub { pos: BlockPos::new(cx + 8, 50 + dy, cz), build: Box::new(move |_, out| *out = pieces) })

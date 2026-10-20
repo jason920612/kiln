@@ -45,7 +45,7 @@ fn generate(ctx: &mut GenCtx) -> Vec<Box<dyn Piece>> {
             g.add_children(p, &mut ctx.random);
         }
         let mut pieces: Vec<Box<dyn Piece>> = g.list.into_iter().map(|p| Box::new(p) as Box<dyn Piece>).collect();
-        let (sea, min_y) = (ctx.generator.sea_level, ctx.min_y());
+        let (sea, min_y) = (ctx.generator.sea_level, ctx.generator_min_y());
         move_below_sea_level(&mut pieces, sea, min_y, &mut ctx.random, 10);
         if !pieces.is_empty() && g.portal {
             return pieces;
