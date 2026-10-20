@@ -116,16 +116,18 @@ fn a_smash_attack_from_a_fall_does_what_vanilla_does() {
         } else {
             ""
         };
-        w.run(&format!("summon minecraft:zombie {x} {floor} {z} {{NoAI:1b,PersistenceRequired:1b{armor}}}"));
+        w.run(&format!("summon minecraft:zombie {} {floor} {z} {{NoAI:1b,PersistenceRequired:1b,Health:1000f,attributes:[{{id:\"minecraft:max_health\",base:1000d}}]{armor}}}", x - 0.7));
         let enchants: Vec<String> = v["enchants"].as_object().unwrap().iter().map(|(k, l)| format!("\"{k}\":{l}")).collect();
         w.run(&format!("item replace entity Faller weapon.mainhand with minecraft:mace[enchantments={{{}}}]", enchants.join(",")));
-        let start_y = 100.0 + 1.95 + v["height"].as_f64().unwrap() + dy;
-        w.run(&format!("tp Faller {x} {start_y} {z}"));
-        w.ticks(30);
+        let path: Vec<f64> = v["path"].as_array().unwrap().iter().map(|y| y.as_f64().unwrap() + dy).collect();
+        // The vanilla player began one fall step above the first position of its path.
+        let start_y = path[0] + 0.0784;
+        w.ticks(5);
         let mob = *w.sim.entity_ids_of("minecraft:zombie").last().expect("the zombie");
         let health_before = w.sim.mob_state(mob).unwrap().health;
-        let path: Vec<f64> = v["path"].as_array().unwrap().iter().map(|y| y.as_f64().unwrap() + dy).collect();
         let attack_at = v["attack_at"].as_u64().unwrap() as usize;
+        w.run(&format!("tp Faller {x} {start_y} {z}"));
+        w.ticks(2);
         let _ = w.packets();
         for (tick, &y) in path.iter().enumerate() {
             let mut inbox = Vec::new();
@@ -154,6 +156,7 @@ fn a_smash_attack_from_a_fall_does_what_vanilla_does() {
         check("victim health", format!("{}", state.health), format!("{}", r["victim_health"].as_f64().unwrap() as f32));
         let theirs: Vec<f64> = r["victim_delta"].as_array().unwrap().iter().map(|d| d.as_f64().unwrap()).collect();
         check("victim motion", format!("{:?}", state.delta), format!("{theirs:?}"));
+        check("attacker fall distance", format!("{:.4}", w.sim.fall_distance(1).unwrap()), format!("{:.4}", r["attacker_fall_distance"].as_f64().unwrap()));
         check("mace damage", format!("{}", w.sim.item_damage(1, 36).unwrap_or(0)), format!("{}", r["mace_damage"]));
         let explosions_theirs = r["packets"].as_array().unwrap().iter().filter(|p| p.as_str().unwrap().starts_with("explode")).count();
         check("explosion packets", format!("{}", lines.iter().filter(|l| l.starts_with("explode")).count()), format!("{explosions_theirs}"));

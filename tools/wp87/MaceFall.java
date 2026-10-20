@@ -44,7 +44,7 @@ import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.Vec3;
 
 public class MaceFall {
-    static final double X = 0.5, Y0 = 100.0, Z = 0.5;
+    static final double X = 0.5, Y0 = 100.0, Z = 0.5, FX = 1.2;
 
     record Scenario(String name, double height, Map<String, Integer> enchants, String victim, boolean armored) {}
 
@@ -125,6 +125,8 @@ public class MaceFall {
         Mob mob = (Mob) net.minecraft.world.entity.EntityTypes.ZOMBIE.create(level, EntitySpawnReason.COMMAND);
         mob.setPos(X, Y0, Z);
         mob.setNoAi(true);
+        mob.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH).setBaseValue(1000.0);
+        mob.setHealth(1000f);
         mob.setPersistenceRequired();
         if (s.armored) {
             mob.setItemSlot(EquipmentSlot.HEAD, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse("minecraft:diamond_helmet"))));
@@ -139,7 +141,7 @@ public class MaceFall {
         call(p.connection, "markClientLoaded");
         double top = Y0 + mob.getBbHeight();
         double y = top + 4.0 + s.height;
-        p.setPos(X, y, Z);
+        p.setPos(FX, y, Z);
         p.setYRot(0f);
         p.setYHeadRot(0f);
         p.setXRot(90f);
@@ -169,7 +171,7 @@ public class MaceFall {
             vy = (vy - 0.08) * 0.98;
             y += vy;
             path.add(y);
-            p.connection.handleMovePlayer(new ServerboundMovePlayerPacket.PosRot(X, y, Z, 0f, 90f, false, false));
+            p.connection.handleMovePlayer(new ServerboundMovePlayerPacket.PosRot(FX, y, Z, 0f, 90f, false, false));
             set(p, "attackStrengthTicker", 1000);
             if (p.isWithinAttackRange(mace, mob.getBoundingBox(), 3.0)) {
                 attackAt = tick;
