@@ -323,15 +323,23 @@ def hover(self, seconds, y_offset=0.0, on_ground=False, tick=0.05):
     n = 0
     while _t.time() - t0 < seconds:
         n += 1
-        self.send_raw(SB_MOVE_POS, struct.pack(">dddB", x, y + y_offset, z, 1 if on_ground else 0))
-        self.send_raw(SB_CLIENT_TICK_END)
+        try:
+            self.send_raw(SB_MOVE_POS, struct.pack(">dddB", x, y + y_offset, z, 1 if on_ground else 0))
+            self.send_raw(SB_CLIENT_TICK_END)
+        except OSError:
+            out.append((round(_t.time() - t0, 1), -1, b"connection closed"))
+            return out
         _t.sleep(tick)
-        for pid, body in self.drain(0.0):
+        try:
+            got = self.drain(0.0)
+        except OSError:
+            got = [(-1, b"reset")]
+        for pid, body in got:
             if pid == CB_DISCONNECT:
                 out.append((round(_t.time() - t0, 1), pid, body))
                 return out
             if pid == -1:
-                out.append((round(_t.time() - t0, 1), -1, b""))
+                out.append((round(_t.time() - t0, 1), -1, b"closed"))
                 return out
     return out
 
