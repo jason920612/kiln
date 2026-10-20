@@ -147,19 +147,15 @@ CASES = {
     ),
     "ocean_ruin_save": (
         "crates/kiln-worldgen/src/structure/templated/ocean_ruin.rs",
-        "        *self.settled.lock().unwrap() = Some(pos);
-",
-        "        let _ = pos;
-",
+        "        *self.settled.lock().unwrap() = Some(pos);" + chr(10),
+        "        let _ = pos;" + chr(10),
         "-p kiln-worldgen --test wp87_order seed_84",
         {},
     ),
     "nether_sky": (
         "crates/kiln-sim/src/blocks.rs",
-        "    if !crate::dim_type(env.dim).has_skylight {
-        return 0;",
-        "    if false && !crate::dim_type(env.dim).has_skylight {
-        return 0;",
+        "    if !crate::dim_type(env.dim).has_skylight {",
+        "    if false && !crate::dim_type(env.dim).has_skylight {",
         "-p kiln-sim --test nether_sky_wp87",
         {},
     ),
