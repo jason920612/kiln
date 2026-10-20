@@ -347,7 +347,7 @@ pub fn tick_leash(e: &mut Entity, mut m: Option<&mut MobData>, level: &mut dyn E
     let h_data = mob::data(h);
     // `getHolderMovement`: a mob without AI stands still as far as the lead can tell.
     let h_move = if h_data.is_some_and(|hm| hm.no_ai) { Vec3::ZERO } else { level.known_movement(holder_id) };
-    let h_quad = h_data.is_some_and(|hm| hm.kind == MobKind::HappyGhast);
+    let h_quad = h_data.is_some_and(|hm| matches!(hm.kind, MobKind::HappyGhast | MobKind::Ghast));
     let h_key = key_of(h);
     // The holder's identity as a save names it.
     if let Some(d) = e.leash.as_mut() {

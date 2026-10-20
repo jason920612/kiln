@@ -1,12 +1,8 @@
 // wp87: the elastic pull of a lead on vanilla 26.3 (Leashable.tickLeash) for entities that hang on four points (horses, camels, sniffers, boats) held by a happy ghast, and for ordinary leads.
-// above a mob, starts falling with the client's own physics (v = (v - 0.08) * 0.98 each tick, sent as the position packets a client sends, on_ground
-// false), and when the mob is in reach attacks it with a mace (ServerboundAttackPacket), with Density, Breach and Wind Burst. One JSON line per
-// scenario: the setup (so that Kiln replays the same packets) and what came out: the mob's health and motion, the attacker's motion, fall distance and
-// mace damage, the packets the attacker was sent.
+// Scenarios: a horse, donkey, camel, sniffer, boat, llama and cow led by a happy ghast, a cow and a ghast, at several offsets and yaws, both without AI;
+// per scenario twelve calls of Leashable.tickLeash, after each of which the led entity's delta, yaw and the lead's angular momentum are written.
 //
-// usage (cwd = a scratch server directory):
-//   java --add-opens java.base/java.lang=ALL-UNNAMED -cp <server jar + libraries> tools/wp87/LeashQuad.java <out.jsonl> [name-filter]
-// (tools/wp87/mace87.sh sets this up)
+// usage (cwd = a scratch server directory): tools/wp87/leash87.sh
 
 import com.mojang.authlib.GameProfile;
 import io.netty.channel.embedded.EmbeddedChannel;
