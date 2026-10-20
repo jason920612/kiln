@@ -89,7 +89,6 @@ impl Chain {
 }
 
 struct Player {
-    conn: u64,
     uuid: Uuid,
     stats: Arc<SinkStats>,
     client: Client,
@@ -99,7 +98,7 @@ fn join(sim: &mut Sim, conn: u64, name: &str) -> Player {
     let (msg, stats) = testing::join(conn, name, 2);
     *stats.log.lock().unwrap() = Some(Vec::new());
     assert!(sim.step([msg]));
-    Player { conn, uuid: Uuid::from_u64_pair(0x6b69_6c6e, conn), client: Client::new(conn, stats.clone()), stats }
+    Player { uuid: Uuid::from_u64_pair(0x6b69_6c6e, conn), client: Client::new(conn, stats.clone()), stats }
 }
 
 fn run(sim: &mut Sim, players: &mut [&mut Player], n: usize) {
@@ -211,12 +210,12 @@ fn a_chat_session_and_signed_messages_are_verified_chained_and_relayed() {
     chain.next_index = 1;
     let sig2 = signed_chats(&b)[1].2.clone().unwrap();
     let seen2 = vec![sig1.clone(), sig2.clone()];
-    assert!(sim.step([ToSim::Packet(1, chain.message("replayed", t0 + 20, 44, 1, [0, 0, 24], &seen2))]));
+    assert!(sim.step([ToSim::Packet(1, chain.message("replayed", t0 + 20, 44, 1, [0, 0, 12], &seen2))]));
     run(&mut sim, &mut [&mut a, &mut b], 2);
     assert!(said(&a, SYSTEM_CHAT, "chat.disabled.invalid_signature"), "told in red");
     assert_eq!(signed_chats(&b).len(), 2, "not relayed");
     chain.next_index = 2;
-    assert!(sim.step([ToSim::Packet(1, chain.message("after the break", t0 + 30, 45, 1, [0, 0, 24], &seen2))]));
+    assert!(sim.step([ToSim::Packet(1, chain.message("after the break", t0 + 30, 45, 1, [0, 0, 12], &seen2))]));
     run(&mut sim, &mut [&mut a, &mut b], 2);
     assert!(said(&a, SYSTEM_CHAT, "chat.disabled.chain_broken"));
     assert_eq!(signed_chats(&b).len(), 2);
