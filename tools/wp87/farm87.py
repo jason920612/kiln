@@ -198,7 +198,12 @@ def scen_wither(f):
     w(t, "gamemode survival W0")
     w(t, "gamemode survival W1")
     time.sleep(0.5)
-    cmd(t, "execute at W0 run tp W1 ~10 ~ ~")
+    # A glass platform high above the ground (nothing between the players and the wither).
+    cmd(t, "execute in minecraft:overworld run forceload add -16 -16 16 16")
+    time.sleep(25)
+    cmd(t, "execute in minecraft:overworld run fill -8 199 -8 20 199 8 minecraft:glass")
+    cmd(t, "execute in minecraft:overworld run tp W0 0.5 200 0.5")
+    cmd(t, "execute in minecraft:overworld run tp W1 10.5 200 0.5")
     time.sleep(1.5)
     for p in ("W0", "W1"):
         cmd(t, f"effect give {p} minecraft:resistance 99999 4 true")
