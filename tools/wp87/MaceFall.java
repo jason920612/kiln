@@ -50,7 +50,7 @@ public class MaceFall {
 
     static List<Scenario> scenarios() {
         List<Scenario> out = new ArrayList<>();
-        double[] heights = {1.7, 2.5, 4.0, 8.0, 16.0, 40.0};
+        double[] heights = {0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0};
         for (double h : heights) {
             out.add(new Scenario("plain_h" + h, h, Map.of(), "zombie", false));
             out.add(new Scenario("plain_armored_h" + h, h, Map.of(), "zombie", true));
@@ -138,7 +138,7 @@ public class MaceFall {
         p.setGameMode(GameType.SURVIVAL);
         call(p.connection, "markClientLoaded");
         double top = Y0 + mob.getBbHeight();
-        double y = top + s.height;
+        double y = top + 4.0 + s.height;
         p.setPos(X, y, Z);
         p.setYRot(0f);
         p.setYHeadRot(0f);
@@ -176,6 +176,7 @@ public class MaceFall {
                 break;
             }
             p.connection.tick();
+            if (Math.abs(p.getY() - y) > 0.01) throw new IllegalStateException("the server moved the player back at tick " + tick + ": at " + p.getY() + " wanted " + y);
         }
         if (attackAt < 0) throw new IllegalStateException("never in reach");
         double fallBefore = p.fallDistance;
