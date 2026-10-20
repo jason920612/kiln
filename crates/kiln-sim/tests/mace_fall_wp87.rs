@@ -13,6 +13,8 @@ use kiln_sim::{Sim, SimConfig};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+mod support;
+
 fn vectors() -> Option<Vec<Value>> {
     let file = std::env::var_os("KILN_MACE_VECTORS").map(PathBuf::from).unwrap_or_else(|| {
         match std::env::var_os("KILN_WORK") {
@@ -42,6 +44,8 @@ impl World {
             ToSim::Console("gamerule minecraft:spawn_mobs false".into()),
             ToSim::Console("difficulty normal".into()),
             ToSim::Console("gamemode survival Faller".into()),
+            ToSim::Console("time set midnight".into()),
+            ToSim::Console("gamerule minecraft:advance_time false".into()),
         ]));
         let mut w = World { sim, client: Client::new(1, stats), stats: keep };
         w.ticks(40);
@@ -97,6 +101,11 @@ fn a_smash_attack_from_a_fall_does_what_vanilla_does() {
         return;
     };
     assert!(!vectors.is_empty());
+    if !support::vanilla_data() {
+        eprintln!("skipped: needs the vanilla data pack (the enchantments' definitions)");
+        return;
+    }
+    let _x = kiln_data::live::exclusive();
     let mut failures = Vec::new();
     for v in &vectors {
         let name = v["name"].as_str().unwrap().to_owned();

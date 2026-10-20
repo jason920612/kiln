@@ -134,6 +134,7 @@ public class MaceFall {
             mob.setItemSlot(EquipmentSlot.LEGS, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse("minecraft:diamond_leggings"))));
             mob.setItemSlot(EquipmentSlot.FEET, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse("minecraft:diamond_boots"))));
         }
+        call(mob, "detectEquipmentUpdates");
         level.addFreshEntity(mob);
         // The attacker.
         ServerPlayer p = mockPlayer(server, "Faller" + index);
