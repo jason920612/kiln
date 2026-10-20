@@ -84,7 +84,11 @@ fn main() -> Result<()> {
 
     let level_name = options.world.clone().unwrap_or_else(|| props.level_name.clone());
     let world_dir = (!legacy).then(|| options.universe.clone().unwrap_or_else(|| ".".into()).join(&level_name));
-    let defaults = launch::kiln_defaults(&props, &options, world_dir.as_deref());
+    let mut defaults = launch::kiln_defaults(&props, &options, world_dir.as_deref());
+    if legacy {
+        // The harnesses never set a difficulty: the world's own (normal for a new one) stays.
+        defaults.remove("KILN_DIFFICULTY");
+    }
     // A variable that is set wins over the properties file.
     let var = |k: &str| env(k).or_else(|| defaults.get(k).filter(|v| !v.trim().is_empty()).cloned());
     let number = |k: &str| var(k).and_then(|v| v.trim().parse::<i64>().ok());
@@ -165,16 +169,18 @@ fn main() -> Result<()> {
         default_game_mode: (!legacy).then_some(props.gamemode),
         force_gamemode: props.force_gamemode,
         hardcore: props.hardcore,
-        spawn_protection: props.spawn_protection,
-        allow_flight: props.allow_flight,
+        // (A harness run, with no server.properties, keeps what Kiln did before it had one: no spawn protection, no
+        // floating kick, no pause, no watchdog, functions at level 4.)
+        spawn_protection: if legacy { 0 } else { props.spawn_protection },
+        allow_flight: legacy || props.allow_flight,
         player_idle_timeout: props.player_idle_timeout,
-        pause_when_empty_seconds: props.pause_when_empty_seconds,
-        max_tick_time_ms: props.max_tick_time,
+        pause_when_empty_seconds: if legacy { 0 } else { props.pause_when_empty_seconds },
+        max_tick_time_ms: if legacy { 0 } else { props.max_tick_time },
         entity_broadcast_range_percentage: props.entity_broadcast_range_percentage,
         max_world_size: props.max_world_size,
         max_chained_neighbor_updates: props.max_chained_neighbor_updates,
         op_permission_level: props.op_permission_level,
-        function_permission_level: props.function_permission_level,
+        function_permission_level: if legacy { 4 } else { props.function_permission_level },
         enforce_secure_profile: enforce_secure_chat,
         command_spam_threshold_seconds: props.command_spam_threshold_seconds,
         chat_spam_threshold_seconds: props.chat_spam_threshold_seconds,
@@ -309,7 +315,7 @@ fn main() -> Result<()> {
     })?;
 
     // `DedicatedServer.initServer`: the watchdog of `max-tick-time`.
-    let _watchdog = kiln_server::watchdog::start(shared.info.clone(), props.max_tick_time, 50);
+    let _watchdog = kiln_server::watchdog::start(shared.info.clone(), if legacy { 0 } else { props.max_tick_time }, 50);
 
     // `DedicatedServer.initServer`: Query, then RCON, once the server is up.
     let host_ip = match props.server_ip.trim() {
