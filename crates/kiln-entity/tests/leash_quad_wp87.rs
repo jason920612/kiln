@@ -5,6 +5,7 @@
 //!
 //! Skipped without the dump (`$KILN_LEASH_VECTORS`, default `<work>/wp87/leash.txt`; `tools/wp87/leash87.sh` writes it).
 
+use kiln_entity::level::EntityLevel;
 use kiln_entity::leash;
 use kiln_entity::math::Vec3;
 use kiln_entity::memory::MemoryLevel;
