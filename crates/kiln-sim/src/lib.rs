@@ -29,6 +29,7 @@ mod command_data;
 mod commands;
 mod chat;
 mod settings;
+mod mgmt;
 mod chat_flow;
 mod consume;
 mod buckets;
@@ -1750,6 +1751,9 @@ fn publish_next_tick(info: &kiln_link::ServerInfo, next_tick: Instant) {
 pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
     let mut sim = Sim::new(config);
     sim.sync_ops();
+    // `DedicatedServer.initServer` ends: the server is ready, and the management clients hear of it.
+    sim.config.info.ready.store(true, std::sync::atomic::Ordering::Relaxed);
+    sim.notify(kiln_link::mgmt::Notification::ServerStarted);
     let mut next_tick = Instant::now();
     let mut inbox = Vec::new();
     let info = sim.config.info.clone();
@@ -3996,18 +4000,24 @@ impl Sim {
             self.player_stops_riding(&p);
             self.plugins_left(&p);
             self.announce_leave(&p, conn);
+            self.notify(kiln_link::mgmt::Notification::PlayerLeft(kiln_link::access::NameAndId { uuid: p.uuid, name: p.name.clone() }));
             self.broadcast_system(yellow(&format!("{} left the game", p.name)));
         }
     }
 
     fn shut_down(&mut self) {
+        // (`DedicatedServer.stopServer`, then the final save.)
+        self.config.info.ready.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.notify(kiln_link::mgmt::Notification::ServerShuttingDown);
         stats::flush_trace();
         info!("{}", chunkstats::line(self.config.noise.as_ref().map_or(0, |n| n.threads)));
         self.rendezvous();
         for p in self.players.values_mut() {
             p.disconnect("Server closed");
         }
+        self.notify(kiln_link::mgmt::Notification::ServerSaveStarted);
         self.save();
+        self.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
         // Writes still running on the storage threads reach the disk before the server stops.
         for d in &mut self.dims {
             if let Err(e) = d.provider.sync() {
@@ -4034,9 +4044,12 @@ impl Sim {
     /// [`SAVE_BUDGET`] and encoded and written on the storage threads, so the save holds no tick
     /// up; everything else is saved at once. Elsewhere, the whole save at once.
     fn start_save(&mut self) {
+        // (`DedicatedServer.saveAllChunks`: the management clients hear of every save.)
+        self.notify(kiln_link::mgmt::Notification::ServerSaveStarted);
         let background = self.dims.iter().all(|d| d.generation.is_some() && d.lent.is_empty());
         if !background || std::env::var("KILN_BACKGROUND_STORAGE").is_ok_and(|v| v == "0") {
             self.save();
+            self.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
             return;
         }
         let start = Instant::now();
@@ -4130,6 +4143,7 @@ impl Sim {
             for d in &mut self.dims {
                 d.flush_when_encoded = true;
             }
+            self.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
         } else {
             self.save_run = Some(queue);
         }
@@ -4514,6 +4528,7 @@ impl Sim {
         self.send_command_tree(j.conn);
         self.announce_join(j.conn);
         self.broadcast_system(msg);
+        self.notify(kiln_link::mgmt::Notification::PlayerJoined(kiln_link::access::NameAndId { uuid, name: self.players[&j.conn].name.clone() }));
         self.commands.bossbars.player_joined(uuid);
         self.flush_scoreboard();
     }

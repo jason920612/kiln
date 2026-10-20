@@ -4,6 +4,7 @@
 //! and it answers through `Sink`s, which the network layer implements.
 
 pub mod access;
+pub mod mgmt;
 
 use bytes::Bytes;
 pub use kiln_proto::packets::{ClientInfo, PlayIn};
@@ -46,6 +47,11 @@ pub trait AdminHost {
     /// Runs `command` as the RCON source (`RconConsoleSource`: permission level 4, nobody's
     /// position) and returns what it said (`getAndClearBuffer`).
     fn rcon_command(&mut self, command: &str) -> String;
+
+    /// The face the management server's methods use (`None` for hosts without one).
+    fn mgmt(&mut self) -> Option<&mut dyn mgmt::MgmtHost> {
+        None
+    }
 }
 
 /// A player in the player list, as the server list, Query and the management server see it.
@@ -76,6 +82,12 @@ pub struct ServerInfo {
     pub services_keys: std::sync::RwLock<Vec<Vec<u8>>>,
     /// When the next tick is due (Unix milliseconds; 0 until the simulation ticks): what the watchdog of `max-tick-time` watches.
     pub next_tick_due_ms: std::sync::atomic::AtomicU64,
+    /// `MinecraftServer.isReady`: the world is loaded and the server runs.
+    pub ready: std::sync::atomic::AtomicBool,
+    /// `accepts-transfers`.
+    pub accepts_transfers: std::sync::atomic::AtomicBool,
+    /// The management server's notifications (see [`mgmt::Notifier`]).
+    pub notifier: std::sync::Arc<mgmt::NotifierSlot>,
 }
 
 impl ServerInfo {
@@ -90,6 +102,9 @@ impl ServerInfo {
             version_name: kiln_data::version::NAME.to_owned(),
             services_keys: Default::default(),
             next_tick_due_ms: Default::default(),
+            ready: std::sync::atomic::AtomicBool::new(false),
+            accepts_transfers: std::sync::atomic::AtomicBool::new(false),
+            notifier: Default::default(),
         }
     }
 

@@ -126,6 +126,7 @@ fn main() -> Result<()> {
     let info = Arc::new(kiln_link::ServerInfo::new(&props.motd, max_players as i32, &level_name));
     info.hide_online_players.store(props.hide_online_players, std::sync::atomic::Ordering::Relaxed);
     info.enable_status.store(props.enable_status, std::sync::atomic::Ordering::Relaxed);
+    info.accepts_transfers.store(lobby.accepts_transfers, std::sync::atomic::Ordering::Relaxed);
 
     let (to_sim, sim_rx) = crossbeam_channel::unbounded();
     let shutdown = to_sim.clone();
@@ -134,6 +135,7 @@ fn main() -> Result<()> {
     let mut access = kiln_link::access::AccessLists::new(Some(std::env::current_dir()?));
     access.use_whitelist = var("KILN_WHITELIST").is_some_and(|v| v == "true");
     access.enforce_whitelist = var("KILN_ENFORCE_WHITELIST").is_some_and(|v| v == "true");
+    access.notifier = info.notifier.clone();
     let access = access.shared();
     let shared = Arc::new(
         kiln_net::Shared::with_login(net_config, login, to_sim)
@@ -141,6 +143,27 @@ fn main() -> Result<()> {
             .with_access(access.clone())
             .with_info(info.clone()),
     );
+    // `Main.main`: the management server starts before the world loads (`JsonRpc.create`).
+    let mut mgmt = None;
+    if props.management_server_enabled {
+        let to_sim = shutdown.clone();
+        let backend = kiln_server::mgmt::Backend {
+            runner: Arc::new(SimRunner(to_sim)),
+            info: info.clone(),
+            access: access.clone(),
+            settings: Arc::new(kiln_server::mgmt::Settings { props: std::sync::Mutex::new(props.clone()), path: (!legacy).then(|| props_path.to_path_buf()) }),
+            lookup: shared.authenticates().then(kiln_net::SessionProfiles::new),
+            online_mode: shared.authenticates(),
+        };
+        match kiln_server::mgmt::ManagementServer::start(&kiln_server::mgmt::Config::from_properties(&props), backend) {
+            Ok(server) => mgmt = Some(server),
+            Err(e) => {
+                tracing::error!("Failed to start the minecraft server");
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+    }
     let mut sim_config = kiln_sim::SimConfig::new(max_players, view_distance, var("KILN_WORLD").map(Into::into));
     sim_config.simulation_distance = simulation_distance;
     sim_config.access = access;
@@ -339,7 +362,10 @@ fn main() -> Result<()> {
         }
     })?;
     // `DedicatedServer.onServerExit`: the listeners stop with the server.
-    let stop_listeners = |rcon: &mut Option<kiln_server::rcon::RconServer>, query: &mut Option<kiln_server::query::QueryServer>| {
+    let stop_listeners = |rcon: &mut Option<kiln_server::rcon::RconServer>, query: &mut Option<kiln_server::query::QueryServer>, mgmt: &mut Option<kiln_server::mgmt::ManagementServer>| {
+        if let Some(m) = mgmt.as_mut() {
+            m.stop();
+        }
         if let Some(r) = rcon.as_mut() {
             r.stop();
         }
@@ -348,7 +374,7 @@ fn main() -> Result<()> {
         }
     };
     if sim_stopped {
-        stop_listeners(&mut rcon, &mut query);
+        stop_listeners(&mut rcon, &mut query, &mut mgmt);
         let _ = sim.join();
         return Ok(());
     }
@@ -357,7 +383,7 @@ fn main() -> Result<()> {
     if shutdown.send(kiln_link::ToSim::Shutdown { done: done_tx }).is_ok() {
         let _ = done_rx.recv_timeout(std::time::Duration::from_secs(60));
     }
-    stop_listeners(&mut rcon, &mut query);
+    stop_listeners(&mut rcon, &mut query, &mut mgmt);
     let _ = sim.join();
     Ok(())
 }
@@ -407,4 +433,18 @@ fn world_tool(args: &[String]) -> Result<()> {
 fn random_seed() -> i64 {
     use rand_core::RngCore;
     rand_core::OsRng.next_u64() as i64
+}
+
+/// Runs the management server's work on the simulation thread.
+struct SimRunner(crossbeam_channel::Sender<kiln_link::ToSim>);
+
+impl kiln_server::mgmt::Runner for SimRunner {
+    fn run(&self, job: Box<dyn FnOnce(&mut dyn kiln_link::mgmt::MgmtHost) + Send>) -> bool {
+        let work = Box::new(move |host: &mut dyn kiln_link::AdminHost| {
+            if let Some(h) = host.mgmt() {
+                job(h);
+            }
+        });
+        self.0.send(kiln_link::ToSim::Admin(work)).is_ok()
+    }
 }

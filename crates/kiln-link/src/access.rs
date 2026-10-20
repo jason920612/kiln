@@ -11,6 +11,7 @@ use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use crate::mgmt::{Notification, NotifierSlot};
 use uuid::Uuid;
 
 pub type SharedAccess = Arc<RwLock<AccessLists>>;
@@ -229,6 +230,8 @@ pub struct AccessLists {
     pub enforce_whitelist: bool,
     /// Operator names, mirrored by the simulation (`prefix*` matches a prefix).
     pub ops: HashSet<String>,
+    /// Told what changes in the lists (`NotificationService`, for the management server).
+    pub notifier: Arc<NotifierSlot>,
 }
 
 fn now_secs() -> i64 {
@@ -236,7 +239,7 @@ fn now_secs() -> i64 {
 }
 
 /// Parses `yyyy-MM-dd HH:mm:ss Z` into Unix seconds (for `hasExpired`).
-fn parse_date(s: &str) -> Option<i64> {
+pub fn parse_date(s: &str) -> Option<i64> {
     let (date, rest) = s.split_once(' ')?;
     let (time, zone) = rest.split_once(' ')?;
     let d: Vec<i64> = date.split('-').map(str::parse).collect::<Result<_, _>>().ok()?;
@@ -385,6 +388,112 @@ impl AccessLists {
             })
             .collect();
         self.write_file("banned-ips.json", entries);
+    }
+
+    /// `UserWhiteList.add`: the entry is stored and saved; listeners hear of it every time.
+    pub fn whitelist_add(&mut self, user: NameAndId) -> bool {
+        self.whitelist.put(user.uuid.to_string(), user.clone());
+        self.save_whitelist();
+        self.notifier.notify(Notification::PlayerAddedToAllowlist(user));
+        true
+    }
+
+    /// `UserWhiteList.remove`: false if the player was not listed.
+    pub fn whitelist_remove(&mut self, user: &NameAndId) -> bool {
+        if self.whitelist.remove(&user.uuid.to_string()).is_none() {
+            return false;
+        }
+        self.save_whitelist();
+        self.notifier.notify(Notification::PlayerRemovedFromAllowlist(user.clone()));
+        true
+    }
+
+    /// `UserWhiteList.clear`: every entry is announced as removed, then the list is emptied.
+    pub fn whitelist_clear(&mut self) {
+        for u in self.whitelist.values().into_iter().cloned().collect::<Vec<_>>() {
+            self.notifier.notify(Notification::PlayerRemovedFromAllowlist(u));
+        }
+        self.whitelist.clear();
+        self.save_whitelist();
+    }
+
+    /// `UserBanList.add`.
+    pub fn ban_add(&mut self, ban: UserBan) -> bool {
+        self.bans.put(ban.user.uuid.to_string(), ban.clone());
+        self.save_bans();
+        self.notifier.notify(Notification::PlayerBanned(ban));
+        true
+    }
+
+    /// `UserBanList.remove`: false if the player was not banned.
+    pub fn ban_remove(&mut self, user: &NameAndId) -> bool {
+        if self.bans.remove(&user.uuid.to_string()).is_none() {
+            return false;
+        }
+        self.save_bans();
+        self.notifier.notify(Notification::PlayerUnbanned(user.clone()));
+        true
+    }
+
+    /// `UserBanList.clear`.
+    pub fn ban_clear(&mut self) {
+        for b in self.bans.values().into_iter().cloned().collect::<Vec<_>>() {
+            self.notifier.notify(Notification::PlayerUnbanned(b.user));
+        }
+        self.bans.clear();
+        self.save_bans();
+    }
+
+    /// `IpBanList.add`.
+    pub fn ip_ban_add(&mut self, ban: IpBan) -> bool {
+        self.ip_bans.put(ban.ip.clone(), ban.clone());
+        self.save_ip_bans();
+        self.notifier.notify(Notification::IpBanned(ban));
+        true
+    }
+
+    /// `IpBanList.remove`: false if the address was not banned.
+    pub fn ip_ban_remove(&mut self, ip: &str) -> bool {
+        if self.ip_bans.remove(ip).is_none() {
+            return false;
+        }
+        self.save_ip_bans();
+        self.notifier.notify(Notification::IpUnbanned(ip.to_owned()));
+        true
+    }
+
+    /// `IpBanList.clear`.
+    pub fn ip_ban_clear(&mut self) {
+        for b in self.ip_bans.values().into_iter().cloned().collect::<Vec<_>>() {
+            self.notifier.notify(Notification::IpUnbanned(b.ip));
+        }
+        self.ip_bans.clear();
+        self.save_ip_bans();
+    }
+
+    /// `ServerOpList.add`.
+    pub fn op_add(&mut self, entry: OpEntry) -> bool {
+        self.op_list.put(entry.user.uuid.to_string(), entry.clone());
+        self.save_ops();
+        self.notifier.notify(Notification::PlayerOped(entry));
+        true
+    }
+
+    /// `ServerOpList.remove`: the entry that was removed.
+    pub fn op_remove(&mut self, user: &NameAndId) -> Option<OpEntry> {
+        let entry = self.op_list.remove(&user.uuid.to_string())?;
+        self.save_ops();
+        self.notifier.notify(Notification::PlayerDeoped(entry.clone()));
+        Some(entry)
+    }
+
+    /// `ServerOpList.clear`.
+    pub fn op_clear(&mut self) {
+        for e in self.op_list.values().into_iter().cloned().collect::<Vec<_>>() {
+            self.notifier.notify(Notification::PlayerDeoped(e));
+        }
+        self.op_list.clear();
+        self.save_ops();
     }
 
     pub fn is_op(&self, name: &str) -> bool {
