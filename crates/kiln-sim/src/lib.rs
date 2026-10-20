@@ -1789,7 +1789,17 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         next_tick += Duration::from_nanos(sim.world.tick_rate.nanos_per_tick() as u64);
         let now = Instant::now();
         if next_tick > now {
-            std::thread::sleep(next_tick - now);
+            // The wait for the next tick serves the work of the administration threads (RCON, the management
+            // server) as it arrives, as vanilla's main thread runs queued tasks while it waits: a request is not
+            // held back a whole tick. (Only when every region ticks in lockstep: nothing is running then.)
+            while let Some(left) = next_tick.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
+                match rx.recv_timeout(left) {
+                    Ok(ToSim::Admin(work)) if sim.config.schedule == ScheduleMode::Lockstep => work(&mut sim),
+                    Ok(msg) => inbox.push(msg),
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => break,
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
+                }
+            }
         } else {
             next_tick = now;
         }
