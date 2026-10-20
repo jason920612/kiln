@@ -263,4 +263,5 @@ fn vanilla_itself_changes_with_the_decoration_order() {
         eprintln!("suspicious sand in the ruin, {}: {n}", file.file_name().unwrap().to_string_lossy());
     }
     eprintln!("(vanilla in three valid orders: {total_diffs} blocks differ between the first order and the others)");
+    assert!(total_diffs > 0, "vanilla's blocks do not depend on the decoration order here: the premise of this test is gone");
 }
