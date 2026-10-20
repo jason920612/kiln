@@ -138,6 +138,59 @@ CASES = {
         "-p kiln-sim --test dp_clocks_wp87 world_keeps_them",
         {},
     ),
+    "quad_leash": (
+        "crates/kiln-entity/src/leash.rs",
+        "let quad = holder.quad && supports_quad_leash(e, m);",
+        "let quad = false && holder.quad && supports_quad_leash(e, m);",
+        "-p kiln-entity --test leash_quad_wp87",
+        {},
+    ),
+    "ocean_ruin_save": (
+        "crates/kiln-worldgen/src/structure/templated/ocean_ruin.rs",
+        "        *self.settled.lock().unwrap() = Some(pos);
+",
+        "        let _ = pos;
+",
+        "-p kiln-worldgen --test wp87_order seed_84",
+        {},
+    ),
+    "nether_sky": (
+        "crates/kiln-sim/src/blocks.rs",
+        "    if !crate::dim_type(env.dim).has_skylight {
+        return 0;",
+        "    if false && !crate::dim_type(env.dim).has_skylight {
+        return 0;",
+        "-p kiln-sim --test nether_sky_wp87",
+        {},
+    ),
+    "flat_depth": (
+        "crates/kiln-worldgen/src/generator.rs",
+        "g.gen_min_y = g.min_y.max(0);",
+        "g.gen_min_y = g.min_y;",
+        "-p kiln-worldgen --test wp87_flat a_flat_level_with_features",
+        {},
+    ),
+    "flat_structure_depth": (
+        "crates/kiln-worldgen/src/structure/mod.rs",
+        "if self.generator.is_flat() { 0 } else { self.generator.min_y }",
+        "self.generator.min_y",
+        "-p kiln-worldgen --test wp87_flat without_overrides",
+        {},
+    ),
+    "flat_pipeline": (
+        "crates/kiln-sim/src/lib.rs",
+        "StemGenerator::Flat(flat) if flat.needs_pipeline() &&",
+        "StemGenerator::Flat(flat) if false && flat.needs_pipeline() &&",
+        "-p kiln-sim --test dp_flat_wp87",
+        {},
+    ),
+    "flat_overrides": (
+        "crates/kiln-worldgen/src/structure/mod.rs",
+        ".filter(|&i| allowed.as_ref().is_none_or(|a| a.contains(&sets[i].name)))",
+        ".filter(|&i| allowed.as_ref().is_none_or(|a| a.contains(&sets[i].name)) || true)",
+        "-p kiln-worldgen --test wp87_flat structure_sets_it_names",
+        {},
+    ),
 }
 
 
