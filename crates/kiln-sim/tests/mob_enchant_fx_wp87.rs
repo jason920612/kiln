@@ -138,7 +138,7 @@ fn a_location_effect_follows_the_mob_from_block_to_block() {
     // Soul Speed's shape: the attribute holds while the block under the feet is one of a kind (`location_check` with `offsetY: -1`).
     let stride = enchantment(
         BOOTS_SLOT,
-        r#""minecraft:location_changed": [{"requirements": {"condition": "minecraft:location_check", "offsetY": -1, "predicate": {"block": {"blocks": "minecraft:gold_block"}}}, "effect": {"type": "minecraft:attribute", "amount": 1.0, "attribute": "minecraft:movement_efficiency", "id": "kiln87:stride", "operation": "add_value"}}]"#,
+        r#""minecraft:location_changed": [{"requirements": {"type": "minecraft:location_check", "offsetY": -1, "predicate": {"block": {"blocks": "minecraft:gold_block"}}}, "effect": {"type": "minecraft:attribute", "amount": 1.0, "attribute": "minecraft:movement_efficiency", "id": "kiln87:stride", "operation": "add_value"}}]"#,
     );
     let mut w = World::new("follows", &[("stride", stride)]);
     let (home, gold) = (w.spot(3.0), w.spot(6.0));
