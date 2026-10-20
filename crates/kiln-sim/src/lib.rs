@@ -265,8 +265,9 @@ pub struct ServerSettings {
     pub chat_spam_threshold_seconds: i32,
     /// `log-ips`: logins and logouts print the address.
     pub log_ips: bool,
-    /// What the console prints for system messages starts with `System chat: ` (`MinecraftServer.sendSystemMessage`);
-    /// off for the harness runs, whose tools read the older plain lines.
+    /// The console decorates what it prints like vanilla: `System chat: ` before system messages
+    /// (`MinecraftServer.sendSystemMessage`) and `[Not Secure] ` before unsigned chat; off for the harness runs, whose
+    /// tools read the older plain lines.
     pub console_system_prefix: bool,
     /// `generate-structures` (a world keeps the value it was made with).
     pub generate_structures: bool,

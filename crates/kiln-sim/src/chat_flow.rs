@@ -269,7 +269,7 @@ impl Sim {
         let content = Text::literal(message.unsigned_content.clone().unwrap_or_else(|| message.body.content.clone()));
         let chat_message = ChatMessage { kind, sender: sender_name.clone(), target: None, content: content.clone() };
         let line = console_text(&chat_message.to_text());
-        if trusted {
+        if trusted || !self.config.server.console_system_prefix {
             info!("{line}");
         } else {
             info!("[Not Secure] {line}");

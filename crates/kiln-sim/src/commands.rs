@@ -631,7 +631,7 @@ impl Sim {
     fn broadcast_command_chat(&mut self, m: &crate::chat::Message, message: &ChatMessage) {
         let trusted = m.signature.is_some() && !m.expired_server(crate::chat_flow::now_ms());
         let line = console_text(&message.to_text());
-        if trusted {
+        if trusted || !self.config.server.console_system_prefix {
             info!("{line}");
         } else {
             info!("[Not Secure] {line}");
