@@ -213,6 +213,7 @@ impl Shared {
     }
 
     pub fn with_lobby(mut self, lobby: LobbyConfig) -> Self {
+        self.info.accepts_transfers.store(lobby.accepts_transfers, Ordering::Relaxed);
         self.lobby = lobby;
         self
     }
@@ -537,7 +538,7 @@ async fn handle(mut stream: TcpStream, addr: SocketAddr, shared: Arc<Shared>) ->
         1 => status(&mut conn, &shared, protocol).await,
         2 => login(conn, addr, &shared, protocol, &host).await,
         // `ServerHandshakePacketListenerImpl`: refused before login when transfers are off.
-        3 if !shared.lobby.accepts_transfers => {
+        3 if !shared.info.accepts_transfers.load(Ordering::Relaxed) => {
             conn.send(&login_ext::login_disconnect_translated("multiplayer.disconnect.transfers_disabled")).await?;
             bail!("transfer refused: accepts-transfers is off")
         }
@@ -736,7 +737,10 @@ async fn authenticate(
     };
     let reason = match result {
         Ok(Some(profile)) => match auth::verify_profile(&profile, name) {
-            Ok(()) => return Ok(profile),
+            Ok(()) => {
+                shared.info.notifier.activity();
+                return Ok(profile);
+            }
             Err(why) => anyhow!("{name} from {addr}: {why}"),
         },
         Ok(None) => anyhow!("{name} from {addr} failed to verify username"),

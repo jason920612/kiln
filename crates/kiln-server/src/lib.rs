@@ -6,6 +6,7 @@ pub mod jar;
 pub mod javaprops;
 pub mod launch;
 pub mod logging;
+pub mod mgmt;
 pub mod properties;
 pub mod query;
 pub mod rcon;

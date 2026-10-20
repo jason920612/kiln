@@ -1,0 +1,91 @@
+# parameterless with params null, method names
+{"jsonrpc":"2.0","id":1,"method":"minecraft:allowlist","params":null}
+{"jsonrpc":"2.0","id":2,"method":"minecraft:allowlist/add","params":null}
+{"jsonrpc":"2.0","id":3,"method":""}
+{"jsonrpc":"2.0","id":4,"method":"minecraft:"}
+{"jsonrpc":"2.0","id":5,"method":":allowlist"}
+{"jsonrpc":"2.0","id":6,"method":"a:b:c"}
+{"jsonrpc":"2.0","id":7,"method":" allowlist"}
+{"jsonrpc":"2.0","id":8,"method":"MINECRAFT:allowlist"}
+{"jsonrpc":"2.0","id":9,"method":"other:allowlist"}
+{"jsonrpc":"2.0","id":10,"method":true}
+{"jsonrpc":"2.0","id":11,"method":null}
+{"jsonrpc":"2.0","id":12,"method":[]}
+{"jsonrpc":"2.0","id":13,"method":{}}
+{"jsonrpc":"2.0","id":14,"method":"minecraft:allowlist","error":{"code":1}}
+{"jsonrpc":"2.0","id":15,"error":{"code":1,"message":"m"}}
+{"jsonrpc":"2.0","id":16,"result":null}
+{"jsonrpc":"2.0","id":16,"method":"minecraft:allowlist","result":null}
+# list errors
+{"jsonrpc":"2.0","id":20,"method":"minecraft:allowlist/add","params":[[5,6]]}
+{"jsonrpc":"2.0","id":21,"method":"minecraft:allowlist/add","params":[[{"name":"kt-a"},5]]}
+{"jsonrpc":"2.0","id":22,"method":"minecraft:allowlist/add","params":[[{"name":5},{"name":6}]]}
+{"jsonrpc":"2.0","id":23,"method":"minecraft:allowlist/add","params":[[{"name":5,"id":6}]]}
+{"jsonrpc":"2.0","id":24,"method":"minecraft:allowlist/add","params":[{"name":"kt-a"}]}
+{"jsonrpc":"2.0","id":25,"method":"minecraft:allowlist/add","params":"x"}
+# uuid shapes
+{"jsonrpc":"2.0","id":30,"method":"minecraft:allowlist/add","params":[[{"id":"1-2-3-4-5"}]]}
+{"jsonrpc":"2.0","id":31,"method":"minecraft:allowlist/add","params":[[{"id":"zzzzzzzz-0000-0000-0000-000000000000"}]]}
+{"jsonrpc":"2.0","id":32,"method":"minecraft:allowlist/add","params":[[{"id":5}]]}
+{"jsonrpc":"2.0","id":33,"method":"minecraft:allowlist/add","params":[[{"id":""}]]}
+{"jsonrpc":"2.0","id":34,"method":"minecraft:allowlist/add","params":[[{"id":"00000000-0000-0000-0000-0000000000000000000"}]]}
+{"jsonrpc":"2.0","id":35,"method":"minecraft:allowlist/add","params":[[{"id":"-1-2-3-4"}]]}
+{"jsonrpc":"2.0","id":36,"method":"minecraft:allowlist/add","params":[[{"id":"1-2-3-4-"}]]}
+{"jsonrpc":"2.0","id":37,"method":"minecraft:allowlist/add","params":[[{"id":"+1-2-3-4-5"}]]}
+{"jsonrpc":"2.0","id":38,"method":"minecraft:allowlist/add","params":[[{"id":"fffffffffffffffff-2-3-4-5"}]]}
+# operators
+{"jsonrpc":"2.0","id":40,"method":"minecraft:operators/add","params":[[{"player":{"name":"kt-op1"},"permissionLevel":-1}]]}
+{"jsonrpc":"2.0","id":41,"method":"minecraft:operators/add","params":[[{"player":{"name":"kt-op2"},"permissionLevel":2.5}]]}
+{"jsonrpc":"2.0","id":42,"method":"minecraft:operators/add","params":[[{"player":{"name":"kt-op3"},"permissionLevel":"x"}]]}
+{"jsonrpc":"2.0","id":43,"method":"minecraft:operators/add","params":[[{"player":{"name":"kt-op4"},"permissionLevel":3,"bypassesPlayerLimit":"y"}]]}
+{"jsonrpc":"2.0","id":44,"method":"minecraft:operators/set","params":[[{"player":{"name":"kt-op1"},"permissionLevel":0,"bypassesPlayerLimit":false}]]}
+{"jsonrpc":"2.0","id":45,"method":"minecraft:operators/set","params":[[{"player":{"name":"kt-op1"},"permissionLevel":0,"bypassesPlayerLimit":false}]]}
+{"jsonrpc":"2.0","id":46,"method":"minecraft:operators/clear"}
+# gamerule keys
+{"jsonrpc":"2.0","id":50,"method":"minecraft:gamerules/update","params":[{"key":"Minecraft:keep_inventory","value":true}]}
+{"jsonrpc":"2.0","id":51,"method":"minecraft:gamerules/update","params":[{"key":"keep inventory","value":true}]}
+{"jsonrpc":"2.0","id":52,"method":"minecraft:gamerules/update","params":[{"key":5,"value":true}]}
+{"jsonrpc":"2.0","id":53,"method":"minecraft:gamerules/update","params":[{"key":"","value":true}]}
+{"jsonrpc":"2.0","id":54,"method":"minecraft:gamerules/update","params":[{"key":"other:keep_inventory","value":true}]}
+{"jsonrpc":"2.0","id":55,"method":"minecraft:gamerules/update","params":[{"key":"minecraft:max_command_forks","value":2147483648}]}
+{"jsonrpc":"2.0","id":56,"method":"minecraft:gamerules/update","params":[{"key":"minecraft:max_command_forks","value":2.5}]}
+{"jsonrpc":"2.0","id":57,"method":"minecraft:gamerules/update","params":[{"key":"minecraft:keep_inventory","value":false,"extra":1}]}
+{"jsonrpc":"2.0","id":58,"method":"minecraft:gamerules/update","params":[5]}
+{"jsonrpc":"2.0","id":59,"method":"minecraft:gamerules/update","params":[{"key":5,"value":5}]}
+# instants
+{"jsonrpc":"2.0","id":60,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-t1"},"expires":"2030-01-01T00:00:00+01:00"}]]}
+{"jsonrpc":"2.0","id":61,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-t2"},"expires":"2030-01-01"}]]}
+{"jsonrpc":"2.0","id":62,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-t3"},"expires":"2030-01-01T00:00:00"}]]}
+{"jsonrpc":"2.0","id":63,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-t4"},"expires":"2030-13-01T00:00:00Z"}]]}
+{"jsonrpc":"2.0","id":64,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-t5"},"expires":5}]]}
+{"jsonrpc":"2.0","id":65,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-t6"},"expires":"2030-02-30T00:00:00Z"}]]}
+{"jsonrpc":"2.0","id":66,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-t7"},"expires":"2030-01-01T00:00:00.123456Z"}]]}
+{"jsonrpc":"2.0","id":67,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-t8"},"expires":"2030-01-01T00:00Z"}]]}
+{"jsonrpc":"2.0","id":68,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-t9"},"expires":"2030-01-01T25:00:00Z"}]]}
+{"jsonrpc":"2.0","id":69,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-ta"},"expires":"2030-01-01T00:00:00Zx"}]]}
+{"jsonrpc":"2.0","id":70,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-tb"},"expires":"+12345-01-01T00:00:00Z"}]]}
+{"jsonrpc":"2.0","id":71,"method":"minecraft:bans"}
+{"jsonrpc":"2.0","id":72,"method":"minecraft:bans/clear"}
+# messages
+{"jsonrpc":"2.0","id":80,"method":"minecraft:server/system_message","params":[{"message":{"translatable":"chat.type.admin"},"overlay":false}]}
+{"jsonrpc":"2.0","id":81,"method":"minecraft:server/system_message","params":[{"message":{"literal":"a","translatable":"b"},"overlay":false}]}
+{"jsonrpc":"2.0","id":82,"method":"minecraft:server/system_message","params":[{"message":{"literal":5,"translatable":6},"overlay":false}]}
+{"jsonrpc":"2.0","id":83,"method":"minecraft:server/system_message","params":[{"message":{"translatableParams":5,"literal":"x"},"overlay":false}]}
+{"jsonrpc":"2.0","id":84,"method":"minecraft:server/system_message","params":[{"message":{"translatable":"commands.op.success","translatableParams":["a"]},"overlay":false}]}
+{"jsonrpc":"2.0","id":85,"method":"minecraft:server/system_message","params":[{"message":5,"overlay":5}]}
+# settings with odd numbers
+{"jsonrpc":"2.0","id":90,"method":"minecraft:serversettings/max_players/set","params":[1e20]}
+{"jsonrpc":"2.0","id":91,"method":"minecraft:serversettings/max_players/set","params":[-2.5]}
+{"jsonrpc":"2.0","id":92,"method":"minecraft:serversettings/max_players/set","params":[2147483648]}
+{"jsonrpc":"2.0","id":93,"method":"minecraft:serversettings/max_players/set","params":[-2147483649]}
+{"jsonrpc":"2.0","id":94,"method":"minecraft:serversettings/max_players/set","params":[12345678901234567890123]}
+{"jsonrpc":"2.0","id":95,"method":"minecraft:serversettings/max_players/set","params":[1.5e3]}
+{"jsonrpc":"2.0","id":96,"method":"minecraft:serversettings/max_players/set","params":[null]}
+{"jsonrpc":"2.0","id":97,"method":"minecraft:serversettings/difficulty/set","params":[null]}
+{"jsonrpc":"2.0","id":98,"method":"minecraft:serversettings/difficulty/set","params":{"difficulty":"easy"}}
+{"jsonrpc":"2.0","id":99,"method":"minecraft:serversettings/difficulty/set","params":{"difficulty":null}}
+# duplicate keys and ordering
+!raw {"jsonrpc":"2.0","jsonrpc":"2.0","id":100,"id":101,"method":"minecraft:allowlist"}
+!raw {"method":"minecraft:serversettings/motd","id":"a<b>&'c","params":[]}
+!raw {"method":"minecraft:serversettings/motd","id":"é ","params":[]}
+# binary and fragmented frames are covered by the Rust tests

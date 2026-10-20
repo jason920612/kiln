@@ -764,6 +764,10 @@ impl kiln_link::AdminHost for Sim {
     fn rcon_command(&mut self, command: &str) -> String {
         self.run_rcon_command(command)
     }
+
+    fn mgmt(&mut self) -> Option<&mut dyn kiln_link::mgmt::MgmtHost> {
+        Some(self)
+    }
 }
 
 impl SelectorWorld for Sim {
@@ -1284,20 +1288,18 @@ impl Host for Sim {
         {
             // `PlayerList.op` / `deop`: `ops.json` follows.
             let mut access = self.config.access.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let key = profile.uuid.to_string();
             if op {
                 // `op-permission-level`: what `/op` grants.
                 let level = self.config.server.op_permission_level;
                 self.commands.ops.insert(profile.name.clone());
                 self.commands.op_levels.insert(profile.name.clone(), level);
                 let user = kiln_link::access::NameAndId { uuid: profile.uuid, name: profile.name.clone() };
-                access.op_list.put(key, kiln_link::access::OpEntry { user, level, bypasses_player_limit: false });
+                access.op_add(kiln_link::access::OpEntry { user, level, bypasses_player_limit: false });
             } else {
                 self.commands.ops.remove(&profile.name);
                 self.commands.op_levels.remove(&profile.name);
-                access.op_list.remove(&key);
+                access.op_remove(&kiln_link::access::NameAndId { uuid: profile.uuid, name: profile.name.clone() });
             }
-            access.save_ops();
         }
         self.sync_ops();
         let conn = self.players.iter().find(|(_, p)| p.name == profile.name).map(|(c, _)| *c);
@@ -1342,6 +1344,13 @@ impl Host for Sim {
     }
 
     fn set_game_rule(&mut self, rule: &str, value: GameRuleValue) {
+        self.notify(kiln_link::mgmt::Notification::GameRuleChanged {
+            key: rule.to_owned(),
+            value: match value {
+                GameRuleValue::Bool(b) => kiln_link::mgmt::RuleValue::Bool(b),
+                GameRuleValue::Int(i) => kiln_link::mgmt::RuleValue::Int(i),
+            },
+        });
         self.commands.game_rules.insert(rule.to_owned(), value);
         // `MinecraftServer.onGameRuleChanged`: what clients show follows the rule.
         let on = matches!(value, GameRuleValue::Bool(true));

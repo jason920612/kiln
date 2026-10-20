@@ -29,6 +29,7 @@ mod command_data;
 mod commands;
 mod chat;
 mod settings;
+mod mgmt;
 mod chat_flow;
 mod consume;
 mod buckets;
@@ -1758,6 +1759,12 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
     // (The line that panels wait for: the server is ready for players.)
     info!("Done ({:.3}s)! For help, type \"help\"", started.elapsed().as_secs_f64());
     sim.sync_ops();
+    // `DedicatedServer.initServer` ends: the server is ready, and the management clients hear of it.
+    sim.config.info.ready.store(true, std::sync::atomic::Ordering::Relaxed);
+    // (`initServer` ends with `saveEverything(true, true, true)` and then `serverStarted`.)
+    sim.notify(kiln_link::mgmt::Notification::ServerSaveStarted);
+    sim.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
+    sim.notify(kiln_link::mgmt::Notification::ServerStarted);
     let mut next_tick = Instant::now();
     let mut inbox = Vec::new();
     let info = sim.config.info.clone();
@@ -1790,7 +1797,17 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         next_tick += Duration::from_nanos(sim.world.tick_rate.nanos_per_tick() as u64);
         let now = Instant::now();
         if next_tick > now {
-            std::thread::sleep(next_tick - now);
+            // The wait for the next tick serves the work of the administration threads (RCON, the management
+            // server) as it arrives, as vanilla's main thread runs queued tasks while it waits: a request is not
+            // held back a whole tick. (Only when every region ticks in lockstep: nothing is running then.)
+            while let Some(left) = next_tick.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
+                match rx.recv_timeout(left) {
+                    Ok(ToSim::Admin(work)) if sim.config.schedule == ScheduleMode::Lockstep => work(&mut sim),
+                    Ok(msg) => inbox.push(msg),
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => break,
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
+                }
+            }
         } else {
             next_tick = now;
         }
@@ -4004,19 +4021,25 @@ impl Sim {
             self.player_stops_riding(&p);
             self.plugins_left(&p);
             self.announce_leave(&p, conn);
+            self.notify(kiln_link::mgmt::Notification::PlayerLeft(kiln_link::access::NameAndId { uuid: p.uuid, name: p.name.clone() }));
             let shown = self.player_display_name(&p.name, p.uuid);
             self.broadcast_system_text(Text::translate("multiplayer.player.left", vec![Arg::Text(shown)]).color("yellow"));
         }
     }
 
     fn shut_down(&mut self) {
+        // (`DedicatedServer.stopServer`, then the final save.)
+        self.config.info.ready.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.notify(kiln_link::mgmt::Notification::ServerShuttingDown);
         stats::flush_trace();
         info!("{}", chunkstats::line(self.config.noise.as_ref().map_or(0, |n| n.threads)));
         self.rendezvous();
         for p in self.players.values_mut() {
             p.disconnect("Server closed");
         }
+        self.notify(kiln_link::mgmt::Notification::ServerSaveStarted);
         self.save();
+        self.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
         // Writes still running on the storage threads reach the disk before the server stops.
         for d in &mut self.dims {
             if let Err(e) = d.provider.sync() {
@@ -4043,9 +4066,12 @@ impl Sim {
     /// [`SAVE_BUDGET`] and encoded and written on the storage threads, so the save holds no tick
     /// up; everything else is saved at once. Elsewhere, the whole save at once.
     fn start_save(&mut self) {
+        // (`DedicatedServer.saveAllChunks`: the management clients hear of every save.)
+        self.notify(kiln_link::mgmt::Notification::ServerSaveStarted);
         let background = self.dims.iter().all(|d| d.generation.is_some() && d.lent.is_empty());
         if !background || std::env::var("KILN_BACKGROUND_STORAGE").is_ok_and(|v| v == "0") {
             self.save();
+            self.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
             return;
         }
         let start = Instant::now();
@@ -4139,6 +4165,7 @@ impl Sim {
             for d in &mut self.dims {
                 d.flush_when_encoded = true;
             }
+            self.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
         } else {
             self.save_run = Some(queue);
         }
@@ -4526,6 +4553,7 @@ impl Sim {
         self.send_command_tree(j.conn);
         self.announce_join(j.conn);
         self.broadcast_system(msg);
+        self.notify(kiln_link::mgmt::Notification::PlayerJoined(kiln_link::access::NameAndId { uuid, name: self.players[&j.conn].name.clone() }));
         self.commands.bossbars.player_joined(uuid);
         self.flush_scoreboard();
     }
