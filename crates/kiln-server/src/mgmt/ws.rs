@@ -21,25 +21,36 @@ impl HttpRequest {
     }
 }
 
-/// Parses the head of a request (everything up to the blank line); `None` if it is no HTTP.
-pub fn parse_request(head: &str) -> Option<HttpRequest> {
+/// Parses the head of a request (everything up to the blank line). Netty hands anything it cannot parse
+/// on as a request that has no headers, so what is no HTTP gives a request with an empty method and no headers.
+pub fn parse_request(head: &str) -> HttpRequest {
+    let junk = HttpRequest { method: String::new(), target: String::new(), headers: Vec::new() };
+    if head.contains('\n') && !head.contains("\r\n") {
+        // (Lines ended by a bare line feed are not taken for lines.)
+        return junk;
+    }
     let mut lines = head.split("\r\n");
-    let mut first = lines.next()?.split(' ');
-    let method = first.next()?.to_owned();
-    let target = first.next()?.to_owned();
-    if !first.next()?.starts_with("HTTP/1.") {
-        return None;
+    let Some(first) = lines.next() else { return junk };
+    let mut parts = first.split(' ');
+    let (Some(method), Some(target), Some(version), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else { return junk };
+    if !version.starts_with("HTTP/1.") {
+        return junk;
     }
     let headers = lines
         .filter(|l| !l.is_empty())
         .filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned())))
         .collect();
-    Some(HttpRequest { method, target, headers })
+    HttpRequest { method: method.to_owned(), target: target.to_owned(), headers }
 }
 
 /// The index just past the blank line that ends a request head.
 pub fn head_end(buf: &[u8]) -> Option<usize> {
-    buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4)
+    let crlf = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4);
+    let lf = buf.windows(2).position(|w| w == b"\n\n").map(|i| i + 2);
+    match (crlf, lf) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 /// `Sec-WebSocket-Accept` for a key.
@@ -50,23 +61,63 @@ pub fn accept_key(key: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(h.finalize())
 }
 
-/// A WebSocket handshake request the way netty checks one: GET, `Upgrade: websocket`, `Connection: Upgrade`,
-/// a key and version 13. Err is the status line and reason of the refusal.
-pub fn check_handshake(req: &HttpRequest) -> Result<String, (u16, &'static str)> {
+/// What the server answers to a request that wants a WebSocket.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Handshake {
+    /// Version 7, 8 or 13: the connection becomes a WebSocket (the key to answer).
+    Accept(String),
+    /// An answer, and whether the connection is closed after it.
+    Refuse(Vec<u8>, bool),
+    /// The first draft of the protocol (no version header, an origin): the answer; the draft's framing is not served.
+    Draft(Vec<u8>),
+}
+
+fn has_token(req: &HttpRequest, name: &str, token: &str) -> bool {
+    req.headers.iter().filter(|(k, _)| k.eq_ignore_ascii_case(name)).any(|(_, v)| v.split(',').any(|t| t.trim().eq_ignore_ascii_case(token)))
+}
+
+/// A bare 400 with the reason as the body: no headers, no length, then the connection closes (a HEAD request gets no body).
+fn bad_request(req: &HttpRequest, why: &str) -> Handshake {
+    let body = if req.method == "HEAD" { "" } else { why };
+    Handshake::Refuse(format!("HTTP/1.1 400 Bad Request\r\n\r\n{body}").into_bytes(), true)
+}
+
+/// `WebSocketServerProtocolHandshakeHandler` for the path "/": the checks of netty's handshakers by version.
+pub fn handshake(req: &HttpRequest) -> Handshake {
     if req.method != "GET" {
-        return Err((403, "Forbidden"));
-    }
-    let has = |name: &str, token: &str| req.header(name).is_some_and(|v| v.split(',').any(|t| t.trim().eq_ignore_ascii_case(token)));
-    if !has("Connection", "upgrade") || !has("Upgrade", "websocket") {
-        return Err((400, "Bad Request"));
+        return bad_request(req, &format!("Invalid WebSocket handshake method: {}", req.method));
     }
     match req.header("Sec-WebSocket-Version") {
-        Some("13") => {}
-        _ => return Err((426, "Upgrade Required")),
-    }
-    match req.header("Sec-WebSocket-Key") {
-        Some(k) if !k.is_empty() => Ok(k.to_owned()),
-        _ => Err((400, "Bad Request")),
+        Some("13" | "8" | "7") => {
+            if !has_token(req, "Connection", "upgrade") {
+                return bad_request(req, "not a WebSocket request: a |Connection| header must include a token 'Upgrade'");
+            }
+            if !has_token(req, "Upgrade", "websocket") {
+                return bad_request(req, "not a WebSocket request: an |Upgrade| header must containing the value 'websocket'");
+            }
+            match req.header("Sec-WebSocket-Key") {
+                Some(key) => Handshake::Accept(key.to_owned()),
+                None => bad_request(req, "not a WebSocket request: missing key"),
+            }
+        }
+        Some(_) => Handshake::Refuse(b"HTTP/1.1 426 Upgrade Required\r\nsec-websocket-version: 13\r\ncontent-length: 0\r\n\r\n".to_vec(), false),
+        None => {
+            if !has_token(req, "Connection", "upgrade") || !has_token(req, "Upgrade", "websocket") {
+                return bad_request(req, "not a WebSocket handshake request: missing upgrade");
+            }
+            let Some(origin) = req.header("Origin") else {
+                let mut names: Vec<&str> = req.headers.iter().map(|(k, _)| k.as_str()).collect();
+                if !names.iter().any(|n| n.eq_ignore_ascii_case("content-length")) {
+                    names.push("content-length");
+                }
+                return bad_request(req, &format!("Missing origin header, got only [{}]", names.join(", ")));
+            };
+            let host = req.header("Host").unwrap_or("");
+            Handshake::Draft(
+                format!("HTTP/1.1 101 Web Socket Protocol Handshake\r\nupgrade: websocket\r\nconnection: upgrade\r\nwebsocket-origin: {origin}\r\nwebsocket-location: ws://{host}{}\r\n\r\n", req.target)
+                    .into_bytes(),
+            )
+        }
     }
 }
 

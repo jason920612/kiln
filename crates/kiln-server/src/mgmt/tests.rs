@@ -494,7 +494,8 @@ fn only_the_secret_gets_in() {
     assert!(r.starts_with("HTTP/1.1 401 Unauthorized\r\n") && r.ends_with(&body("Missing API key")), "{r}");
     assert!(r.contains("content-type: application/json\r\n") && r.contains("connection: close\r\n"));
     assert!(denied(&env, &[("Authorization", "Bearer wrong")]).ends_with(&body("Invalid API key")));
-    assert!(denied(&env, &[("Authorization", "Bearer")]).ends_with(&body("Invalid API key")));
+    assert!(denied(&env, &[("Authorization", "Bearer")]).ends_with(&body("Missing API key")));
+    assert!(denied(&env, &[("Authorization", "bearer abc")]).ends_with(&body("Missing API key")));
     assert!(denied(&env, &[("Authorization", "Basic abc")]).ends_with(&body("Missing API key")));
     // The secret in the sub-protocol needs an origin that is allowed.
     let proto = format!("minecraft-v1, {SECRET}");
@@ -1042,4 +1043,82 @@ fn set_removes_in_the_order_of_a_java_hash_set() {
         assert!(got.contains("notification/bans/removed") && got.contains(&format!(r#""name":"{name}""#)), "{got}");
     }
     assert!(c.text().contains("notification/bans/added"));
+}
+
+/// Sends `text` and returns what comes back until the server closes or says nothing for half a second.
+fn raw(addr: SocketAddr, text: &str) -> String {
+    let mut sock = TcpStream::connect(addr).unwrap();
+    sock.write_all(text.as_bytes()).unwrap();
+    sock.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 1024];
+    while let Ok(n) = sock.read(&mut chunk) {
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&chunk[..n]);
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[test]
+fn handshake_refusals_read_like_nettys() {
+    let env = Env::start();
+    let auth = format!("Authorization: Bearer {SECRET}\r\n");
+    let key = "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
+    let ok_headers = format!("Host: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n{key}Sec-WebSocket-Version: 13\r\n{auth}");
+    let get = |headers: &str| format!("GET / HTTP/1.1\r\n{headers}\r\n");
+    let addr = env.server.local_addr();
+    let bad = |why: &str| format!("HTTP/1.1 400 Bad Request\r\n\r\n{why}");
+    assert_eq!(raw(addr, &format!("POST / HTTP/1.1\r\n{ok_headers}\r\n")), bad("Invalid WebSocket handshake method: POST"));
+    assert_eq!(raw(addr, &format!("HEAD / HTTP/1.1\r\n{ok_headers}\r\n")), bad(""));
+    assert_eq!(raw(addr, &get(&format!("Host: x\r\n{key}Sec-WebSocket-Version: 13\r\n{auth}"))), bad("not a WebSocket request: a |Connection| header must include a token 'Upgrade'"));
+    assert_eq!(
+        raw(addr, &get(&format!("Host: x\r\nUpgrade: websocket\r\nConnection: keep-alive\r\n{key}Sec-WebSocket-Version: 13\r\n{auth}"))),
+        bad("not a WebSocket request: a |Connection| header must include a token 'Upgrade'")
+    );
+    assert_eq!(
+        raw(addr, &get(&format!("Host: x\r\nUpgrade: foo\r\nConnection: Upgrade\r\n{key}Sec-WebSocket-Version: 13\r\n{auth}"))),
+        bad("not a WebSocket request: an |Upgrade| header must containing the value 'websocket'")
+    );
+    assert_eq!(
+        raw(addr, &get(&format!("Host: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n{auth}"))),
+        bad("not a WebSocket request: missing key")
+    );
+    // A key that is empty or short is taken; the version may be 7, 8 or 13; others get 426 and the connection stays.
+    for (version, ok) in [("13", true), ("8", true), ("7", true), ("0", false), ("99", false)] {
+        let r = raw(addr, &get(&format!("Host: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key:\r\nSec-WebSocket-Version: {version}\r\n{auth}")));
+        if ok {
+            assert!(r.starts_with("HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: upgrade\r\nsec-websocket-accept: "), "{r}");
+        } else {
+            assert_eq!(r, "HTTP/1.1 426 Upgrade Required\r\nsec-websocket-version: 13\r\ncontent-length: 0\r\n\r\n");
+        }
+    }
+    // Without a version: the first draft of the protocol.
+    assert_eq!(
+        raw(addr, &get(&format!("Host: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n{auth}"))),
+        bad("Missing origin header, got only [Host, Upgrade, Connection, Authorization, content-length]")
+    );
+    assert_eq!(raw(addr, &get(&format!("Host: x\r\n{auth}"))), bad("not a WebSocket handshake request: missing upgrade"));
+    assert_eq!(
+        raw(addr, &get(&format!("Host: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nOrigin: http://x\r\n{auth}"))),
+        "HTTP/1.1 101 Web Socket Protocol Handshake\r\nupgrade: websocket\r\nconnection: upgrade\r\nwebsocket-origin: http://x\r\nwebsocket-location: ws://x/\r\n\r\n"
+    );
+    // Only "/" is a WebSocket path; the request for another is never answered, but the secret is checked first.
+    assert_eq!(raw(addr, &format!("GET /foo HTTP/1.1\r\n{ok_headers}\r\n")), "");
+    assert_eq!(raw(addr, &format!("GET /?x=1 HTTP/1.1\r\n{ok_headers}\r\n")), "");
+    assert!(raw(addr, "GET /foo HTTP/1.1\r\nHost: x\r\n\r\n").ends_with(r#"{"error":"Unauthorized","message":"Missing API key"}"#));
+    // What is no HTTP request at all has no secret either.
+    assert!(raw(addr, "hello there\r\n\r\n").ends_with(r#""message":"Missing API key"}"#));
+    assert!(raw(addr, "GET / HTTP/1.1\nHost: x\nAuthorization: Bearer nope\n\n").ends_with(r#""message":"Missing API key"}"#));
+    // A client waiting for permission to send a body is given it.
+    let r = raw(addr, &get(&format!("{ok_headers}Expect: 100-continue\r\n")));
+    assert!(r.starts_with("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 101 Switching Protocols\r\n"), "{r}");
+    // The origin must match exactly.
+    let proto = format!("Sec-WebSocket-Protocol: minecraft-v1, {SECRET}\r\n");
+    let env2 = Env::start_with(|c| c.allowed_origins = "https://good.example".into());
+    for origin in ["HTTPS://GOOD.EXAMPLE", "https://good.example/"] {
+        let r = raw(env2.server.local_addr(), &get(&format!("{ok_headers_no_auth}{proto}Origin: {origin}\r\n", ok_headers_no_auth = format!("Host: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n{key}Sec-WebSocket-Version: 13\r\n"))));
+        assert!(r.ends_with(r#""message":"Origin Not Allowed"}"#), "{r}");
+    }
 }

@@ -80,9 +80,9 @@ fn valid_key(shared: &Shared, token: &str) -> bool {
 }
 
 fn security_check(shared: &Shared, req: &ws::HttpRequest) -> Check {
-    // `Authorization: Bearer <secret>`.
+    // `Authorization: Bearer <secret>` (the first such header, its value trimmed).
     if let Some(auth) = req.header("Authorization")
-        && let Some(rest) = auth.strip_prefix("Bearer")
+        && let Some(rest) = auth.strip_prefix("Bearer ")
     {
         return if valid_key(shared, rest.trim()) { Check::Allowed { token_in_protocol: false } } else { Check::Denied("Invalid API key") };
     }
@@ -99,16 +99,15 @@ fn security_check(shared: &Shared, req: &ws::HttpRequest) -> Check {
     Check::Denied("Missing API key")
 }
 
-/// Reads until the end of the request head, within ten seconds.
-fn read_head(wire: &mut dyn Wire, buf: &mut Vec<u8>) -> Option<usize> {
-    let deadline = Instant::now() + Duration::from_secs(10);
+/// Reads until the end of the request head. `None` if the peer goes away, or the server stops.
+fn read_head(wire: &mut dyn Wire, buf: &mut Vec<u8>, shared: &Shared) -> Option<usize> {
     let mut chunk = [0u8; 4096];
     wire.set_timeout(Duration::from_millis(200));
     loop {
         if let Some(end) = ws::head_end(buf) {
             return Some(end);
         }
-        if buf.len() > ws::MAX_PAYLOAD || Instant::now() > deadline {
+        if buf.len() > 4 * ws::MAX_PAYLOAD || shared.stopping.load(Ordering::SeqCst) {
             return None;
         }
         match wire.read(&mut chunk) {
@@ -153,39 +152,62 @@ pub fn serve(mut wire: Box<dyn Wire>, peer: SocketAddr, id: u32, shared: Arc<Sha
 /// The HTTP request: authentication, then the WebSocket handshake. `Some` with what followed the request.
 fn upgrade(wire: &mut dyn Wire, peer: SocketAddr, shared: &Shared) -> Option<(bool, Vec<u8>)> {
     let mut buf = Vec::new();
-    let end = read_head(wire, &mut buf)?;
-    let head = String::from_utf8_lossy(&buf[..end - 4]).into_owned();
-    let leftover = buf[end..].to_vec();
-    let Some(req) = ws::parse_request(&head) else {
-        send(wire, &ws::status_response(400, "Bad Request", "", "", &[]));
-        return None;
-    };
-    let token_in_protocol = match security_check(shared, &req) {
-        Check::Allowed { token_in_protocol } => token_in_protocol,
-        Check::Denied(reason) => {
-            debug!("Authentication rejected for connection with ip {}: {reason}", peer.ip());
-            let body = format!("{{\"error\":\"Unauthorized\",\"message\":\"{reason}\"}}");
-            send(wire, &ws::status_response(401, "Unauthorized", "application/json", &body, &[]));
-            return None;
+    loop {
+        let end = read_head(wire, &mut buf, shared)?;
+        let sep = if buf[..end].ends_with(b"\r\n\r\n") { 4 } else { 2 };
+        let head = String::from_utf8_lossy(&buf[..end - sep]).into_owned();
+        let req = ws::parse_request(&head);
+        // `HttpObjectAggregator`: a client that waits for permission to send a body gets it.
+        if req.header("Expect").is_some_and(|e| e.eq_ignore_ascii_case("100-continue")) {
+            send(wire, b"HTTP/1.1 100 Continue\r\n\r\n");
         }
-    };
-    let path = req.target.split('?').next().unwrap_or("");
-    if path != "/" {
-        send(wire, &ws::status_response(404, "Not Found", "", "", &[]));
-        return None;
-    }
-    match ws::check_handshake(&req) {
-        Ok(key) => {
-            let protocol = token_in_protocol.then_some("minecraft-v1");
-            send(wire, &ws::switching_protocols(&key, protocol)).then_some((token_in_protocol, leftover))
+        // What the request carries as a body is read and dropped.
+        let body = req.header("Content-Length").and_then(|n| n.parse::<usize>().ok()).unwrap_or(0).min(ws::MAX_PAYLOAD);
+        while buf.len() < end + body {
+            let mut chunk = [0u8; 4096];
+            match wire.read(&mut chunk) {
+                Ok(0) => return None,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                    if shared.stopping.load(Ordering::SeqCst) {
+                        return None;
+                    }
+                }
+                Err(_) => return None,
+            }
         }
-        Err((426, reason)) => {
-            send(wire, &ws::status_response(426, reason, "", "", &[("sec-websocket-version", "13")]));
-            None
+        let leftover = buf[end + body..].to_vec();
+        buf.clear();
+        let token_in_protocol = match security_check(shared, &req) {
+            Check::Allowed { token_in_protocol } => token_in_protocol,
+            Check::Denied(reason) => {
+                debug!("Authentication rejected for connection with ip {}: {reason}", peer.ip());
+                let body = format!("{{\"error\":\"Unauthorized\",\"message\":\"{reason}\"}}");
+                send(wire, &ws::status_response(401, "Unauthorized", "application/json", &body, &[]));
+                return None;
+            }
+        };
+        // Only "/" is the WebSocket path; any other request is passed on to nobody (and never answered).
+        if req.target != "/" {
+            buf = leftover;
+            continue;
         }
-        Err((code, reason)) => {
-            send(wire, &ws::status_response(code, reason, "", "", &[]));
-            None
+        match ws::handshake(&req) {
+            ws::Handshake::Accept(key) => {
+                let protocol = token_in_protocol.then_some("minecraft-v1");
+                return send(wire, &ws::switching_protocols(&key, protocol)).then_some((token_in_protocol, leftover));
+            }
+            ws::Handshake::Draft(answer) => {
+                send(wire, &answer);
+                return None;
+            }
+            ws::Handshake::Refuse(answer, close) => {
+                send(wire, &answer);
+                if close {
+                    return None;
+                }
+                buf = leftover;
+            }
         }
     }
 }
