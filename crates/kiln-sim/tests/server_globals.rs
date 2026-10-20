@@ -108,6 +108,8 @@ fn op_permission_level_is_what_op_grants() {
     let mut config = SimConfig::new(4, 2, None);
     config.server.op_permission_level = 3;
     let mut sim = Sim::new(config);
+    let (msg, _stats) = testing::join(1, "Boss", 2);
+    assert!(sim.step([msg]));
     sim.console_now("op Boss");
     assert_eq!(sim.permission_level_of_name("Boss"), 3);
     sim.console_now("deop Boss");
