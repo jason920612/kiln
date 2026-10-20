@@ -215,7 +215,7 @@ fn a_chat_session_and_signed_messages_are_verified_chained_and_relayed() {
     assert!(said(&a, SYSTEM_CHAT, "chat.disabled.invalid_signature"), "told in red");
     assert_eq!(signed_chats(&b).len(), 2, "not relayed");
     chain.next_index = 2;
-    assert!(sim.step([ToSim::Packet(1, chain.message("after the break", t0 + 30, 45, 1, [0, 0, 12], &seen2))]));
+    assert!(sim.step([ToSim::Packet(1, chain.message("after the break", t0 + 30, 45, 0, [0, 0, 12], &seen2))]));
     run(&mut sim, &mut [&mut a, &mut b], 2);
     assert!(said(&a, SYSTEM_CHAT, "chat.disabled.chain_broken"));
     assert_eq!(signed_chats(&b).len(), 2);
