@@ -122,7 +122,7 @@ public class MaceFall {
         server.getCommands().performPrefixedCommand(cmd, "gamerule minecraft:pvp true");
         ServerLevel level = server.overworld();
         // The mob: a zombie that does not think, on the ground.
-        Mob mob = (Mob) EntityType.ZOMBIE.create(level, EntitySpawnReason.COMMAND);
+        Mob mob = (Mob) net.minecraft.world.entity.EntityTypes.ZOMBIE.create(level, EntitySpawnReason.COMMAND);
         mob.setPos(X, Y0, Z);
         mob.setNoAi(true);
         mob.setPersistenceRequired();
