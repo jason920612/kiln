@@ -804,7 +804,7 @@ async fn login_refusals_use_translatable_texts() {
     let (addr, _) = serve(shared.clone()).await;
     let mut c = Conn::new(TcpStream::connect(addr).await.unwrap());
     c.queue(&packet(ids::handshake::serverbound::INTENTION, |b| {
-        b.put_varint(700); // a 1.21 client
+        b.put_varint(800); // a newer client
         b.put_string("localhost");
         b.put_u16(25565);
         b.put_varint(2);
@@ -819,6 +819,24 @@ async fn login_refusals_use_translatable_texts() {
     let (id, body) = recv(&mut c).await;
     let reason: serde_json::Value = serde_json::from_str(&disconnect_reason(id, &body)).unwrap();
     assert_eq!(reason, serde_json::json!({ "translate": "multiplayer.disconnect.incompatible", "with": [version::NAME] }));
+
+    // A client older than the 1.16 protocol is "outdated".
+    let mut c = Conn::new(TcpStream::connect(addr).await.unwrap());
+    c.queue(&packet(ids::handshake::serverbound::INTENTION, |b| {
+        b.put_varint(700);
+        b.put_string("localhost");
+        b.put_u16(25565);
+        b.put_varint(2);
+    }))
+    .unwrap();
+    c.queue(&packet(ids::login::serverbound::HELLO, |b| {
+        b.put_string("Old");
+        b.put_uuid(Uuid::nil());
+    }))
+    .unwrap();
+    c.flush().await.unwrap();
+    let (id, body) = recv(&mut c).await;
+    assert!(disconnect_reason(id, &body).contains("multiplayer.disconnect.outdated_client"));
 
     // A full server.
     let slots: Vec<_> = (0..10).map(|_| super::PlayerSlot::reserve(&shared).unwrap()).collect();
