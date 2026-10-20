@@ -122,7 +122,8 @@ fn a_smash_attack_from_a_fall_does_what_vanilla_does() {
         let path: Vec<f64> = v["path"].as_array().unwrap().iter().map(|y| y.as_f64().unwrap() + dy).collect();
         // The vanilla player began one fall step above the first position of its path.
         let start_y = path[0] + 0.0784;
-        w.ticks(5);
+        // (The mace is swung at full strength: its cooldown ran out.)
+        w.ticks(45);
         let mob = *w.sim.entity_ids_of("minecraft:zombie").last().expect("the zombie");
         let health_before = w.sim.mob_state(mob).unwrap().health;
         let attack_at = v["attack_at"].as_u64().unwrap() as usize;
