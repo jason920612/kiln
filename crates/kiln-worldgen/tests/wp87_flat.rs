@@ -150,6 +150,7 @@ fn check(case: &str, dimension: &str, expect_blocks: &[(&str, usize)], expect_st
     let chunks: Vec<_> = dump.targets.iter().map(|t| pipeline.full(&mut gs, t.x, t.z)).collect();
     let (mut block_diffs, mut start_diffs, mut bad_chunks) = (0usize, 0usize, 0usize);
     let mut first = Vec::new();
+    let mut pairs = std::collections::BTreeMap::<(u16, u16), usize>::new();
     for (t, p) in dump.targets.iter().zip(&chunks) {
         let min_y = pipeline.world().generator.min_y;
         let mut chunk_bad = false;
@@ -157,6 +158,7 @@ fn check(case: &str, dimension: &str, expect_blocks: &[(&str, usize)], expect_st
             if ours != theirs {
                 block_diffs += 1;
                 chunk_bad = true;
+                *pairs.entry((ours, theirs)).or_default() += 1;
                 let (s, k) = (i >> 12, i & 4095);
                 if first.len() < 20 {
                     first.push(format!(
@@ -200,6 +202,11 @@ fn check(case: &str, dimension: &str, expect_blocks: &[(&str, usize)], expect_st
     }
     let structures: usize = dump.targets.iter().map(|t| t.starts.len()).sum();
     eprintln!("{case} ({dimension}): {} chunks, {structures} structure starts in them; {bad_chunks} chunks differ: {block_diffs} blocks, {start_diffs} structure start lists", dump.targets.len());
+    let mut by_count: Vec<_> = pairs.into_iter().collect();
+    by_count.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    for ((ours, theirs), n) in by_count.iter().take(8) {
+        eprintln!("  {n} x kiln {} vanilla {}", state_name(*ours), state_name(*theirs));
+    }
     for line in &first {
         eprintln!("  {line}");
     }
