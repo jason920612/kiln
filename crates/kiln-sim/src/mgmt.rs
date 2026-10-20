@@ -132,7 +132,7 @@ impl MgmtHost for Sim {
                 .collect()
         };
         for u in unlisted {
-            self.kick(u, &MgmtText::Translatable { key: "multiplayer.disconnect.not_whitelisted".into(), args: vec![] });
+            MgmtHost::kick(self, u, &MgmtText::Translatable { key: "multiplayer.disconnect.not_whitelisted".into(), args: vec![] });
         }
     }
 

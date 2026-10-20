@@ -22,7 +22,14 @@ impl Errs {
     }
 
     pub fn finish(self) -> R<()> {
-        if self.0.is_empty() { Ok(()) } else { Err(self.0.join("; ")) }
+        // (`DataResult.apply` puts the error of the later field first.)
+        if self.0.is_empty() {
+            Ok(())
+        } else {
+            let mut errors = self.0;
+            errors.reverse();
+            Err(errors.join("; "))
+        }
     }
 }
 
@@ -118,39 +125,71 @@ pub fn list<T>(j: &J, element: impl Fn(&J) -> R<T>) -> R<Vec<T>> {
     Ok(out)
 }
 
-/// `UUIDUtil.STRING_CODEC`: `UUID.fromString`.
+/// `Long.parseLong(s, begin, end, 16)`: the message of the `NumberFormatException` on failure.
+fn parse_hex_range(chars: &[char], begin: usize, end: usize) -> Result<i64, String> {
+    let shown: String = chars[begin..end].iter().collect();
+    let at = |i: usize| format!("Error at index {} in: \"{shown}\"", i - begin);
+    if begin == end {
+        return Err("For input string: \"\" under radix 16".into());
+    }
+    let (mut i, mut negative, mut limit) = (begin, false, -i64::MAX);
+    if chars[i] < '0' {
+        match chars[i] {
+            '-' => {
+                negative = true;
+                limit = i64::MIN;
+            }
+            '+' => {}
+            _ => return Err(at(i)),
+        }
+        i += 1;
+        if i == end {
+            return Err(at(i));
+        }
+    }
+    let multmin = limit / 16;
+    let mut result: i64 = 0;
+    while i < end {
+        let Some(digit) = chars[i].to_digit(16).map(i64::from) else { return Err(at(i)) };
+        if result < multmin {
+            return Err(at(i));
+        }
+        result *= 16;
+        if result < limit + digit {
+            return Err(at(i));
+        }
+        i += 1;
+        result -= digit;
+    }
+    Ok(if negative { result } else { -result })
+}
+
+/// `UUIDUtil.STRING_CODEC`: `UUID.fromString` (JDK 25), with the text of its failures.
 pub fn uuid_string(s: &str) -> Result<Uuid, String> {
     let fail = |m: String| format!("Invalid UUID {s}: {m}");
-    if s.len() > 36 {
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+    if len > 36 {
         return Err(fail("UUID string too large".into()));
     }
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 5 {
+    let dash = |from: usize| chars.iter().skip(from).position(|c| *c == '-').map(|p| p + from);
+    let d1 = dash(0);
+    let d2 = d1.and_then(|d| dash(d + 1));
+    let d3 = d2.and_then(|d| dash(d + 1));
+    let d4 = d3.and_then(|d| dash(d + 1));
+    let d5 = d4.and_then(|d| dash(d + 1));
+    let (Some(d1), Some(d2), Some(d3), Some(d4), None) = (d1, d2, d3, d4, d5) else {
         return Err(fail(format!("Invalid UUID string: {s}")));
-    }
-    let hex = |c: &str| -> Result<i64, String> {
-        // Long.decode("0x" + c)
-        let (neg, digits) = match c.strip_prefix('-') {
-            Some(d) => (true, d),
-            None => (false, c.strip_prefix('+').unwrap_or(c)),
-        };
-        let bad = || format!("For input string: \"{c}\" under radix 16");
-        if neg {
-            return Err(fail(bad()));
-        }
-        if digits.is_empty() {
-            return Err(fail("Zero length string".into()));
-        }
-        u64::from_str_radix(digits, 16).map(|v| v as i64).map_err(|_| fail(bad()))
     };
-    let mut msb = hex(parts[0])?;
+    let part = |b: usize, e: usize| parse_hex_range(&chars, b, e).map_err(&fail);
+    let mut msb = part(0, d1)? & 0xffff_ffff;
     msb <<= 16;
-    msb |= hex(parts[1])?;
+    msb |= part(d1 + 1, d2)? & 0xffff;
     msb <<= 16;
-    msb |= hex(parts[2])?;
-    let mut lsb = hex(parts[3])?;
+    msb |= part(d2 + 1, d3)? & 0xffff;
+    let mut lsb = part(d3 + 1, d4)? & 0xffff;
     lsb <<= 48;
-    lsb |= hex(parts[4])?;
+    lsb |= part(d4 + 1, len)? & 0xffff_ffff_ffff;
     Ok(Uuid::from_u64_pair(msb as u64, lsb as u64))
 }
 
@@ -324,9 +363,8 @@ pub fn parse_instant(text: &str) -> R<(i64, u32)> {
     if i != b.len() {
         return Err(format!("Text '{text}' could not be parsed, unparsed text found at index {i}"));
     }
-    let range = |name: &str, v: i64, lo: i64, hi: i64| -> R<()> {
-        if (lo..=hi).contains(&v) { Ok(()) } else { Err(format!("Text '{text}' could not be parsed: Invalid value for {name} (valid values {lo} - {hi}): {v}")) }
-    };
+    // (A field out of range or a day that does not exist: `ISO_INSTANT` fails at the start.)
+    let range = |_name: &str, v: i64, lo: i64, hi: i64| -> R<()> { if (lo..=hi).contains(&v) { Ok(()) } else { Err(at(0)) } };
     range("MonthOfYear", month, 1, 12)?;
     range("DayOfMonth", day, 1, 31)?;
     range("HourOfDay", hour, 0, 23)?;
@@ -339,11 +377,7 @@ pub fn parse_instant(text: &str) -> R<(i64, u32)> {
         _ => 31,
     };
     if day > days_in_month(year, month) {
-        let names = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
-        if day == 29 && month == 2 {
-            return Err(format!("Text '{text}' could not be parsed: Invalid date 'February 29' as '{year}' is not a leap year"));
-        }
-        return Err(format!("Text '{text}' could not be parsed: Invalid date '{} {day}'", names[(month - 1) as usize]));
+        return Err(at(0));
     }
     let secs = days_from_civil(year, month as u32, day as u32) * 86_400 + hour * 3600 + minute * 60 + second - offset;
     Ok((secs, nanos))

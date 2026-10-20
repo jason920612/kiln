@@ -18,6 +18,8 @@ The observer connection prints "[obs] ..." lines; messages carry no timing so tr
 import sys, time, os, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wsrpc import Ws
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import mcclient
 
 
 def main():
@@ -25,6 +27,8 @@ def main():
     tls = "--tls" in sys.argv
     console = sys.argv[sys.argv.index("--console") + 1] if "--console" in sys.argv else None
     use_obs = "--no-obs" not in sys.argv
+    game_port = int(sys.argv[sys.argv.index("--game-port") + 1]) if "--game-port" in sys.argv else None
+    games = {}
     main_ws = Ws(host, port, secret, tls=tls)
     obs = Ws(host, port, secret, tls=tls) if use_obs else None
 
@@ -56,6 +60,30 @@ def main():
             os.write(fd, (cmd + "\n").encode())
             os.close(fd)
             time.sleep(0.7)
+            show_main_pending(0.1)
+            show_obs(0.3)
+            continue
+        if line.startswith("!join "):
+            name = line.split()[1]
+            c = mcclient.Client("127.0.0.1", game_port, name).login()
+            c.until_play()
+            games[name] = c
+            print("game> joined", name)
+            time.sleep(0.6)
+            show_main_pending(0.1)
+            show_obs(0.3)
+            continue
+        if line.startswith("!pkts "):
+            name = line.split()[1]
+            for pid, body in games[name].drain(0.8):
+                if pid in (mcclient.CB_SYSTEM_CHAT, mcclient.CB_DISCONNECT, 33, 66):
+                    print("game>", name, pid, body.hex())
+                elif pid == -1:
+                    print("game>", name, "closed")
+            continue
+        if line.startswith("!leave "):
+            games.pop(line.split()[1]).close()
+            time.sleep(0.6)
             show_main_pending(0.1)
             show_obs(0.3)
             continue
