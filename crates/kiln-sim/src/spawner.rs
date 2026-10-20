@@ -1158,7 +1158,7 @@ impl kiln_entity::mob::ext::SpawnView for View<'_, '_> {
         self.0.env.mobs.sky_darken
     }
     fn sky_light(&self, pos: kiln_entity::math::BlockPos) -> i32 {
-        kiln_world::light::light_at(&*self.0.cells, kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z).map_or(15, i32::from)
+        crate::blocks::sky_light_at(&*self.0.cells, self.0.env, KBlockPos::new(pos.x, pos.y, pos.z), Some(15))
     }
     fn block_light(&self, pos: kiln_entity::math::BlockPos) -> i32 {
         kiln_world::light::light_at(&*self.0.cells, kiln_world::chunk::LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)

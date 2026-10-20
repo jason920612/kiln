@@ -1834,8 +1834,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn sky_light(&self, pos: BlockPos) -> i32 {
-        kiln_world::light::light_at(self.level.cells(), kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z)
-            .map_or(if pos.y >= self.level.env().min_y + self.level.env().height { 15 } else { 0 }, i32::from)
+        crate::blocks::sky_light_at(self.level.cells(), self.level.env(), kb(pos), None)
     }
 
     fn effective_difficulty(&self, _pos: BlockPos) -> f32 {

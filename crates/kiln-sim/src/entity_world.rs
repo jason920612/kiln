@@ -150,8 +150,7 @@ impl<'a, 'l> World<'a, 'l> {
         match self {
             World::Region(l) => l.raw_brightness(pos, sky_darken),
             World::Island(i) => {
-                let top = i.env.min_y + i.env.height;
-                let sky = i.cells.light_at(LightLayer::Sky, pos.x, pos.y, pos.z).map_or(if pos.y >= top { 15 } else { 0 }, i32::from);
+                let sky = crate::blocks::sky_light_at(&*i.cells, &i.env, pos, None);
                 let block = i.cells.light_at(LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from);
                 (sky - sky_darken).max(block)
             }

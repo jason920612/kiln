@@ -324,8 +324,7 @@ pub(crate) fn motion_blocking_height(cells: &CellSet<Cell>, env: &BlockEnv, x: i
 
 /// `Level.canSeeSky`: full sky light.
 pub(crate) fn can_see_sky(cells: &CellSet<Cell>, env: &BlockEnv, pos: BlockPos) -> bool {
-    let top = env.min_y + env.height;
-    cells.light_at(kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z).map_or(pos.y >= top, |s| s >= 15)
+    crate::blocks::sky_light_at(cells, env, pos, None) >= 15
 }
 
 /// `Level.isRainingAt`: raining, under open sky, at or above the rain heightmap, in a biome
