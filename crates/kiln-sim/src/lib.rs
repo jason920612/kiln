@@ -2270,6 +2270,13 @@ impl Sim {
         Some(self.sky_darken_of(dim_id(dimension)?))
     }
 
+    /// The sky light the game sees at a position of the level `dimension` (none in a level without sky light), if its chunk is loaded (for tests).
+    pub fn sky_light_in(&mut self, dimension: &str, x: i32, y: i32, z: i32) -> Option<i32> {
+        use kiln_blocks::Level;
+        let d = dim_id(dimension)?;
+        self.with_level_in(d, [x, y, z], |l| l.sky_light(kiln_blocks::BlockPos::new(x, y, z)))
+    }
+
     /// The total ticks of a world clock (`minecraft:world_clock` entry), for tests and tools.
     pub fn clock_ticks(&self, clock: &str) -> Option<i64> {
         self.clock_total_of(clock)

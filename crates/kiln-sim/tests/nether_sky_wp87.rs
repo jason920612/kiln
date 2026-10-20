@@ -26,14 +26,9 @@ fn up_on_the_nether_roof_it_is_dark() {
         sim.console_now(&format!("execute in {dim} run forceload add 0 0 15 15"));
     }
     ticks(&mut sim, 20);
-    // A position with nothing around it, high up: a gold block in the same level says that the predicate (a light of at least 8) held.
-    let probe = "{condition:\"minecraft:location_check\",predicate:{light:{light:{min:8}}}}";
-    for (dim, y, marker) in [("minecraft:overworld", 100, 70), ("minecraft:the_nether", 200, 70)] {
-        sim.console_now("time set noon");
-        sim.console_now(&format!("execute in {dim} positioned 8 {y} 8 if predicate {probe} run setblock 4 {marker} 4 minecraft:gold_block"));
-    }
-    ticks(&mut sim, 2);
-    let gold = kiln_data::blocks::default_state::GOLD_BLOCK;
-    assert_eq!(sim.block_in("minecraft:overworld", 4, 70, 4), Some(gold), "daylight on a world in the overworld has light");
-    assert_eq!(sim.block_in("minecraft:the_nether", 4, 70, 4), Some(kiln_data::blocks::default_state::AIR), "no sky light in the nether, not even above its roof");
+    // A position with nothing around it, high up.
+    sim.console_now("time set noon");
+    assert_eq!(sim.sky_light_in("minecraft:overworld", 8, 100, 8), Some(15), "open sky in the overworld");
+    assert_eq!(sim.sky_light_in("minecraft:the_nether", 8, 200, 8), Some(0), "no sky light in the nether, not even above its roof");
+    assert_eq!(sim.sky_light_in("minecraft:the_nether", 8, 100, 8), Some(0), "nor below it");
 }
