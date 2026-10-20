@@ -137,7 +137,9 @@ pub fn tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
                 }
                 for (i, ce) in en.effects.tick.iter().enumerate() {
                     let ctx = FxContext::entity(lvl, &view, at, Some(facts));
-                    if ce.matches(loot, &ctx, &mut rng) {
+                    let okk = ce.matches(loot, &ctx, &mut rng);
+                eprintln!("DBG match {okk} at {at:?}");
+                if okk {
                         due.push(Due { key: Active { slot: index, enchantment: id, index: i }, level: lvl, effect: ce.effect.clone(), fresh: false });
                     }
                 }
