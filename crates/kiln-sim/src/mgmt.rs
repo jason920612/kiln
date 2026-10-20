@@ -59,13 +59,11 @@ impl MgmtHost for Sim {
         v.into_iter().map(|(_, p)| OnlinePlayer { user: NameAndId { uuid: p.uuid, name: p.name.clone() }, address: p.address }).collect()
     }
 
-    fn kick(&mut self, user: Uuid, reason: &MgmtText, remove: bool) {
+    fn kick(&mut self, user: Uuid, reason: &MgmtText) {
         let Some((&conn, p)) = self.players.iter_mut().find(|(_, p)| p.uuid == user) else { return };
         p.flush();
         p.sink.disconnect(packets::play_disconnect_text(text_of(reason).to_nbt()));
-        if remove {
-            self.leave(conn);
-        }
+        self.leave(conn);
     }
 
     fn system_message(&mut self, text: &MgmtText, overlay: bool, to: Option<&[Uuid]>) {
@@ -134,7 +132,7 @@ impl MgmtHost for Sim {
                 .collect()
         };
         for u in unlisted {
-            MgmtHost::kick(self, u, &MgmtText::Translatable { key: "multiplayer.disconnect.not_whitelisted".into(), args: vec![] }, false);
+            MgmtHost::kick(self, u, &MgmtText::Translatable { key: "multiplayer.disconnect.not_whitelisted".into(), args: vec![] });
         }
     }
 

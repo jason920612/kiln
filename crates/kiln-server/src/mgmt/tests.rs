@@ -145,14 +145,12 @@ impl MgmtHost for Fake {
         self.players.clone()
     }
 
-    fn kick(&mut self, user: Uuid, reason: &MgmtText, remove: bool) {
+    fn kick(&mut self, user: Uuid, reason: &MgmtText) {
         if let Some(i) = self.players.iter().position(|p| p.user.uuid == user) {
             self.kicked.push((user, reason.clone()));
-            if remove {
-                let gone = self.players.remove(i);
-                self.info.roster.write().unwrap().retain(|e| e.uuid != user);
-                self.info.notifier.notify(Notification::PlayerLeft(gone.user));
-            }
+            let gone = self.players.remove(i);
+            self.info.roster.write().unwrap().retain(|e| e.uuid != user);
+            self.info.notifier.notify(Notification::PlayerLeft(gone.user));
         }
     }
 
@@ -686,6 +684,7 @@ fn bans_carry_reason_source_and_expiry() {
     c.call(&req(5, "bans/clear", ""));
     assert!(c.text().contains("bans/removed"));
     // IP bans.
+    env.with_fake(|f| f.players.push(OnlinePlayer { user: NameAndId { uuid: offline_uuid("grief2"), name: "grief2".into() }, address: Some("10.0.0.5".parse().unwrap()) }));
     let reply = c.call(&req(6, "ip_bans/add", r#"[[{"ip":"10.0.0.5","reason":"spam"},{"ip":"bad ip"}]]"#));
     assert_eq!(reply, r#"{"jsonrpc":"2.0","id":6,"result":[{"ip":"10.0.0.5","reason":"spam","source":"Management server"}]}"#);
     assert_eq!(c.text(), r#"{"jsonrpc":"2.0","method":"minecraft:notification/ip_bans/added","params":[{"ip":"10.0.0.5","reason":"spam","source":"Management server"}]}"#);
