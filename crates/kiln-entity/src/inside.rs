@@ -36,6 +36,10 @@ pub enum Action {
     CampfireHurt(f32),
     /// `WitherRoseBlock.entityInside`: the wither effect for 2 seconds.
     WitherRose,
+    /// `MagmaBlock.stepOn`: 1 point of hot floor damage.
+    HotFloor,
+    /// `CactusBlock.entityInside`: 1 point of cactus damage.
+    CactusHurt,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -217,7 +221,17 @@ impl Entity {
     fn apply_action(&mut self, level: &mut dyn EntityLevel, a: Action) {
         match a {
             // (A mob mid-tick cannot take damage here: its own tick does, `crate::mob::apply_deferred_hurts`.)
-            Action::FireHurt(_) | Action::LavaHurt | Action::CampfireHurt(_) | Action::WitherRose if matches!(self.kind, EntityKind::MobTicking { .. }) => self.inside.deferred.push(a),
+            Action::FireHurt(_) | Action::LavaHurt | Action::CampfireHurt(_) | Action::WitherRose | Action::HotFloor | Action::CactusHurt
+                if matches!(self.kind, EntityKind::MobTicking { .. }) =>
+            {
+                self.inside.deferred.push(a)
+            }
+            Action::HotFloor => {
+                self.hurt(level, DamageKind::HotFloor, 1.0, None);
+            }
+            Action::CactusHurt => {
+                self.hurt(level, DamageKind::Cactus, 1.0, None);
+            }
             Action::FireHurt(damage) => {
                 self.hurt(level, DamageKind::InFire, damage, None);
             }
@@ -280,6 +294,12 @@ impl Entity {
                 if d < 0.1 && !self.shift_key_down {
                     let e = 0.4 + d * 0.2;
                     self.delta = self.delta.multiply(e, 1.0, e);
+                }
+            }
+            // `MagmaBlock.stepOn`: a living entity that is not stepping carefully (sneaking) is burned.
+            Kind::MagmaBlock => {
+                if !self.shift_key_down && self.is_living() {
+                    self.apply_action(level, Action::HotFloor);
                 }
             }
             _ => {
@@ -507,9 +527,7 @@ impl Entity {
                     }
                 }
             }
-            Kind::Cactus => {
-                self.hurt(level, DamageKind::Cactus, 1.0, None);
-            }
+            Kind::Cactus => self.apply_action(level, Action::CactusHurt),
             // (Players are handled by kiln-sim; armor stands are not simulated here.)
             Kind::Campfire if matches!(self.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) => {
                 let info = kiln_data::blocks_types::block_of(state);

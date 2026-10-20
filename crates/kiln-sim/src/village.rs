@@ -136,7 +136,7 @@ impl Sim {
     /// `VillageSiege.tick` (the overworld's), once per tick.
     pub(crate) fn tick_village_siege(&mut self) {
         let spawn_enemies = self.commands.difficulty as u8 != 0 && self.rule_bool("minecraft:spawn_monsters");
-        let sky_darken = crate::weather::sky_darken(OVERWORLD_ID, self.day_time, &self.level_weather[OVERWORLD_ID]);
+        let sky_darken = self.sky_darken_of(OVERWORLD_ID);
         // `isBrightOutside`.
         if sky_darken < 4 || !spawn_enemies {
             self.siege.state = SiegeState::Done;

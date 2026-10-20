@@ -73,12 +73,27 @@ impl Worldgen {
     /// A noise-generated dimension of `pack`: `stem` (a parsed `LevelStem`, see [`Datapack::parse_stem`]) in the
     /// level `stem.dimension_type` describes, for `seed`. Flat and debug stems have no noise pipeline (`None`).
     pub fn from_stem(pack: &Datapack, stem: &Stem, seed: i64, generate_structures: bool) -> Result<Option<Worldgen>, Error> {
+        if let StemGenerator::Flat(flat) = &stem.generator {
+            return Self::flat(pack, flat, &stem.dimension_type, seed, generate_structures).map(Some);
+        }
         let StemGenerator::Noise { settings, source } = &stem.generator else { return Ok(None) };
         let generator = Generator::for_dimension(pack, settings, source.kind(), &stem.dimension_type, seed)?;
         let loader = Loader::new(pack, generator.biomes.iter().map(|b| b.name.clone()).collect());
         let decorator = Decorator::new(&generator, &loader)?;
         let structures = Structures::load(&generator, &loader)?;
         Ok(Some(Worldgen { generator, decorator, structures, generate_structures }))
+    }
+
+    /// A `minecraft:flat` dimension that generates more than its layers (see [`crate::stem::FlatSettings::needs_pipeline`]): the layers as the terrain,
+    /// the biome's decoration as `features` and `lakes` ask, and the structure sets of `structure_overrides`.
+    pub fn flat(pack: &Datapack, flat: &crate::stem::FlatSettings, dimension_type: &str, seed: i64, generate_structures: bool) -> Result<Worldgen, Error> {
+        let layers: Vec<u16> = flat.layers.clone();
+        let generator = Generator::for_flat(pack, &flat.biome, layers, dimension_type, seed)?;
+        let loader = Loader::new(pack, generator.biomes.iter().map(|b| b.name.clone()).collect());
+        let void_gen = flat.layers.iter().all(|&s| s == crate::blocks::state::AIR) && flat.biome != "minecraft:the_void";
+        let decorator = Decorator::new_flat(&generator, &loader, crate::decorate::FlatDecoration { features: flat.features, lakes: flat.lakes, void_gen })?;
+        let structures = Structures::load_only(&generator, &loader, flat.structure_overrides.as_deref())?;
+        Ok(Worldgen { generator, decorator, structures, generate_structures })
     }
 
     /// The End of `pack` for `seed` (noise settings `minecraft:end`, the end biome source).

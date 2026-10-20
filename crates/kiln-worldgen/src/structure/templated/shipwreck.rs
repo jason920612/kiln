@@ -134,6 +134,20 @@ impl ShipwreckPiece {
     }
 }
 
+impl ShipwreckPiece {
+    /// The template position the first placement chose, if the piece has been placed and adjusted its height.
+    fn settled_at(&self) -> Option<BlockPos> {
+        let y = (*self.placed.lock().unwrap())?;
+        Some(BlockPos::new(self.t.position.x, y, self.t.position.z))
+    }
+
+    fn save_fields(&self, tag: &mut Vec<(String, Tag)>, height_adjusted: bool) {
+        tag.push(("isBeached".into(), Tag::Byte(self.beached as i8)));
+        tag.push(("Rot".into(), Tag::String(self.t.rotation.enum_name().into())));
+        tag.push(("height_adjusted".into(), Tag::Byte(height_adjusted as i8)));
+    }
+}
+
 impl Piece for ShipwreckPiece {
     fn base(&self) -> &PieceBase {
         &self.t.base
@@ -186,9 +200,23 @@ impl Piece for ShipwreckPiece {
 
     fn save_extra(&self, tag: &mut Vec<(String, Tag)>) {
         self.t.save_template(tag);
-        tag.push(("isBeached".into(), Tag::Byte(self.beached as i8)));
-        tag.push(("Rot".into(), Tag::String(self.t.rotation.enum_name().into())));
-        tag.push(("height_adjusted".into(), Tag::Byte(self.height_adjusted as i8)));
+        self.save_fields(tag, self.height_adjusted);
+    }
+
+    fn bbox_now(&self) -> BoundingBox {
+        match self.settled_at() {
+            Some(pos) => self.t.bbox_at(pos),
+            None => self.t.base.bbox,
+        }
+    }
+
+    /// `StructurePiece.createTag` after the first placement changed the piece (`adjustPositionHeight`: the height chosen is the template position's,
+    /// the box follows and the flag is set).
+    fn save(&self) -> Tag {
+        match self.settled_at() {
+            Some(pos) => self.t.save_settled(self.t.base.kind, pos, self.t.bbox_at(pos), |tag| self.save_fields(tag, true)),
+            None => self.t.save_settled(self.t.base.kind, self.t.position, self.t.base.bbox, |tag| self.save_fields(tag, self.height_adjusted)),
+        }
     }
 
     fn shift(&mut self, dx: i32, dy: i32, dz: i32) {

@@ -191,7 +191,7 @@ impl Kind for RuinedPortal {
 
 /// `RuinedPortalStructure.findSuitableY`.
 fn find_suitable_y(ctx: &mut GenCtx, placement: Vertical, air_pocket: bool, surface: i32, y_span: i32, b: &BoundingBox) -> i32 {
-    let min = ctx.min_y() + 15;
+    let min = ctx.generator_min_y() + 15;
     let random = &mut ctx.random;
     let start = match placement {
         Vertical::InNether => {

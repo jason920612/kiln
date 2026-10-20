@@ -19,6 +19,7 @@ pub mod control;
 pub mod dispense;
 pub mod convert;
 pub mod effects;
+pub mod enchant_fx;
 pub mod goals;
 pub mod gossip;
 pub mod interact;
@@ -663,6 +664,8 @@ pub struct MobData {
     pub hurt_by: Option<(DamageKind, Option<i32>, Option<i32>)>,
     /// The attribute modifiers the equipment added (`collectEquipmentChanges`).
     pub equip_mods: Vec<(Attr, String)>,
+    /// The enchantments' `tick` and `location_changed` effects running for the equipment (see [`enchant_fx`]).
+    pub fx: Option<Box<enchant_fx::Fx>>,
     /// `activeEffects` (see [`effects`]).
     pub effects: crate::effect::Effects,
     /// The `Brain` of brain-driven types (taken out of the mob while it ticks).
@@ -821,6 +824,7 @@ impl MobData {
             air_supply_max: 300,
             hurt_by: None,
             equip_mods: Vec::new(),
+            fx: None,
             effects: crate::effect::Effects::new(),
             brain: None,
             brain_random: kiln_javamath::random::LegacyRandom::new(0),
@@ -1563,6 +1567,7 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if let Some(k) = m.kind.ext() {
         k.detect_equipment_updates(e, m, level);
     }
+    enchant_fx::equipment_changed(e, m, level);
     if !e.is_removed() {
         crate::prof!("mob", "ai_step");
         ai_step(e, m, level);
@@ -1663,6 +1668,8 @@ fn increase_air(m: &MobData, current: i32) -> i32 {
 
 /// `Mob.baseTick` → `LivingEntity.baseTick` → `Entity.baseTick`.
 fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    // `LivingEntity.baseTick` starts with the enchantments' `tick` effects.
+    enchant_fx::tick(e, m, level);
     let air_before = e.air_supply;
     e.compute_speed();
     e.was_in_powder_snow = e.is_in_powder_snow;
@@ -1719,6 +1726,8 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         } else if e.air_supply < m.air_supply_max {
             e.air_supply = increase_air(m, e.air_supply);
         }
+        // A new block position runs the location-changed enchantments (`onChangedBlock`).
+        enchant_fx::block_changed(e, m, level);
     }
     if m.hurt_time > 0 {
         m.hurt_time -= 1;
@@ -1934,6 +1943,8 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         travel(e, m, level, input);
     }
     if let Some((fall, state, at)) = e.landing.take() {
+        // `LivingEntity.checkFallDamage`: a landing runs the location-changed enchantments first.
+        enchant_fx::landed(e, m, level);
         landing_dust(e, m, level, fall, state, at);
     }
     if let Some((distance, multiplier)) = e.pending_fall.take() {
@@ -1957,6 +1968,12 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             match action {
                 crate::inside::Action::FireHurt(damage) => {
                     hurt(e, m, level, DamageSource::of(DamageKind::InFire), damage);
+                }
+                crate::inside::Action::HotFloor => {
+                    hurt(e, m, level, DamageSource::of(DamageKind::HotFloor), 1.0);
+                }
+                crate::inside::Action::CactusHurt => {
+                    hurt(e, m, level, DamageSource::of(DamageKind::Cactus), 1.0);
                 }
                 crate::inside::Action::CampfireHurt(damage) => {
                     hurt(e, m, level, DamageSource::of(DamageKind::of_type("minecraft:campfire")), damage);
@@ -2676,6 +2693,23 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     }
     if kind.is_tag("minecraft:is_fire") && effects::has(m, crate::effect::ids::fire_resistance()) {
         return false;
+    }
+    // `LivingEntity.isInvulnerableTo`: the equipment's enchantments may make the mob immune to this damage (frost walker boots on magma).
+    if m.equipment.iter().any(|s| !s.is_empty() && s.get(kiln_item::keys::ENCHANTMENTS).is_some_and(|l| !l.is_empty()))
+        && !kind.is_tag("minecraft:bypasses_invulnerability")
+    {
+        use kiln_item::component::EquipmentSlot as S;
+        let equipment: Vec<(S, &ItemStack)> = [(S::MainHand, MAINHAND), (S::OffHand, OFFHAND), (S::Feet, FEET), (S::Legs, LEGS), (S::Chest, CHEST), (S::Head, HEAD)]
+            .into_iter()
+            .filter(|(_, i)| !m.equipment[*i].is_empty())
+            .map(|(s, i)| (s, &m.equipment[i]))
+            .collect();
+        let view = weapon::attacker_view(e);
+        let damage_type = kiln_data::synced_id("minecraft:damage_type", kind.type_name()).unwrap_or(0);
+        let mut random = kiln_javamath::random::LegacyRandom::new(0);
+        if crate::enchanting::damage_immunity(&equipment, &view, damage_type, &mut random) {
+            return false;
+        }
     }
     m.no_action_time = 0;
     let mut amount = amount.max(0.0);

@@ -163,6 +163,18 @@ fn entity_pos(level: &dyn EntityLevel, id: i32) -> Option<(Vec3, f64)> {
 
 /// `performRangedAttack(head, x, y, z, dangerous)`: a wither skull from the head toward the point.
 #[allow(clippy::too_many_arguments)]
+/// `KILN_WITHER_TRACE=<file>`: one line per side head target pick, "tick head type x z" (the same lines the vanilla agent of tools/wp87 writes),
+/// to compare the choice of targets of a wither between players.
+fn trace_pick(level: &dyn EntityLevel, head: i32, target: i32, candidates: usize) {
+    static FILE: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    let Some(path) = FILE.get_or_init(|| std::env::var_os("KILN_WITHER_TRACE").filter(|f| !f.is_empty()).map(Into::into)) else { return };
+    let Some(t) = goals::living(level, target) else { return };
+    use std::io::Write as _;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{} {} {} {} {} {}", level.game_time(), head, t.type_name.trim_start_matches("minecraft:"), t.pos.x.floor(), t.pos.z.floor(), candidates);
+    }
+}
+
 fn shoot(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, head: i32, tx: f64, ty: f64, tz: f64, dangerous: bool) {
     if !e.silent {
         level.emit(Event::LevelEvent { event: 1024, pos: e.block_position(), data: 0 });
@@ -397,6 +409,7 @@ impl Kind for Wither {
                 if !found.is_empty() {
                     let k = e.random.next_int_bounded(found.len() as i32) as usize;
                     st_mut(m).targets[i] = found[k];
+                    trace_pick(level, i as i32, found[k], found.len());
                 }
             }
         }

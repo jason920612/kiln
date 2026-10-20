@@ -140,6 +140,7 @@ mod village;
 mod display_text;
 mod waypoints;
 mod weather;
+mod timelines;
 mod world_state;
 mod wither;
 pub mod testing;
@@ -754,6 +755,8 @@ struct Player {
     /// World effects the enchantments asked for this tick, run with the region's blocks; functions
     /// they asked to run (name, position).
     fx_jobs: Vec<enchant_fx::LevelJob>,
+    /// The `explode` effects the enchantments asked for (effect, enchantment level, position), carried out in the entities' turn.
+    explosions: Vec<(kiln_loot::effects::EntityEffect, i32, [f64; 3])>,
     function_requests: Vec<(String, [f64; 3])>,
     /// The move since the last tick (`Entity.getKnownMovement` for the `movement` predicate).
     move_delta: [f64; 3],
@@ -799,8 +802,13 @@ struct Player {
     equipment_sent: Vec<kiln_item::ItemStack>,
     /// The server's `deltaMovement` of the player (knockback builds on it): its body's, which [`phantom`] travels each tick.
     vel: [f64; 3],
-    /// A velocity packet for the knockback waits one tick (see `players::encode_movement`).
-    sync_deferred: bool,
+    /// The player's own `travel` has run since `sync_velocity` was set: a hit of the entities' turn waits for it (see `players::encode_movement`).
+    sync_stepped: bool,
+    /// The velocity packet of the hit in `sync_velocity` was held back for that step.
+    sync_held: bool,
+    /// The velocity a hit outside the level's tick (a command, a function, a command block, a chat command) left: vanilla's `sendChanges`
+    /// follows it at once, before the player's `travel` has moved it, so the client is told this value and not the stepped one.
+    sync_raw: Option<[f64; 3]>,
     /// The parity harnesses replay vanilla's recorded hit with no player tick of its own: such a player's velocity is not travelled.
     untravelled: bool,
     /// `syncVelocity`: a hit this tick; the velocity goes to the client and its viewers.
@@ -1668,9 +1676,12 @@ pub struct Sim {
     /// The overworld clock (time of day).
     day_time: i64,
     overworld_clock: i32,
-    /// The End's clock (`minecraft:the_end`, the End's `default_clock`).
-    end_time: i64,
-    end_clock: i32,
+    /// The state of the overworld clock besides its total.
+    overworld_run: weather::ClockRun,
+    /// The other world clocks (`minecraft:the_end`, the End's `default_clock`, and the data packs' own).
+    other_clocks: Vec<weather::ClockSlot>,
+    /// The timelines of the world: what follows the clocks, the markers of the clocks.
+    timelines: std::sync::Arc<timelines::Timelines>,
     /// The End's dragon fight (`EnderDragonFight`).
     dragon_fight: dragon_fight::DragonFight,
     commands: commands::CommandState,
@@ -1684,8 +1695,6 @@ pub struct Sim {
     climates: Option<std::sync::Arc<weather::Climates>>,
     /// `BiomeManager`'s obfuscated world seed.
     zoom_seed: i64,
-    /// Rate, fraction and pause of the overworld and End clocks.
-    clock_runs: [weather::ClockRun; 2],
     /// Each level's sleeping players (`ServerLevel.sleepStatus`).
     sleep_status: Vec<sleep::SleepStatus>,
     /// Each level's locator bar waypoints (`ServerWaypointManager`).
@@ -1859,6 +1868,24 @@ impl Sim {
                 }
             };
             match &stem.generator {
+                kiln_worldgen::stem::StemGenerator::Flat(flat) if flat.needs_pipeline() && pack.is_some() && config.noise.is_some() => {
+                    let (pack, n) = (pack.as_ref().expect("pack"), config.noise.as_ref().expect("noise"));
+                    match kiln_worldgen::Worldgen::from_stem(pack, &stem, n.seed, true) {
+                        Ok(Some(world)) => {
+                            info!("{key} generation: flat, {} layers, features {}, lakes {}, structure sets {:?}", flat.layers.len(), flat.features, flat.lakes, flat.structure_overrides);
+                            let dimension_type = kiln_data::dimension_type(&stem.dimension_type);
+                            let (min_y, height) = dimension_type.map_or((-64, 384), |t| (t.min_y, t.height));
+                            let spawn_y = min_y + height.min(flat.layers.len() as i32);
+                            let pipeline = std::sync::Arc::new(kiln_worldgen::Pipeline::new(std::sync::Arc::new(world)));
+                            Made::FlatFull(kiln_worldgen::FullChunks::new(pipeline), spawn_y)
+                        }
+                        Ok(None) => Made::Nothing,
+                        Err(e) => {
+                            warn!("cannot set up {key} generation: {e}");
+                            Made::Nothing
+                        }
+                    }
+                }
                 kiln_worldgen::stem::StemGenerator::Flat(flat) => {
                     let biome = kiln_data::synced_id("minecraft:worldgen/biome", &flat.biome).unwrap_or(0) as u16;
                     info!("{key} generation: flat, {} layers", flat.layers.len());
@@ -1901,7 +1928,7 @@ impl Sim {
                 let generator = made(id);
                 pipelines.push(generator.pipeline());
                 sea_levels.push(generator.sea_level(id));
-                flats.push(matches!(generator, Made::Flat(_)));
+                flats.push(matches!(generator, Made::Flat(_) | Made::FlatFull(..)));
                 match &config.world {
                     Some(dir) => {
                         let source: Box<dyn kiln_world::ChunkSource> = if format == Some(kiln_storage::WorldFormat::Native) {
@@ -1958,6 +1985,7 @@ impl Sim {
         let threads = config.noise.as_ref().map_or(1, |n| n.threads);
         let mut storage = storage;
         let level = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.state());
+        let saved_clocks = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.clocks()).unwrap_or_default();
         // The seed: the generator's, else the save's (`world_gen_settings.dat`); a world that
         // generates with a seed and has none saved gets it written, so vanilla loads the same.
         let seed = match (&config.noise, storage.as_mut()) {
@@ -2015,8 +2043,9 @@ impl Sim {
             game_time,
             day_time: level.as_ref().map_or(1000, |l| l.day_time),
             overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
-            end_time: 0,
-            end_clock: kiln_data::synced_id("minecraft:world_clock", "minecraft:the_end").expect("end clock"),
+            overworld_run: Default::default(),
+            other_clocks: Sim::load_clocks(&saved_clocks),
+            timelines: timelines::Timelines::load(&roots),
             dragon_fight: dragon_fight::DragonFight::load(None, seed),
             commands: commands::CommandState::new(ops_from_env()),
             weather: Default::default(),
@@ -2024,7 +2053,6 @@ impl Sim {
             weather_random: kiln_javamath::random::LegacyRandom::new(seed ^ 0x7765_6174_6865_72),
             climates: weather::Climates::load(&roots).map(std::sync::Arc::new),
             zoom_seed: kiln_worldgen::generator::obfuscate_seed(seed),
-            clock_runs: Default::default(),
             sleep_status: world_state::per_level(),
             waypoints: world_state::per_level(),
             advancements: Default::default(),
@@ -2209,6 +2237,7 @@ impl Sim {
         self.deliver_plugin_messages();
         lap(&mut self.stats, "global");
 
+        self.freeze_unstepped_hits();
         // The entities that were in a portal when the last tick ended go through it now, at the start of their turn (`Entity.handlePortal` in `baseTick`),
         // into a level that ticks after theirs.
         if self.world.tick_rate.runs_normally() {
@@ -2275,6 +2304,8 @@ impl Sim {
             self.entity_portals(looked.then_some((&portal_candidates[..], first_new)));
         }
         self.materialize_spawns();
+        // (Command blocks and enchantment functions ran after the regions; vanilla runs them as the next tick's scheduled block ticks.)
+        self.freeze_unstepped_hits();
         lap(&mut self.stats, "regions");
         // CPU time summed over regions (the "regions" phase is wall time).
         for (name, d) in region::SUB_PHASES.iter().zip(times) {
@@ -2388,6 +2419,28 @@ impl Sim {
     /// The overworld clock (time of day).
     pub fn day_time(&self) -> i64 {
         self.day_time
+    }
+
+    /// A boolean environment attribute of the level `dimension` as its dimension type's timelines make it, for tests and tools.
+    pub fn timeline_bool_in(&self, dimension: &str, attribute: &str) -> Option<bool> {
+        Some(self.timeline_bool(dim_id(dimension)?, attribute, false))
+    }
+
+    /// `Level.skyDarken` of the level `dimension` (for tests and tools).
+    pub fn sky_darken_in(&self, dimension: &str) -> Option<i32> {
+        Some(self.sky_darken_of(dim_id(dimension)?))
+    }
+
+    /// The sky light the game sees at a position of the level `dimension` (none in a level without sky light), if its chunk is loaded (for tests).
+    pub fn sky_light_in(&mut self, dimension: &str, x: i32, y: i32, z: i32) -> Option<i32> {
+        use kiln_blocks::Level;
+        let d = dim_id(dimension)?;
+        self.with_level_in(d, [x, y, z], |l| l.sky_light(kiln_blocks::BlockPos::new(x, y, z)))
+    }
+
+    /// The total ticks of a world clock (`minecraft:world_clock` entry), for tests and tools.
+    pub fn clock_ticks(&self, clock: &str) -> Option<i64> {
+        self.clock_total_of(clock)
     }
 
     /// The overworld's weather: (raining, thundering, rain level, thunder level) with the
@@ -2731,6 +2784,13 @@ impl Sim {
         })
     }
 
+    /// The value of a mob's attribute (`minecraft:movement_speed`...) with its modifiers, for tests and tools.
+    pub fn mob_attribute(&self, id: i32, attribute: &str) -> Option<f64> {
+        let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id)?;
+        let attr = kiln_entity::mob::attributes::Attr::by_name(attribute)?;
+        Some(kiln_entity::mob::data(e.phys.as_deref()?)?.attrs.value(attr))
+    }
+
     /// A mob's combat state, as `tools/CombatVectors.java` records it (for tests and tools).
     pub fn mob_state(&self, id: i32) -> Option<MobState> {
         let list = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter());
@@ -2755,6 +2815,16 @@ impl Sim {
             vehicle,
             pos: e.pos,
         })
+    }
+
+    /// A player's `fallDistance` (for tests and tools).
+    pub fn fall_distance(&self, conn: ConnId) -> Option<f64> {
+        self.players.get(&conn).map(|p| p.fall_distance)
+    }
+
+    /// The server's `deltaMovement` of a player (for tests and tools).
+    pub fn player_velocity(&self, conn: ConnId) -> Option<[f64; 3]> {
+        self.players.get(&conn).map(|p| p.vel)
     }
 
     /// The ticks a player's riptide spin has left (for tests and tools).
@@ -3022,9 +3092,12 @@ impl Sim {
             damage: self.damage_rules(),
             mobs: mobs::MobRules {
                 day_time: self.day_time,
-                sky_darken: weather::sky_darken(dim, self.day_time, &self.level_weather[dim]),
-                monsters_burn: mobs::monsters_burn(self.day_time),
-                creaking_active: dim_type(dim).has_timeline("minecraft:day") && mobs::creaking_active(self.day_time),
+                sky_darken: self.sky_darken_of(dim),
+                monsters_burn: self.timeline_bool(dim, "minecraft:gameplay/monsters_burn", false),
+                creaking_active: self.timeline_bool(dim, "minecraft:gameplay/creaking_active", false),
+                eyeblossom_open: self.timelines.has_track(dim_type(dim).timelines, "minecraft:gameplay/eyeblossom_open").then(|| self.timeline_bool(dim, "minecraft:gameplay/eyeblossom_open", false)),
+                bees_stay_in_hive: self.timeline_bool(dim, "minecraft:gameplay/bees_stay_in_hive", false),
+                turtle_egg_hatch_chance: self.timeline_float(dim, "minecraft:gameplay/turtle_egg_hatch_chance", 0.002),
                 griefing: self.rule_bool("minecraft:mob_griefing"),
                 drops: self.rule_bool("minecraft:mob_drops"),
                 entity_drops: self.rule_bool("minecraft:entity_drops"),
@@ -3578,6 +3651,18 @@ impl Sim {
     /// After the serial phases: players whose chunk is not loaded (teleported into the gap
     /// between regions, or into another level) get it loaded and a region now, like joining
     /// players, so every player ticks in the region of its position whatever the topology.
+    /// `ServerEntity.sendChanges` follows a hit from outside the level's tick (a console or chat command, a function, a command block: scheduled
+    /// block ticks run before the chunk source) at once, before the player's own `travel` has moved its velocity: the client is told the value
+    /// the hit left. Hits of the entities' turn wait for the step instead (`players::encode_movement`).
+    fn freeze_unstepped_hits(&mut self) {
+        for p in self.players.values_mut() {
+            if p.sync_velocity && !p.sync_held && p.phantom_travels() {
+                p.sync_raw = Some(p.vel);
+                p.sync_velocity = false;
+            }
+        }
+    }
+
     fn settle_teleported(&mut self) {
         let mut stray: Vec<(DimId, ChunkPos)> = self
             .players
@@ -3886,6 +3971,8 @@ impl Sim {
         }
         p.vel = [0.0; 3];
         p.sync_velocity = false;
+        p.sync_held = false;
+        p.sync_raw = None;
         p.sent_chunks.clear();
         p.load_checked = None;
         p.unacked_batches = 0;
@@ -4407,6 +4494,7 @@ impl Sim {
             loc_active: Vec::new(),
             loc_modifiers: Vec::new(),
             fx_jobs: Vec::new(),
+            explosions: Vec::new(),
             function_requests: Vec::new(),
             move_delta: [0.0; 3],
             block_edits: Vec::new(),
@@ -4426,7 +4514,9 @@ impl Sim {
             equipment_seen: vec![kiln_item::ItemStack::empty(); combat::SLOTS.len()],
             equipment_sent: vec![kiln_item::ItemStack::empty(); combat::SLOTS.len()],
             vel: [0.0; 3],
-            sync_deferred: false,
+            sync_stepped: false,
+            sync_held: false,
+            sync_raw: None,
             untravelled: false,
             sync_velocity: false,
             push_sync: false,
@@ -4673,13 +4763,16 @@ enum Made {
     Noise(kiln_worldgen::FullChunks),
     /// Superflat layers.
     Flat(kiln_worldgen::stem::FlatChunks),
+    /// A superflat level that also decorates and has structures (the flat settings' `features`, `lakes` and `structure_overrides`), and where its
+    /// spawn is (`FlatLevelSource.getSpawnHeight`).
+    FlatFull(kiln_worldgen::FullChunks, i32),
     Nothing,
 }
 
 impl Made {
     fn pipeline(&self) -> Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>> {
         match self {
-            Made::Noise(g) => Some(g.pipeline().clone()),
+            Made::Noise(g) | Made::FlatFull(g, _) => Some(g.pipeline().clone()),
             _ => None,
         }
     }
@@ -4687,7 +4780,7 @@ impl Made {
     /// `ChunkGenerator.getSeaLevel` of the level (the noise settings' `sea_level`, -63 for superflat), else the vanilla level's.
     fn sea_level(&self, dim: DimId) -> i32 {
         match self {
-            Made::Noise(g) => g.pipeline().world().generator.sea_level,
+            Made::Noise(g) | Made::FlatFull(g, _) => g.pipeline().world().generator.sea_level,
             Made::Flat(_) => -63,
             Made::Nothing => [63, 32, 0].get(dim).copied().unwrap_or(63),
         }
@@ -4698,13 +4791,14 @@ impl Made {
         match self {
             Made::Noise(g) => Some(initial_spawn(g.pipeline())),
             Made::Flat(f) => Some([8, f.spawn_height(dimension), 8]),
+            Made::FlatFull(_, y) => Some([8, *y, 8]),
             Made::Nothing => None,
         }
     }
 
     fn into_generator(self) -> Option<Box<dyn kiln_world::ChunkGenerator>> {
         match self {
-            Made::Noise(g) => Some(Box::new(g)),
+            Made::Noise(g) | Made::FlatFull(g, _) => Some(Box::new(g)),
             Made::Flat(f) => Some(Box::new(f)),
             Made::Nothing => None,
         }

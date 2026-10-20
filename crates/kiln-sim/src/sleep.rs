@@ -589,17 +589,33 @@ impl Sim {
             if deep < needed {
                 continue;
             }
-            if self.rule_bool("minecraft:advance_time") && crate::dim_type(dim).overworld_clock() {
-                if let Some(to) = crate::weather::marker_move(self.day_time, 0) {
-                    self.day_time = to;
-                    self.clock_runs[0].partial = 0.0;
-                }
+            if self.rule_bool("minecraft:advance_time")
+                && let Some(clock) = crate::dim_type(dim).default_clock
+            {
+                // `ClockManager.moveToTimeMarker(clock, WAKE_UP_FROM_SLEEP)`: the level's clock goes to the next moment that marker names.
+                self.move_to_wake_up_marker(clock);
                 let pkt = self.time_packet();
                 self.broadcast(pkt);
             }
             self.wake_up_all(dim);
             if self.rule_bool("minecraft:advance_weather") && self.is_raining(dim) {
                 self.weather.reset_cycle();
+            }
+        }
+    }
+
+    /// The clock moves to the next occurrence of the marker `minecraft:wake_up_from_sleep` of its timelines (nothing if it has none or the
+    /// clock stands at it).
+    fn move_to_wake_up_marker(&mut self, clock: &str) {
+        let Some((_, period, ticks, _)) = self.time_markers_of(clock).into_iter().find(|(id, ..)| id == "minecraft:wake_up_from_sleep") else { return };
+        let Some(total) = self.clock_total_of(clock) else { return };
+        if let Some(to) = crate::weather::marker_move_in(total, ticks, period.unwrap_or(24000)) {
+            if clock == "minecraft:overworld" {
+                self.day_time = to;
+                self.overworld_run.partial = 0.0;
+            } else if let Some(c) = self.other_clocks.iter_mut().find(|c| c.name == clock) {
+                c.total = to;
+                c.run.partial = 0.0;
             }
         }
     }

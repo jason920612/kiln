@@ -762,7 +762,11 @@ impl RegionWork<'_> {
             let list = &self.entities.list;
             self.blocks.sculk.retain_allays(|id| list.binary_search_by_key(&id, |e| e.id).is_ok_and(|i| !list[i].removed));
         }
-        if self.entities.list.is_empty() && self.blocks.hearts.is_empty() && (self.players.is_empty() || (env.blocks.spawn_table.is_none() && self.blocks.spawners.is_empty())) {
+        if self.entities.list.is_empty()
+            && self.blocks.hearts.is_empty()
+            && self.players.iter().all(|p| p.explosions.is_empty())
+            && (self.players.is_empty() || (env.blocks.spawn_table.is_none() && self.blocks.spawners.is_empty()))
+        {
             self.tick_pistons(env, ticking_now);
             self.tick_lids(env, ticking_now);
             self.tick_block_entities(env, ticking_now);
@@ -1072,6 +1076,10 @@ pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, pistons: &kiln_
     p.tick_honey_slide(&block, env.game_time);
     p.sync_health();
     p.sync_experience();
+    // (A hit of this `doTick` is told after it: the body's step is behind it.)
+    if p.sync_velocity {
+        p.sync_stepped = true;
+    }
     t
 }
 

@@ -747,8 +747,7 @@ impl Level for RegionLevel<'_> {
     }
 
     fn sky_light(&self, pos: BlockPos) -> i32 {
-        let top = self.env.min_y + self.env.height;
-        self.cells.light_at(LightLayer::Sky, pos.x, pos.y, pos.z).map_or(if pos.y >= top { 15 } else { 0 }, i32::from)
+        sky_light_at(&*self.cells, self.env, pos, None)
     }
 
     fn sun_angle(&self) -> f32 {
@@ -768,8 +767,7 @@ impl Level for RegionLevel<'_> {
     }
 
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
-        let top = self.env.min_y + self.env.height;
-        let sky = self.cells.light_at(LightLayer::Sky, pos.x, pos.y, pos.z).map_or(if pos.y >= top { 15 } else { 0 }, i32::from);
+        let sky = sky_light_at(&*self.cells, self.env, pos, None);
         let block = self.cells.light_at(LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from);
         block.max(sky - sky_darken)
     }
@@ -890,14 +888,13 @@ impl Level for RegionLevel<'_> {
 
     /// `gameplay/eyeblossom_open`: the overworld's timeline, open from 12600 to 23401.
     fn eyeblossom_open(&self, _pos: BlockPos) -> Option<bool> {
-        crate::dim_type(self.env.dim).has_timeline("minecraft:day").then(|| (12600..23401).contains(&self.env.mobs.day_time.rem_euclid(24000)))
+        self.env.mobs.eyeblossom_open
     }
 
     /// `gameplay/turtle_egg_hatch_chance`: certain for 843 ticks around dawn in the overworld,
     /// otherwise the default 1/500.
     fn turtle_egg_hatch_chance(&self, _pos: BlockPos) -> f32 {
-        let dawn = crate::dim_type(self.env.dim).has_timeline("minecraft:day") && (21062..21905).contains(&self.env.mobs.day_time.rem_euclid(24000));
-        if dawn { 1.0 } else { 0.002 }
+        self.env.mobs.turtle_egg_hatch_chance
     }
 
     fn is_raining_at(&self, pos: BlockPos) -> bool {
@@ -2276,4 +2273,18 @@ mod tests {
             assert_eq!(capped.contains_random(ChunkPos::new(x, 0)), want, "random ticks, distance {x}");
         }
     }
+}
+
+/// The sky light at a position as the game sees it: what the chunks store, but none in a level without sky light (the nether, and a dimension type
+/// whose `has_skylight` is off): the light engine of such a level has no sky layer at all (`LevelLightEngine.skyEngine` is null), so above the nether
+/// roof it is as dark as under it and monsters spawn there. `default_unloaded` is what a position the loaded chunks do not hold is taken to have
+/// (callers differ: above the world's top 15, below it 0).
+pub(crate) fn sky_light_at(cells: &kiln_region::CellSet<kiln_world::Cell>, env: &BlockEnv, pos: BlockPos, default_unloaded: Option<i32>) -> i32 {
+    if !crate::dim_type(env.dim).has_skylight {
+        return 0;
+    }
+    let top = env.min_y + env.height;
+    cells
+        .light_at(LightLayer::Sky, pos.x, pos.y, pos.z)
+        .map_or_else(|| default_unloaded.unwrap_or(if pos.y >= top { 15 } else { 0 }), i32::from)
 }

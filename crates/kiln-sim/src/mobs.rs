@@ -18,6 +18,12 @@ pub(crate) struct MobRules {
     pub monsters_burn: bool,
     /// The `minecraft:gameplay/creaking_active` value (the overworld's night).
     pub creaking_active: bool,
+    /// The `minecraft:gameplay/eyeblossom_open` value; none when no timeline of the level has the track.
+    pub eyeblossom_open: Option<bool>,
+    /// The timelines' `minecraft:gameplay/bees_stay_in_hive` (the weather layer adds its own).
+    pub bees_stay_in_hive: bool,
+    /// The `minecraft:gameplay/turtle_egg_hatch_chance` value.
+    pub turtle_egg_hatch_chance: f32,
     pub griefing: bool,
     pub drops: bool,
     /// `minecraft:entity_drops` (vehicles and other non-mob entities drop their items).
@@ -56,6 +62,9 @@ impl Default for MobRules {
             sky_darken: 0,
             monsters_burn: true,
             creaking_active: false,
+            eyeblossom_open: None,
+            bees_stay_in_hive: false,
+            turtle_egg_hatch_chance: 0.002,
             griefing: true,
             drops: true,
             entity_drops: true,
@@ -76,17 +85,6 @@ impl Default for MobRules {
             spectators_generate_chunks: true,
         }
     }
-}
-
-/// The `minecraft:gameplay/monsters_burn` timeline: off from 12542 to 23460.
-pub(crate) fn monsters_burn(day_time: i64) -> bool {
-    let t = day_time.rem_euclid(24000);
-    !(12542..23460).contains(&t)
-}
-
-/// The `minecraft:gameplay/creaking_active` timeline: on from 12600 to 23401.
-pub(crate) fn creaking_active(day_time: i64) -> bool {
-    (12600..23401).contains(&day_time.rem_euclid(24000))
 }
 
 /// Entity data of a mob for its viewers.
@@ -397,6 +395,10 @@ pub(crate) struct DeathExtra {
     pub tool: Option<kiln_item::ItemStack>,
     /// The context has no `damage_source` (gifts, shearing, equipment: not a death).
     pub no_damage_source: bool,
+    /// The context has no `origin` (`PIGLIN_BARTER`, `ENTITY_INTERACT`).
+    pub no_origin: bool,
+    /// The `interacting_entity` of an `ENTITY_INTERACT` table: the player.
+    pub interacting: Option<crate::enchant::EntityView>,
 }
 
 /// `EntitySubPredicate`s that depend on the entity's class (`type_specific/sheep`, `type_specific/cube_mob`).
@@ -446,11 +448,13 @@ impl kiln_loot::LootContext for DeathContext {
             kiln_loot::EntityTarget::This => true,
             kiln_loot::EntityTarget::Attacker | kiln_loot::EntityTarget::DirectAttacker => self.killed_by_player || self.attacker.is_some(),
             kiln_loot::EntityTarget::AttackingPlayer => self.killed_by_player,
-            _ => false,
+            kiln_loot::EntityTarget::InteractingEntity => self.extra.interacting.is_some(),
+            // (`ENTITY_INTERACT` names the mob `target_entity`.)
+            kiln_loot::EntityTarget::TargetEntity => self.extra.interacting.is_some(),
         }
     }
     fn origin(&self) -> Option<[f64; 3]> {
-        Some(self.origin)
+        (!self.extra.no_origin).then_some(self.origin)
     }
     fn has_damage_source(&self) -> bool {
         !self.extra.no_damage_source
@@ -491,7 +495,10 @@ impl kiln_loot::LootContext for DeathContext {
                 other => a.matches(&kiln_loot::predicate::world::EntityPredicate { parts: vec![other.clone()], json: predicate.json.clone() }),
             });
         }
-        if target != kiln_loot::EntityTarget::This {
+        if target == kiln_loot::EntityTarget::InteractingEntity {
+            return self.extra.interacting.as_ref().is_some_and(|v| v.matches(predicate));
+        }
+        if target != kiln_loot::EntityTarget::This && !(target == kiln_loot::EntityTarget::TargetEntity && self.extra.interacting.is_some()) {
             return false;
         }
         let type_id = kiln_item::registry::ENTITY_TYPE.id(self.type_name).unwrap_or(-1);

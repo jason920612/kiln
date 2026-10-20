@@ -1,0 +1,33 @@
+{
+  "clock": "kiln87:short",
+  "period_ticks": 1000,
+  "time_markers": {
+    "kiln87:peak": {
+      "show_in_commands": true,
+      "ticks": 500
+    }
+  },
+  "tracks": {
+    "minecraft:gameplay/monsters_burn": {
+      "modifier": "or",
+      "keyframes": [
+        {"ticks": 100, "value": false},
+        {"ticks": 600, "value": true}
+      ]
+    },
+    "minecraft:gameplay/creaking_active": {
+      "modifier": "or",
+      "keyframes": [
+        {"ticks": 100, "value": true},
+        {"ticks": 600, "value": false}
+      ]
+    },
+    "minecraft:gameplay/sky_light_level": {
+      "modifier": "multiply",
+      "keyframes": [
+        {"ticks": 0, "value": 1.0},
+        {"ticks": 500, "value": 0.2}
+      ]
+    }
+  }
+}

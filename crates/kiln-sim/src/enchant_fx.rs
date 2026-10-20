@@ -303,7 +303,9 @@ impl Player {
 pub(crate) fn run_level_jobs(level: &mut RegionLevel, p: &mut Player, difficulty: u8, spawns: &mut Vec<crate::entities::Spawn>) {
     for job in std::mem::take(&mut p.fx_jobs) {
         match job.action {
-            Action::Level { effect, level: lvl, at } => run_level_effect(level, p, &effect, lvl, at),
+            // (An explosion hurts and pushes entities: it happens in the entities' turn, see `crate::entities::player_explosions`.)
+            Action::Level { effect, level: lvl, at } if matches!(effect, EntityEffect::Explode { .. }) => p.explosions.push((effect, lvl, at)),
+            Action::Level { effect, level: lvl, at } => run_level_effect(level, &effect, lvl, at),
             Action::Summon { entity, at, join_team: _ } => summon(level, p, &entity, at, difficulty, spawns),
             Action::Function { function, at } => p.function_requests.push((function.as_str().to_owned(), at)),
             _ => {}
@@ -330,7 +332,7 @@ fn summon(level: &mut RegionLevel, p: &Player, entity: &kiln_item::Identifier, a
 }
 
 /// `ReplaceBlock`, `ReplaceDisk` and `SetBlockProperties` at the effect's position.
-fn run_level_effect(level: &mut RegionLevel, p: &Player, effect: &EntityEffect, enchant_level: i32, at: [f64; 3]) {
+pub(crate) fn run_level_effect(level: &mut RegionLevel, effect: &EntityEffect, enchant_level: i32, at: [f64; 3]) {
     let here = BlockPos::new(at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32);
     let offset = |o: &[i32; 3]| BlockPos::new(here.x + o[0], here.y + o[1], here.z + o[2]);
     match effect {
@@ -377,7 +379,6 @@ fn run_level_effect(level: &mut RegionLevel, p: &Player, effect: &EntityEffect, 
         // (A level explosion belongs to attacks: see `crate::melee`.)
         _ => {}
     }
-    let _ = p;
 }
 
 fn game_event(level: &mut RegionLevel, event: Option<&kiln_item::Identifier>, pos: BlockPos) {

@@ -1004,6 +1004,24 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | 沒做 | 簽章聊天沒有用真的 Mojang 帳號試過(用自己產生的 RSA 金鑰對照位元組格式);`generator-settings`、`region-file-compression`、`sync-chunk-writes`、`text-filtering-*` 讀了不用;`level-type` 只認 `normal`/`flat`;看門狗報告沒有 Java 執行緒傾印;聊天過濾沒有;`multiplayer.player.joined.renamed` 沒有;登入/斷線的日誌行用 Kiln 自己的格式;管理伺服器:Hixie 草案握手只回 101、`world/upgrade_*` 不送、離線模式不向 Mojang 查名字、`view_distance` 不重送給在線客戶端;沒有用真實客戶端看聊天(以協定客戶端對 vanilla 比封包) |
 | 驗證 | workspace 測試 1693 通過／0 失敗／23 ignored（有 vanilla 資料、沒有資料、預設執行緒數各一次）；`parity_suites.py --skip-workspace` 113/113（含 `determinism`、`mob_parity` 全部情境、`plugin_compat`）；`command_diff.py` 3 次都 1957/1957；外掛 API 測試全過；`neg86.sh` 47/47；`cargo check --workspace --all-targets` 沒有警告；`crowd_golden` 的四個封包摘要重錄（狀態雜湊不變，只有系統聊天 id 124 的位元組變大，原因是進出訊息改成帶顯示名稱的可翻譯元件）；細節見 `docs/wp86.md` §12 |
 
+### 6.30 wp87(`wp87-gaps`):wp84、wp85、wp82 留下的差異(擊退、世界生成順序、生物的附魔效果、自訂時鐘與平坦維度、鎖步比對、下界屋頂生怪)
+
+細節見 `docs/wp87.md`。工具(`tools/wp87/`):`MaceFall.java`+`mace87.sh`、`LeashQuad.java`+`leash87.sh`、`make_order_vectors.py`→`OrderVectors.java`+`order87.py`、`make_flat_vectors.py`→`FlatVectors.java`+`flat87.py`、`agent/`(vanilla 生怪計數)、`sv.sh`/`bot.sh`/`lk.py`/`farm87.py`/`cmp87.py`/`run87.sh`(鎖步)、`neg87.py`/`neg87.sh`、資料包 `packs/kiln87_clock`、`packs/kiln87_flat`;向量在 `work/wp87/`。
+
+| 區域 | 結果 |
+|---|---|
+| `/damage` 與擊退 | **修**:tick 之外(console、聊天指令、tick function、指令方塊)造成的擊退,客戶端收到**沒走過一步**的速度(vanilla 的玩家 `travel` 在實體階段之後);實體階段內的打擊維持走一步。`damage_knockback_wp87.rs`(3) |
+| seed 84 的世界生成 | **查清楚**:地下城位置由 vanilla 的裝飾順序決定(vanilla 在三種合法順序之間就差 29,938 個方塊,金字塔下的地下城在其中);Kiln 在自己的順序下與 vanilla 逐方塊、逐結構 start 相同(128 chunk、0 差異)。**修**:海底遺跡/沉船 piece 存檔的是放置後的位置與包圍盒(之前存放置前的;跨 chunk 的遺跡後半段會用錯高度,可疑沙最可能的來源,沒有在活伺服器上重現 6 塊的數字)。`wp87_order.rs`(2) |
+| 生物的附魔效果 | **補**:生物穿戴的 `tick`/`location_changed`/屬性(暫時性)效果、`explode`(tick、近戰 post_attack、投射物打到方塊)、`periodic_tick` 謂詞、`damage_immunity`(岩漿塊、仙人掌)、刷子/犰狳的 `interacting_entity`、豬布林交易沒有 `origin`。`mob_enchant_fx_wp87.rs`(11)、`loot_calls.rs`(+2)。**沒做**:`run_function` 對生物/投射物 |
+| 自訂維度的時鐘 | **補**:`world_clock`/`timeline` registry、維度類型的 `default_clock`/`timelines`、`/time of …`、Set Time 封包帶全部時鐘、`world_clocks.dat` 存檔;`dp_clocks_wp87.rs`(4) |
+| 平坦維度 | **補**:`features`、`lakes`、`structure_overrides`;**修**(對照 vanilla 才看到):`FlatLevelSource.getMinY()` 是 0、`getGenDepth()` 是 384,地物的高度範圍從 0 起,礦坑/要塞/廢棄傳送門也問生成器的最低高度。`wp87_flat.rs`(4):features 128、lakes 200、村莊白名單 1712、全部結構集 1416 chunk(11 個結構 start)與 vanilla 逐方塊相同;`dp_flat_wp87.rs` |
+| 鎖步:重錘 | 行程內 vanilla 與 Kiln:91 個情境(不同高度 × 密度/突破/風爆)傷害、速度、耐久、剩餘掉落距離、爆炸封包 **0 個不同**(`mace_fall_wp87.rs`) |
+| 鎖步:凋零選目標 | 位元碼相同;活伺服器 120 輪(每邊 240 次選擇)Kiln 123/117、vanilla 117/123;行程內 400 次 211/189(`wither_targets_wp87.rs`)。**沒有差異** |
+| 鎖步:恐魂牽拴繩 | **修**:恐魂/快樂恐魂牽船、馬、駱駝、嗅探獸用四點彈簧(`SHARED_QUAD_ATTACHMENT_POINTS`,Llama 不用);84 個設定 × 12 次 `tickLeash` 逐項相同(`leash_quad_wp87.rs`) |
+| 下界屋頂的 MONSTER 多 5~10% | **修(原因找到)**:Kiln 對每個維度都存天光,下界屋頂(基岩之上)天光 15,`isValidPositionForMob` 擋掉所有怪,農場不出怪 → 計數上限一直沒滿;vanilla 的下界沒有天光層。`blocks::sky_light_at`(`has_skylight` 為假回 0)。修正後鎖步同一個農場:每次嘗試的 MONSTER 選擇 1.131 對 1.126、生出 2381 對 2392、農場殺掉 29+2 對 27+3(修正前 Kiln 殺掉 0)。`nether_sky_wp87.rs` |
+| 沒做 | 附魔 `run_function` 對生物/投射物;平坦世界非不透明層的 `FillLayerFeature` 順序(目前直接放);jigsaw 最低高度的來源未逐位元碼確認;可疑沙 6 塊的數字未重現 |
+| 驗證 | `cargo check --workspace --all-targets` 沒有警告;`cargo test --release --workspace`:不帶 `KILN_DATAPACK`(6 執行緒)、帶 `KILN_DATAPACK=/home/test/kiln/work/generated`(6 執行緒)、帶它並用預設執行緒數各一次,都是 **1617 通過、0 失敗、23 個本來就 ignore**(最後一個 commit 以 `--no-fail-fast` 再跑一次:1618 通過、0 失敗;`transformer_parity` 在 VM 負載高時會偶發失敗〔既有,wp85 的分支同樣 4 次 2 次失敗〕;含 `determinism.rs`、`crowd_golden`〔沒重錄,狀態雜湊與封包摘要沒變〕、`mob_parity`);`parity_suites.py --skip-workspace` 113/113;`command_diff.py` 5 次中 4 次 1957/1957、1 次 `execute on controller` 3 行 Kiln 沒輸出(單獨跑該段 12 次全過,VM 共用負載的時序偶發);**修**了 `command_diff.py` 自己的 `waypoint list` 比對(正規表示式遇到維度 id 的冒號就不配對,實體 id 雜湊順序因此偶爾判為不同);`neg87.py` **25/25**(每個案例拿掉修正後該修正的測試都失敗;跑的過程中抓到 2 個測試其實測不到修正——`mob_location` 的測試用不會移動的生物、`barter_origin` 用了空的 `location_check` 述詞——補了「生物走到金塊上」與「沒有述詞的 `location_check`」兩個測試,兩個案例改成 fails;`location_check` 的條件鍵在 26.x 是 `type` 不是 `condition`) |
+
 ## 7. 重跑
 
 ```sh
@@ -1139,6 +1157,10 @@ python tools/mob_vectors.py --filter eq63_ --out work/m6-mobs2/eq63.jsonl      #
 #   bash tools/wp82/push.sh；SEED=78 ./sv.sh K|V fresh 8（AGENT=1 ./sv.sh V …：閘道出口 agent，先 bash tools/wp82/agent/build.sh）；./bot.sh K|V W 1
 #   python3 raid82.py 4 1 | raidcd82.py | bonemeal82.py all 40 | be82.py 5 | portal82.py 6 | gateway82.py 20 -40 | gwbatch82.py 30,30 40,10 | ticket82.py A|B
 #   負向檢查：~/kt wp82-gaps bash tools/wp82/neg82.sh
+# wp87:擊退、世界生成順序、生物附魔、時鐘、平坦維度、鎖步(VM;Kiln 25599、vanilla 25596;見 docs/wp87.md)
+#   向量:bash tools/wp87/mace87.sh(work/wp87/mace.jsonl)、bash tools/wp87/leash87.sh(leash.txt)、python3 tools/wp87/order87.py NAME 84 RANK X,Z,W,H …(vectors/pack_seed84_*.bin)、python3 tools/wp87/flat87.py [feat|village|lakes|all](vectors/pack_flat_*.bin)
+#   鎖步:bash tools/wp87/agent/build.sh;WITHER=1 AGENT=1 ./sv.sh K|V fresh 6;python3 farm87.py wither 120 300;SEED=77 ./run87.sh nether 30 600 -71,129,57,-57,132,71 6
+#   負向檢查:~/kt wp87-gaps bash tools/wp87/neg87.sh
 # 登入等封包的 golden 由原版驗證後寫入
 python tools/packet_vectors.py --bless
 ```

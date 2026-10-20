@@ -324,3 +324,55 @@ fn brushing_an_armadillo_rolls_its_table_with_the_brush_as_the_tool() {
     assert_eq!(items.get("minecraft:emerald"), Some(&1), "the pack's table: {items:?}");
     assert_eq!(items.get("minecraft:diamond"), Some(&1), "the brush is the tool of the context: {items:?}");
 }
+
+/// wp87: `dropFromEntityInteractLootTable` gives the context a `target_entity` (the armadillo) and an `interacting_entity` (the player who brushes);
+/// predicates on them hold (they did not before: the context was a gift's).
+#[test]
+fn brushing_an_armadillo_has_the_player_as_the_interacting_entity() {
+    let on = |entity: &str, id: &str, what: &str| {
+        format!(
+            r#"{{"rolls":1,"entries":[{{"type":"minecraft:item","name":"minecraft:{what}","condition":{{"type":"minecraft:entity_properties","entity":"{entity}","predicate":{{"minecraft:entity_type":"minecraft:{id}"}}}}}}]}}"#
+        )
+    };
+    let t = table(
+        "entity_interact",
+        &[on("interacting_entity", "player", "diamond"), on("target_entity", "armadillo", "emerald"), on("interacting_entity", "zombie", "gold_ingot")],
+    );
+    let mut w = World::new("brush_who", &[("brush/armadillo", &t)]);
+    let [x, y, z] = w.at(1, 1, 0);
+    w.run(&format!("summon minecraft:armadillo {x} {y} {z} {{NoAI:1b}}"));
+    w.ticks(2);
+    let id = w.sim.entity_ids_of("minecraft:armadillo")[0];
+    w.hold("minecraft:brush", 1);
+    let pkt = PlayIn::Interact { entity_id: id, hand: kiln_proto::packets::serverbound::Hand::Main, location: [0.0, 0.5, 0.0], sneaking: false };
+    assert!(w.sim.step([ToSim::Packet(1, pkt)]));
+    w.ticks(2);
+    let items = w.items();
+    assert_eq!(items.get("minecraft:diamond"), Some(&1), "the brusher is a player: {items:?}");
+    assert_eq!(items.get("minecraft:emerald"), Some(&1), "the target is the armadillo: {items:?}");
+    assert!(!items.contains_key("minecraft:gold_ingot"), "the brusher is not a zombie: {items:?}");
+}
+
+/// wp87: the context of the piglins' barter table (`PIGLIN_BARTER`) is `this_entity` alone, no `origin`: a `location_check` does not hold (without a predicate it holds exactly when there is an origin).
+#[test]
+fn the_piglin_barter_context_has_no_origin() {
+    let at_all = r#"{"rolls":1,"entries":[{"type":"minecraft:item","name":"minecraft:emerald","condition":{"type":"minecraft:location_check"}}]}"#;
+    let t = table("barter", &[pool(&[item("diamond", 1)]), at_all.to_owned()]);
+    let mut w = World::new("barter_origin", &[("gameplay/piglin_bartering", &t)]);
+    let [x, y, z] = w.at(1, 1, 0);
+    w.run(&format!("summon minecraft:piglin {x} {y} {z} {{IsImmuneToZombification:1b,PersistenceRequired:1b}}"));
+    w.ticks(2);
+    let id = w.sim.entity_ids_of("minecraft:piglin")[0];
+    w.hold("minecraft:gold_ingot", 1);
+    let pkt = PlayIn::Interact { entity_id: id, hand: kiln_proto::packets::serverbound::Hand::Main, location: [0.0, 0.5, 0.0], sneaking: false };
+    assert!(w.sim.step([ToSim::Packet(1, pkt)]));
+    w.ticks(140);
+    // (What was thrown may lie about or already be in the player's hands.)
+    let mut items = w.items();
+    let names = kiln_data::builtin_entries("minecraft:item").unwrap();
+    for (id, count) in w.sim.inventory(1).unwrap().iter().flatten() {
+        *items.entry(names[*id as usize].to_string()).or_insert(0) += count;
+    }
+    assert_eq!(items.get("minecraft:diamond"), Some(&1), "the barter table rolled: {items:?}");
+    assert!(!items.contains_key("minecraft:emerald"), "no origin to check a location at: {items:?}");
+}

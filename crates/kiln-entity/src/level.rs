@@ -296,6 +296,16 @@ pub struct ExplosionFx {
     pub sound: &'static str,
 }
 
+/// An entity effect that changes blocks, on its way to the simulation (never equal to another).
+#[derive(Clone, Debug)]
+pub struct BlockFx(pub std::sync::Arc<kiln_loot::effects::EntityEffect>);
+
+impl PartialEq for BlockFx {
+    fn eq(&self, other: &BlockFx) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 /// Side effects the simulation carries out or broadcasts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
@@ -319,6 +329,12 @@ pub enum Event {
     ExplosionHit { player: i32, source: Option<i32> },
     /// `sendParticles(ItemParticleOption(minecraft:item, item), pos, count, spread, speed)` (`item` is the item's network id).
     ItemParticles { item: i32, pos: Vec3, count: i32, spread: Vec3, speed: f32 },
+    /// `SpawnParticlesEffect.apply`: `ServerLevel.sendParticles(particle, pos, 0, velocity, speed)` (a count of 0 makes `velocity` the direction).
+    FxParticles { particle: &'static str, pos: [f64; 3], velocity: [f64; 3], speed: f64 },
+    /// `SummonEntityEffect.apply`: `entity` (a `minecraft:` type name) at `at`; `owner` is who the effect belongs to.
+    FxSummon { entity: &'static str, at: Vec3, owner: Option<i32> },
+    /// An enchantment effect that changes blocks (`replace_block`, `replace_disk`, `set_block_properties`) at `at`, at enchantment level `level`.
+    BlockFx { effect: BlockFx, level: i32, at: [f64; 3] },
     /// A game event for vibrations (`minecraft:hit_ground`, `minecraft:entity_place`, ...).
     GameEvent { event: &'static str, pos: Vec3, entity: Option<i32> },
     /// Damage to an entity this crate does not simulate (mobs, players).
@@ -376,6 +392,9 @@ pub enum Event {
     },
     /// `dropFromGiftLootTable` (a chicken's egg).
     GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
+    /// `dropFromEntityInteractLootTable` (a brushed armadillo): the table rolls with the mob as the `target_entity`, the player `interacting` as the
+    /// `interacting_entity` and the brush as the `tool`.
+    InteractLoot { entity: i32, table: &'static str, pos: Vec3, interacting: i32 },
     /// `dropFromGiftLootTable` with `BehaviorUtils.throwItem` as the consumer (a hero-of-the-village gift): each item is thrown from the entity's
     /// eyes towards `to`.
     GiftThrow { entity: i32, table: &'static str, to: Vec3 },

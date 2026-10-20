@@ -513,6 +513,7 @@ impl Sim {
             data_packs: Some((self.commands.packs.selected.clone(), self.commands.packs.disabled.clone())),
             enabled_features: Some(self.commands.packs.features.clone()),
             difficulty: Some((self.commands.difficulty as u8, self.commands.difficulty_locked)),
+            clocks: self.saved_clocks(),
         };
         let rules = self.saved_game_rules();
         let Some(storage) = &mut self.storage else { return };

@@ -1230,7 +1230,7 @@ impl Sim {
             return;
         }
         d.raids.patrol_next_tick += 12000 + rng.next_int_bounded(1200);
-        let sky_darken = crate::weather::sky_darken(OVERWORLD, self.day_time, &self.level_weather[OVERWORLD]);
+        let sky_darken = self.sky_darken_of(OVERWORLD);
         if sky_darken >= 4 {
             return;
         }

@@ -1834,8 +1834,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn sky_light(&self, pos: BlockPos) -> i32 {
-        kiln_world::light::light_at(self.level.cells(), kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z)
-            .map_or(if pos.y >= self.level.env().min_y + self.level.env().height { 15 } else { 0 }, i32::from)
+        crate::blocks::sky_light_at(self.level.cells(), self.level.env(), kb(pos), None)
     }
 
     fn effective_difficulty(&self, _pos: BlockPos) -> f32 {
@@ -2233,7 +2232,11 @@ pub(crate) fn tick(
     any_player: bool,
     ctx: &kiln_sched::Ctx<'_>,
 ) {
-    if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) && level.blocks.hearts.is_empty() && (level.blocks.spawners.is_empty() || players.is_empty()) {
+    if entities.list.is_empty()
+        && players.iter().all(|p| p.vehicle.is_none() && p.explosions.is_empty())
+        && level.blocks.hearts.is_empty()
+        && (level.blocks.spawners.is_empty() || players.is_empty())
+    {
         return;
     }
     // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
@@ -2317,6 +2320,7 @@ pub(crate) fn tick(
     // Creakings that lost their heart in the block phase go before the entities tick.
     crate::heart::process_released(&mut sim);
     process_pending_kills(&mut sim);
+    player_explosions(&mut sim);
     if !islands::tick_islands(&mut sim, ticking, any_player, ctx) && !spec::tick_speculative(&mut sim, pace, ticking, any_player, ctx) {
         tick_list(&mut sim, ticking, any_player, &mut |_, _| true);
     }
@@ -2446,6 +2450,22 @@ fn tick_turn(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_player
             // waiting for its id) ticks in this very tick, as `tickPassenger` does for what
             // joined the level meanwhile.
             tick_new_passenger(sim, id, i);
+        }
+    }
+}
+
+/// `ExplodeEffect.apply` for the `explode` effects the players' enchantments asked for this tick (outside a blow: in `tick`, `location_changed`,
+/// `hit_block`...): the explosion hurts and pushes the entities around, so it happens in the entities' turn.
+fn player_explosions(sim: &mut SimLevel) {
+    for k in 0..sim.players.len() {
+        if sim.players[k].explosions.is_empty() {
+            continue;
+        }
+        let id = sim.players[k].entity_id;
+        for (effect, enchant_level, at) in std::mem::take(&mut sim.players[k].explosions) {
+            (sim.current, sim.seeds) = (id, 0x6578_706c);
+            sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time ^ 0x6578_706c, id);
+            kiln_entity::enchanting::explode_effect(sim, Some(id), &effect, enchant_level, at);
         }
     }
 }
@@ -3483,7 +3503,7 @@ fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
         .into_iter()
         .map(|ev| {
             let key = match &ev {
-                Event::DeathLoot { entity, .. } | Event::GiftLoot { entity, .. } | Event::ShearLoot { entity, .. } | Event::ItemDrops { entity, .. } | Event::GiftThrow { entity, .. } => (0, *entity as u32 as u64),
+                Event::DeathLoot { entity, .. } | Event::GiftLoot { entity, .. } | Event::InteractLoot { entity, .. } | Event::ShearLoot { entity, .. } | Event::ItemDrops { entity, .. } | Event::GiftThrow { entity, .. } => (0, *entity as u32 as u64),
                 Event::EntityEvent { entity, .. } | Event::MobHurt { entity, .. } => (1, *entity as u32 as u64),
                 Event::Sound { pos, .. } => (2, pos_key(*pos)),
                 Event::EntitySound { entity, .. } => (6, *entity as u32 as u64),
@@ -3601,6 +3621,31 @@ fn carry_out(
                 p.explosion_hit(cause);
             }
         }
+        // `SpawnParticlesEffect.apply`: `sendParticles` with a count of 0, to the players within 32 blocks.
+        Event::FxParticles { particle, pos, velocity, speed } => {
+            use kiln_proto::packets::world_fx;
+            let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", particle) else { return };
+            let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+                particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
+                override_limiter: false,
+                always_show: false,
+                pos,
+                offset: [velocity[0] as f32, velocity[1] as f32, velocity[2] as f32],
+                max_speed: [speed as f32; 3],
+                count: 0,
+                randomization: world_fx::ParticleRandomization::Alternative,
+            });
+            for p in players.iter_mut().filter(|p| dist2(p.pos, pos) < 32.0 * 32.0) {
+                p.send(pkt.clone());
+            }
+        }
+        // `SummonEntityEffect.apply`.
+        Event::FxSummon { entity, at, owner } => {
+            let seed = crate::mobs::loot_seed(env.seed, env.game_time, owner.unwrap_or(0), 0x7375_6d6d);
+            let _ = crate::mobs::summon(spawns, entity, arr(at), None, true, env.mobs.difficulty, env.game_time, 0, seed);
+        }
+        // `replace_block`, `replace_disk`, `set_block_properties` of an enchantment effect.
+        Event::BlockFx { effect, level: enchant_level, at } => crate::enchant_fx::run_level_effect(level, &effect.0, enchant_level, at),
         Event::ItemParticles { item, pos, count, spread, speed } => {
             if let Some((at, range, pkt)) = item_packet(item, pos, count, spread, speed) {
                 for p in players.iter_mut().filter(|p| dist2(p.pos, at) < range * range) {
@@ -3774,15 +3819,19 @@ fn carry_out(
                 }
             }
         }
-        Event::GiftLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, table, pos, n, 0.0, None),
-        Event::GiftThrow { entity: id, table, to } => loot_drop(env, list, spawns, id, table, to, n, 0.0, Some(to)),
+        Event::GiftLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, table, pos, n, 0.0, None, None),
+        Event::InteractLoot { entity: id, table, pos, interacting } => {
+            let who = players.iter().find(|p| p.entity_id == interacting).map(|p| p.view());
+            loot_drop(env, list, spawns, id, table, pos, n, 0.0, None, who)
+        }
+        Event::GiftThrow { entity: id, table, to } => loot_drop(env, list, spawns, id, table, to, n, 0.0, Some(to), None),
         Event::ItemDrops { entity: id, pos, stacks } => {
             for (k, stack) in stacks.into_iter().enumerate() {
                 let h = crate::mobs::loot_seed(env.seed, env.game_time, id, (n as u64) << 8 | k as u64 | 0x6368_0000) as u64;
                 spawns.push(crate::mobs::drop_item(stack, arr(pos), h));
             }
         }
-        Event::ShearLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, &table, pos, n, 1.0, None),
+        Event::ShearLoot { entity: id, table, pos } => loot_drop(env, list, spawns, id, &table, pos, n, 1.0, None, None),
         // `ThrownEnderpearl.onHit`: its player goes to where the pearl was at the start of the
         // tick, takes 5 `ender_pearl` damage and hears the teleport.
         Event::ProjectileHit { projectile, projectile_type: "minecraft:ender_pearl", owner: Some(owner), .. } => {
@@ -3956,7 +4005,11 @@ pub(crate) fn charged_creeper_stacks(env: &blocks::BlockEnv, victim: &kiln_entit
 
 /// `dropFromGiftLootTable` (`y_off` 0) and `dropFromShearingLootTable` (`y_off` 1, with the shears as the tool): the table rolls with the entity and
 /// its position as the context (`GIFT`, `SHEARING`: no damage source), the items appear at `pos`.
-fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, id: i32, table: &str, pos: Vec3, n: usize, y_off: f64, throw_to: Option<Vec3>) {
+///
+/// `interacting` is the player of an `ENTITY_INTERACT` table (`dropFromEntityInteractLootTable`: `target_entity`, `interacting_entity` and `tool`, with
+/// no `origin` or `this_entity`); the piglins' barter table (`PIGLIN_BARTER`) has `this_entity` alone, no `origin` either.
+#[allow(clippy::too_many_arguments)]
+fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, id: i32, table: &str, pos: Vec3, n: usize, y_off: f64, throw_to: Option<Vec3>, interacting: Option<crate::enchant::EntityView>) {
     let Some(loot) = env.loot.clone() else { return };
     let phys = list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| list[i].phys.as_deref());
     let ctx = crate::mobs::DeathContext {
@@ -3981,6 +4034,8 @@ fn loot_drop(env: &blocks::BlockEnv, list: &[Entity], spawns: &mut Vec<Spawn>, i
                 None
             },
             no_damage_source: true,
+            no_origin: table == kiln_entity::mob::kinds::piglin::BARTERING_TABLE || interacting.is_some(),
+            interacting,
             ..Default::default()
         },
     };

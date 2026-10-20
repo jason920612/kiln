@@ -441,6 +441,15 @@ pub mod stats {
         }
     }
 
+    /// Why `isValidPositionForMob` said no (Kiln only): a line in the trace file.
+    pub(crate) fn why_not(type_name: &str, pos: [i32; 3], why: &str) {
+        let Some(file) = std::env::var_os("KILN_SPAWN_TRACE") else { return };
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
+            let _ = writeln!(f, "VMFALSE {} {} {} {} {why}", type_name, pos[0], pos[1], pos[2]);
+        }
+    }
+
     /// `start` of the vanilla agent: a pack start (counted per height for the columns of the box).
     pub(crate) fn start(category: kiln_entity::mob::Category, pos: [i32; 3]) {
         let Some(c) = config() else { return };
@@ -1037,6 +1046,15 @@ fn spawn_category_for_chunk(
             let liquid_ok = kind.ext().is_some_and(|k| k.spawn_in_liquids());
             let mob_ok = !((walk < 0.0 && !ignores_light) || (!liquid_ok && contains_liquid(level, [fx, y as f64, fz], t.width, t.height)));
             stats::valid_mob(d_.type_name, [pos.x, pos.y, pos.z], mob_ok);
+            if !mob_ok && stats::enabled() {
+                stats::why_not(d_.type_name, [pos.x, pos.y, pos.z], &format!(
+                    "magic {magic} walk {walk} ignores_light {ignores_light} liquid {} sky {} block {} darken {}",
+                    contains_liquid(level, [fx, y as f64, fz], t.width, t.height),
+                    level.cells.light_at(kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z).map_or(-1, i32::from),
+                    level.cells.light_at(kiln_world::chunk::LightLayer::Block, pos.x, pos.y, pos.z).map_or(-1, i32::from),
+                    level.env.mobs.sky_darken
+                ));
+            }
             if !mob_ok {
                 continue;
             }
@@ -1140,7 +1158,7 @@ impl kiln_entity::mob::ext::SpawnView for View<'_, '_> {
         self.0.env.mobs.sky_darken
     }
     fn sky_light(&self, pos: kiln_entity::math::BlockPos) -> i32 {
-        kiln_world::light::light_at(&*self.0.cells, kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z).map_or(15, i32::from)
+        crate::blocks::sky_light_at(&*self.0.cells, self.0.env, KBlockPos::new(pos.x, pos.y, pos.z), Some(15))
     }
     fn block_light(&self, pos: kiln_entity::math::BlockPos) -> i32 {
         kiln_world::light::light_at(&*self.0.cells, kiln_world::chunk::LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)

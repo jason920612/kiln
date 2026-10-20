@@ -54,12 +54,33 @@ pub struct Decorator {
     pub bone_meal: Vec<Vec<usize>>,
 }
 
+/// What a flat level makes of its biome's decoration (`FlatLevelGeneratorSettings.adjustGenerationSettings`).
+#[derive(Clone, Copy, Debug)]
+pub struct FlatDecoration {
+    /// `features` (the biome's decoration, but for the underground and surface structure steps).
+    pub features: bool,
+    /// `lakes` (lava lakes in the lakes step, in place of the biome's).
+    pub lakes: bool,
+    /// Every layer is air and the biome is not `minecraft:the_void`: no decoration.
+    pub void_gen: bool,
+}
+
 impl Decorator {
     pub fn new(generator: &Generator, l: &Loader) -> Result<Decorator, Error> {
+        Self::build(generator, l, None)
+    }
+
+    /// The decorator of a flat level: the single biome's features as the flat settings adjust them.
+    pub fn new_flat(generator: &Generator, l: &Loader, flat: FlatDecoration) -> Result<Decorator, Error> {
+        Self::build(generator, l, Some(flat))
+    }
+
+    fn build(generator: &Generator, l: &Loader, flat: Option<FlatDecoration>) -> Result<Decorator, Error> {
         let mut features = Features::load(l)?;
         // Per biome, the placed features of each step, from the biome JSON.
         let mut lists: Vec<Vec<Vec<usize>>> = Vec::with_capacity(generator.biomes.len());
-        for b in &generator.biomes {
+        let source: Vec<u16> = generator.possible_biomes();
+        for (bi, b) in generator.biomes.iter().enumerate() {
             let json = l
                 .pack
                 .biomes
@@ -72,6 +93,9 @@ impl Decorator {
                 for s in step_lists {
                     steps.push(features.placed_list(s, l).map_err(|e| e.context(&b.name))?);
                 }
+            }
+            if let Some(f) = flat.filter(|_| source.contains(&(bi as u16))) {
+                steps = Self::flat_steps(&mut features, l, steps, f).map_err(|e| e.context(&b.name))?;
             }
             lists.push(steps);
         }
@@ -116,6 +140,32 @@ impl Decorator {
             })
             .collect();
         Ok(Decorator { features, steps, biome_steps, possible, bone_meal })
+    }
+
+    /// `FlatLevelGeneratorSettings.adjustGenerationSettings`: the lakes (when asked for) in the lakes step, and, when the level decorates, the biome's
+    /// features of every step but `UNDERGROUND_STRUCTURES` and `SURFACE_STRUCTURES` (and the lakes step, if the flat level has its own lakes).
+    fn flat_steps(features: &mut Features, l: &Loader, biome: Vec<Vec<usize>>, f: FlatDecoration) -> Result<Vec<Vec<usize>>, Error> {
+        const LAKES: usize = 1;
+        const UNDERGROUND_STRUCTURES: usize = 3;
+        const SURFACE_STRUCTURES: usize = 4;
+        let mut out: Vec<Vec<usize>> = Vec::new();
+        if f.lakes {
+            let lakes = Json::Array(vec![Json::String("minecraft:lake_lava_underground".into()), Json::String("minecraft:lake_lava_surface".into())]);
+            out.resize(LAKES + 1, Vec::new());
+            out[LAKES] = features.placed_list(&lakes, l)?;
+        }
+        if f.features && !f.void_gen {
+            for (i, list) in biome.into_iter().enumerate() {
+                if i == UNDERGROUND_STRUCTURES || i == SURFACE_STRUCTURES || (f.lakes && i == LAKES) {
+                    continue;
+                }
+                if out.len() <= i {
+                    out.resize(i + 1, Vec::new());
+                }
+                out[i].extend(list);
+            }
+        }
+        Ok(out)
     }
 
     /// `applyBiomeDecoration` for the region's center chunk: per step, the pieces of the

@@ -24,11 +24,13 @@ pub(crate) struct CellProbe<'a> {
     pub height: i32,
     /// `Level.getSkyDarken`.
     pub sky_darken: i32,
+    /// The level has sky light (its dimension type's `has_skylight`).
+    pub has_skylight: bool,
 }
 
 impl<'a> CellProbe<'a> {
     pub fn new(cells: &'a kiln_region::CellSet<kiln_world::Cell>, env: &crate::blocks::BlockEnv) -> Self {
-        CellProbe { cells, min_y: env.min_y, height: env.height, sky_darken: env.mobs.sky_darken }
+        CellProbe { cells, min_y: env.min_y, height: env.height, sky_darken: env.mobs.sky_darken, has_skylight: crate::dim_type(env.dim).has_skylight }
     }
 }
 
@@ -58,7 +60,7 @@ impl WorldProbe for CellProbe<'_> {
         use kiln_world::chunk::LightLayer;
         self.cells.chunk(kiln_world::ChunkPos::of_block(pos[0], pos[2]))?;
         let top = self.min_y + self.height;
-        let sky = self.cells.light_at(LightLayer::Sky, pos[0], pos[1], pos[2]).map_or(if pos[1] >= top { 15 } else { 0 }, i32::from);
+        let sky = if self.has_skylight { self.cells.light_at(LightLayer::Sky, pos[0], pos[1], pos[2]).map_or(if pos[1] >= top { 15 } else { 0 }, i32::from) } else { 0 };
         let block = self.cells.light_at(LightLayer::Block, pos[0], pos[1], pos[2]).map_or(0, i32::from);
         Some(block.max(sky - self.sky_darken))
     }
@@ -68,7 +70,7 @@ impl WorldProbe for CellProbe<'_> {
         use kiln_world::chunk::LightLayer;
         self.cells.chunk(kiln_world::ChunkPos::of_block(pos[0], pos[2]))?;
         let top = self.min_y + self.height;
-        Some(self.cells.light_at(LightLayer::Sky, pos[0], pos[1], pos[2]).map_or(pos[1] >= top, |s| s >= 15))
+        Some(self.has_skylight && self.cells.light_at(LightLayer::Sky, pos[0], pos[1], pos[2]).map_or(pos[1] >= top, |s| s >= 15))
     }
 
     fn structures_at(&self, pos: [i32; 3]) -> Option<Vec<String>> {
