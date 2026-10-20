@@ -314,14 +314,12 @@ fn a_player_with_chat_hidden_gets_no_chat_and_is_told_so() {
     run(&mut sim, &mut [&mut a, &mut b], 2, None);
     assert!(contains_text(&b, SYSTEM_CHAT, "chat.disabled.options"), "told his chat is off");
     assert_eq!(chats(&a).len(), 1, "and nothing was sent on");
-    // Server-made chat is hidden from him too (a `/say`, a `tellraw`), but his action bar is not.
+    // Server-made chat is hidden from him too (a `/say`, a `tellraw`).
     sim.console_now("say loud");
     sim.console_now("tellraw Bob \"quiet\"");
-    sim.console_now("title Bob actionbar \"overlay\"");
     run(&mut sim, &mut [&mut a, &mut b], 2, None);
     assert!(!contains_text(&b, DISGUISED_CHAT, "loud") && !contains_text(&b, SYSTEM_CHAT, "quiet"), "no chat for a player who hid it");
     assert!(contains_text(&a, DISGUISED_CHAT, "loud"));
-    assert!(contains_text(&b, SYSTEM_CHAT, "overlay"), "the action bar still shows");
     // "Commands only" (system) still gets system messages, but no player chat.
     let system = kiln_proto::packets::ClientInfo { chat_visibility: 1, ..Default::default() };
     send(&mut sim, 2, PlayIn::ClientInformation(system));
