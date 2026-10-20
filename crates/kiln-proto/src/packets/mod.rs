@@ -337,14 +337,15 @@ pub fn keep_alive(id: i64) -> Bytes {
 
 pub fn system_chat(text: Tag, overlay: bool) -> Bytes {
     let mut b = packet(ids::play::clientbound::SYSTEM_CHAT);
-    text.write_network(&mut b);
+    // (A component's fields in the order vanilla's `CompoundTag` writes them.)
+    text.java_ordered().write_network(&mut b);
     b.put_bool(overlay);
     b.freeze()
 }
 
 pub fn play_disconnect_text(reason: Tag) -> Bytes {
     let mut b = packet(ids::play::clientbound::DISCONNECT);
-    reason.write_network(&mut b);
+    reason.java_ordered().write_network(&mut b);
     b.freeze()
 }
 
@@ -356,6 +357,71 @@ pub fn disguised_chat(message: &Tag, chat_type: i32, sender: &Tag, target: Optio
     sender.write_network(&mut b);
     b.put_bool(target.is_some());
     if let Some(t) = target {
+        t.write_network(&mut b);
+    }
+    b.freeze()
+}
+
+/// How a signature goes in `ClientboundPlayerChatPacket`'s last-seen list (`MessageSignature.Packed`): the
+/// cache slot the client has it in, or the whole signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackedSignature {
+    Cached(i32),
+    Full(Box<[u8; 256]>),
+}
+
+/// A player's message as `ClientboundPlayerChatPacket` carries it.
+pub struct PlayerChat<'a> {
+    /// The recipient's running count of chat messages sent to them.
+    pub global_index: i32,
+    pub sender: Uuid,
+    /// Position in the sender's chain.
+    pub index: i32,
+    pub signature: Option<&'a [u8; 256]>,
+    pub content: &'a str,
+    pub timestamp_ms: i64,
+    pub salt: i64,
+    pub last_seen: &'a [PackedSignature],
+    /// The decorated text when it differs from `content`.
+    pub unsigned_content: Option<&'a Tag>,
+    /// `minecraft:chat_type` registry id of the decoration.
+    pub chat_type: i32,
+    pub name: &'a Tag,
+    pub target: Option<&'a Tag>,
+}
+
+/// `ClientboundPlayerChatPacket` (the filter mask is always `PASS_THROUGH`: Kiln filters no text).
+pub fn player_chat(m: &PlayerChat) -> Bytes {
+    let mut b = packet(ids::play::clientbound::PLAYER_CHAT);
+    b.put_varint(m.global_index);
+    b.put_uuid(m.sender);
+    b.put_varint(m.index);
+    b.put_bool(m.signature.is_some());
+    if let Some(sig) = m.signature {
+        b.put_slice(sig);
+    }
+    b.put_string(m.content);
+    b.put_i64(m.timestamp_ms);
+    b.put_i64(m.salt);
+    b.put_varint(m.last_seen.len() as i32);
+    for s in m.last_seen {
+        match s {
+            PackedSignature::Cached(id) => b.put_varint(id + 1),
+            PackedSignature::Full(sig) => {
+                b.put_varint(0);
+                b.put_slice(&sig[..]);
+            }
+        }
+    }
+    b.put_bool(m.unsigned_content.is_some());
+    if let Some(t) = m.unsigned_content {
+        t.write_network(&mut b);
+    }
+    b.put_varint(0); // FilterMask.Type.PASS_THROUGH
+    b.put_varint(m.chat_type + 1);
+    m.name.write_network(&mut b);
+    b.put_bool(m.target.is_some());
+    if let Some(t) = m.target {
         t.write_network(&mut b);
     }
     b.freeze()
@@ -474,10 +540,23 @@ pub enum PlayIn {
     PlayerCommand { action: i32 },
     /// `player_command` `START_RIDING_JUMP` (action 3) with the jump strength (0 to 100).
     RidingJump { data: i32 },
-    /// A command without its leading `/` (signed commands arrive here too; signatures are ignored).
+    /// A command without its leading `/`, sent unsigned.
     ChatCommand { command: String },
+    /// A command with signable arguments (`/say`, `/msg`, ...): sent signed whether or not the client
+    /// has a chat session, with the acknowledgements of the messages it has seen.
+    ChatCommandSigned(Box<commands::SignedChatCommand>),
     CommandSuggestion { id: i32, text: String },
-    Chat { message: String },
+    /// A chat message: when it was written (milliseconds since the epoch), the salt, the signature
+    /// if the client signs, and the acknowledgements.
+    Chat {
+        message: String,
+        timestamp_ms: i64,
+        salt: i64,
+        signature: Option<Box<[u8; 256]>>,
+        last_seen: commands::LastSeenUpdate,
+    },
+    /// The client's chat session: `session_id`, when its key expires, the key (DER) and Mojang's signature of it.
+    ChatSessionUpdate { session_id: Uuid, expires_at_ms: i64, key: Vec<u8>, key_signature: Vec<u8> },
     PlayerLoaded,
     PlayerAction { action: i32, pos: [i32; 3], face: u8, sequence: i32 },
     UseItemOn { hand: i32, pos: [i32; 3], face: i32, cursor: [f32; 3], inside: bool, sequence: i32 },
@@ -546,6 +625,20 @@ pub enum PlayIn {
     CookieResponse(common::CookieResponse),
     /// A `minecraft:custom` click action from a dialog or chat.
     CustomClickAction { id: String, payload: Option<Tag> },
+}
+
+impl PlayIn {
+    /// An unsigned chat message with nothing acknowledged, as a client without a chat session sends it.
+    pub fn chat(message: impl Into<String>) -> PlayIn {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+        PlayIn::Chat {
+            message: message.into(),
+            timestamp_ms: now,
+            salt: 0,
+            signature: None,
+            last_seen: commands::LastSeenUpdate { offset: 0, acknowledged: [0; 3], checksum: 0 },
+        }
+    }
 }
 
 /// An item stack as sent by the client. Component patches are kept as raw, length-delimited
@@ -667,15 +760,37 @@ pub fn decode_play(id: i32, r: &mut Reader) -> Result<Option<PlayIn>, DecodeErro
             if action == 3 { PlayIn::RidingJump { data } } else { PlayIn::PlayerCommand { action } }
         }
         sb::CHAT_COMMAND => PlayIn::ChatCommand { command: commands::decode_chat_command(r)? },
-        sb::CHAT_COMMAND_SIGNED => PlayIn::ChatCommand { command: commands::decode_chat_command_signed(r)?.command },
+        sb::CHAT_COMMAND_SIGNED => PlayIn::ChatCommandSigned(Box::new(commands::decode_chat_command_signed(r)?)),
+        sb::CHAT_SESSION_UPDATE => {
+            let session_id = r.uuid()?;
+            let expires_at_ms = r.i64()?;
+            let n = r.len()?;
+            if n > 512 {
+                return Err(DecodeError::Invalid("profile key too long"));
+            }
+            let key = r.bytes(n)?.to_vec();
+            let n = r.len()?;
+            if n > 4096 {
+                return Err(DecodeError::Invalid("profile key signature too long"));
+            }
+            let key_signature = r.bytes(n)?.to_vec();
+            r.finish()?;
+            PlayIn::ChatSessionUpdate { session_id, expires_at_ms, key, key_signature }
+        }
         sb::COMMAND_SUGGESTION => {
             let req = commands::decode_command_suggestion(r)?;
             PlayIn::CommandSuggestion { id: req.id, text: req.command }
         }
         sb::CHAT => {
             let message = r.string(256)?.to_owned();
-            r.rest(); // timestamp, salt, signature, acknowledgements: unsigned chat for now
-            PlayIn::Chat { message }
+            let timestamp_ms = r.i64()?;
+            let salt = r.i64()?;
+            let signature = if r.bool()? { Some(Box::new(r.bytes(256)?.try_into().expect("256 bytes"))) } else { None };
+            let offset = r.varint()?;
+            let acknowledged = r.bytes(3)?.try_into().expect("3 bytes");
+            let checksum = r.u8()?;
+            r.finish()?;
+            PlayIn::Chat { message, timestamp_ms, salt, signature, last_seen: commands::LastSeenUpdate { offset, acknowledged, checksum } }
         }
         sb::PLAYER_LOADED => PlayIn::PlayerLoaded,
         sb::PLAYER_ACTION => PlayIn::PlayerAction {
@@ -771,11 +886,15 @@ pub struct ClientInfo {
     pub skin_parts: u8,
     /// 0 left, 1 right.
     pub main_hand: i32,
+    /// `ChatVisiblity` id: 0 full, 1 commands only, 2 hidden.
+    pub chat_visibility: u8,
+    /// Whether the player shows in the server list's sample (`allowsListing`).
+    pub allows_listing: bool,
 }
 
 impl Default for ClientInfo {
     fn default() -> Self {
-        Self { view_distance: 8, skin_parts: 0x7f, main_hand: 1 }
+        Self { view_distance: 8, skin_parts: 0x7f, main_hand: 1, chat_visibility: 0, allows_listing: true }
     }
 }
 
@@ -783,14 +902,15 @@ impl Default for ClientInfo {
 pub fn read_client_information(r: &mut Reader) -> Result<ClientInfo, DecodeError> {
     let _locale = r.string(16)?;
     let view_distance = r.i8()?.max(2) as u8;
-    let _chat_mode = r.varint()?;
+    let chat_mode = r.varint()?;
     let _chat_colors = r.bool()?;
     let skin_parts = r.u8()?;
     let main_hand = r.varint()?;
     let _text_filtering = r.bool()?;
-    let _allow_listing = r.bool()?;
+    let allows_listing = r.bool()?;
     let _particles = r.varint()?;
-    Ok(ClientInfo { view_distance, skin_parts, main_hand })
+    // `ChatVisiblity.BY_ID` wraps around.
+    Ok(ClientInfo { view_distance, skin_parts, main_hand, chat_visibility: chat_mode.rem_euclid(3) as u8, allows_listing })
 }
 
 #[cfg(test)]

@@ -4,6 +4,10 @@ edition.workspace = true
 version.workspace = true
 publish.workspace = true
 
+[lib]
+name = "kiln_server"
+path = "src/lib.rs"
+
 [[bin]]
 name = "kiln"
 path = "src/main.rs"
@@ -13,6 +17,7 @@ kiln-net.workspace = true
 kiln-sim.workspace = true
 kiln-sched.workspace = true
 kiln-link.workspace = true
+kiln-data.workspace = true
 kiln-storage.workspace = true
 anyhow.workspace = true
 crossbeam-channel.workspace = true
@@ -20,3 +25,16 @@ mimalloc.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+thiserror.workspace = true
+rand_core.workspace = true
+uuid.workspace = true
+flate2.workspace = true
+sha1.workspace = true
+md-5.workspace = true
+subtle.workspace = true
+base64 = "0.23"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+p12-keystore = "0.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

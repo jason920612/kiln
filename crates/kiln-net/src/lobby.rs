@@ -64,7 +64,7 @@ impl LobbyConfig {
         Self::from_vars(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()))
     }
 
-    pub(crate) fn from_vars(var: impl Fn(&str) -> Option<String>) -> Result<Self> {
+    pub fn from_vars(var: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let flag = |k: &str| -> Result<bool> {
             match var(k).as_deref().map(str::trim) {
                 None => Ok(false),

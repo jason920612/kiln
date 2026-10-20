@@ -30,6 +30,10 @@
 //! already loaded when it is wanted and goes out in that tick's batch instead of the next one: the same chunk packets (same count and bytes, checked
 //! with `KILN_CROWD_IDS=1 KILN_SINK_IDS=1`), 2 to 3 chunk batches fewer in three of the four crowds (the one with far-apart groups only has them in
 //! another order).
+//! wp86: the packet digests were re-recorded (the state hashes are the same): "X joined the game" and "X left the game" are the translatable
+//! `multiplayer.player.joined`/`left` with the player's display name (the click, insertion and hover events a name has in chat) instead of plain
+//! text. Checked against the base with `KILN_CROWD_IDS=1 KILN_SINK_IDS=1`: every packet id has the same count and bytes except the system chat (id
+//! 124), whose count is the same and whose bytes grow (crowd_in_one_region 556,994 -> 3,042,659; the other three grow alike).
 
 use kiln_sim::testing::{Churn, Client, Walker, group_offset, join};
 use kiln_sim::{Sim, SimConfig};
@@ -128,19 +132,19 @@ fn check(s: Scenario, hash: u64, digest: u64, regions: usize) {
 /// One region, everyone close: block links.
 #[test]
 fn crowd_in_one_region() {
-    check(Scenario { players: 150, groups: 4, spacing: 48.0, walk: false, ticks: 150, events: no_events }, 0xe94274c461b259ab, 0xab1c0901b81e9d8c, 1);
+    check(Scenario { players: 150, groups: 4, spacing: 48.0, walk: false, ticks: 150, events: no_events }, 0xe94274c461b259ab, 0x7897dd85b025d75f, 1);
 }
 
 /// Groups far enough apart for chunk links, walking.
 #[test]
 fn groups_with_chunk_links() {
-    check(Scenario { players: 80, groups: 4, spacing: 200.0, walk: true, ticks: 150, events: no_events }, 0x9d96bd81102791fd, 0xa315ca23a4194ee8, 1);
+    check(Scenario { players: 80, groups: 4, spacing: 200.0, walk: true, ticks: 150, events: no_events }, 0x9d96bd81102791fd, 0xb71eb47a7b2e2c36, 1);
 }
 
 /// Groups past the locator bar's 332 blocks: azimuth links, one region each.
 #[test]
 fn groups_with_azimuth_links() {
-    check(Scenario { players: 60, groups: 3, spacing: 1500.0, walk: true, ticks: 150, events: no_events }, 0x16e1ef1b0c272be9, 0x1110e27853a927de, 3);
+    check(Scenario { players: 60, groups: 3, spacing: 1500.0, walk: true, ticks: 150, events: no_events }, 0x16e1ef1b0c272be9, 0xcf2617cf0de1619d, 3);
 }
 
 /// The locator bar's other paths: team colors (connections keep the color they were made
@@ -172,5 +176,5 @@ fn locator_events(k: usize, inbox: &mut Vec<kiln_link::ToSim>) {
 /// scenarios kept their first constants, which Linux now reproduces.
 #[test]
 fn locator_bar_commands_and_dimensions() {
-    check(Scenario { players: 40, groups: 2, spacing: 120.0, walk: true, ticks: 120, events: locator_events }, 0xff6bf67d90731153, 0xcae50d6b09a9bdae, 2);
+    check(Scenario { players: 40, groups: 2, spacing: 120.0, walk: true, ticks: 120, events: locator_events }, 0xff6bf67d90731153, 0x0f3748f1ae296b37, 2);
 }

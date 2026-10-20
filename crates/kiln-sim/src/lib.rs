@@ -27,6 +27,10 @@ mod combat;
 mod melee;
 mod command_data;
 mod commands;
+mod chat;
+mod settings;
+mod mgmt;
+mod chat_flow;
 mod consume;
 mod buckets;
 mod beehive;
@@ -99,6 +103,7 @@ mod generation;
 mod chunkstats;
 mod golem;
 mod independent;
+pub use commands::set_console_language;
 pub use generation::generation_totals;
 pub use independent::{InjectedDelay, ScheduleMode};
 mod hazards;
@@ -173,6 +178,7 @@ mod interact_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
+use kiln_command::text::{Arg, Text};
 use kiln_link::{ClientInfo, ConnId, JoinInfo, PlayIn, Property, Sink, ToSim};
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
@@ -220,7 +226,85 @@ pub struct MobState {
     pub pos: [f64; 3],
 }
 
+/// What `server.properties` decides about the game itself (the rest of a dedicated server's
+/// settings is the network's or the launcher's). The defaults are vanilla's, except that nothing
+/// pauses an empty server: tests and tools run worlds without players.
+#[derive(Debug, Clone)]
+pub struct ServerSettings {
+    /// `gamemode`: the default game mode, 0 survival .. 3 spectator (`None`: the world's own, creative in a new one,
+    /// as before Kiln had a `server.properties`).
+    pub default_game_mode: Option<u8>,
+    /// `force-gamemode`: every join sets the default game mode.
+    pub force_gamemode: bool,
+    /// `hardcore`: a new world is hardcore.
+    pub hardcore: bool,
+    /// `spawn-protection`: the radius around the world spawn only operators may build in.
+    pub spawn_protection: i32,
+    /// `allow-flight`: survival players are not kicked for flying.
+    pub allow_flight: bool,
+    /// `player-idle-timeout` in minutes (0: off).
+    pub player_idle_timeout: i32,
+    /// `pause-when-empty-seconds`: the world stops ticking after this long without players (0 or less: never).
+    pub pause_when_empty_seconds: i32,
+    /// `max-tick-time` in milliseconds (0 or less: no watchdog).
+    pub max_tick_time_ms: i64,
+    /// `entity-broadcast-range-percentage`.
+    pub entity_broadcast_range_percentage: i32,
+    /// `max-world-size`: the world border's largest radius.
+    pub max_world_size: i32,
+    /// `max-chained-neighbor-updates`.
+    pub max_chained_neighbor_updates: i32,
+    /// `op-permission-level`: what `/op` grants.
+    pub op_permission_level: u8,
+    /// `function-permission-level`: what data pack functions run with.
+    pub function_permission_level: u8,
+    /// `enforce-secure-profile` while the server is in online mode: chat needs a chat session.
+    pub enforce_secure_profile: bool,
+    /// `command-spam-threshold-seconds` and `chat-spam-threshold-seconds` (the `TickThrottler` thresholds).
+    pub command_spam_threshold_seconds: i32,
+    pub chat_spam_threshold_seconds: i32,
+    /// `log-ips`: logins and logouts print the address.
+    pub log_ips: bool,
+    /// The console decorates what it prints like vanilla: `System chat: ` before system messages
+    /// (`MinecraftServer.sendSystemMessage`) and `[Not Secure] ` before unsigned chat; off for the harness runs, whose
+    /// tools read the older plain lines.
+    pub console_system_prefix: bool,
+    /// `generate-structures` (a world keeps the value it was made with).
+    pub generate_structures: bool,
+    /// `announce-player-achievements`, the legacy key: sets the `show_advancement_messages` game rule when present.
+    pub announce_advancements: Option<bool>,
+}
+
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self {
+            default_game_mode: None,
+            force_gamemode: false,
+            hardcore: false,
+            spawn_protection: 16,
+            allow_flight: false,
+            player_idle_timeout: 0,
+            pause_when_empty_seconds: 0,
+            max_tick_time_ms: 0,
+            entity_broadcast_range_percentage: 100,
+            max_world_size: 29_999_984,
+            max_chained_neighbor_updates: 1_000_000,
+            op_permission_level: 4,
+            function_permission_level: 2,
+            enforce_secure_profile: false,
+            command_spam_threshold_seconds: 10,
+            chat_spam_threshold_seconds: 10,
+            log_ips: true,
+            console_system_prefix: false,
+            generate_structures: true,
+            announce_advancements: None,
+        }
+    }
+}
+
 pub struct SimConfig {
+    /// The `server.properties` settings that concern the game.
+    pub server: ServerSettings,
     pub max_players: usize,
     pub view_distance: u8,
     pub simulation_distance: u8,
@@ -278,6 +362,12 @@ pub struct SimConfig {
     /// dedicated server's `difficulty` property, which it applies over the save's at every start.
     /// Without it a world starts in its saved difficulty, a new one in normal.
     pub difficulty: Option<u8>,
+    /// The player list and server list settings that threads outside the simulation read.
+    pub info: std::sync::Arc<kiln_link::ServerInfo>,
+    /// `broadcast-console-to-ops`: console commands' feedback goes to the operators.
+    pub broadcast_console_to_ops: bool,
+    /// `broadcast-rcon-to-ops`: so does RCON commands'.
+    pub broadcast_rcon_to_ops: bool,
     /// Tests: entities that console commands and functions summon join the level after the tick, as they did before wp72 (the
     /// recorders of some vanilla vectors add entities without ticking them; vanilla's `/summon` ticks the entity in the same tick).
     pub summons_join_late: bool,
@@ -330,6 +420,7 @@ impl SimConfig {
     pub fn new(max_players: usize, view_distance: u8, world: Option<std::path::PathBuf>) -> Self {
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
         Self {
+            server: ServerSettings::default(),
             max_players,
             view_distance,
             simulation_distance: view_distance,
@@ -361,6 +452,9 @@ impl SimConfig {
             profile_lookup: None,
             replies: None,
             difficulty: None,
+            info: std::sync::Arc::new(kiln_link::ServerInfo::new("A Minecraft Server", max_players as i32, "world")),
+            broadcast_console_to_ops: true,
+            broadcast_rcon_to_ops: true,
             summons_join_late: false,
         }
     }
@@ -438,6 +532,8 @@ struct Player {
     address: Option<std::net::IpAddr>,
     /// `ServerPlayer.lastActionTime`, for `/setidletimeout`.
     last_action: Instant,
+    /// The message chain, acknowledgements and signature cache of this player's chat.
+    chat: chat::ChatState,
     /// `ServerPlayer.postEffects` and whether the client has them (`postEffectsDirty`).
     post_effects: Vec<String>,
     post_effects_dirty: bool,
@@ -551,6 +647,11 @@ struct Player {
     brush_ticks: Option<i32>,
     /// The operator permission level (`/op`), kept by the server for the regions' sake (game master blocks).
     permission: u8,
+    /// `clientIsFloating` and `aboveGroundTickCount`: the client's last move left it with nothing under it, and for how long.
+    client_is_floating: bool,
+    above_ground_ticks: i32,
+    /// Whether the player is in the operators list (`PlayerList.isOp`, which spawn protection asks).
+    is_op: bool,
     /// The level the client was last told (`EntityEvent.PERMISSION_LEVEL_*`); `None` until the first notice.
     permission_sent: Option<u8>,
     /// The plugin instances of the region the player is in, when some plugin hears of player
@@ -812,7 +913,16 @@ struct Player {
 }
 
 impl Player {
+    /// Sends `p` whatever the player's chat setting is (the packets the server sends to tell them chat is off).
+    fn send_unfiltered(&mut self, p: Bytes) {
+        self.outbox.push(p);
+    }
     fn send(&mut self, p: Bytes) {
+        // A player whose chat is off gets no chat: none at all with "commands only", and only the action bar with "hidden"
+        // (`ServerPlayer.acceptsChatMessages` and `acceptsSystemMessages`).
+        if self.client.chat_visibility != chat_flow::CHAT_FULL && is_hidden_chat(&p, self.client.chat_visibility) {
+            return;
+        }
         self.outbox.push(p);
     }
     fn flush(&mut self) {
@@ -1599,6 +1709,10 @@ pub struct Sim {
     /// Packets of players in [`WAITING`] that need their region's blocks (clicks on blocks and
     /// entities, container clicks, ...), applied once they are placed.
     held_packets: Vec<(ConnId, PlayIn)>,
+    /// Ticks in a row without players (`MinecraftServer.emptyTicks`), for `pause-when-empty-seconds`.
+    empty_ticks: i64,
+    /// A paused tick met the shutdown message.
+    stopped: bool,
     /// A world save going on over several ticks: the chunks still to copy, by level.
     save_run: Option<Vec<(DimId, ChunkPos)>>,
     /// The maps (`data/minecraft/maps`), shared with the players that use empty maps.
@@ -1632,12 +1746,31 @@ fn ops_from_env() -> HashSet<String> {
         .unwrap_or_default()
 }
 
+/// Tells the watchdog when the next tick is due, as a wall-clock time.
+fn publish_next_tick(info: &kiln_link::ServerInfo, next_tick: Instant) {
+    let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+    let now = Instant::now();
+    let offset = if next_tick >= now { (next_tick - now).as_millis() as i64 } else { -((now - next_tick).as_millis() as i64) };
+    info.next_tick_due_ms.store((unix_now + offset).max(1) as u64, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
+    let started = Instant::now();
     let mut sim = Sim::new(config);
+    // (The line that panels wait for: the server is ready for players.)
+    info!("Done ({:.3}s)! For help, type \"help\"", started.elapsed().as_secs_f64());
     sim.sync_ops();
+    // `DedicatedServer.initServer` ends: the server is ready, and the management clients hear of it.
+    sim.config.info.ready.store(true, std::sync::atomic::Ordering::Relaxed);
+    // (`initServer` ends with `saveEverything(true, true, true)` and then `serverStarted`.)
+    sim.notify(kiln_link::mgmt::Notification::ServerSaveStarted);
+    sim.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
+    sim.notify(kiln_link::mgmt::Notification::ServerStarted);
     let mut next_tick = Instant::now();
     let mut inbox = Vec::new();
+    let info = sim.config.info.clone();
     loop {
+        publish_next_tick(&info, next_tick);
         loop {
             match rx.try_recv() {
                 Ok(msg) => inbox.push(msg),
@@ -1665,7 +1798,17 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         next_tick += Duration::from_nanos(sim.world.tick_rate.nanos_per_tick() as u64);
         let now = Instant::now();
         if next_tick > now {
-            std::thread::sleep(next_tick - now);
+            // The wait for the next tick serves the work of the administration threads (RCON, the management
+            // server) as it arrives, as vanilla's main thread runs queued tasks while it waits: a request is not
+            // held back a whole tick. (Only when every region ticks in lockstep: nothing is running then.)
+            while let Some(left) = next_tick.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
+                match rx.recv_timeout(left) {
+                    Ok(ToSim::Admin(work)) if sim.config.schedule == ScheduleMode::Lockstep => work(&mut sim),
+                    Ok(msg) => inbox.push(msg),
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => break,
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
+                }
+            }
         } else {
             next_tick = now;
         }
@@ -1697,6 +1840,9 @@ impl Sim {
                 .map_err(|e| warn!("cannot load the datapack at {}: {e}", vanilla_pack.display()))
                 .ok()
         });
+        // `generate-structures`: a world keeps the value it was created with.
+        let generate_structures =
+            storage.as_ref().and_then(|s| s.level.generate_structures()).unwrap_or(config.server.generate_structures);
         // What generates each level's chunks, from its stem.
         let mut made = |id: DimId| -> Made {
             let key = dim_key(id);
@@ -1720,7 +1866,7 @@ impl Sim {
                 }
                 kiln_worldgen::stem::StemGenerator::Noise { .. } => {
                     let (Some(pack), Some(n)) = (pack.as_ref(), config.noise.as_ref()) else { return Made::Nothing };
-                    let world = match kiln_worldgen::Worldgen::from_stem(pack, &stem, n.seed, true) {
+                    let world = match kiln_worldgen::Worldgen::from_stem(pack, &stem, n.seed, generate_structures) {
                         Ok(Some(world)) => world,
                         Ok(None) => return Made::Nothing,
                         Err(e) => {
@@ -1817,6 +1963,7 @@ impl Sim {
         let seed = match (&config.noise, storage.as_mut()) {
             (Some(n), Some(s)) => {
                 s.level.set_seed_if_missing(n.seed);
+                s.level.set_generate_structures_if_missing(config.server.generate_structures);
                 n.seed
             }
             (Some(n), None) => n.seed,
@@ -1890,6 +2037,8 @@ impl Sim {
             siege: Default::default(),
             world: world_state::WorldState { pipelines, feature_hosts, ..Default::default() },
             held_packets: Vec::new(),
+            empty_ticks: 0,
+            stopped: false,
             save_run: None,
             maps,
             pearls_returning: Vec::new(),
@@ -1900,6 +2049,7 @@ impl Sim {
         sim.commands.bossbars.seed(now.as_nanos() as u64);
         sim.commands.seed = seed;
         sim.load_admin_state();
+        sim.apply_server_settings();
         sim.load_scoreboard();
         sim.load_stopwatches();
         sim.load_weather();
@@ -1919,6 +2069,11 @@ impl Sim {
     /// Runs one tick: applies the connection events received since the last tick, then
     /// simulates and flushes every connection. Returns `false` once the simulation stopped.
     pub fn step(&mut self, inbox: impl IntoIterator<Item = ToSim>) -> bool {
+        let mut inbox: Vec<ToSim> = inbox.into_iter().collect();
+        // A world without players stops after `pause-when-empty-seconds`.
+        if self.paused_tick(&mut inbox) {
+            return !std::mem::take(&mut self.stopped);
+        }
         let start = Instant::now();
         let mut mark = start;
         let mut lap = |stats: &mut stats::TickStats, name| {
@@ -1937,6 +2092,7 @@ impl Sim {
         // B0: connection events, chunks, topology, joins, membership.
         let (mut packets, mut joins, mut console, mut leaves) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut profile_results = Vec::new();
+        let mut admin_work = Vec::new();
         for msg in inbox {
             match msg {
                 ToSim::Join(j) => joins.push(j),
@@ -1953,6 +2109,7 @@ impl Sim {
                     return false;
                 }
                 ToSim::ProfileLookup { request, result } => profile_results.push((request, result)),
+                ToSim::Admin(work) => admin_work.push(work),
             }
         }
         // `/kiln use` clicks, as if their players had sent them.
@@ -1963,6 +2120,7 @@ impl Sim {
         let packets = self.independent_b0(packets, !joins.is_empty() || !leaves.is_empty() || !console.is_empty());
         self.track_idle(&packets);
         let dt = diag::lap_slow("b0.idle", dt);
+        self.tick_chat_throttles();
         self.maintain_chunks();
         let dt = diag::lap_slow("b0.chunks", dt);
         self.rendezvous_for_topology();
@@ -2018,7 +2176,10 @@ impl Sim {
         // G: console, time, autosave.
         self.deliver_profile_answers();
         for command in console {
-            self.run_console_command(command.trim_start_matches('/'));
+            self.run_console_command(command.strip_prefix('/').unwrap_or(&command));
+        }
+        for work in admin_work {
+            work(self);
         }
         self.run_structure_triggers();
         for (request, result) in profile_results {
@@ -2818,6 +2979,10 @@ impl Sim {
             frozen: !self.world.tick_rate.runs_normally(),
             border: self.world.borders[dim].bounds(),
             tickets: std::sync::Arc::new(self.level_tickets(dim)),
+            // `DedicatedServer.isUnderSpawnProtection`: in the spawn's level, once somebody is an operator.
+            allow_flight: self.config.server.allow_flight,
+            spawn_protection: (dim == OVERWORLD_ID && self.config.server.spawn_protection > 0 && !self.commands.ops.is_empty())
+                .then_some((self.config.server.spawn_protection, self.spawn)),
         }
     }
 
@@ -3787,10 +3952,11 @@ impl Sim {
     fn exclusive_packet(&mut self, conn: ConnId, pkt: PlayIn) {
         match pkt {
             PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::PerformRespawn) => self.respawn(conn),
-            PlayIn::ChatCommand { command } => {
-                if !self.plugin_command_denied(conn, &command) {
-                    self.run_command(conn, &command);
-                }
+            PlayIn::ChatCommand { command } => self.handle_chat_command(conn, command),
+            PlayIn::ChatCommandSigned(c) => self.handle_chat_command_signed(conn, *c),
+            PlayIn::ChatAck { offset } => self.handle_chat_ack(conn, offset),
+            PlayIn::ChatSessionUpdate { session_id, expires_at_ms, key, key_signature } => {
+                self.handle_chat_session_update(conn, session_id, expires_at_ms, key, key_signature)
             }
             PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
             PlayIn::SetCommandBlock(update) => self.set_command_block(conn, &update),
@@ -3799,19 +3965,8 @@ impl Sim {
             PlayIn::JigsawGenerate { pos, levels, keep_jigsaws } => self.jigsaw_generate(conn, pos, levels, keep_jigsaws),
             PlayIn::ResourcePack { id, action } => self.resource_pack_response(conn, id, action),
             PlayIn::CookieResponse(response) => self.cookie_response(conn, response),
-            PlayIn::Chat { message } => {
-                let Some(p) = self.players.get_mut(&conn) else { return };
-                if commands::has_illegal_chars(&message) {
-                    p.disconnect("Illegal characters in chat");
-                    return;
-                }
-                if self.plugin_chat(conn, &message) {
-                    return;
-                }
-                let Some(p) = self.players.get(&conn) else { return };
-                info!("<{}> {}", p.name, message);
-                let pkt = players::chat_player(&p.name, &message);
-                self.broadcast(pkt);
+            PlayIn::Chat { message, timestamp_ms, salt, signature, last_seen } => {
+                self.handle_chat(conn, message, timestamp_ms, salt, signature, last_seen)
             }
             // A region packet queued behind a serial one: it runs here, in the player's region.
             pkt => {
@@ -3845,6 +4000,9 @@ impl Sim {
     }
 
     fn leave(&mut self, conn: ConnId) {
+        if let Ok(mut roster) = self.config.info.roster.write() {
+            roster.retain(|e| e.conn != conn);
+        }
         self.dragon_fight_left(conn);
         // `ServerPlayer.disconnect`: a sleeper gets out of bed first.
         if let Some(mut p) = self.players.remove(&conn) {
@@ -3864,18 +4022,25 @@ impl Sim {
             self.player_stops_riding(&p);
             self.plugins_left(&p);
             self.announce_leave(&p, conn);
-            self.broadcast_system(yellow(&format!("{} left the game", p.name)));
+            self.notify(kiln_link::mgmt::Notification::PlayerLeft(kiln_link::access::NameAndId { uuid: p.uuid, name: p.name.clone() }));
+            let shown = self.player_display_name(&p.name, p.uuid);
+            self.broadcast_system_text(Text::translate("multiplayer.player.left", vec![Arg::Text(shown)]).color("yellow"));
         }
     }
 
     fn shut_down(&mut self) {
+        // (`DedicatedServer.stopServer`, then the final save.)
+        self.config.info.ready.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.notify(kiln_link::mgmt::Notification::ServerShuttingDown);
         stats::flush_trace();
         info!("{}", chunkstats::line(self.config.noise.as_ref().map_or(0, |n| n.threads)));
         self.rendezvous();
         for p in self.players.values_mut() {
             p.disconnect("Server closed");
         }
+        self.notify(kiln_link::mgmt::Notification::ServerSaveStarted);
         self.save();
+        self.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
         // Writes still running on the storage threads reach the disk before the server stops.
         for d in &mut self.dims {
             if let Err(e) = d.provider.sync() {
@@ -3902,9 +4067,12 @@ impl Sim {
     /// [`SAVE_BUDGET`] and encoded and written on the storage threads, so the save holds no tick
     /// up; everything else is saved at once. Elsewhere, the whole save at once.
     fn start_save(&mut self) {
+        // (`DedicatedServer.saveAllChunks`: the management clients hear of every save.)
+        self.notify(kiln_link::mgmt::Notification::ServerSaveStarted);
         let background = self.dims.iter().all(|d| d.generation.is_some() && d.lent.is_empty());
         if !background || std::env::var("KILN_BACKGROUND_STORAGE").is_ok_and(|v| v == "0") {
             self.save();
+            self.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
             return;
         }
         let start = Instant::now();
@@ -3998,6 +4166,7 @@ impl Sim {
             for d in &mut self.dims {
                 d.flush_when_encoded = true;
             }
+            self.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
         } else {
             self.save_run = Some(queue);
         }
@@ -4112,6 +4281,11 @@ impl Sim {
             sink: j.sink,
             address: j.address,
             last_action: Instant::now(),
+            chat: chat::ChatState::new(
+                self.config.server.enforce_secure_profile,
+                self.config.server.command_spam_threshold_seconds,
+                self.config.server.chat_spam_threshold_seconds,
+            ),
             post_effects: persist::saved_post_effects(joining.saved.raw()),
             post_effects_dirty: true,
             waypoint_icon: persist::saved_waypoint_icon(joining.saved.raw()),
@@ -4178,6 +4352,9 @@ impl Sim {
             kinetic_ticks: None,
             brush_ticks: None,
             permission: 0,
+            is_op: false,
+            client_is_floating: false,
+            above_ground_ticks: 0,
             permission_sent: None,
             plugin_gate: None,
             recent_stabs: Vec::new(),
@@ -4359,18 +4536,25 @@ impl Sim {
         let mut spawns = Vec::new();
         player.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
 
-        let msg = yellow(&format!("{} joined the game", player.name));
+        let shown = self.player_display_name(&player.name, player.uuid);
+        let msg = Text::translate("multiplayer.player.joined", vec![Arg::Text(shown)]).color("yellow");
+        self.log_system_chat(&msg);
+        let msg = msg.to_nbt();
         let uuid = player.uuid;
         for pkt in self.commands.scoreboard.join_packets() {
             player.send(pkt);
         }
         self.sleep_status[player.dim].dirty = true;
+        if let Ok(mut roster) = self.config.info.roster.write() {
+            roster.push(kiln_link::RosterEntry { conn: j.conn, uuid, name: player.name.clone(), allows_listing: player.client.allows_listing });
+        }
         self.players.insert(j.conn, player);
         self.queue_player_pearls(entity_id, &saved_pearls);
         self.refresh_permissions();
         self.send_command_tree(j.conn);
         self.announce_join(j.conn);
         self.broadcast_system(msg);
+        self.notify(kiln_link::mgmt::Notification::PlayerJoined(kiln_link::access::NameAndId { uuid, name: self.players[&j.conn].name.clone() }));
         self.commands.bossbars.player_joined(uuid);
         self.flush_scoreboard();
     }
@@ -4395,6 +4579,16 @@ impl Sim {
             portal_cooldown: p.portal_cooldown,
             sea_level: self.dims[dim].sea_level,
         }
+    }
+
+    /// `Player.getDisplayName`: the team-decorated name with the click and hover events chat shows.
+    fn player_display_name(&self, name: &str, uuid: uuid::Uuid) -> Text {
+        chat_flow::decorate_player_name(self.commands.scoreboard.player_display_name(name), name, uuid)
+    }
+
+    fn broadcast_system_text(&mut self, text: Text) {
+        self.log_system_chat(&text);
+        self.broadcast_system(text.to_nbt());
     }
 
     fn broadcast_system(&mut self, text: Tag) {
@@ -4575,6 +4769,15 @@ fn player_chunk(pos: [f64; 3]) -> ChunkPos {
     ChunkPos::of_block(pos[0].floor() as i32, pos[2].floor() as i32)
 }
 
-fn yellow(s: &str) -> Tag {
-    Tag::Compound(vec![("text".into(), Tag::String(s.into())), ("color".into(), Tag::String("yellow".into()))])
+/// Whether `packet` is chat that a player with this chat setting does not get.
+fn is_hidden_chat(packet: &[u8], visibility: u8) -> bool {
+    use kiln_data::packets::play::clientbound as ids;
+    let mut r = kiln_proto::Reader::new(packet);
+    match r.varint() {
+        Ok(id) if id == ids::PLAYER_CHAT || id == ids::DISGUISED_CHAT => true,
+        // System chat ends with its overlay flag; the action bar is shown even with chat hidden.
+        Ok(id) if id == ids::SYSTEM_CHAT => visibility == chat_flow::CHAT_HIDDEN && packet.last() == Some(&0),
+        _ => false,
+    }
 }
+

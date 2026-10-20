@@ -4,6 +4,7 @@
 //! and it answers through `Sink`s, which the network layer implements.
 
 pub mod access;
+pub mod mgmt;
 
 use bytes::Bytes;
 pub use kiln_proto::packets::{ClientInfo, PlayIn};
@@ -36,6 +37,96 @@ pub enum ToSim {
     /// The answer to a profile lookup the simulation started (`request` is its number);
     /// `None` when the profile does not exist or the lookup failed.
     ProfileLookup { request: u64, result: Option<LookedUpProfile> },
+    /// Work for the simulation thread from the administration threads (RCON, the management
+    /// server): the closure runs between ticks with the simulation's [`AdminHost`] face.
+    Admin(Box<dyn FnOnce(&mut dyn AdminHost) + Send>),
+}
+
+/// What the simulation lends to remote administration (see [`ToSim::Admin`]).
+pub trait AdminHost {
+    /// Runs `command` as the RCON source (`RconConsoleSource`: permission level 4, nobody's
+    /// position) and returns what it said (`getAndClearBuffer`).
+    fn rcon_command(&mut self, command: &str) -> String;
+
+    /// The face the management server's methods use (`None` for hosts without one).
+    fn mgmt(&mut self) -> Option<&mut dyn mgmt::MgmtHost> {
+        None
+    }
+}
+
+/// A player in the player list, as the server list, Query and the management server see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RosterEntry {
+    pub conn: ConnId,
+    pub uuid: Uuid,
+    pub name: String,
+    /// The client's "Allow Server Listings" option (`ServerPlayer.allowsListing`).
+    pub allows_listing: bool,
+}
+
+/// Facts about the running server that threads outside the simulation read (the server list,
+/// Query, RCON, the management server). The simulation keeps the roster; the settings are the
+/// mutable ones of `DedicatedServerProperties`.
+#[derive(Debug)]
+pub struct ServerInfo {
+    pub roster: std::sync::RwLock<Vec<RosterEntry>>,
+    pub motd: std::sync::RwLock<String>,
+    pub max_players: std::sync::atomic::AtomicI32,
+    pub hide_online_players: std::sync::atomic::AtomicBool,
+    pub enable_status: std::sync::atomic::AtomicBool,
+    /// The world's name (`level-name`), Query's `map`.
+    pub level_name: String,
+    /// The version Query and the legacy ping report.
+    pub version_name: String,
+    /// Mojang's public keys (X.509 DER) that sign players' chat keys; empty until fetched (online mode).
+    pub services_keys: std::sync::RwLock<Vec<Vec<u8>>>,
+    /// When the next tick is due (Unix milliseconds; 0 until the simulation ticks): what the watchdog of `max-tick-time` watches.
+    pub next_tick_due_ms: std::sync::atomic::AtomicU64,
+    /// `MinecraftServer.isReady`: the world is loaded and the server runs.
+    pub ready: std::sync::atomic::AtomicBool,
+    /// `accepts-transfers`.
+    pub accepts_transfers: std::sync::atomic::AtomicBool,
+    /// The management server's notifications (see [`mgmt::Notifier`]).
+    pub notifier: std::sync::Arc<mgmt::NotifierSlot>,
+}
+
+impl ServerInfo {
+    pub fn new(motd: &str, max_players: i32, level_name: &str) -> Self {
+        Self {
+            roster: Default::default(),
+            motd: std::sync::RwLock::new(motd.to_owned()),
+            max_players: std::sync::atomic::AtomicI32::new(max_players),
+            hide_online_players: std::sync::atomic::AtomicBool::new(false),
+            enable_status: std::sync::atomic::AtomicBool::new(true),
+            level_name: level_name.to_owned(),
+            version_name: kiln_data::version::NAME.to_owned(),
+            services_keys: Default::default(),
+            next_tick_due_ms: Default::default(),
+            ready: std::sync::atomic::AtomicBool::new(false),
+            accepts_transfers: std::sync::atomic::AtomicBool::new(false),
+            notifier: Default::default(),
+        }
+    }
+
+    pub fn services_keys(&self) -> Vec<Vec<u8>> {
+        self.services_keys.read().map(|k| k.clone()).unwrap_or_default()
+    }
+
+    pub fn motd(&self) -> String {
+        self.motd.read().map(|m| m.clone()).unwrap_or_default()
+    }
+
+    pub fn max_players(&self) -> i32 {
+        self.max_players.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn players(&self) -> Vec<RosterEntry> {
+        self.roster.read().map(|r| r.clone()).unwrap_or_default()
+    }
+
+    pub fn player_count(&self) -> usize {
+        self.roster.read().map_or(0, |r| r.len())
+    }
 }
 
 /// A game profile a lookup found, with its properties (skin textures).

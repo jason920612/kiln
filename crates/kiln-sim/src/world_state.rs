@@ -17,7 +17,16 @@ use kiln_proto::packets::world_fx as fx;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// `MinecraftServer.getAbsoluteMaxWorldSize` (the `max-world-size` default).
-const ABSOLUTE_MAX_SIZE: i32 = 29_999_984;
+/// `max-world-size` (`WorldBorder.absoluteMaxSize`): how far from the centre the border can reach, whatever its size says.
+static ABSOLUTE_MAX_SIZE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(29_999_984);
+
+pub(crate) fn set_absolute_max_size(blocks: i32) {
+    ABSOLUTE_MAX_SIZE.store(blocks, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn absolute_max_size() -> i32 {
+    ABSOLUTE_MAX_SIZE.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 // ---- world border -------------------------------------------------------------------------
 
@@ -173,7 +182,7 @@ impl Border {
             Extent::Static(s) => s,
             Extent::Moving(m) => m.previous,
         };
-        let max = ABSOLUTE_MAX_SIZE as f64;
+        let max = f64::from(absolute_max_size());
         let clamp = |v: f64| v.clamp(-max, max);
         BorderBox {
             min_x: clamp(self.center[0] - size / 2.0),
@@ -239,7 +248,7 @@ impl Border {
             size: self.size(),
             target_size: self.lerp_target(),
             lerp_ticks: self.lerp_time(),
-            absolute_max_size: ABSOLUTE_MAX_SIZE,
+            absolute_max_size: absolute_max_size(),
             warning_blocks: self.warning_blocks,
             warning_time: self.warning_time,
         })

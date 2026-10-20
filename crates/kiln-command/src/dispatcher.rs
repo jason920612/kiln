@@ -681,6 +681,24 @@ impl<S: Source> Dispatcher<S> {
         potentials.swap_remove(0)
     }
 
+    /// `SignableCommand.of`: the message arguments the command parses (the ones a chat session
+    /// signs), in order, with the text each was typed as. The arguments of the commands a redirect
+    /// leads to (`execute ... run say hi`) count.
+    pub fn signable_arguments(&self, input: &str, source: &S) -> Vec<(String, String)> {
+        let parse = self.parse(input, source);
+        let mut out = Vec::new();
+        let mut context = Some(&parse.context);
+        while let Some(c) = context {
+            for a in &c.args {
+                if matches!(a.value, ArgumentValue::Message(_)) {
+                    out.push((a.name.clone(), input[a.start..a.end].to_owned()));
+                }
+            }
+            context = c.child.as_deref();
+        }
+        out
+    }
+
     /// Parses and runs `input` (without a leading `/`).
     pub fn execute(&self, input: &str, source: &mut S) -> Result<i32, CommandError> {
         let parse = self.parse(input, source);

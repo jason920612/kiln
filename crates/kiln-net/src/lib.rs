@@ -6,6 +6,7 @@ mod cipher;
 pub mod lobby;
 mod profile;
 pub mod proxy;
+pub mod status;
 
 pub use lobby::LobbyConfig;
 pub use profile::GameProfile;
@@ -42,6 +43,31 @@ pub struct Config {
     pub simulation_distance: u8,
     /// `None` disables compression. Behind a proxy `LoginConfig::proxy_compression_threshold` applies.
     pub compression_threshold: Option<usize>,
+    /// The server list icon (`data:image/png;base64,...`, from `server-icon.png`).
+    pub favicon: Option<String>,
+    /// `enforcesSecureChat` of the server list: `enforce-secure-profile` in online mode.
+    pub enforces_secure_chat: bool,
+    /// `rate-limit`: packets per second a connection may average before it is kicked (0: no limit).
+    pub rate_limit: u32,
+    /// `log-ips`: the log names the players' addresses.
+    pub log_ips: bool,
+}
+
+impl Config {
+    pub fn new(bind: SocketAddr, motd: &str, max_players: usize, view_distance: u8) -> Self {
+        Self {
+            bind,
+            motd: motd.to_owned(),
+            max_players,
+            view_distance,
+            simulation_distance: view_distance,
+            compression_threshold: Some(256),
+            favicon: None,
+            enforces_secure_chat: false,
+            rate_limit: 0,
+            log_ips: true,
+        }
+    }
 }
 
 /// How players prove who they are.
@@ -76,7 +102,7 @@ impl LoginConfig {
         Self::from_vars(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()))
     }
 
-    fn from_vars(var: impl Fn(&str) -> Option<String>) -> Result<Self> {
+    pub fn from_vars(var: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let flag = |k: &str| -> Result<bool> {
             match var(k).as_deref().map(str::trim) {
                 None => Ok(false),
@@ -171,6 +197,10 @@ pub struct Shared {
     auth: Option<Authenticator>,
     /// Whitelist and bans, checked at login; the simulation's commands change them.
     pub access: kiln_link::access::SharedAccess,
+    /// The player list and the settings the server list shows (shared with the simulation).
+    pub info: Arc<kiln_link::ServerInfo>,
+    status_cache: std::sync::Mutex<status::StatusCache>,
+    sample_rng: std::sync::Mutex<status::SampleRng>,
 }
 
 impl Shared {
@@ -183,8 +213,20 @@ impl Shared {
     }
 
     pub fn with_lobby(mut self, lobby: LobbyConfig) -> Self {
+        self.info.accepts_transfers.store(lobby.accepts_transfers, Ordering::Relaxed);
         self.lobby = lobby;
         self
+    }
+
+    /// The status response, rebuilt every five seconds (`MinecraftServer.status`).
+    pub fn status_json(&self) -> String {
+        let mut cache = self.status_cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut rng = self.sample_rng.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache
+            .get(std::time::Instant::now(), || {
+                status::build(&self.info, self.config.favicon.as_deref(), self.config.enforces_secure_chat, &mut rng)
+            })
+            .to_owned()
     }
 
     /// `MinecraftServer.isResourcePackRequired`.
@@ -193,6 +235,8 @@ impl Shared {
     }
 
     pub fn with_login(config: Config, login: LoginConfig, to_sim: crossbeam_channel::Sender<ToSim>) -> Self {
+        let (motd, max_players) = (config.motd.clone(), config.max_players);
+        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
         // Encoded once and reused for every login.
         let registry_packets = kiln_data::registries::SYNCHRONIZED
             .iter()
@@ -216,7 +260,40 @@ impl Shared {
             data_sync: Arc::default(),
             auth,
             access: kiln_link::access::AccessLists::new(None).shared(),
+            info: Arc::new(kiln_link::ServerInfo::new(&motd, max_players as i32, "world")),
+            status_cache: Default::default(),
+            sample_rng: std::sync::Mutex::new(status::SampleRng::new(seed)),
         }
+    }
+
+    /// Shares the player list and server list settings with the simulation.
+    pub fn with_info(mut self, info: Arc<kiln_link::ServerInfo>) -> Self {
+        self.info = info;
+        self
+    }
+
+    /// Online mode: fetches Mojang's keys that sign players' chat keys in the background (the chat sessions of players who
+    /// join before they arrive are ignored, as in vanilla), retrying a few times.
+    pub fn fetch_services_keys(&self) {
+        let Some(auth) = &self.auth else { return };
+        let (session, info) = (auth.session.clone(), self.info.clone());
+        let _ = std::thread::Builder::new().name("Services keys".into()).spawn(move || {
+            for attempt in 0..5 {
+                match session.player_certificate_keys() {
+                    Ok(keys) => {
+                        debug!("{} Minecraft Services public keys", keys.len());
+                        if let Ok(mut k) = info.services_keys.write() {
+                            *k = keys;
+                        }
+                        return;
+                    }
+                    Err(e) => {
+                        warn!("Failed to request Minecraft Services public key: {e:#}");
+                        std::thread::sleep(Duration::from_secs(5 << attempt));
+                    }
+                }
+            }
+        });
     }
 
     /// Uses `access` for the login checks (shared with the simulation).
@@ -320,6 +397,7 @@ pub async fn listen(shared: Arc<Shared>) -> Result<()> {
     let listener = TcpListener::bind(shared.config.bind).await?;
     info!("listening on {}", shared.config.bind);
     shared.log_login_mode();
+    shared.fetch_services_keys();
     loop {
         let (stream, addr) = listener.accept().await?;
         let _ = stream.set_nodelay(true);
@@ -415,7 +493,30 @@ fn split_id(pkt: &[u8]) -> Result<(i32, Reader<'_>)> {
     Ok((id, r))
 }
 
-async fn handle(stream: TcpStream, addr: SocketAddr, shared: Arc<Shared>) -> Result<()> {
+/// `LegacyQueryHandler`: answers the pre-1.7 server list pings (`FE`, `FE 01`, `FE 01 FA
+/// MC|PingHost ...`) with a kick packet and closes. `false`: not such a ping, handle the
+/// connection as usual (the bytes are still unread).
+async fn legacy_ping(stream: &mut TcpStream, addr: SocketAddr, shared: &Shared) -> Result<bool> {
+    let mut buf = [0u8; 512];
+    let Ok(Ok(n)) = tokio::time::timeout(PRE_PLAY_TIMEOUT, stream.peek(&mut buf)).await else { return Ok(false) };
+    if n == 0 || buf[0] != 0xfe {
+        return Ok(false);
+    }
+    let info = &shared.info;
+    let reply = status::legacy_ping_reply(&buf[..n], &info.motd(), &info.version_name, info.player_count(), info.max_players());
+    let Some(reply) = reply else { return Ok(false) };
+    debug!("Ping: (legacy, {n} bytes) from {addr}");
+    stream.read_exact(&mut buf[..n]).await?;
+    stream.write_all(&reply).await?;
+    stream.shutdown().await?;
+    Ok(true)
+}
+
+async fn handle(mut stream: TcpStream, addr: SocketAddr, shared: Arc<Shared>) -> Result<()> {
+    // The legacy handler is part of the pipeline only while the server answers status requests.
+    if shared.info.enable_status.load(Ordering::Relaxed) && legacy_ping(&mut stream, addr, &shared).await? {
+        return Ok(());
+    }
     let mut conn = Conn::new(stream);
     let pkt = conn.read().await?;
     let (id, mut r) = split_id(&pkt)?;
@@ -437,7 +538,7 @@ async fn handle(stream: TcpStream, addr: SocketAddr, shared: Arc<Shared>) -> Res
         1 => status(&mut conn, &shared, protocol).await,
         2 => login(conn, addr, &shared, protocol, &host).await,
         // `ServerHandshakePacketListenerImpl`: refused before login when transfers are off.
-        3 if !shared.lobby.accepts_transfers => {
+        3 if !shared.info.accepts_transfers.load(Ordering::Relaxed) => {
             conn.send(&login_ext::login_disconnect_translated("multiplayer.disconnect.transfers_disabled")).await?;
             bail!("transfer refused: accepts-transfers is off")
         }
@@ -447,22 +548,23 @@ async fn handle(stream: TcpStream, addr: SocketAddr, shared: Arc<Shared>) -> Res
 }
 
 async fn status(conn: &mut Conn, shared: &Shared, _client_protocol: i32) -> Result<()> {
+    // `ServerHandshakePacketListenerImpl`: with `enable-status` off the connection is just closed.
+    if !shared.info.enable_status.load(Ordering::Relaxed) {
+        bail!("status requests are disabled (enable-status=false)");
+    }
+    let mut requested = false;
     loop {
         let pkt = conn.read().await?;
         let (id, mut r) = split_id(&pkt)?;
         match id {
             ids::status::serverbound::STATUS_REQUEST => {
-                let json = serde_json::json!({
-                    "version": { "name": version::NAME, "protocol": version::PROTOCOL },
-                    "players": {
-                        "max": shared.config.max_players,
-                        "online": shared.online.load(Ordering::Relaxed),
-                        "sample": [],
-                    },
-                    "description": { "text": shared.config.motd },
-                    "enforcesSecureChat": false,
-                });
-                conn.send(&packets::status_response(&json.to_string())).await?;
+                // `ServerStatusPacketListenerImpl`: one status request per connection.
+                if requested {
+                    bail!("status requested twice");
+                }
+                requested = true;
+                let json = shared.status_json();
+                conn.send(&packets::status_response(&json)).await?;
             }
             ids::status::serverbound::PING_REQUEST => {
                 let ts = r.i64()?;
@@ -483,8 +585,9 @@ async fn login(mut conn: Conn, addr: SocketAddr, shared: &Shared, protocol: i32,
     let name = login_ext::read_login_start(&mut r)?.name.to_owned();
 
     if protocol != version::PROTOCOL {
-        let msg = format!("Kiln runs Minecraft {} (protocol {}).", version::NAME, version::PROTOCOL);
-        conn.send(&packets::login_disconnect(&msg)).await?;
+        // `ServerHandshakePacketListenerImpl.beginLogin`: older than the 1.16 protocol is outdated.
+        let key = if protocol < 754 { "multiplayer.disconnect.outdated_client" } else { "multiplayer.disconnect.incompatible" };
+        conn.send(&login_ext::login_disconnect_translated_with(key, &[version::NAME])).await?;
         bail!("{name}: unsupported protocol {protocol}");
     }
     if !valid_name(&name) {
@@ -493,7 +596,7 @@ async fn login(mut conn: Conn, addr: SocketAddr, shared: &Shared, protocol: i32,
     }
     // Reserved until the connection ends, so concurrent logins cannot overfill the server.
     let Some(_slot) = PlayerSlot::reserve(shared) else {
-        conn.send(&packets::login_disconnect("The server is full.")).await?;
+        conn.send(&login_ext::login_disconnect_translated("multiplayer.disconnect.server_full")).await?;
         bail!("{name}: server full");
     };
 
@@ -546,9 +649,10 @@ async fn login(mut conn: Conn, addr: SocketAddr, shared: &Shared, protocol: i32,
 
     let client = configure(&mut conn, shared, &profile.name).await?;
     info!(
-        "{} ({}) joined from {remote}{via}, {} profile properties",
+        "{} ({}) joined from {}{via}, {} profile properties",
         profile.name,
         profile.uuid,
+        shown_address(shared, remote),
         profile.properties.len()
     );
     play(conn, shared, profile, remote, client).await
@@ -633,7 +737,10 @@ async fn authenticate(
     };
     let reason = match result {
         Ok(Some(profile)) => match auth::verify_profile(&profile, name) {
-            Ok(()) => return Ok(profile),
+            Ok(()) => {
+                shared.info.notifier.activity();
+                return Ok(profile);
+            }
             Err(why) => anyhow!("{name} from {addr}: {why}"),
         },
         Ok(None) => anyhow!("{name} from {addr} failed to verify username"),
@@ -878,7 +985,7 @@ struct PlayerSlot<'a>(&'a AtomicUsize);
 
 impl<'a> PlayerSlot<'a> {
     fn reserve(shared: &'a Shared) -> Option<Self> {
-        let max = shared.config.max_players;
+        let max = shared.info.max_players().max(0) as usize;
         shared.online.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < max).then_some(n + 1)).ok()?;
         Some(Self(&shared.online))
     }
@@ -890,11 +997,64 @@ impl Drop for PlayerSlot<'_> {
     }
 }
 
+/// A play packet the client sent that could not be decoded (`DecoderException`): vanilla tells the player
+/// "Internal Exception: io.netty.handler.codec.DecoderException: Failed to decode packet '<name>'".
+#[derive(Debug)]
+struct DecodeFailure {
+    packet: String,
+}
+
+impl std::fmt::Display for DecodeFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Failed to decode packet '{}'", self.packet)
+    }
+}
+
+impl std::error::Error for DecodeFailure {}
+
+/// A connection that sent more packets than `rate-limit` allows.
+#[derive(Debug)]
+struct RateExceeded;
+
+impl std::fmt::Display for RateExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "exceeded the packet rate limit")
+    }
+}
+
+impl std::error::Error for RateExceeded {}
+
+impl RateExceeded {
+    fn disconnect_packet(&self) -> Bytes {
+        packets::play_disconnect_text(kiln_proto::nbt::Tag::Compound(vec![(
+            "translate".to_owned(),
+            kiln_proto::nbt::Tag::String("disconnect.exceeded_packet_rate".to_owned()),
+        )]))
+    }
+}
+
+impl DecodeFailure {
+    fn disconnect_packet(&self) -> Bytes {
+        let reason = format!("Internal Exception: io.netty.handler.codec.DecoderException: {self}");
+        let tag = kiln_proto::nbt::Tag::Compound(vec![
+            ("translate".to_owned(), kiln_proto::nbt::Tag::String("disconnect.genericReason".to_owned())),
+            ("with".to_owned(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::String(reason)])),
+        ]);
+        packets::play_disconnect_text(tag)
+    }
+}
+
+/// `log-ips`: the address as the log shows it.
+fn shown_address(shared: &Shared, remote: IpAddr) -> String {
+    if shared.config.log_ips { remote.to_string() } else { "<ip address withheld>".to_owned() }
+}
+
 async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr, client: packets::ClientInfo) -> Result<()> {
     let conn_id = shared.next_conn.fetch_add(1, Ordering::Relaxed);
     let Conn { stream, mut rbuf, mut rx, tx, wbuf, encrypt, mut decrypt } = conn;
     let (reader, writer) = stream.into_split();
     let (out_tx, out_rx) = mpsc::unbounded_channel();
+    let decode_failure_tx = out_tx.clone();
     let queued = Arc::new(AtomicUsize::new(0));
     let name = profile.name.clone();
 
@@ -914,7 +1074,7 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
     let mut writer_task = tokio::spawn(write_loop(writer, tx, wbuf, encrypt, out_rx, queued));
     let result = if joined {
         // The writer ends after a kick (disconnect packet sent) or when the client falls behind.
-        let read = read_loop(reader, &mut rbuf, &mut rx, decrypt.as_mut(), conn_id, &shared.to_sim);
+        let read = read_loop(reader, &mut rbuf, &mut rx, decrypt.as_mut(), conn_id, &shared.to_sim, shared.config.rate_limit);
         tokio::pin!(read);
         tokio::select! {
             r = &mut read => r,
@@ -933,10 +1093,18 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
         Err(anyhow!("simulation is not running"))
     };
 
+    // A packet that would not decode: the client is told why before the connection closes.
+    let kick = result.as_ref().err().and_then(|e| {
+        e.downcast_ref::<DecodeFailure>().map(DecodeFailure::disconnect_packet).or_else(|| e.downcast_ref::<RateExceeded>().map(RateExceeded::disconnect_packet))
+    });
+    if let Some(packet) = kick {
+        let _ = decode_failure_tx.send(Outbound::Disconnect(packet));
+        let _ = tokio::time::timeout(Duration::from_secs(2), &mut writer_task).await;
+    }
     let _ = shared.to_sim.send(ToSim::Leave(conn_id));
     writer_task.abort();
     let why = result.as_ref().err().map_or("disconnected".to_string(), |e| format!("{e:#}"));
-    info!("{name} ({remote}) left: {why}");
+    info!("{name} ({}) left: {why}", shown_address(shared, remote));
     Ok(())
 }
 
@@ -947,9 +1115,22 @@ async fn read_loop(
     mut decrypt: Option<&mut Decryptor>,
     conn: ConnId,
     to_sim: &crossbeam_channel::Sender<ToSim>,
+    rate_limit: u32,
 ) -> Result<()> {
+    // `RateKickingConnection`: the packets received a second, averaged (a quarter of this second's count, three
+    // quarters of the average before).
+    let (mut second_start, mut received, mut average) = (std::time::Instant::now(), 0u32, 0f32);
     loop {
         while let Some(pkt) = rx.decode(rbuf)? {
+            received += 1;
+            if rate_limit > 0 && second_start.elapsed() >= Duration::from_secs(1) {
+                average = 0.25 * received as f32 + 0.75 * average;
+                (second_start, received) = (std::time::Instant::now(), 0);
+                if average > rate_limit as f32 {
+                    warn!("Player exceeded rate-limit (sent {average} packets per second)");
+                    return Err(RateExceeded.into());
+                }
+            }
             let (id, mut r) = split_id(&pkt)?;
             match packets::decode_play(id, &mut r) {
                 Ok(Some(p)) => {
@@ -960,7 +1141,8 @@ async fn read_loop(
                 Ok(None) => {}
                 Err(e) => {
                     warn!("bad play packet {id}: {e}");
-                    bail!("malformed packet");
+                    let name = ids::play::serverbound::NAMES.get(id as usize).copied().unwrap_or("minecraft:unknown");
+                    return Err(DecodeFailure { packet: format!("serverbound/{name}") }.into());
                 }
             }
         }

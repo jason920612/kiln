@@ -170,7 +170,11 @@ impl Sim {
         Joining {
             pos,
             rot: saved.rot.unwrap_or(self.spawn_rot),
-            game_mode: saved.game_mode.unwrap_or_else(|| self.default_game_mode()),
+            // `force-gamemode`: every login takes the default game mode.
+            game_mode: match saved.game_mode {
+                Some(m) if !self.config.server.force_gamemode => m,
+                _ => self.default_game_mode(),
+            },
             inv,
             health: saved.raw().get("Health").and_then(Tag::as_f64).map_or(crate::health::MAX_HEALTH, |h| h as f32),
             food: saved.raw().get("foodLevel").and_then(Tag::as_i64).map_or(20, |f| f as i32),

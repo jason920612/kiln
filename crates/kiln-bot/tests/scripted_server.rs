@@ -197,7 +197,7 @@ async fn serve(stream: TcpStream, port: u16, seen: Arc<Mutex<Vec<Seen>>>) {
             Some(PlayIn::ChunkBatchReceived { .. }) => s.batch_acks += 1,
             Some(PlayIn::PlayerLoaded) => s.loaded_after_batch = s.batch_acks == 1 && s.teleport_echo.is_some(),
             Some(PlayIn::KeepAlive { id }) => s.play_keep_alive = Some(id),
-            Some(PlayIn::Chat { message }) => s.chats.push(message),
+            Some(PlayIn::Chat { message, .. }) => s.chats.push(message),
             _ => {}
         }
     }

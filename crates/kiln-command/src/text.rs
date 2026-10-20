@@ -54,7 +54,16 @@ pub struct Style {
     pub underlined: Option<bool>,
     pub click: Option<ClickEvent>,
     pub hover: Option<Box<Text>>,
+    /// `HoverEvent.ShowEntity`: the entity's name, type and UUID (a player's display name carries one).
+    pub hover_entity: Option<Box<HoverEntity>>,
     pub insertion: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HoverEntity {
+    pub name: Option<Text>,
+    pub id: String,
+    pub uuid: uuid::Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,6 +116,11 @@ impl Text {
         self
     }
 
+    pub fn hover_entity(mut self, entity: HoverEntity) -> Self {
+        self.style.hover_entity = Some(Box::new(entity));
+        self
+    }
+
     pub fn insertion(mut self, s: impl Into<String>) -> Self {
         self.style.insertion = Some(s.into());
         self
@@ -145,6 +159,11 @@ impl Text {
 
     /// Joins with `, ` like `ComponentUtils.formatList`.
     pub fn join(items: impl IntoIterator<Item = Text>) -> Self {
+        let items: Vec<Text> = items.into_iter().collect();
+        // (`formatList`: one element is that element itself, no empty wrapper.)
+        if items.len() == 1 {
+            return items.into_iter().next().expect("one item");
+        }
         let mut out = Text::empty();
         for (i, item) in items.into_iter().enumerate() {
             if i > 0 {
@@ -207,6 +226,17 @@ impl Text {
                     ("value".into(), hover.to_nbt()),
                 ]),
             ));
+        }
+        if let Some(e) = &s.hover_entity {
+            let mut hover = vec![("action".to_owned(), Tag::String("show_entity".into()))];
+            if let Some(name) = &e.name {
+                hover.push(("name".to_owned(), name.to_nbt()));
+            }
+            hover.push(("id".to_owned(), Tag::String(e.id.clone())));
+            let (hi, lo) = (e.uuid.as_u128() >> 64, e.uuid.as_u128() & u128::from(u64::MAX));
+            let ints = vec![(hi >> 32) as u32 as i32, hi as u32 as i32, (lo >> 32) as u32 as i32, lo as u32 as i32];
+            hover.push(("uuid".to_owned(), Tag::IntArray(ints)));
+            fields.push(("hover_event".into(), Tag::Compound(hover)));
         }
         if let Some(ins) = &s.insertion {
             fields.push(("insertion".into(), Tag::String(ins.clone())));
@@ -560,5 +590,16 @@ mod tests {
         let t = tr!("k", 1, tr!("bad", 2)).append(Text::literal("b").bracketed()).append(tr!("k", 1));
         assert_eq!(t.to_string_in(&lang), "1 and %d, 100%[b]%s and %2$s, 100%%");
         assert_eq!(tr!("missing.key").to_string_in(&lang), "missing.key");
+    }
+
+    /// wp86: `ComponentUtils.formatList` of one element is the element itself (the `/list` of a lone player had an empty wrapper
+    /// around the name, and so was not byte for byte what vanilla sends).
+    #[test]
+    fn joining_one_text_is_that_text() {
+        let one = Text::literal("Alice").color("red");
+        assert_eq!(Text::join([one.clone()]), one);
+        assert_eq!(Text::join(Vec::new()), Text::empty());
+        let two = Text::join([Text::literal("a"), Text::literal("b")]);
+        assert_eq!(two.extra.len(), 3, "a, separator, b");
     }
 }

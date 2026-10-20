@@ -32,8 +32,12 @@ tracing.workspace = true
 uuid.workspace = true
 serde_json.workspace = true
 flate2.workspace = true
+rsa.workspace = true
+sha1.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
+rand_core.workspace = true
 # Exact float parsing: the parity vectors print Java's shortest round-trip decimals.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 tracing-subscriber.workspace = true

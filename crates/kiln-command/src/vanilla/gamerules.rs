@@ -32,6 +32,11 @@ pub fn value_type(rule: &str) -> ArgumentType {
     }
 }
 
+/// The range of an integer rule (`None` for the boolean ones).
+pub fn int_range(rule: &str) -> Option<(i32, i32)> {
+    INT_RULES.iter().find(|(name, ..)| *name == rule).map(|&(_, min, max)| (min, max))
+}
+
 /// `Identifier.toShortString`: the path for the `minecraft` namespace.
 pub fn short_name(rule: &str) -> &str {
     rule.strip_prefix("minecraft:").unwrap_or(rule)

@@ -20,19 +20,6 @@ const VISIBILITY_WINDOW: Window = Window::new();
 /// Per-player entity data packs: comparing the player's values with what was last sent.
 const DATA_WINDOW: Window = Window::new().item_ns(60);
 
-/// A command chat message (`say`, `me`, `msg`) through its chat type.
-pub(crate) fn chat_disguised(message: &kiln_command::ChatMessage) -> Bytes {
-    let chat_type = kiln_data::synced_id("minecraft:chat_type", message.kind.id()).unwrap_or(0);
-    let target = message.target.as_ref().map(|t| t.to_nbt());
-    kiln_proto::packets::disguised_chat(&message.content.to_nbt(), chat_type, &message.sender.to_nbt(), target.as_ref())
-}
-
-/// A player's chat line through the `minecraft:chat` chat type ("<name> message").
-pub(crate) fn chat_player(name: &str, content: &str) -> Bytes {
-    let chat_type = kiln_data::synced_id("minecraft:chat_type", "minecraft:chat").unwrap_or(0);
-    kiln_proto::packets::disguised_chat(&kiln_proto::nbt::text(content), chat_type, &kiln_proto::nbt::text(name), None)
-}
-
 /// Tab list game mode change.
 pub(crate) fn game_mode_update(uuid: uuid::Uuid, mode: i32) -> Bytes {
     entity::player_info_update(PlayerInfoActions::UPDATE_GAME_MODE, &[PlayerInfoEntry::new(uuid, "", &[], mode)])
@@ -226,11 +213,17 @@ impl Player {
         d
     }
 
-    fn info_entry<'a>(&'a self, props: &'a [ProfileProperty<'a>]) -> PlayerInfoEntry<'a> {
-        PlayerInfoEntry::new(self.uuid, &self.name, props, self.game_mode as i32)
+    pub(crate) fn info_entry<'a>(&'a self, props: &'a [ProfileProperty<'a>]) -> PlayerInfoEntry<'a> {
+        let chat_session = self.chat.session().map(|s| kiln_proto::packets::entity::ChatSession {
+            session_id: s.id,
+            expires_at: s.expires_at_ms,
+            public_key: &s.key_der,
+            key_signature: &s.key_signature,
+        });
+        PlayerInfoEntry { chat_session, ..PlayerInfoEntry::new(self.uuid, &self.name, props, self.game_mode as i32) }
     }
 
-    fn profile_properties(&self) -> Vec<ProfileProperty<'_>> {
+    pub(crate) fn profile_properties(&self) -> Vec<ProfileProperty<'_>> {
         self.properties
             .iter()
             .map(|p| ProfileProperty { name: &p.name, value: &p.value, signature: p.signature.as_deref() })
@@ -423,7 +416,7 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
         /// In spectator mode: sees everyone, and is seen only by other spectators.
         spectator: bool,
     }
-    let range_cap = PLAYER.tracking_range as f64 * 16.0;
+    let range_cap = crate::entities::scaled_tracking_range(PLAYER.tracking_range as i32);
     let snaps: Vec<Snap> = players
         .iter_mut()
         .map(|p| {

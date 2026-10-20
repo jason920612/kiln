@@ -31,7 +31,12 @@ use smallvec::SmallVec;
 use std::collections::{BTreeMap, HashSet};
 
 /// `max-chained-neighbor-updates` default.
-const MAX_CHAINED_NEIGHBOR_UPDATES: i32 = 1_000_000;
+/// `max-chained-neighbor-updates`: how many updates one chain may run.
+static MAX_CHAINED_NEIGHBOR_UPDATES: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1_000_000);
+
+pub(crate) fn set_max_chained_neighbor_updates(updates: i32) {
+    MAX_CHAINED_NEIGHBOR_UPDATES.store(updates, std::sync::atomic::Ordering::Relaxed);
+}
 /// Chunks per cell side.
 const CELL_CHUNKS: i32 = kiln_region::CELL_BLOCKS / 16;
 /// `Level.MAX_LEVEL_SIZE`: blocks beyond ±30M are outside the world.
@@ -89,7 +94,7 @@ impl Default for RegionBlocks {
         Self {
             block_ticks: LevelTicks::new(),
             fluid_ticks: LevelTicks::new(),
-            data: LevelData::new(MAX_CHAINED_NEIGHBOR_UPDATES, 0),
+            data: LevelData::new(MAX_CHAINED_NEIGHBOR_UPDATES.load(std::sync::atomic::Ordering::Relaxed), 0),
             random: LegacyRandom::new(0),
             sub_tick: 0,
             generated: Vec::new(),

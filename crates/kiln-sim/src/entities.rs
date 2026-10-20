@@ -4367,9 +4367,22 @@ struct Tracked {
     packets: Vec<Bytes>,
 }
 
+/// `entity-broadcast-range-percentage`.
+static BROADCAST_RANGE_PERCENT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(100);
+
+pub(crate) fn set_broadcast_range_percentage(percent: i32) {
+    BROADCAST_RANGE_PERCENT.store(percent, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `MinecraftServer.getScaledTrackingDistance`: an entity type's tracking range (in chunks), as blocks, scaled
+/// by the percentage with integer arithmetic.
+pub(crate) fn scaled_tracking_range(chunks: i32) -> f64 {
+    f64::from(BROADCAST_RANGE_PERCENT.load(std::sync::atomic::Ordering::Relaxed).wrapping_mul(chunks * 16) / 100)
+}
+
 fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &Present) -> Tracked {
     let sees = |p: &Viewer, e: &Entity| {
-        let range = (e.kind.tracking_range as f64 * 16.0).min(p.view as f64 * 16.0);
+        let range = scaled_tracking_range(e.kind.tracking_range as i32).min(p.view as f64 * 16.0);
         let (dx, dz) = (p.pos[0] - e.pos[0], p.pos[2] - e.pos[2]);
         let (pc, ec) = (chunk_of(p.pos), chunk_of(e.pos));
         e.kind.tracking_range != 0 && !e.removed && dx * dx + dz * dz <= range * range && (pc.x - ec.x).abs() <= p.view && (pc.z - ec.z).abs() <= p.view
@@ -4382,7 +4395,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
     let never_looked_at = e.removed && e.section.is_none() && e.kind.tracking_range != 0;
     e.section = Some(section);
     if never_looked_at {
-        let range = (e.kind.tracking_range as f64 * 16.0).min(f64::MAX);
+        let range = scaled_tracking_range(e.kind.tracking_range as i32);
         for p in viewers {
             let (dx, dz) = (p.pos[0] - e.pos[0], p.pos[2] - e.pos[2]);
             let (pc, ec) = (chunk_of(p.pos), chunk_of(e.pos));

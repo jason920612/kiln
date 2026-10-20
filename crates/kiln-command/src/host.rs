@@ -444,6 +444,8 @@ impl GameRuleValue {
 /// The chat types of `say`, `me`, `msg` and `teammsg`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatKind {
+    /// A player's chat line.
+    Chat,
     Say,
     Emote,
     MsgIncoming,
@@ -456,6 +458,7 @@ impl ChatKind {
     /// Id in the `minecraft:chat_type` registry, for `disguised_chat`.
     pub fn id(self) -> &'static str {
         match self {
+            ChatKind::Chat => "minecraft:chat",
             ChatKind::Say => "minecraft:say_command",
             ChatKind::Emote => "minecraft:emote_command",
             ChatKind::MsgIncoming => "minecraft:msg_command_incoming",
@@ -481,6 +484,7 @@ impl ChatMessage {
     pub fn to_text(&self) -> Text {
         let content = Arg::Text(self.content.clone());
         match self.kind {
+            ChatKind::Chat => tr!("chat.type.text", self.sender.clone(), content),
             ChatKind::Say => tr!("chat.type.announcement", self.sender.clone(), content),
             ChatKind::Emote => tr!("chat.type.emote", self.sender.clone(), content),
             ChatKind::MsgIncoming => {

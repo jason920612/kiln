@@ -4,7 +4,7 @@
 //! the source: `CommandSource` says who is executing (a player or the console) while a command
 //! runs.
 
-use crate::{Player, Sim, players::chat_disguised};
+use crate::{Player, Sim};
 use bytes::Bytes;
 use kiln_command::selector::{Aabb, SelectorTarget, SelectorWorld};
 use kiln_command::{
@@ -24,11 +24,18 @@ pub(crate) const OVERWORLD: &str = "minecraft:overworld";
 /// Longest tab-completion request answered for players without command-block rights (vanilla).
 const MAX_SUGGESTION_LEN: usize = 256;
 
+static CONSOLE_LANG: OnceLock<Option<Language>> = OnceLock::new();
+
+/// Sets the language the console prints in (the text of vanilla's `en_us.json`); the first call wins, and it has to come
+/// before any message is printed. Without it `KILN_LANG` names the file.
+pub fn set_console_language(json: &str) -> bool {
+    CONSOLE_LANG.set(Language::from_json(json)).is_ok()
+}
+
 /// Console rendering of a message: in the language file named by `KILN_LANG` (vanilla's
 /// console prints its bundled `en_us`), else translation keys as `key[args]`.
 pub(crate) fn console_text(text: &Text) -> String {
-    static LANG: OnceLock<Option<Language>> = OnceLock::new();
-    let lang = LANG.get_or_init(|| {
+    let lang = CONSOLE_LANG.get_or_init(|| {
         let path = std::env::var_os("KILN_LANG")?;
         let lang = std::fs::read_to_string(&path).ok().and_then(|s| Language::from_json(&s));
         if lang.is_none() {
@@ -51,6 +58,9 @@ pub(crate) fn has_illegal_chars(s: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandSource {
     Console,
+    /// A remote console (`RconConsoleSource`): permission level 4, at the world spawn, named
+    /// "Rcon"; what it prints is kept in [`CommandState::rcon_buffer`].
+    Rcon,
     Player(ConnId),
     /// A command block (`BaseCommandBlock.createCommandSourceStack`): in level `dim`, at `pos`.
     Block { dim: usize, pos: [i32; 3] },
@@ -111,7 +121,8 @@ impl PlayerRef {
         Self {
             conn,
             uuid: p.uuid,
-            name: Named::Player(p.name.clone(), scoreboard.player_display_name(&p.name)),
+            // (`Player.getDisplayName`: the team's formatting, and the events chat names carry.)
+            name: Named::Player(p.name.clone(), crate::chat_flow::decorate_player_name(scoreboard.player_display_name(&p.name), &p.name, p.uuid)),
             pos: p.pos,
             rot: p.rot,
             dim: crate::dim_key(p.dim),
@@ -276,6 +287,10 @@ pub(crate) struct CommandState {
     pub gametests: crate::gametest::GameTests,
     /// Console lines kept for tests ([`Sim::capture_console`]).
     pub console_capture: Option<Vec<String>>,
+    /// The signed messages of the arguments of the command a player is running (`CommandSigningContext`).
+    pub signing: HashMap<String, crate::chat::Message>,
+    /// What the running RCON command printed (`RconConsoleSource.buffer`, texts joined as they come).
+    pub rcon_buffer: String,
     /// `fetchprofile` lookups on their way: who asked, and what for.
     pub profile_requests: HashMap<u64, (CommandSource, kiln_command::host::ProfileQuery)>,
     pub next_profile_request: u64,
@@ -323,6 +338,8 @@ impl CommandState {
             stopwatches_dirty: false,
             gametests: Default::default(),
             console_capture: None,
+            rcon_buffer: String::new(),
+            signing: HashMap::new(),
             profile_requests: HashMap::new(),
             next_profile_request: 1,
             profile_results: Vec::new(),
@@ -500,6 +517,13 @@ impl Sim {
         self.execute_as(CommandSource::Console, command);
     }
 
+    /// `DedicatedServer.runCommand`: runs `command` as the RCON source and returns what it printed.
+    pub(crate) fn run_rcon_command(&mut self, command: &str) -> String {
+        self.commands.rcon_buffer.clear();
+        self.execute_as(CommandSource::Rcon, command.strip_prefix('/').unwrap_or(command));
+        std::mem::take(&mut self.commands.rcon_buffer)
+    }
+
     /// [`Sim::run_console_command`] between ticks, to look at the world right after a command
     /// returns (for tests).
     pub fn console_now(&mut self, command: &str) {
@@ -546,6 +570,7 @@ impl Sim {
             CommandSource::Console => {
                 SourceStack::new(Text::literal("Server"), OVERWORLD, self.spawn.map(|v| v as f64))
             }
+            CommandSource::Rcon => SourceStack::new(Text::literal("Rcon"), OVERWORLD, self.spawn.map(|v| v as f64)),
             // `CommandBlockEntity$1.createCommandSourceStack`: the block's name, the middle of the block, facing
             // the way the block does, without an entity, at permission level 2.
             CommandSource::Block { dim, pos } => {
@@ -593,10 +618,44 @@ impl Sim {
         }
     }
 
+    /// The chat message a command's message argument stands for: the player's signed one if the
+    /// command came signed, else the server saying it (`PlayerChatMessage.system`).
+    fn command_message(&self, message: &ChatMessage) -> crate::chat::Message {
+        match self.commands.signing.values().next() {
+            Some(m) => m.clone(),
+            None => crate::chat::Message::system(&message.content.to_plain(), crate::chat_flow::now_ms()),
+        }
+    }
+
+    /// `PlayerList.broadcastChatMessage` for a command's chat type: the server log and every player.
+    fn broadcast_command_chat(&mut self, m: &crate::chat::Message, message: &ChatMessage) {
+        let trusted = m.signature.is_some() && !m.expired_server(crate::chat_flow::now_ms());
+        let line = console_text(&message.to_text());
+        if trusted || !self.config.server.console_system_prefix {
+            info!("{line}");
+        } else {
+            info!("[Not Secure] {line}");
+        }
+        let mut conns: Vec<ConnId> = self.players.keys().copied().collect();
+        conns.sort_unstable();
+        for c in conns {
+            self.deliver_chat(c, m, message.kind, &message.sender, message.target.as_ref(), &message.content);
+        }
+    }
+
     /// System message to the current command source.
     /// A message to the console (and to the lines a test keeps).
+    /// What the console prints for a system message (`System chat: ` in front on a server).
+    pub(crate) fn log_system_chat(&self, text: &Text) {
+        if self.config.server.console_system_prefix {
+            info!("System chat: {}", console_text(text));
+        } else {
+            info!("{}", console_text(text));
+        }
+    }
+
     pub(crate) fn reply_console(&mut self, text: &Text) {
-        info!("{}", console_text(text));
+        self.log_system_chat(text);
         if let Some(lines) = self.commands.console_capture.as_mut() {
             lines.push(console_text(text));
         }
@@ -615,6 +674,10 @@ impl Sim {
     fn reply(&mut self, text: Text) {
         match self.commands.source {
             CommandSource::Console => self.reply_console(&text),
+            CommandSource::Rcon => {
+                let line = console_text(&text);
+                self.commands.rcon_buffer.push_str(&line);
+            }
             // `CloseableCommandBlockSource.sendSystemMessage`: the last output, with the time.
             CommandSource::Block { .. } => crate::command_block::output(self, text),
             CommandSource::Player(conn) => {
@@ -637,7 +700,7 @@ impl Source for Sim {
 
     fn permission_level(&self) -> u8 {
         match self.commands.source {
-            CommandSource::Console => 4,
+            CommandSource::Console | CommandSource::Rcon => 4,
             CommandSource::Player(conn) => self.permission_level_of(conn),
             CommandSource::Block { .. } => 2,
         }
@@ -694,6 +757,16 @@ impl Source for Sim {
 
     fn command_limit(&self) -> i32 {
         Host::game_rule(self, "minecraft:max_command_sequence_length").command_result()
+    }
+}
+
+impl kiln_link::AdminHost for Sim {
+    fn rcon_command(&mut self, command: &str) -> String {
+        self.run_rcon_command(command)
+    }
+
+    fn mgmt(&mut self) -> Option<&mut dyn kiln_link::mgmt::MgmtHost> {
+        Some(self)
     }
 }
 
@@ -794,9 +867,15 @@ impl Host for Sim {
         let feedback = self.rule_bool("minecraft:send_command_feedback");
         let me = match self.commands.source {
             CommandSource::Player(c) => Some(c),
-            CommandSource::Console | CommandSource::Block { .. } => None,
+            CommandSource::Console | CommandSource::Rcon | CommandSource::Block { .. } => None,
         };
-        if broadcast {
+        // `shouldInformAdmins`: the console and RCON have a property for it.
+        let informs = match self.commands.source {
+            CommandSource::Console => self.config.broadcast_console_to_ops,
+            CommandSource::Rcon => self.config.broadcast_rcon_to_ops,
+            _ => true,
+        };
+        if broadcast && informs {
             // Other operators see a gray, italic "[Source: message]" (chat.type.admin).
             let admin = kiln_command::tr!("chat.type.admin", self.source_name(), text.clone()).color("gray").italic();
             if feedback {
@@ -825,18 +904,26 @@ impl Host for Sim {
     }
 
     fn broadcast_chat(&mut self, message: ChatMessage) {
-        info!("{}", console_text(&message.to_text()));
-        self.broadcast(chat_disguised(&message));
+        let m = self.command_message(&message);
+        self.broadcast_command_chat(&m, &message);
     }
 
     fn send_chat(&mut self, player: &PlayerRef, message: ChatMessage) {
-        self.send_to(player.conn, chat_disguised(&message));
+        let m = self.command_message(&message);
+        self.deliver_chat(player.conn, &m, message.kind, &message.sender, message.target.as_ref(), &message.content);
     }
 
     fn send_chat_to_source(&mut self, message: ChatMessage) {
         match self.commands.source {
-            CommandSource::Player(conn) => self.send_to(conn, chat_disguised(&message)),
+            CommandSource::Player(conn) => {
+                let m = self.command_message(&message);
+                self.deliver_chat(conn, &m, message.kind, &message.sender, message.target.as_ref(), &message.content);
+            }
             CommandSource::Console | CommandSource::Block { .. } => info!("{}", console_text(&message.to_text())),
+            CommandSource::Rcon => {
+                let line = console_text(&message.to_text());
+                self.commands.rcon_buffer.push_str(&line);
+            }
         }
     }
 
@@ -1201,18 +1288,18 @@ impl Host for Sim {
         {
             // `PlayerList.op` / `deop`: `ops.json` follows.
             let mut access = self.config.access.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let key = profile.uuid.to_string();
             if op {
+                // `op-permission-level`: what `/op` grants.
+                let level = self.config.server.op_permission_level;
                 self.commands.ops.insert(profile.name.clone());
-                self.commands.op_levels.remove(&profile.name);
+                self.commands.op_levels.insert(profile.name.clone(), level);
                 let user = kiln_link::access::NameAndId { uuid: profile.uuid, name: profile.name.clone() };
-                access.op_list.put(key, kiln_link::access::OpEntry { user, level: 4, bypasses_player_limit: false });
+                access.op_add(kiln_link::access::OpEntry { user, level, bypasses_player_limit: false });
             } else {
                 self.commands.ops.remove(&profile.name);
                 self.commands.op_levels.remove(&profile.name);
-                access.op_list.remove(&key);
+                access.op_remove(&kiln_link::access::NameAndId { uuid: profile.uuid, name: profile.name.clone() });
             }
-            access.save_ops();
         }
         self.sync_ops();
         let conn = self.players.iter().find(|(_, p)| p.name == profile.name).map(|(c, _)| *c);
@@ -1257,6 +1344,13 @@ impl Host for Sim {
     }
 
     fn set_game_rule(&mut self, rule: &str, value: GameRuleValue) {
+        self.notify(kiln_link::mgmt::Notification::GameRuleChanged {
+            key: rule.to_owned(),
+            value: match value {
+                GameRuleValue::Bool(b) => kiln_link::mgmt::RuleValue::Bool(b),
+                GameRuleValue::Int(i) => kiln_link::mgmt::RuleValue::Int(i),
+            },
+        });
         self.commands.game_rules.insert(rule.to_owned(), value);
         // `MinecraftServer.onGameRuleChanged`: what clients show follows the rule.
         let on = matches!(value, GameRuleValue::Bool(true));
@@ -1971,7 +2065,7 @@ impl Host for Sim {
     }
 
     fn broadcast_system_message(&mut self, text: Text) {
-        info!("{}", console_text(&text));
+        self.log_system_chat(&text);
         self.broadcast(packets::system_chat(text.to_nbt(), false));
     }
 
@@ -2109,6 +2203,7 @@ impl Sim {
         for (c, level) in levels {
             if let Some(p) = self.players.get_mut(&c) {
                 p.permission = level;
+                p.is_op = self.commands.is_op(&p.name);
                 // `PlayerList.sendPlayerPermissionLevel`: on join and whenever the level changes.
                 if p.permission_sent != Some(level) {
                     p.permission_sent = Some(level);

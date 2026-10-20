@@ -47,6 +47,13 @@ pub fn login_disconnect_translated(key: &str) -> Bytes {
     b.freeze()
 }
 
+/// Login Disconnect with a translatable reason that takes plain text arguments.
+pub fn login_disconnect_translated_with(key: &str, args: &[&str]) -> Bytes {
+    let mut b = packet(ids::login::clientbound::LOGIN_DISCONNECT);
+    b.put_string(&serde_json::json!({ "translate": key, "with": args }).to_string());
+    b.freeze()
+}
+
 /// Login Start (`minecraft:hello`, serverbound).
 pub struct LoginStart<'a> {
     pub name: &'a str,

@@ -89,7 +89,7 @@ fn spawn_protection_chat_format_and_counter() {
 
     // Chat comes out formatted.
     w.received();
-    w.send(PlayIn::Chat { message: "hello plugins".into() });
+    w.send(PlayIn::chat("hello plugins"));
     let chat = w.received();
     assert!(chat.iter().any(|p| contains(p, "] \u{bb} ") && contains(p, "hello plugins")), "formatted chat");
 
@@ -186,7 +186,7 @@ fn reload_by_command_changes_the_chat_format() {
     let mut w = World { sim, client: Client::new(1, stats) };
     w.ticks(3);
     w.received();
-    w.send(PlayIn::Chat { message: "before".into() });
+    w.send(PlayIn::chat("before"));
     assert!(w.got_text("] \u{bb} "), "v1 format");
     let manifest = dir.join("chat-format").join("plugin.toml");
     let text = std::fs::read_to_string(&manifest).unwrap().replace("name_color = \"gold\"", "name_color = \"aqua\"\nprefix = \"(v2) \"");
@@ -201,7 +201,7 @@ fn reload_by_command_changes_the_chat_format() {
     }
     assert_eq!(w.sim.plugin_generation("chat-format"), Some(1), "reloaded");
     w.received();
-    w.send(PlayIn::Chat { message: "after".into() });
+    w.send(PlayIn::chat("after"));
     let chat = w.received();
     assert!(chat.iter().any(|p| contains(p, "(v2) ") && contains(p, "after") && contains(p, "aqua")), "v2 format");
     assert_eq!(w.sim.plugin_stat("reloads"), 1);

@@ -1,0 +1,65 @@
+# allowlist add by name only, by id only, both, bad
+{"jsonrpc":"2.0","id":1,"method":"minecraft:allowlist/add","params":[[{"name":"kt-alex"}]]}
+{"jsonrpc":"2.0","id":2,"method":"minecraft:allowlist/add","params":[[{"name":"kt-alex"}]]}
+{"jsonrpc":"2.0","id":3,"method":"minecraft:allowlist/add","params":[[{"id":"00000000-0000-0000-0000-000000000007","name":"kt-bob"}]]}
+{"jsonrpc":"2.0","id":4,"method":"minecraft:allowlist/add","params":[[{"id":"00000000-0000-0000-0000-000000000009"}]]}
+{"jsonrpc":"2.0","id":5,"method":"minecraft:allowlist/add","params":[[{}]]}
+{"jsonrpc":"2.0","id":6,"method":"minecraft:allowlist/add","params":[[]]}
+{"jsonrpc":"2.0","id":7,"method":"minecraft:allowlist/add","params":[[{"id":"nope"}]]}
+{"jsonrpc":"2.0","id":8,"method":"minecraft:allowlist/add"}
+{"jsonrpc":"2.0","id":9,"method":"minecraft:allowlist/add","params":[]}
+{"jsonrpc":"2.0","id":10,"method":"minecraft:allowlist/add","params":[5]}
+{"jsonrpc":"2.0","id":11,"method":"minecraft:allowlist/add","params":[[5]]}
+{"jsonrpc":"2.0","id":12,"method":"minecraft:allowlist/add","params":[[{"name":5}]]}
+{"jsonrpc":"2.0","id":13,"method":"minecraft:allowlist/add","params":{"add":[{"name":"kt-carol"}]}}
+{"jsonrpc":"2.0","id":14,"method":"minecraft:allowlist/add","params":[[{"name":"kt-carol"}],[]]}
+{"jsonrpc":"2.0","id":15,"method":"minecraft:allowlist"}
+# set / remove / clear
+{"jsonrpc":"2.0","id":20,"method":"minecraft:allowlist/set","params":[[{"name":"kt-dave"},{"name":"kt-alex"}]]}
+{"jsonrpc":"2.0","id":21,"method":"minecraft:allowlist/remove","params":[[{"name":"kt-alex"}]]}
+{"jsonrpc":"2.0","id":22,"method":"minecraft:allowlist/remove","params":[[{"name":"kt-nobody"}]]}
+{"jsonrpc":"2.0","id":23,"method":"minecraft:allowlist/clear"}
+{"jsonrpc":"2.0","id":24,"method":"minecraft:allowlist/clear"}
+!console whitelist add kt-zed
+{"jsonrpc":"2.0","id":25,"method":"minecraft:allowlist"}
+!console whitelist remove kt-zed
+!console whitelist add kt-zed
+!console whitelist reload
+!console whitelist list
+# bans
+{"jsonrpc":"2.0","id":30,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-grief"},"reason":"x","source":"me"}]]}
+{"jsonrpc":"2.0","id":31,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-grief2"},"expires":"2030-01-01T00:00:00Z"}]]}
+{"jsonrpc":"2.0","id":32,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-grief3"},"expires":"2030-01-01T00:00:00.123Z"}]]}
+{"jsonrpc":"2.0","id":33,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-grief4"},"expires":"bad"}]]}
+{"jsonrpc":"2.0","id":34,"method":"minecraft:bans/add","params":[[{"player":{"name":"kt-grief5"},"expires":"2000-01-01T00:00:00Z"}]]}
+{"jsonrpc":"2.0","id":35,"method":"minecraft:bans/add","params":[[{"reason":"no player"}]]}
+{"jsonrpc":"2.0","id":36,"method":"minecraft:bans"}
+{"jsonrpc":"2.0","id":37,"method":"minecraft:bans/remove","params":[[{"name":"kt-grief"}]]}
+{"jsonrpc":"2.0","id":38,"method":"minecraft:bans/set","params":[[{"player":{"name":"kt-solo"}}]]}
+{"jsonrpc":"2.0","id":39,"method":"minecraft:bans/clear"}
+!console ban kt-zed griefing
+!console pardon kt-zed
+# ip bans
+{"jsonrpc":"2.0","id":40,"method":"minecraft:ip_bans/add","params":[[{"ip":"1.2.3.4","reason":"spam","source":"me"}]]}
+{"jsonrpc":"2.0","id":41,"method":"minecraft:ip_bans/add","params":[[{"ip":"1.2.3.4"}]]}
+{"jsonrpc":"2.0","id":42,"method":"minecraft:ip_bans/add","params":[[{"ip":"bad ip"}]]}
+{"jsonrpc":"2.0","id":43,"method":"minecraft:ip_bans/add","params":[[{"player":{"name":"kt-alex"}}]]}
+{"jsonrpc":"2.0","id":44,"method":"minecraft:ip_bans/add","params":[[{"ip":"1.2.3.5","expires":"2030-01-01T00:00:00Z"}]]}
+{"jsonrpc":"2.0","id":45,"method":"minecraft:ip_bans"}
+{"jsonrpc":"2.0","id":46,"method":"minecraft:ip_bans/remove","params":[["1.2.3.4"]]}
+{"jsonrpc":"2.0","id":47,"method":"minecraft:ip_bans/remove","params":[["9.9.9.9"]]}
+{"jsonrpc":"2.0","id":48,"method":"minecraft:ip_bans/set","params":[[{"ip":"7.7.7.7","reason":"r"}]]}
+{"jsonrpc":"2.0","id":49,"method":"minecraft:ip_bans/clear"}
+!console ban-ip 5.5.5.5 hmm
+!console pardon-ip 5.5.5.5
+# operators
+{"jsonrpc":"2.0","id":50,"method":"minecraft:operators/add","params":[[{"player":{"name":"kt-boss"}}]]}
+{"jsonrpc":"2.0","id":51,"method":"minecraft:operators/add","params":[[{"player":{"name":"kt-boss2"},"permissionLevel":2,"bypassesPlayerLimit":true}]]}
+{"jsonrpc":"2.0","id":52,"method":"minecraft:operators/add","params":[[{"player":{"name":"kt-boss3"},"permissionLevel":9}]]}
+{"jsonrpc":"2.0","id":53,"method":"minecraft:operators/add","params":[[{"player":{"name":"kt-boss4"},"permissionLevel":0}]]}
+{"jsonrpc":"2.0","id":54,"method":"minecraft:operators"}
+{"jsonrpc":"2.0","id":55,"method":"minecraft:operators/remove","params":[[{"name":"kt-boss"}]]}
+{"jsonrpc":"2.0","id":56,"method":"minecraft:operators/set","params":[[{"player":{"name":"kt-solo"}}]]}
+{"jsonrpc":"2.0","id":57,"method":"minecraft:operators/clear"}
+!console op kt-zed
+!console deop kt-zed

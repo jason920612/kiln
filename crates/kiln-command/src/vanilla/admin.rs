@@ -88,11 +88,10 @@ pub fn whitelist<S: Host + 'static>(d: &mut Dispatcher<S>) {
                     return false;
                 }
                 if add {
-                    l.whitelist.put(key.clone(), user.clone());
+                    l.whitelist_add(user.clone());
                 } else {
-                    l.whitelist.remove(&key);
+                    l.whitelist_remove(&user);
                 }
-                l.save_whitelist();
                 true
             })?;
             if done {
@@ -179,15 +178,13 @@ pub fn ban<S: Host + 'static>(d: &mut Dispatcher<S>) {
         let mut banned = 0;
         for p in &profiles {
             let user = name_and_id(p);
-            let key = user.uuid.to_string();
             let entry = UserBan { user, ban: BanInfo::now(Some(&source), reason.clone()) };
             let message = reason_message(&entry.ban);
             let added = with_lists(s, |l| {
                 if l.is_banned(&entry.user.uuid) {
                     return false;
                 }
-                l.bans.put(key.clone(), entry.clone());
-                l.save_bans();
+                l.ban_add(entry.clone());
                 true
             })?;
             if added {
@@ -236,8 +233,7 @@ pub fn ban_ip<S: Host + 'static>(d: &mut Dispatcher<S>) {
         let entry = IpBan { ip: ip.clone(), ban: BanInfo::now(Some(&text_name(s)), reason) };
         let message = reason_message(&entry.ban);
         with_lists(s, |l| {
-            l.ip_bans.put(ip.clone(), entry);
-            l.save_ip_bans();
+            l.ip_ban_add(entry);
         })?;
         s.send_success(tr!("commands.banip.success", ip.as_str(), message), true);
         if !players.is_empty() {
@@ -308,8 +304,7 @@ pub fn pardon<S: Host + 'static>(d: &mut Dispatcher<S>) {
                             if !l.is_banned(&p.uuid) {
                                 return false;
                             }
-                            l.bans.remove(&p.uuid.to_string());
-                            l.save_bans();
+                            l.ban_remove(&name_and_id(p));
                             true
                         })?;
                         if removed {
@@ -344,8 +339,7 @@ pub fn pardon_ip<S: Host + 'static>(d: &mut Dispatcher<S>) {
                         if !l.is_ip_banned(&ip) {
                             return false;
                         }
-                        l.ip_bans.remove(&ip);
-                        l.save_ip_bans();
+                        l.ip_ban_remove(&ip);
                         true
                     })?;
                     if !removed {
