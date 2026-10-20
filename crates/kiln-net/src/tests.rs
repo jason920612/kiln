@@ -821,6 +821,7 @@ async fn login_refusals_use_translatable_texts() {
     assert_eq!(reason, serde_json::json!({ "translate": "multiplayer.disconnect.incompatible", "with": [version::NAME] }));
 
     // A client older than the 1.16 protocol is "outdated".
+    let (addr, _) = serve(shared.clone()).await;
     let mut c = Conn::new(TcpStream::connect(addr).await.unwrap());
     c.queue(&packet(ids::handshake::serverbound::INTENTION, |b| {
         b.put_varint(700);
