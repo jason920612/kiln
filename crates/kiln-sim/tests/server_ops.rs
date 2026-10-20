@@ -302,6 +302,17 @@ fn too_many_messages_in_a_short_time_is_spam() {
 }
 
 #[test]
+fn joining_and_leaving_are_translatable_messages_naming_the_player() {
+    let (mut sim, mut a, mut b) = two_players(SimConfig::new(4, 2, None));
+    assert!(contains_text(&a, SYSTEM_CHAT, "multiplayer.player.joined"), "Alice is told Bob joined");
+    assert!(contains_text(&a, SYSTEM_CHAT, "minecraft:player"), "the name carries its hover entity");
+    assert!(contains_text(&a, SYSTEM_CHAT, "/tell Bob "), "and the click that suggests a message to him");
+    sim.step([ToSim::Leave(2)]);
+    run(&mut sim, &mut [&mut a, &mut b], 2, None);
+    assert!(contains_text(&a, SYSTEM_CHAT, "multiplayer.player.left"));
+}
+
+#[test]
 fn a_player_with_chat_hidden_gets_no_chat_and_is_told_so() {
     let (mut sim, mut a, mut b) = two_players(SimConfig::new(4, 2, None));
     let hidden = kiln_proto::packets::ClientInfo { chat_visibility: 2, ..Default::default() };

@@ -185,6 +185,7 @@ fn main() -> Result<()> {
         command_spam_threshold_seconds: props.command_spam_threshold_seconds,
         chat_spam_threshold_seconds: props.chat_spam_threshold_seconds,
         log_ips: props.log_ips,
+        console_system_prefix: !legacy,
         generate_structures: props.generate_structures,
         announce_advancements: props.announce_player_achievements,
     };

@@ -177,6 +177,7 @@ mod interact_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
+use kiln_command::text::{Arg, Text};
 use kiln_link::{ClientInfo, ConnId, JoinInfo, PlayIn, Property, Sink, ToSim};
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
@@ -263,6 +264,9 @@ pub struct ServerSettings {
     pub chat_spam_threshold_seconds: i32,
     /// `log-ips`: logins and logouts print the address.
     pub log_ips: bool,
+    /// What the console prints for system messages starts with `System chat: ` (`MinecraftServer.sendSystemMessage`);
+    /// off for the harness runs, whose tools read the older plain lines.
+    pub console_system_prefix: bool,
     /// `generate-structures` (a world keeps the value it was made with).
     pub generate_structures: bool,
     /// `announce-player-achievements`, the legacy key: sets the `show_advancement_messages` game rule when present.
@@ -289,6 +293,7 @@ impl Default for ServerSettings {
             command_spam_threshold_seconds: 10,
             chat_spam_threshold_seconds: 10,
             log_ips: true,
+            console_system_prefix: false,
             generate_structures: true,
             announce_advancements: None,
         }
@@ -3999,7 +4004,8 @@ impl Sim {
             self.player_stops_riding(&p);
             self.plugins_left(&p);
             self.announce_leave(&p, conn);
-            self.broadcast_system(yellow(&format!("{} left the game", p.name)));
+            let shown = self.player_display_name(&p.name, p.uuid);
+            self.broadcast_system_text(Text::translate("multiplayer.player.left", vec![Arg::Text(shown)]).color("yellow"));
         }
     }
 
@@ -4502,7 +4508,10 @@ impl Sim {
         let mut spawns = Vec::new();
         player.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
 
-        let msg = yellow(&format!("{} joined the game", player.name));
+        let shown = self.player_display_name(&player.name, player.uuid);
+        let msg = Text::translate("multiplayer.player.joined", vec![Arg::Text(shown)]).color("yellow");
+        self.log_system_chat(&msg);
+        let msg = msg.to_nbt();
         let uuid = player.uuid;
         for pkt in self.commands.scoreboard.join_packets() {
             player.send(pkt);
@@ -4541,6 +4550,16 @@ impl Sim {
             portal_cooldown: p.portal_cooldown,
             sea_level: self.dims[dim].sea_level,
         }
+    }
+
+    /// `Player.getDisplayName`: the team-decorated name with the click and hover events chat shows.
+    fn player_display_name(&self, name: &str, uuid: uuid::Uuid) -> Text {
+        chat_flow::decorate_player_name(self.commands.scoreboard.player_display_name(name), name, uuid)
+    }
+
+    fn broadcast_system_text(&mut self, text: Text) {
+        self.log_system_chat(&text);
+        self.broadcast_system(text.to_nbt());
     }
 
     fn broadcast_system(&mut self, text: Tag) {
@@ -4733,6 +4752,3 @@ fn is_hidden_chat(packet: &[u8], visibility: u8) -> bool {
     }
 }
 
-fn yellow(s: &str) -> Tag {
-    Tag::Compound(vec![("text".into(), Tag::String(s.into())), ("color".into(), Tag::String("yellow".into()))])
-}

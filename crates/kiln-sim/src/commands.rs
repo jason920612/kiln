@@ -645,8 +645,17 @@ impl Sim {
 
     /// System message to the current command source.
     /// A message to the console (and to the lines a test keeps).
+    /// What the console prints for a system message (`System chat: ` in front on a server).
+    pub(crate) fn log_system_chat(&self, text: &Text) {
+        if self.config.server.console_system_prefix {
+            info!("System chat: {}", console_text(text));
+        } else {
+            info!("{}", console_text(text));
+        }
+    }
+
     pub(crate) fn reply_console(&mut self, text: &Text) {
-        info!("{}", console_text(text));
+        self.log_system_chat(text);
         if let Some(lines) = self.commands.console_capture.as_mut() {
             lines.push(console_text(text));
         }
@@ -2047,7 +2056,7 @@ impl Host for Sim {
     }
 
     fn broadcast_system_message(&mut self, text: Text) {
-        info!("{}", console_text(&text));
+        self.log_system_chat(&text);
         self.broadcast(packets::system_chat(text.to_nbt(), false));
     }
 
