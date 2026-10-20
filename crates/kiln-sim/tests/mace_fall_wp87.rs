@@ -118,7 +118,7 @@ fn a_smash_attack_from_a_fall_does_what_vanilla_does() {
         let ground = p[1].floor() as i32 - 1;
         let floor = ground as f64 + 1.0;
         let (x, z) = (p[0], p[2]);
-        let dy = floor - 100.0;
+        let dy = floor - (-63.0);
         w.run(&format!("fill {} {ground} {} {} {ground} {} minecraft:stone", x.floor() as i32 - 3, z.floor() as i32 - 3, x.floor() as i32 + 3, z.floor() as i32 + 3));
         let armor = if v["victim_armored"].as_bool().unwrap_or(false) {
             ",equipment:{head:{id:\"minecraft:diamond_helmet\"},chest:{id:\"minecraft:diamond_chestplate\"},legs:{id:\"minecraft:diamond_leggings\"},feet:{id:\"minecraft:diamond_boots\"}}"
