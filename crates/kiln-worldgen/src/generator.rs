@@ -262,8 +262,10 @@ impl Generator {
     /// the biome list); its sea level is `FlatLevelSource.getSeaLevel`, -63.
     pub fn for_flat(pack: &Datapack, biome: &str, layers: Vec<u16>, dimension_type: &str, seed: i64) -> Result<Generator, Error> {
         let mut g = Self::for_dimension(pack, "minecraft:overworld", BiomeSourceKind::Fixed(biome), dimension_type, seed)?;
-        g.gen_min_y = g.min_y;
-        g.gen_height = g.height;
+        // `FlatLevelSource.getMinY` is 0 and `getGenDepth` 384: `WorldGenerationContext` (the y ranges of placed features: `above_bottom`, `below_top`)
+        // takes the larger of the level's minimum and the generator's, so in a level that goes down to -64 these still start at 0.
+        g.gen_min_y = g.min_y.max(0);
+        g.gen_height = g.height.min(384);
         g.sea_level = -63;
         g.flat = Some(layers);
         Ok(g)
@@ -605,7 +607,7 @@ impl Generator {
     pub fn base_column(&self, s: &mut Scratch, x: i32, z: i32) -> Vec<u16> {
         if let Some(layers) = &self.flat {
             // `FlatLevelSource.getBaseColumn`: the layers (air for none), as far as the level goes.
-            let mut out = vec![state::AIR; self.gen_height as usize];
+            let mut out = vec![state::AIR; self.height as usize];
             for (slot, &layer) in out.iter_mut().zip(layers) {
                 *slot = layer;
             }
@@ -633,10 +635,9 @@ impl Generator {
     pub fn base_height(&self, s: &mut Scratch, x: i32, z: i32, map: crate::proto::Heightmap) -> i32 {
         let column = self.base_column(s, x, z);
         let bit = crate::proto::heightmap_bit(map);
-        column
-            .iter()
-            .rposition(|&b| crate::proto::heightmap_flags(b) & bit != 0)
-            .map_or(self.gen_min_y, |i| self.gen_min_y + i as i32 + 1)
+        // (The column of a flat level starts at the level's bottom, that of a noise level at the generation depth.)
+        let bottom = if self.flat.is_some() { self.min_y } else { self.gen_min_y };
+        column.iter().rposition(|&b| crate::proto::heightmap_flags(b) & bit != 0).map_or(bottom, |i| bottom + i as i32 + 1)
     }
 
     /// `MultiNoiseBiomeSource.createResolverForChunk`'s sampling: the six climate values on a
