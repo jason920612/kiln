@@ -268,6 +268,30 @@ impl Shared {
         self
     }
 
+    /// Online mode: fetches Mojang's keys that sign players' chat keys in the background (the chat sessions of players who
+    /// join before they arrive are ignored, as in vanilla), retrying a few times.
+    pub fn fetch_services_keys(&self) {
+        let Some(auth) = &self.auth else { return };
+        let (session, info) = (auth.session.clone(), self.info.clone());
+        let _ = std::thread::Builder::new().name("Services keys".into()).spawn(move || {
+            for attempt in 0..5 {
+                match session.player_certificate_keys() {
+                    Ok(keys) => {
+                        debug!("{} Minecraft Services public keys", keys.len());
+                        if let Ok(mut k) = info.services_keys.write() {
+                            *k = keys;
+                        }
+                        return;
+                    }
+                    Err(e) => {
+                        warn!("Failed to request Minecraft Services public key: {e:#}");
+                        std::thread::sleep(Duration::from_secs(5 << attempt));
+                    }
+                }
+            }
+        });
+    }
+
     /// Uses `access` for the login checks (shared with the simulation).
     pub fn with_access(mut self, access: kiln_link::access::SharedAccess) -> Self {
         self.access = access;
@@ -369,6 +393,7 @@ pub async fn listen(shared: Arc<Shared>) -> Result<()> {
     let listener = TcpListener::bind(shared.config.bind).await?;
     info!("listening on {}", shared.config.bind);
     shared.log_login_mode();
+    shared.fetch_services_keys();
     loop {
         let (stream, addr) = listener.accept().await?;
         let _ = stream.set_nodelay(true);

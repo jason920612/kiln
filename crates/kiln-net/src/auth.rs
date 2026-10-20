@@ -80,6 +80,7 @@ fn java_signed_hex(mut digest: [u8; 20]) -> String {
 
 const DISCOVERY_URL: &str = "https://discovery.minecraftservices.com/minecraft/client";
 const FALLBACK_HAS_JOINED: &str = "https://sessionserver.mojang.com/session/minecraft/hasJoined";
+const FALLBACK_PUBLIC_KEYS: &str = "https://api.minecraftservices.com/publickeys";
 const FALLBACK_PROFILE_BY_ID: &str = "https://sessionserver.mojang.com/session/minecraft/profile/{profileId}";
 const FALLBACK_PROFILE_BY_NAME: &str = "https://api.mojang.com/users/profiles/minecraft/{name}";
 const DISCOVERY_TTL: Duration = Duration::from_secs(3600);
@@ -151,6 +152,17 @@ impl SessionService {
             return Ok(None);
         }
         parse_profile(&body).map(Some)
+    }
+
+    /// Mojang's public keys that sign players' chat keys (`MinecraftServicesDiscoveryService.getServicesKeySet`,
+    /// `playerCertificateKeys`), as X.509 DER.
+    pub fn player_certificate_keys(&self) -> Result<Vec<Vec<u8>>> {
+        let url = self.endpoint("/discovery/authentication/endpoints/getPublicKeys/uri", FALLBACK_PUBLIC_KEYS);
+        let (status, body) = self.get(&url, &[])?;
+        if status != 200 {
+            bail!("public keys: HTTP {status}");
+        }
+        parse_player_certificate_keys(&body)
     }
 
     /// The profile with `id` and its properties (textures), signed. `Ok(None)`: no such
@@ -247,6 +259,42 @@ impl SessionService {
         let body = resp.body_mut().with_config().limit(MAX_RESPONSE).read_to_string()?;
         Ok((resp.status().as_u16(), body))
     }
+}
+
+/// `playerCertificateKeys` of the public keys document: each `publicKey` is base64 of the X.509 encoding.
+pub(crate) fn parse_player_certificate_keys(json: &str) -> Result<Vec<Vec<u8>>> {
+    let doc: serde_json::Value = serde_json::from_str(json).context("public keys document")?;
+    let keys = doc.get("playerCertificateKeys").and_then(|k| k.as_array()).context("no playerCertificateKeys")?;
+    keys.iter()
+        .map(|k| {
+            let b64 = k.get("publicKey").and_then(|v| v.as_str()).context("key without publicKey")?;
+            base64_decode(b64).context("malformed base64 key")
+        })
+        .collect()
+}
+
+/// Standard base64 (padding optional), whitespace ignored.
+pub(crate) fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(text.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0);
+    for c in text.bytes().filter(|c| !c.is_ascii_whitespace() && *c != b'=') {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => return None,
+        };
+        acc = acc << 6 | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
 }
 
 /// `discovery.session.endpoints.verify.uri` of a discovery document; HTTPS only.
@@ -381,6 +429,15 @@ pub(crate) mod tests {
         assert!(parse_discovery(r#"{"discovery":{}}"#).is_err());
         let http = r#"{"discovery":{"session":{"endpoints":{"verify":{"uri":"http://evil.example/x"}}}}}"#;
         assert!(parse_discovery(http).is_err());
+    }
+
+    #[test]
+    fn parses_the_public_keys_document() {
+        let doc = r#"{"profilePropertyKeys":[{"publicKey":"AAAA"}],"playerCertificateKeys":[{"publicKey":"TWFu"},{"publicKey":"TWE="}]}"#;
+        assert_eq!(parse_player_certificate_keys(doc).unwrap(), [b"Man".to_vec(), b"Ma".to_vec()]);
+        assert!(parse_player_certificate_keys(r#"{"profilePropertyKeys":[]}"#).is_err());
+        assert!(parse_player_certificate_keys(r#"{"playerCertificateKeys":[{"publicKey":"!!"}]}"#).is_err());
+        assert_eq!(base64_decode("aGVsbG8gd29ybGQ").unwrap(), b"hello world");
     }
 
     #[test]
