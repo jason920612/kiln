@@ -68,5 +68,6 @@ negsed "signature cache slots" "$SIG signed_messages" $SIM/chat.rs 's/Some(i) =>
 negsed "older session key" "$SIG older_session" $SIM/chat_flow.rs 's/if old.is_some_and(|s| expires_at_ms < s.expires_at_ms) {/if false {/'
 negsed "services public keys document" "-p kiln-net --lib public_keys" crates/kiln-net/src/auth.rs 's/doc.get("playerCertificateKeys")/doc.get("profilePropertyKeys")/'
 negsed "log-ips" "$NET log_ips" crates/kiln-net/src/lib.rs 's/if shared.config.log_ips { remote.to_string() }/if true { remote.to_string() }/'
+negsed "formatList of one" "-p kiln-command --lib joining_one" crates/kiln-command/src/text.rs 's/if items.len() == 1 {/if false {/'
 echo "negative checks failing the wrong way: $fails"
 exit $fails
