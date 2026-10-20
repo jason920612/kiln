@@ -39,7 +39,7 @@ fn a_wither_chooses_among_the_players_around_it() {
     sim.console_now("effect give @a minecraft:resistance 99999 4 true");
     sim.console_now("effect give @a minecraft:regeneration 99999 30 true");
     ticks(&mut sim, 5);
-    for _ in 0..12 {
+    for _ in 0..200 {
         sim.console_now("execute at Aa run summon minecraft:wither ~5 ~4 ~");
         ticks(&mut sim, 300);
         sim.console_now("kill @e[type=minecraft:wither]");
