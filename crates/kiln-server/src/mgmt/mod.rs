@@ -21,7 +21,7 @@ use kiln_link::access::SharedAccess;
 use kiln_link::mgmt::{MgmtHost, Notifier};
 use kiln_link::{ProfileLookup, ServerInfo};
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -361,6 +361,3 @@ fn accept_loop(listener: &TcpListener, shared: &Arc<conn::Shared>, tls: Option<A
         }
     }
 }
-
-#[allow(dead_code)]
-fn _unused(_: TcpStream) {}

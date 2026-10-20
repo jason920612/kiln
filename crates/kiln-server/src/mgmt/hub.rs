@@ -64,7 +64,7 @@ pub fn notification_json(n: &Notification, info: &kiln_link::ServerInfo) -> J {
         Notification::IpUnbanned(ip) => ("ip_bans/removed", Some(J::str(ip.clone()))),
         Notification::PlayerBanned(b) => ("bans/added", Some(exec::user_ban_json(b))),
         Notification::PlayerUnbanned(u) => ("bans/removed", Some(exec::player_json(u))),
-        Notification::GameRuleChanged { key, value } => ("gamerules/updated", Some(exec::rule_json(key, *value as RuleValue))),
+        Notification::GameRuleChanged { key, value } => ("gamerules/updated", Some(exec::rule_json(key, *value))),
         Notification::StatusHeartbeat => ("server/status", Some(exec::state_json(info))),
     };
     let mut members = vec![("jsonrpc", J::str("2.0")), ("method", J::str(format!("minecraft:notification/{method}")))];
@@ -108,10 +108,8 @@ impl Heartbeat {
                 continue;
             }
             let generation = state.generation;
-            let (guard, timeout) = self
-                .wake
-                .wait_timeout(state, Duration::from_secs(state.interval as u64))
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let wait = Duration::from_secs(state.interval as u64);
+            let (guard, timeout) = self.wake.wait_timeout(state, wait).unwrap_or_else(std::sync::PoisonError::into_inner);
             state = guard;
             if timeout.timed_out() && state.generation == generation && !state.stopped && state.interval > 0 {
                 notifier.notify(Notification::StatusHeartbeat);

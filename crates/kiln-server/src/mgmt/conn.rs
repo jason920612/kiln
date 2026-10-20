@@ -2,7 +2,7 @@
 //! WebSocket text frames of JSON-RPC (`Connection`), with the notifications written between requests.
 
 use super::hub::notification_json;
-use super::json::{self, J};
+use super::json;
 use super::ws::{self, Decoder, Message, WsError};
 use super::{Ctx, rpc};
 use kiln_link::mgmt::Notification;
@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::debug;
 
 /// A connection's byte stream: a socket, or a socket under TLS.
 pub trait Wire: Read + Write + Send {
@@ -269,11 +269,3 @@ fn talk(wire: &mut dyn Wire, id: u32, shared: &Shared, notes: &Receiver<Notifica
         }
     }
 }
-
-/// Used by tests and by the server: a notification as the text a client receives.
-pub fn notification_text(n: &Notification, info: &kiln_link::ServerInfo) -> String {
-    notification_json(n, info).to_string()
-}
-
-#[allow(dead_code)]
-fn _assert_j(_: &J) {}
