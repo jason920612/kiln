@@ -1,0 +1,69 @@
+# protocol errors
+!raw not json
+!raw {"jsonrpc":"2.0","id":1,"method":
+!raw 5
+!raw "str"
+!raw null
+!raw []
+!raw [1,2]
+!raw [{"jsonrpc":"2.0","id":1,"method":"minecraft:allowlist"},{"jsonrpc":"2.0","method":"minecraft:allowlist"},{"jsonrpc":"2.0","id":3,"method":"nope"}]
+!raw {}
+!raw {"jsonrpc":"2.0"}
+!raw {"jsonrpc":"2.0","id":1}
+!raw {"jsonrpc":"2.0","id":1,"method":5}
+!raw {"jsonrpc":"2.0","id":1,"method":"nope"}
+!raw {"jsonrpc":"2.0","id":1,"method":"minecraft:nope"}
+!raw {"jsonrpc":"2.0","id":1,"method":"Minecraft:Allowlist"}
+!raw {"jsonrpc":"2.0","id":1,"method":"allowlist"}
+!raw {"jsonrpc":"2.0","id":1,"method":"::"}
+!raw {"jsonrpc":"2.0","id":{"a":1},"method":"minecraft:allowlist"}
+!raw {"jsonrpc":"2.0","id":[1],"method":"minecraft:allowlist"}
+!raw {"jsonrpc":"2.0","id":true,"method":"minecraft:allowlist"}
+!raw {"jsonrpc":"2.0","id":"abc","method":"minecraft:allowlist"}
+!raw {"jsonrpc":"2.0","id":1.5,"method":"minecraft:allowlist"}
+!raw {"jsonrpc":"2.0","id":null,"method":"minecraft:allowlist"}
+!raw {"jsonrpc":"2.0","method":"minecraft:allowlist"}
+!raw {"jsonrpc":"1.0","id":1,"method":"minecraft:allowlist"}
+!raw {"id":1,"method":"minecraft:allowlist"}
+!raw {"jsonrpc":"2.0","id":1,"method":"minecraft:allowlist","params":[]}
+!raw {"jsonrpc":"2.0","id":1,"method":"minecraft:allowlist","params":{}}
+!raw {"jsonrpc":"2.0","id":1,"method":"minecraft:allowlist","params":[1]}
+!raw {"jsonrpc":"2.0","id":1,"method":"minecraft:allowlist","params":5}
+!raw {"jsonrpc":"2.0","id":1,"result":5}
+!raw {"jsonrpc":"2.0","id":1,"result":5,"method":"minecraft:allowlist"}
+!raw {"jsonrpc":"2.0","id":1,"error":{"code":1,"message":"x"}}
+!raw {"jsonrpc":"2.0","id":1,"error":5}
+!raw {"jsonrpc":"2.0","id":null,"error":{"code":1,"message":"x"}}
+# rpc.discover
+{"jsonrpc":"2.0","id":1,"method":"rpc.discover"}
+{"jsonrpc":"2.0","id":2,"method":"rpc.discover","params":[]}
+{"jsonrpc":"2.0","id":3,"method":"minecraft:rpc.discover"}
+# simple getters
+{"jsonrpc":"2.0","id":1,"method":"minecraft:allowlist"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:bans"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:ip_bans"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:operators"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:players"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:server/status"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:gamerules"}
+# settings
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/autosave"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/difficulty"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/enforce_allowlist"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/use_allowlist"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/max_players"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/pause_when_empty_seconds"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/player_idle_timeout"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/allow_flight"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/motd"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/spawn_protection_radius"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/force_game_mode"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/game_mode"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/view_distance"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/simulation_distance"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/accept_transfers"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/status_heartbeat_interval"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/operator_user_permission_level"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/hide_online_players"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/status_replies"}
+{"jsonrpc":"2.0","id":1,"method":"minecraft:serversettings/entity_broadcast_range"}
