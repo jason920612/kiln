@@ -1937,7 +1937,7 @@ impl Sim {
         let seed = match (&config.noise, storage.as_mut()) {
             (Some(n), Some(s)) => {
                 s.level.set_seed_if_missing(n.seed);
-                s.level.set_generate_structures_if_missing(self.config.server.generate_structures);
+                s.level.set_generate_structures_if_missing(config.server.generate_structures);
                 n.seed
             }
             (Some(n), None) => n.seed,
