@@ -2003,7 +2003,7 @@ fn max_flying_ticks(p: &Player) -> i32 {
 /// acknowledge, like vanilla's connection tick), movement bookkeeping and keep-alives.
 fn tick_connection(p: &mut Player, env: &Env) {
     // `tickPlayer`: a client that floats for longer than gravity allows is kicked.
-    if p.client_is_floating && p.sleep.pos.is_none() && p.vehicle.is_none() && !p.dead {
+    if p.client_is_floating && !p.disconnected && p.sleep.pos.is_none() && p.vehicle.is_none() && !p.dead {
         p.above_ground_ticks += 1;
         if p.above_ground_ticks > max_flying_ticks(p) {
             warn!("{} was kicked for floating too long!", p.name);

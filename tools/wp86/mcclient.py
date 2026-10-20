@@ -315,7 +315,7 @@ def hover(self, seconds, y_offset=0.0, on_ground=False, tick=0.05):
     if spawn is None:
         raise TimeoutError("no position")
     tid, x, y, z = spawn
-    self.send_raw(SB_ACCEPT_TELEPORT, varint(tid))
+    self.send_raw(SB_ACCEPT_TELEPORT, varint(tid) + struct.pack(">dddff", x, y, z, 0.0, 0.0))
     self.send_raw(SB_PLAYER_LOADED)
     self.send_raw(SB_CLIENT_TICK_END)
     out = []
