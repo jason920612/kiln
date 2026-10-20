@@ -467,4 +467,22 @@ mod tests {
         assert_eq!((ticks("minecraft:overworld"), ticks("minecraft:the_end")), (Some(6000), Some(150)));
         std::fs::remove_dir_all(&dir).unwrap();
     }
+    /// wp86: `generate-structures=false` is written into a new world's settings and read back; a world keeps what it has.
+    #[test]
+    fn generate_structures_is_part_of_the_new_world_and_stays() {
+        let dir = scratch("genstruct");
+        let mut store = LevelStore::open(&dir);
+        store.set_seed_if_missing(5);
+        store.set_generate_structures_if_missing(false);
+        let state = store.state();
+        store.save(&state).unwrap();
+        let mut again = LevelStore::open(&dir);
+        assert_eq!(again.generate_structures(), Some(false));
+        // Asking for true now changes nothing: the world has its settings.
+        again.set_generate_structures_if_missing(true);
+        let state = again.state();
+        again.save(&state).unwrap();
+        assert_eq!(LevelStore::open(&dir).generate_structures(), Some(false));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

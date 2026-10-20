@@ -335,3 +335,16 @@ fn an_rcon_command_runs_at_level_four_and_returns_what_it_printed() {
     // The command's feedback is not left behind for the next command.
     assert!(!ask(&mut sim, "difficulty").contains("keep_inventory"));
 }
+
+#[test]
+fn the_legacy_announce_key_sets_the_advancement_message_rule() {
+    let mut config = SimConfig::new(4, 2, None);
+    config.server.announce_advancements = Some(false);
+    let mut sim = Sim::new(config);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let work: Box<dyn FnOnce(&mut dyn kiln_link::AdminHost) + Send> = Box::new(move |h| {
+        let _ = tx.send(h.rcon_command("gamerule minecraft:show_advancement_messages"));
+    });
+    assert!(sim.step([ToSim::Admin(work)]));
+    assert!(rx.try_recv().unwrap().contains("false"));
+}
