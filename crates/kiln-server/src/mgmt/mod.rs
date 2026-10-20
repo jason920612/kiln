@@ -327,7 +327,7 @@ fn bind(host: &str, port: u16) -> Result<TcpListener, String> {
             .ok_or_else(|| "java.nio.channels.UnresolvedAddressException".to_owned())?
     };
     TcpListener::bind((ip, port)).map_err(|e| match e.kind() {
-        std::io::ErrorKind::AddrInUse => format!("java.net.BindException: Address already in use: bind ({e})"),
+        std::io::ErrorKind::AddrInUse => "java.net.BindException: Address already in use".to_owned(),
         _ => format!("java.net.SocketException: {e}"),
     })
 }

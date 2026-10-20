@@ -159,7 +159,7 @@ fn main() -> Result<()> {
             Ok(server) => mgmt = Some(server),
             Err(e) => {
                 tracing::error!("Failed to start the minecraft server");
-                eprintln!("{e}");
+                tracing::error!("{e}");
                 std::process::exit(1);
             }
         }
