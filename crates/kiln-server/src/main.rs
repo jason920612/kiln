@@ -125,6 +125,7 @@ fn main() -> Result<()> {
     net_config.compression_threshold = usize::try_from(props.network_compression_threshold).ok();
     net_config.enforces_secure_chat = enforce_secure_chat;
     net_config.rate_limit = props.rate_limit.max(0) as u32;
+    net_config.log_ips = props.log_ips;
     // `server-icon.png`, else the world's `icon.png`; it has to be a 64x64 PNG.
     let icon = [Path::new("server-icon.png").to_path_buf(), world_dir.clone().unwrap_or_default().join("icon.png")]
         .into_iter()

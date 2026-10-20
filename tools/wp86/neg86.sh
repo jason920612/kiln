@@ -67,5 +67,6 @@ negsed "chat session validation" "$SIG not_signed_by" $SIM/chat.rs 's/let ok = s
 negsed "signature cache slots" "$SIG signed_messages" $SIM/chat.rs 's/Some(i) => PackedSignature::Cached(i as i32),/Some(_) => PackedSignature::Full(signature.0.clone()),/'
 negsed "older session key" "$SIG older_session" $SIM/chat_flow.rs 's/if old.is_some_and(|s| expires_at_ms < s.expires_at_ms) {/if false {/'
 negsed "services public keys document" "-p kiln-net --lib public_keys" crates/kiln-net/src/auth.rs 's/doc.get("playerCertificateKeys")/doc.get("profilePropertyKeys")/'
+negsed "log-ips" "$NET log_ips" crates/kiln-net/src/lib.rs 's/if shared.config.log_ips { remote.to_string() }/if true { remote.to_string() }/'
 echo "negative checks failing the wrong way: $fails"
 exit $fails

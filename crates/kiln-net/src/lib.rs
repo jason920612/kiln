@@ -49,6 +49,8 @@ pub struct Config {
     pub enforces_secure_chat: bool,
     /// `rate-limit`: packets per second a connection may average before it is kicked (0: no limit).
     pub rate_limit: u32,
+    /// `log-ips`: the log names the players' addresses.
+    pub log_ips: bool,
 }
 
 impl Config {
@@ -63,6 +65,7 @@ impl Config {
             favicon: None,
             enforces_secure_chat: false,
             rate_limit: 0,
+            log_ips: true,
         }
     }
 }
@@ -645,9 +648,10 @@ async fn login(mut conn: Conn, addr: SocketAddr, shared: &Shared, protocol: i32,
 
     let client = configure(&mut conn, shared, &profile.name).await?;
     info!(
-        "{} ({}) joined from {remote}{via}, {} profile properties",
+        "{} ({}) joined from {}{via}, {} profile properties",
         profile.name,
         profile.uuid,
+        shown_address(shared, remote),
         profile.properties.len()
     );
     play(conn, shared, profile, remote, client).await
@@ -1036,6 +1040,11 @@ impl DecodeFailure {
     }
 }
 
+/// `log-ips`: the address as the log shows it.
+fn shown_address(shared: &Shared, remote: IpAddr) -> String {
+    if shared.config.log_ips { remote.to_string() } else { "<ip address withheld>".to_owned() }
+}
+
 async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr, client: packets::ClientInfo) -> Result<()> {
     let conn_id = shared.next_conn.fetch_add(1, Ordering::Relaxed);
     let Conn { stream, mut rbuf, mut rx, tx, wbuf, encrypt, mut decrypt } = conn;
@@ -1091,7 +1100,7 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
     let _ = shared.to_sim.send(ToSim::Leave(conn_id));
     writer_task.abort();
     let why = result.as_ref().err().map_or("disconnected".to_string(), |e| format!("{e:#}"));
-    info!("{name} ({remote}) left: {why}");
+    info!("{name} ({}) left: {why}", shown_address(shared, remote));
     Ok(())
 }
 

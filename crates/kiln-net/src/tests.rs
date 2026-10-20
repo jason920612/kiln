@@ -27,6 +27,7 @@ fn shared(login: LoginConfig, compression: Option<usize>) -> (Arc<Shared>, cross
         favicon: None,
         enforces_secure_chat: false,
         rate_limit: 0,
+        log_ips: true,
     };
     let (to_sim, sim_rx) = crossbeam_channel::unbounded();
     (Arc::new(Shared::with_login(config, login, to_sim)), sim_rx)
@@ -288,6 +289,7 @@ fn online(url: &str, compression: Option<usize>) -> (Arc<Shared>, crossbeam_chan
         favicon: None,
         enforces_secure_chat: false,
         rate_limit: 0,
+        log_ips: true,
     };
     let mut shared = Shared::with_login(config, LoginConfig::default(), to_sim);
     shared.auth = Some(Authenticator { key: test_key(), session: Arc::new(SessionService::with_endpoint(url)) });
@@ -910,4 +912,13 @@ async fn without_a_rate_limit_the_same_burst_is_fine() {
     c.send(&packet(ids::play::serverbound::CLIENT_TICK_END, |_| {})).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!sim.try_iter().any(|m| matches!(m, ToSim::Leave(_))), "still connected");
+}
+
+#[test]
+fn log_ips_off_withholds_addresses() {
+    let remote: IpAddr = [10, 0, 0, 7].into();
+    let (on, _) = shared_with(|_| {});
+    assert_eq!(super::shown_address(&on, remote), "10.0.0.7");
+    let (off, _) = shared_with(|c| c.log_ips = false);
+    assert_eq!(super::shown_address(&off, remote), "<ip address withheld>");
 }
