@@ -139,8 +139,7 @@ pub fn serve(mut wire: Box<dyn Wire>, peer: SocketAddr, id: u32, shared: Arc<Sha
     let shown = peer_text(peer);
     shared.ctx.log(id, &format!("Management connection opened for {shown}"));
     let upgraded = upgrade(&mut *wire, peer, &shared);
-    if let Some((token_in_protocol, leftover)) = upgraded {
-        let _ = token_in_protocol;
+    if let Some(leftover) = upgraded {
         let notes = shared.ctx.hub.listen(id);
         talk(&mut *wire, id, &shared, &notes, leftover);
         shared.ctx.hub.forget(id);
@@ -150,7 +149,7 @@ pub fn serve(mut wire: Box<dyn Wire>, peer: SocketAddr, id: u32, shared: Arc<Sha
 }
 
 /// The HTTP request: authentication, then the WebSocket handshake. `Some` with what followed the request.
-fn upgrade(wire: &mut dyn Wire, peer: SocketAddr, shared: &Shared) -> Option<(bool, Vec<u8>)> {
+fn upgrade(wire: &mut dyn Wire, peer: SocketAddr, shared: &Shared) -> Option<Vec<u8>> {
     let mut buf = Vec::new();
     loop {
         let end = read_head(wire, &mut buf, shared)?;
@@ -195,7 +194,7 @@ fn upgrade(wire: &mut dyn Wire, peer: SocketAddr, shared: &Shared) -> Option<(bo
         match ws::handshake(&req) {
             ws::Handshake::Accept(key) => {
                 let protocol = token_in_protocol.then_some("minecraft-v1");
-                return send(wire, &ws::switching_protocols(&key, protocol)).then_some((token_in_protocol, leftover));
+                return send(wire, &ws::switching_protocols(&key, protocol)).then_some(leftover);
             }
             ws::Handshake::Draft(answer) => {
                 // (The draft's own framing is not served: the connection stays open and says nothing.)
