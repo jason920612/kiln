@@ -133,6 +133,31 @@ fn an_attribute_effect_of_worn_boots_holds_for_a_mob_while_they_are_worn() {
 }
 
 #[test]
+fn a_location_effect_follows_the_mob_from_block_to_block() {
+    let _x = kiln_data::live::exclusive();
+    // Soul Speed's shape: the attribute holds while the block under the feet is one of a kind (`location_check` with `offsetY: -1`).
+    let stride = enchantment(
+        BOOTS_SLOT,
+        r#""minecraft:location_changed": [{"requirements": {"condition": "minecraft:location_check", "offsetY": -1, "predicate": {"block": {"blocks": "minecraft:gold_block"}}}, "effect": {"type": "minecraft:attribute", "amount": 1.0, "attribute": "minecraft:movement_efficiency", "id": "kiln87:stride", "operation": "add_value"}}]"#,
+    );
+    let mut w = World::new("follows", &[("stride", stride)]);
+    let (home, gold) = (w.spot(3.0), w.spot(6.0));
+    let g = [gold[0].floor() as i32, w.ground[1], gold[2].floor() as i32];
+    w.sim.console_now(&format!("setblock {} {} {} minecraft:gold_block", g[0], g[1], g[2]));
+    let nbt = format!("{{NoAI:1b,PersistenceRequired:1b,{}}}", worn("husk", "feet", "golden_boots", "stride"));
+    let id = w.summon("husk", home, &nbt);
+    w.ticks(4);
+    let efficiency = |w: &World| w.sim.mob_attribute(id, "minecraft:movement_efficiency").expect("the attribute");
+    assert!(efficiency(&w).abs() < 1e-9, "on stone: {}", efficiency(&w));
+    w.sim.console_now(&format!("tp @e[type=minecraft:husk] {} {} {}", gold[0], gold[1], gold[2]));
+    w.ticks(3);
+    assert!((efficiency(&w) - 1.0).abs() < 1e-9, "on the gold block: {}", efficiency(&w));
+    w.sim.console_now(&format!("tp @e[type=minecraft:husk] {} {} {}", home[0], home[1], home[2]));
+    w.ticks(3);
+    assert!(efficiency(&w).abs() < 1e-9, "back on stone: {}", efficiency(&w));
+}
+
+#[test]
 fn a_location_effect_replaces_the_block_a_mob_stands_on() {
     let _x = kiln_data::live::exclusive();
     let frost = enchantment(

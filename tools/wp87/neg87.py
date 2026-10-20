@@ -37,7 +37,7 @@ CASES = {
         "crates/kiln-entity/src/mob/mod.rs",
         "        enchant_fx::block_changed(e, m, level);\n",
         "",
-        "-p kiln-sim --test mob_enchant_fx_wp87 attribute_effect",
+        "-p kiln-sim --test mob_enchant_fx_wp87 follows_the_mob",
         {},
     ),
     "mob_equipment": (
