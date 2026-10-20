@@ -137,7 +137,7 @@ fn peer_text(peer: SocketAddr) -> String {
 /// Serves one connection until it closes.
 pub fn serve(mut wire: Box<dyn Wire>, peer: SocketAddr, id: u32, shared: Arc<Shared>) {
     let shown = peer_text(peer);
-    shared.ctx.log(id, &format!("Management connection opened for {shown}"));
+    shared.ctx.rpc_log(id, &format!("Management connection opened for {shown}"));
     let upgraded = upgrade(&mut *wire, peer, &shared);
     if let Some(leftover) = upgraded {
         let notes = shared.ctx.hub.listen(id);
@@ -145,7 +145,7 @@ pub fn serve(mut wire: Box<dyn Wire>, peer: SocketAddr, id: u32, shared: Arc<Sha
         shared.ctx.hub.forget(id);
     }
     wire.close();
-    shared.ctx.log(id, &format!("Management connection closed for {shown}"));
+    shared.ctx.rpc_log(id, &format!("Management connection closed for {shown}"));
 }
 
 /// The HTTP request: authentication, then the WebSocket handshake. `Some` with what followed the request.

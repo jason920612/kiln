@@ -83,7 +83,7 @@ pub struct Ctx {
 
 impl Ctx {
     /// `JsonRpcLogger.log`: `RPC Connection #<id>: <message>`.
-    pub fn log(&self, client: u32, message: &str) {
+    pub fn rpc_log(&self, client: u32, message: &str) {
         info!("RPC Connection #{client}: {message}");
     }
 

@@ -378,23 +378,23 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
         "allowlist/add" => {
             let dtos = list(codec::player_dto)?;
             for u in ctx.resolve_all(&dtos).into_iter().flatten() {
-                ctx.log(client, &format!("Add player '{}' to allowlist", u.name));
+                ctx.rpc_log(client, &format!("Add player '{}' to allowlist", u.name));
                 lists_mut(ctx).whitelist_add(u);
             }
             Ok(players_json(&lists(ctx)))
         }
         "allowlist/clear" => {
-            ctx.log(client, "Clear allowlist");
+            ctx.rpc_log(client, "Clear allowlist");
             lists_mut(ctx).whitelist_clear();
             Ok(players_json(&lists(ctx)))
         }
         "allowlist/remove" => {
             let dtos = list(codec::player_dto)?;
             for u in ctx.resolve_all(&dtos).into_iter().flatten() {
-                ctx.log(client, &format!("Remove player '{}' from allowlist", u.name));
+                ctx.rpc_log(client, &format!("Remove player '{}' from allowlist", u.name));
                 lists_mut(ctx).whitelist_remove(&u);
             }
-            ctx.log(client, "Kick unlisted players");
+            ctx.rpc_log(client, "Kick unlisted players");
             ctx.on_sim(|h| h.kick_unlisted())?;
             Ok(players_json(&lists(ctx)))
         }
@@ -406,14 +406,14 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
             let wanted = user_set(wanted);
             let current = user_set(current);
             for u in current.iter().filter(|u| !wanted.contains(u)) {
-                ctx.log(client, &format!("Remove player '{}' from allowlist", u.name));
+                ctx.rpc_log(client, &format!("Remove player '{}' from allowlist", u.name));
                 lists_mut(ctx).whitelist_remove(u);
             }
             for u in wanted.iter().filter(|u| !current.contains(u)) {
-                ctx.log(client, &format!("Add player '{}' to allowlist", u.name));
+                ctx.rpc_log(client, &format!("Add player '{}' to allowlist", u.name));
                 lists_mut(ctx).whitelist_add(u.clone());
             }
-            ctx.log(client, "Kick unlisted players");
+            ctx.rpc_log(client, "Kick unlisted players");
             ctx.on_sim(|h| h.kick_unlisted())?;
             Ok(players_json(&lists(ctx)))
         }
@@ -435,7 +435,7 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
         "bans/remove" => {
             let dtos = list(codec::player_dto)?;
             for u in ctx.resolve_all(&dtos).into_iter().flatten() {
-                ctx.log(client, &format!("Remove player '{}' from banlist", u.name));
+                ctx.rpc_log(client, &format!("Remove player '{}' from banlist", u.name));
                 lists_mut(ctx).ban_remove(&u);
             }
             Ok(bans_json(&lists(ctx)))
@@ -451,7 +451,7 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
             let current: Vec<(BanKey, UserBan)> = lists(ctx).bans.values().into_iter().map(|b| (BanKey::of_user_ban(b), b.clone())).collect();
             let (wanted, current) = (ban_set(wanted), ban_set(current));
             for (_, b) in current.iter().filter(|(k, _)| !wanted.iter().any(|(w, _)| w == k)) {
-                ctx.log(client, &format!("Remove player '{}' from banlist", b.user.name));
+                ctx.rpc_log(client, &format!("Remove player '{}' from banlist", b.user.name));
                 lists_mut(ctx).ban_remove(&b.user);
             }
             for (_, (u, d)) in wanted.iter().filter(|(k, _)| !current.iter().any(|(c, _)| c == k)) {
@@ -472,14 +472,14 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
             Ok(ip_bans_json(&lists(ctx)))
         }
         "ip_bans/clear" => {
-            ctx.log(client, "Clear ip ban list");
+            ctx.rpc_log(client, "Clear ip ban list");
             lists_mut(ctx).ip_ban_clear();
             Ok(ip_bans_json(&lists(ctx)))
         }
         "ip_bans/remove" => {
             let ips = codec::list(p(), codec::string).map_err(invalid)?;
             for ip in ips {
-                ctx.log(client, &format!("Remove ip '{ip}' from ban list"));
+                ctx.rpc_log(client, &format!("Remove ip '{ip}' from ban list"));
                 lists_mut(ctx).ip_ban_remove(&ip);
             }
             Ok(ip_bans_json(&lists(ctx)))
@@ -498,12 +498,12 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
             let current: Vec<(BanKey, IpBan)> = lists(ctx).ip_bans.values().into_iter().map(|b| (BanKey::of_ip_ban(b), b.clone())).collect();
             let (wanted, current) = (ban_set(wanted), ban_set(current));
             for (_, b) in current.iter().filter(|(k, _)| !wanted.iter().any(|(w, _)| w == k)) {
-                ctx.log(client, &format!("Remove ip '{}' from ban list", b.ip));
+                ctx.rpc_log(client, &format!("Remove ip '{}' from ban list", b.ip));
                 lists_mut(ctx).ip_ban_remove(&b.ip);
             }
             let mut added = Vec::new();
             for (_, b) in wanted.iter().filter(|(k, _)| !current.iter().any(|(c, _)| c == k)) {
-                ctx.log(client, &format!("Add ip '{}' to ban list", b.ip));
+                ctx.rpc_log(client, &format!("Add ip '{}' to ban list", b.ip));
                 lists_mut(ctx).ip_ban_add(b.clone());
                 added.push(b.ip.clone());
             }
@@ -529,7 +529,7 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
                     .and_then(codec::message_text)
                     .unwrap_or_else(|| translatable("multiplayer.disconnect.kicked"));
                 let name = ctx.info.players().iter().find(|p| p.uuid == uuid).map(|p| p.name.clone()).unwrap_or_default();
-                ctx.log(client, &format!("Remove player '{name}'"));
+                ctx.rpc_log(client, &format!("Remove player '{name}'"));
                 ctx.on_sim(move |h| h.kick(uuid, &reason))?;
                 kicked.push(dto_json(&dto.player));
             }
@@ -547,14 +547,14 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
             Ok(ops_json(&lists(ctx)))
         }
         "operators/clear" => {
-            ctx.log(client, "Clear operator list");
+            ctx.rpc_log(client, "Clear operator list");
             ctx.on_sim(|h| h.deop_all())?;
             Ok(ops_json(&lists(ctx)))
         }
         "operators/remove" => {
             let dtos = list(codec::player_dto)?;
             for u in ctx.resolve_all(&dtos).into_iter().flatten() {
-                ctx.log(client, &format!("Deop '{}'", u.name));
+                ctx.rpc_log(client, &format!("Deop '{}'", u.name));
                 ctx.on_sim(move |h| h.deop(&u))?;
             }
             Ok(ops_json(&lists(ctx)))
@@ -569,7 +569,7 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
             let want: HashSet<_> = wanted.iter().map(|(u, l, b)| key(u, *l, *b)).collect();
             let have: HashSet<_> = current.iter().map(|e| key(&e.user, Some(e.level), Some(e.bypasses_player_limit))).collect();
             for e in current.iter().filter(|e| !want.contains(&key(&e.user, Some(e.level), Some(e.bypasses_player_limit)))) {
-                ctx.log(client, &format!("Deop '{}'", e.user.name));
+                ctx.rpc_log(client, &format!("Deop '{}'", e.user.name));
                 let u = e.user.clone();
                 ctx.on_sim(move |h| h.deop(&u))?;
             }
@@ -584,11 +584,11 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
         "server/status" => Ok(state_json(&ctx.info)),
         "server/save" => {
             let flush = codec::boolean(p()).map_err(invalid)?;
-            ctx.log(client, &format!("Save everything. SuppressLogs: true, flush: {flush}, force: true"));
+            ctx.rpc_log(client, &format!("Save everything. SuppressLogs: true, flush: {flush}, force: true"));
             Ok(J::Bool(ctx.on_sim(move |h| h.save_everything(flush))?))
         }
         "server/stop" => {
-            ctx.log(client, "Halt server. WaitForShutdown: false");
+            ctx.rpc_log(client, "Halt server. WaitForShutdown: false");
             ctx.on_sim_detached(|h| h.halt());
             Ok(J::Bool(true))
         }
@@ -613,7 +613,7 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
                             plain
                         }
                     })?;
-                    ctx.log(client, &format!("Broadcast system message (overlay: {overlay}): '{shown}'"));
+                    ctx.rpc_log(client, &format!("Broadcast system message (overlay: {overlay}): '{shown}'"));
                 }
             }
             Ok(J::Bool(true))
@@ -650,7 +650,7 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
                 RuleValue::Bool(b) => b.to_string(),
                 RuleValue::Int(i) => i.to_string(),
             };
-            ctx.log(client, &format!("Game rule '{}' updated from '{}' to '{}'", id.strip_prefix("minecraft:").unwrap_or(&id), shown(old), shown(new)));
+            ctx.rpc_log(client, &format!("Game rule '{}' updated from '{}' to '{}'", id.strip_prefix("minecraft:").unwrap_or(&id), shown(old), shown(new)));
             let k = id.clone();
             ctx.on_sim(move |h| h.set_game_rule(&k, new))?;
             Ok(rule_json(&id, new))
@@ -661,7 +661,7 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
 
 /// `PlayerList.op` for a user (and the log of `MinecraftOperatorListServiceImpl.op`).
 fn op(ctx: &Ctx, client: u32, user: &NameAndId, level: Option<u8>, bypass: Option<bool>) -> Result<(), Fail> {
-    ctx.log(client, &format!("Op '{}'", user.name));
+    ctx.rpc_log(client, &format!("Op '{}'", user.name));
     let user = user.clone();
     ctx.on_sim(move |h| h.op(&user, level, bypass))
 }
@@ -676,7 +676,7 @@ fn ban_info(source: Option<&str>, reason: Option<String>, expires: Option<Instan
 fn add_ban(ctx: &Ctx, client: u32, user: &NameAndId, dto: &UserBanDto) -> Result<(), Fail> {
     let ban = ban_info(dto.source.as_deref(), dto.reason.clone(), dto.expires);
     let shown = ban.reason.clone().unwrap_or_else(|| "Banned by an operator.".to_owned());
-    ctx.log(client, &format!("Add player '{}' to banlist. Reason: '{shown}'", user.name));
+    ctx.rpc_log(client, &format!("Add player '{}' to banlist. Reason: '{shown}'", user.name));
     lists_mut(ctx).ban_add(UserBan { user: user.clone(), ban });
     let uuid = user.uuid;
     ctx.on_sim(move |h| h.kick(uuid, &translatable("multiplayer.disconnect.banned")))
@@ -696,7 +696,7 @@ fn ban_ip(ctx: &Ctx, client: u32, dto: &IpBanDto) -> Result<Vec<Uuid>, Fail> {
             }
         }
     };
-    ctx.log(client, &format!("Add ip '{ip}' to ban list"));
+    ctx.rpc_log(client, &format!("Add ip '{ip}' to ban list"));
     lists_mut(ctx).ip_ban_add(IpBan { ip: ip.clone(), ban: ban_info(dto.source.as_deref(), dto.reason.clone(), dto.expires) });
     ctx.players_at(&ip)
 }
@@ -988,7 +988,7 @@ fn settings(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
     };
     let old = current(ctx)?;
     let text = def.log.replace("{old}", &setting_log(def.setting, &old, true)).replace("{new}", &setting_log(def.setting, &requested, false));
-    ctx.log(client, &text);
+    ctx.rpc_log(client, &text);
     let mapped = {
         let mut props = ctx.settings.props.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mapped = prop_set(&mut props, def.setting, &requested);
@@ -1023,9 +1023,9 @@ fn heartbeat_setting(ctx: &Ctx, client: u32, set: bool, param: Option<&J>) -> Re
             }
             // (Vanilla logs the old value after the new one was stored.)
             let _ = old;
-            ctx.log(client, &format!("Updated status heartbeat interval from {seconds} to {seconds}"));
+            ctx.rpc_log(client, &format!("Updated status heartbeat interval from {seconds} to {seconds}"));
         } else {
-            ctx.log(
+            ctx.rpc_log(
                 client,
                 &format!("The heartbeat interval was not updated to the new value of {seconds} seconds as the json rpc server is null or a pre-existing heartbeat failed to get canceled"),
             );
