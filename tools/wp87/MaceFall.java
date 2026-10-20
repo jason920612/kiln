@@ -44,7 +44,7 @@ import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.Vec3;
 
 public class MaceFall {
-    static final double X = 0.5, Y0 = -63.0, Z = 0.5, FX = 1.2;
+    static final double X = 0.5, Y0 = -63.0, Z = 0.5, FX = 1.25;
 
     record Scenario(String name, double height, Map<String, Integer> enchants, String victim, boolean armored) {}
 

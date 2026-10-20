@@ -125,7 +125,7 @@ fn a_smash_attack_from_a_fall_does_what_vanilla_does() {
         } else {
             ""
         };
-        w.run(&format!("summon minecraft:zombie {} {floor} {z} {{NoAI:1b,PersistenceRequired:1b,Health:1000f,attributes:[{{id:\"minecraft:max_health\",base:1000d}}]{armor}}}", x - 0.7));
+        w.run(&format!("summon minecraft:zombie {} {floor} {z} {{NoAI:1b,PersistenceRequired:1b,Health:1000f,attributes:[{{id:\"minecraft:max_health\",base:1000d}}]{armor}}}", x - 0.75));
         let enchants: Vec<String> = v["enchants"].as_object().unwrap().iter().map(|(k, l)| format!("\"{k}\":{l}")).collect();
         w.run(&format!("item replace entity Faller weapon.mainhand with minecraft:mace[enchantments={{{}}}]", enchants.join(",")));
         let path: Vec<f64> = v["path"].as_array().unwrap().iter().map(|y| y.as_f64().unwrap() + dy).collect();
