@@ -813,7 +813,7 @@ fn settings_are_stored_mapped_and_written_to_server_properties() {
     assert_eq!(env.with_fake(|f| f.settings.get("OperatorPermissionLevel").cloned()), Some(SettingValue::Int(0)));
     // The properties file follows.
     let file = std::fs::read_to_string(env.dir.join("server.properties")).unwrap();
-    for line in ["max-players=2", "entity-broadcast-range-percentage=1000", "op-permission-level=0", "view-distance=100", "gamemode=creative", "difficulty=hard", "motd=Hello \\u00A7a world", "white-list=true", "enforce-whitelist=true"] {
+    for line in ["max-players=2", "entity-broadcast-range-percentage=1000", "op-permission-level=0", "view-distance=100", "gamemode=creative", "difficulty=hard", "motd=Hello §a world", "white-list=true", "enforce-whitelist=true"] {
         assert!(file.lines().any(|l| l == line), "{line} in\n{file}");
     }
     // A getter answers from the properties.
