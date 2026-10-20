@@ -55,4 +55,8 @@ fn a_wither_chooses_among_the_players_around_it() {
     eprintln!("picks by x: {by_x:?} ({} picks); candidates of the first: {:?}", picks.len(), picks.first().map(|p| p[5]));
     assert!(picks.iter().all(|p| p[5] == "2"), "both players are candidates: {picks:?}");
     assert_eq!(by_x.len(), 2, "both players are picked at some time: {by_x:?}");
+    // Fair: 400 picks of a fair coin are within 40..60 % of one of them 99.99 % of the time. (The two servers side by side, 80 picks each: vanilla 38 / 42,
+    // Kiln 53 / 27 in one run and 211 / 189 in 400 of this test.)
+    let n = picks.len();
+    assert!(by_x.values().all(|&c| c * 100 >= n * 40 && c * 100 <= n * 60), "a wither picks its targets about evenly: {by_x:?}");
 }
