@@ -13,7 +13,7 @@ const DIFFICULTIES: [&str; 4] = ["peaceful", "easy", "normal", "hard"];
 
 /// `world_gen_settings.dat` of a default world with this seed: the vanilla generators of the
 /// three dimensions.
-fn world_gen_settings(seed: i64) -> Tag {
+fn world_gen_settings(seed: i64, generate_structures: bool) -> Tag {
     let s = |v: &str| Tag::String(v.to_owned());
     let compound = |fields: Vec<(&str, Tag)>| Tag::Compound(fields.into_iter().map(|(k, v)| (k.to_owned(), v)).collect());
     let multi_noise = |preset: &str| compound(vec![("preset", s(preset)), ("type", s("minecraft:multi_noise"))]);
@@ -41,7 +41,7 @@ fn world_gen_settings(seed: i64) -> Tag {
     let data = compound(vec![
         ("bonus_chest", Tag::Byte(0)),
         ("seed", Tag::Long(seed)),
-        ("generate_structures", Tag::Byte(1)),
+        ("generate_structures", Tag::Byte(i8::from(generate_structures))),
         ("dimensions", dimensions),
     ]);
     compound(vec![("data", data), ("DataVersion", Tag::Int(DATA_VERSION as i32))])
@@ -95,6 +95,8 @@ pub struct LevelStore {
     world_gen: Option<Tag>,
     /// The seed a world without `world_gen_settings.dat` is given with the next save.
     new_seed: Option<i64>,
+    /// `generate-structures` for a world that gets its `world_gen_settings.dat` now.
+    new_generate_structures: bool,
     /// `game_rules.dat` needs writing.
     rules_dirty: bool,
     /// Game time when the clocks were last read or written, to advance the clocks Kiln does
@@ -126,6 +128,7 @@ impl LevelStore {
             game_rules,
             world_gen,
             new_seed: None,
+            new_generate_structures: true,
             rules_dirty: false,
             clocks_game_time: 0,
         };
@@ -203,6 +206,18 @@ impl LevelStore {
         match self.world_gen.as_ref().and_then(|w| w.get("data")?.get("dimensions")) {
             Some(Tag::Compound(fields)) => fields.clone(),
             _ => Vec::new(),
+        }
+    }
+
+    /// Whether the world generates structures (`world_gen_settings.dat`), if it has settings.
+    pub fn generate_structures(&self) -> Option<bool> {
+        self.world_gen.as_ref()?.get("data")?.get("generate_structures")?.as_i64().map(|v| v != 0)
+    }
+
+    /// `generate-structures` for a world that has no settings yet (one that has them keeps them).
+    pub fn set_generate_structures_if_missing(&mut self, generate: bool) {
+        if self.world_gen.is_none() {
+            self.new_generate_structures = generate;
         }
     }
 
@@ -288,7 +303,7 @@ impl LevelStore {
             self.rules_dirty = false;
         }
         if self.world_gen.is_none() && let Some(seed) = self.new_seed.take() {
-            let settings = world_gen_settings(seed);
+            let settings = world_gen_settings(seed, self.new_generate_structures);
             write_nbt_file(&self.dir.join("data/minecraft/world_gen_settings.dat"), &settings, None)?;
             self.world_gen = Some(settings);
         }

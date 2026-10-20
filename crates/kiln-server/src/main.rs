@@ -165,6 +165,8 @@ fn main() -> Result<()> {
         command_spam_threshold_seconds: props.command_spam_threshold_seconds,
         chat_spam_threshold_seconds: props.chat_spam_threshold_seconds,
         log_ips: props.log_ips,
+        generate_structures: props.generate_structures,
+        announce_advancements: props.announce_player_achievements,
     };
     sim_config.data_sync = shared.data_sync.clone();
     sim_config.online_mode = shared.authenticates();

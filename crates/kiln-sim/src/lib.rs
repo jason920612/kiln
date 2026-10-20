@@ -263,6 +263,10 @@ pub struct ServerSettings {
     pub chat_spam_threshold_seconds: i32,
     /// `log-ips`: logins and logouts print the address.
     pub log_ips: bool,
+    /// `generate-structures` (a world keeps the value it was made with).
+    pub generate_structures: bool,
+    /// `announce-player-achievements`, the legacy key: sets the `show_advancement_messages` game rule when present.
+    pub announce_advancements: Option<bool>,
 }
 
 impl Default for ServerSettings {
@@ -285,6 +289,8 @@ impl Default for ServerSettings {
             command_spam_threshold_seconds: 10,
             chat_spam_threshold_seconds: 10,
             log_ips: true,
+            generate_structures: true,
+            announce_advancements: None,
         }
     }
 }
@@ -1808,6 +1814,9 @@ impl Sim {
                 .map_err(|e| warn!("cannot load the datapack at {}: {e}", vanilla_pack.display()))
                 .ok()
         });
+        // `generate-structures`: a world keeps the value it was created with.
+        let generate_structures =
+            storage.as_ref().and_then(|s| s.level.generate_structures()).unwrap_or(config.server.generate_structures);
         // What generates each level's chunks, from its stem.
         let mut made = |id: DimId| -> Made {
             let key = dim_key(id);
@@ -1831,7 +1840,7 @@ impl Sim {
                 }
                 kiln_worldgen::stem::StemGenerator::Noise { .. } => {
                     let (Some(pack), Some(n)) = (pack.as_ref(), config.noise.as_ref()) else { return Made::Nothing };
-                    let world = match kiln_worldgen::Worldgen::from_stem(pack, &stem, n.seed, true) {
+                    let world = match kiln_worldgen::Worldgen::from_stem(pack, &stem, n.seed, generate_structures) {
                         Ok(Some(world)) => world,
                         Ok(None) => return Made::Nothing,
                         Err(e) => {
@@ -1928,6 +1937,7 @@ impl Sim {
         let seed = match (&config.noise, storage.as_mut()) {
             (Some(n), Some(s)) => {
                 s.level.set_seed_if_missing(n.seed);
+                s.level.set_generate_structures_if_missing(self.config.server.generate_structures);
                 n.seed
             }
             (Some(n), None) => n.seed,
