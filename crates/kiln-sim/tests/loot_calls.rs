@@ -353,10 +353,10 @@ fn brushing_an_armadillo_has_the_player_as_the_interacting_entity() {
     assert!(!items.contains_key("minecraft:gold_ingot"), "the brusher is not a zombie: {items:?}");
 }
 
-/// wp87: the context of the piglins' barter table (`PIGLIN_BARTER`) is `this_entity` alone, no `origin`: a `location_check` does not hold.
+/// wp87: the context of the piglins' barter table (`PIGLIN_BARTER`) is `this_entity` alone, no `origin`: a `location_check` does not hold (without a predicate it holds exactly when there is an origin).
 #[test]
 fn the_piglin_barter_context_has_no_origin() {
-    let at_all = r#"{"rolls":1,"entries":[{"type":"minecraft:item","name":"minecraft:emerald","condition":{"type":"minecraft:location_check","predicate":{}}}]}"#;
+    let at_all = r#"{"rolls":1,"entries":[{"type":"minecraft:item","name":"minecraft:emerald","condition":{"type":"minecraft:location_check"}}]}"#;
     let t = table("barter", &[pool(&[item("diamond", 1)]), at_all.to_owned()]);
     let mut w = World::new("barter_origin", &[("gameplay/piglin_bartering", &t)]);
     let [x, y, z] = w.at(1, 1, 0);
