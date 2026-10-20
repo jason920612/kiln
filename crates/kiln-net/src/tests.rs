@@ -673,3 +673,241 @@ async fn transfers_are_refused_unless_accepted() {
     let mut c = transfer_hello(addr).await;
     assert_eq!(finish_login(&mut c).await.name, "Alex");
 }
+
+// ---- wp86: the server list, the legacy ping, bad play packets ------------------------------
+
+fn shared_with(configure: impl FnOnce(&mut Config)) -> (Arc<Shared>, crossbeam_channel::Receiver<ToSim>) {
+    let mut config = Config::new(([127, 0, 0, 1], 0).into(), "A Test Server", 10, 8);
+    configure(&mut config);
+    let (to_sim, rx) = crossbeam_channel::unbounded();
+    (Arc::new(Shared::with_login(config, LoginConfig::default(), to_sim)), rx)
+}
+
+fn roster(shared: &Shared, names: &[(&str, bool)]) {
+    let mut r = shared.info.roster.write().unwrap();
+    for (i, (name, listing)) in names.iter().enumerate() {
+        r.push(kiln_link::RosterEntry { conn: i as u64, uuid: Uuid::from_u128(i as u128 + 1), name: (*name).to_owned(), allows_listing: *listing });
+    }
+}
+
+async fn status_conn(addr: SocketAddr) -> Conn {
+    let mut c = Conn::new(TcpStream::connect(addr).await.unwrap());
+    c.send(&packet(ids::handshake::serverbound::INTENTION, |b| {
+        b.put_varint(version::PROTOCOL);
+        b.put_string("localhost");
+        b.put_u16(25565);
+        b.put_varint(1);
+    }))
+    .await
+    .unwrap();
+    c
+}
+
+async fn status_json(c: &mut Conn) -> serde_json::Value {
+    c.send(&packet(ids::status::serverbound::STATUS_REQUEST, |_| {})).await.unwrap();
+    let (id, body) = recv(c).await;
+    assert_eq!(id, ids::status::clientbound::STATUS_RESPONSE);
+    serde_json::from_str(Reader::new(&body).string(32767).unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn the_status_names_the_players_and_the_icon() {
+    let (shared, _) = shared_with(|c| {
+        c.favicon = Some("data:image/png;base64,AAAA".into());
+        c.enforces_secure_chat = true;
+    });
+    roster(&shared, &[("Ann", true), ("Hidden", false)]);
+    let (addr, _) = serve(shared).await;
+    let mut c = status_conn(addr).await;
+    let j = status_json(&mut c).await;
+    assert_eq!(j["version"], serde_json::json!({ "name": version::NAME, "protocol": version::PROTOCOL }));
+    assert_eq!(j["players"]["max"], 10);
+    assert_eq!(j["players"]["online"], 2);
+    let sample = j["players"]["sample"].as_array().unwrap();
+    assert_eq!(sample.len(), 2);
+    let names: Vec<&str> = sample.iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"Ann") && names.contains(&"Anonymous Player"), "an unlisted player is the anonymous profile: {names:?}");
+    assert_eq!(j["favicon"], "data:image/png;base64,AAAA");
+    assert_eq!(j["enforcesSecureChat"], true);
+    assert_eq!(j["description"], "A Test Server");
+    // One status request per connection: a second one ends it.
+    c.send(&packet(ids::status::serverbound::STATUS_REQUEST, |_| {})).await.unwrap();
+    assert!(c.read().await.is_err(), "the connection is closed");
+}
+
+#[tokio::test]
+async fn hide_online_players_leaves_the_sample_out_and_a_disabled_status_does_not_answer() {
+    let (shared, _) = shared_with(|_| {});
+    roster(&shared, &[("Ann", true)]);
+    shared.info.hide_online_players.store(true, std::sync::atomic::Ordering::Relaxed);
+    let (addr, _) = serve(shared.clone()).await;
+    let mut c = status_conn(addr).await;
+    let j = status_json(&mut c).await;
+    assert_eq!(j["players"]["online"], 1);
+    assert!(j["players"].get("sample").is_none(), "no sample: {j}");
+    assert!(j.get("favicon").is_none() && j.get("enforcesSecureChat").is_none());
+
+    shared.info.enable_status.store(false, std::sync::atomic::Ordering::Relaxed);
+    let (addr, done) = serve(shared).await;
+    let mut c = status_conn(addr).await;
+    c.send(&packet(ids::status::serverbound::STATUS_REQUEST, |_| {})).await.unwrap();
+    assert!(c.read().await.is_err(), "closed without a response");
+    assert!(done.await.unwrap().is_err());
+}
+
+fn utf16(s: &str) -> Vec<u8> {
+    s.encode_utf16().flat_map(u16::to_be_bytes).collect()
+}
+
+async fn legacy_reply(addr: SocketAddr, ping: &[u8]) -> Vec<u8> {
+    let mut s = TcpStream::connect(addr).await.unwrap();
+    s.write_all(ping).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(3), s.read_to_end(&mut out)).await;
+    out
+}
+
+#[tokio::test]
+async fn the_legacy_pings_are_answered_with_a_kick() {
+    let (shared, _) = shared_with(|_| {});
+    roster(&shared, &[("Ann", true)]);
+    let want = |text: &str| {
+        let mut v = vec![0xff];
+        v.extend_from_slice(&(text.encode_utf16().count() as u16).to_be_bytes());
+        v.extend(utf16(text));
+        v
+    };
+    let (addr, _) = serve(shared.clone()).await;
+    assert_eq!(legacy_reply(addr, &[0xfe]).await, want("A Test Server\u{a7}1\u{a7}10"));
+    let (addr, _) = serve(shared.clone()).await;
+    let v1 = want(&format!("\u{a7}1\0127\0{}\0A Test Server\01\010", version::NAME));
+    assert_eq!(legacy_reply(addr, &[0xfe, 0x01]).await, v1);
+    // 1.6: FE 01 FA "MC|PingHost" length protocol host port.
+    let host = utf16("localhost");
+    let mut ping = vec![0xfe, 0x01, 0xfa, 0, 11];
+    ping.extend(utf16("MC|PingHost"));
+    ping.extend_from_slice(&((7 + host.len()) as u16).to_be_bytes());
+    ping.extend_from_slice(&[78, 0, 9]);
+    ping.extend(&host);
+    ping.extend_from_slice(&25565i32.to_be_bytes());
+    let (addr, _) = serve(shared.clone()).await;
+    assert_eq!(legacy_reply(addr, &ping).await, v1);
+    // With the server list off, the legacy handler is not there either.
+    shared.info.enable_status.store(false, std::sync::atomic::Ordering::Relaxed);
+    let (addr, _) = serve(shared).await;
+    assert!(legacy_reply(addr, &[0xfe, 0x01]).await.is_empty());
+}
+
+#[tokio::test]
+async fn login_refusals_use_translatable_texts() {
+    let (shared, _) = shared_with(|_| {});
+    let (addr, _) = serve(shared.clone()).await;
+    let mut c = Conn::new(TcpStream::connect(addr).await.unwrap());
+    c.queue(&packet(ids::handshake::serverbound::INTENTION, |b| {
+        b.put_varint(800); // a newer client
+        b.put_string("localhost");
+        b.put_u16(25565);
+        b.put_varint(2);
+    }))
+    .unwrap();
+    c.queue(&packet(ids::login::serverbound::HELLO, |b| {
+        b.put_string("Old");
+        b.put_uuid(Uuid::nil());
+    }))
+    .unwrap();
+    c.flush().await.unwrap();
+    let (id, body) = recv(&mut c).await;
+    let reason: serde_json::Value = serde_json::from_str(&disconnect_reason(id, &body)).unwrap();
+    assert_eq!(reason, serde_json::json!({ "translate": "multiplayer.disconnect.incompatible", "with": [version::NAME] }));
+
+    // A client older than the 1.16 protocol is "outdated".
+    let (addr, _) = serve(shared.clone()).await;
+    let mut c = Conn::new(TcpStream::connect(addr).await.unwrap());
+    c.queue(&packet(ids::handshake::serverbound::INTENTION, |b| {
+        b.put_varint(700);
+        b.put_string("localhost");
+        b.put_u16(25565);
+        b.put_varint(2);
+    }))
+    .unwrap();
+    c.queue(&packet(ids::login::serverbound::HELLO, |b| {
+        b.put_string("Old");
+        b.put_uuid(Uuid::nil());
+    }))
+    .unwrap();
+    c.flush().await.unwrap();
+    let (id, body) = recv(&mut c).await;
+    assert!(disconnect_reason(id, &body).contains("multiplayer.disconnect.outdated_client"));
+
+    // A full server.
+    let slots: Vec<_> = (0..10).map(|_| super::PlayerSlot::reserve(&shared).unwrap()).collect();
+    let (addr, _) = serve(shared.clone()).await;
+    let mut c = connect(addr, "localhost", "Late").await;
+    let (id, body) = recv(&mut c).await;
+    assert_eq!(disconnect_reason(id, &body), r#"{"translate":"multiplayer.disconnect.server_full"}"#);
+    drop(slots);
+}
+
+/// Joins a client to the play state of a server without a simulation behind it.
+async fn into_play(shared: Arc<Shared>) -> Conn {
+    let (addr, _) = serve(shared).await;
+    let mut c = connect(addr, "localhost", "Steve").await;
+    finish_login(&mut c).await;
+    configure_client(&mut c).await;
+    c
+}
+
+async fn kick_text(c: &mut Conn) -> Vec<u8> {
+    loop {
+        let (id, body) = recv(c).await;
+        if id == ids::play::clientbound::DISCONNECT {
+            return body;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_play_packet_that_does_not_decode_kicks_with_vanillas_text() {
+    let (shared, _sim) = shared(LoginConfig::default(), None);
+    let mut c = into_play(shared).await;
+    // `chat` cut short after the message.
+    c.send(&packet(ids::play::serverbound::CHAT, |b| b.put_string("hi"))).await.unwrap();
+    let body = kick_text(&mut c).await;
+    let text = String::from_utf8_lossy(&body);
+    assert!(text.contains("disconnect.genericReason"), "{text}");
+    assert!(
+        text.contains("Internal Exception: io.netty.handler.codec.DecoderException: Failed to decode packet 'serverbound/minecraft:chat'"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn rate_limit_kicks_a_connection_that_sends_too_many_packets() {
+    let (shared, _sim) = shared_with(|c| {
+        c.compression_threshold = None;
+        c.rate_limit = 5;
+    });
+    let mut c = into_play(shared).await;
+    for _ in 0..100 {
+        c.queue(&packet(ids::play::serverbound::CLIENT_TICK_END, |_| {})).unwrap();
+    }
+    c.flush().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    c.send(&packet(ids::play::serverbound::CLIENT_TICK_END, |_| {})).await.unwrap();
+    let body = kick_text(&mut c).await;
+    assert!(String::from_utf8_lossy(&body).contains("disconnect.exceeded_packet_rate"));
+}
+
+#[tokio::test]
+async fn without_a_rate_limit_the_same_burst_is_fine() {
+    let (shared, sim) = shared_with(|c| c.compression_threshold = None);
+    let mut c = into_play(shared).await;
+    for _ in 0..100 {
+        c.queue(&packet(ids::play::serverbound::CLIENT_TICK_END, |_| {})).unwrap();
+    }
+    c.flush().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    c.send(&packet(ids::play::serverbound::CLIENT_TICK_END, |_| {})).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!sim.try_iter().any(|m| matches!(m, ToSim::Leave(_))), "still connected");
+}

@@ -153,6 +153,14 @@ fn escape(s: &str, key: bool) -> String {
     out
 }
 
+/// The calendar fields of `now` in UTC: year, month, day, hour, minute, second.
+pub fn utc_parts(now: SystemTime) -> (i64, u32, u32, u64, u64, u64) {
+    let secs = now.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    let rem = secs.rem_euclid(86_400) as u64;
+    (y, m, d, rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
 /// `new Date().toString()` in UTC: `Mon Oct 19 20:43:39 UTC 2026`.
 pub fn java_date(now: SystemTime) -> String {
     let secs = now.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;

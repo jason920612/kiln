@@ -55,6 +55,30 @@ pub(crate) struct Env {
     pub border: crate::world_state::BorderBox,
     /// The level's chunk tickets that tick without a player near (centre, radius): `/forceload`, ender pearls, portals, the dragon fight's arena.
     pub tickets: std::sync::Arc<Vec<(ChunkPos, i32)>>,
+    /// `spawn-protection`: the radius around the world spawn (centre given) in which only operators change blocks;
+    /// `None` when there is none in this level (or no operator exists, as in vanilla).
+    pub spawn_protection: Option<(i32, [i32; 3])>,
+    /// `allow-flight`: players are not kicked for floating.
+    pub allow_flight: bool,
+}
+
+impl Env {
+    /// `MinecraftServer.isUnderSpawnProtection`.
+    pub(crate) fn under_spawn_protection(&self, p: &Player, pos: [i32; 3]) -> bool {
+        match self.spawn_protection {
+            Some((radius, spawn)) if !p.is_op => (pos[0] - spawn[0]).abs().max((pos[2] - spawn[2]).abs()) <= radius,
+            _ => false,
+        }
+    }
+}
+
+/// `ServerPlayer.sendSpawnProtectionMessage`: a red line over the hotbar.
+fn spawn_protection_message(p: &mut Player, pos: [i32; 3]) {
+    let at = format!("{}, {}, {}", pos[0], pos[1], pos[2]);
+    p.send(kiln_proto::packets::system_chat(
+        kiln_command::text::Text::translate("build.spawn_protection", vec![kiln_command::text::Arg::Str(at)]).color("red").to_nbt(),
+        true,
+    ));
 }
 
 /// What a region leaves for the next serial phase.
@@ -1382,8 +1406,12 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 }
                 digging::START_DESTROY_BLOCK | digging::CHANGE_DESTROY_DIRECTION | digging::STOP_DESTROY_BLOCK | digging::ABORT_DESTROY_BLOCK => {
                     let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                    // `handleBlockBreakAction`: near the world spawn only operators start breaking a block.
+                    if action == digging::START_DESTROY_BLOCK && env.under_spawn_protection(p, pos) {
+                        spawn_protection_message(p, pos);
+                        p.resend_block(&level, pos);
                     // `Level.mayInteract`: nothing outside the world border breaks.
-                    if env.border.contains(pos[0] as f64, pos[2] as f64) {
+                    } else if env.border.contains(pos[0] as f64, pos[2] as f64) {
                         digging::player_action(p, &mut level, action, pos, face);
                     } else {
                         p.resend_block(&level, pos);
@@ -1443,7 +1471,12 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
         }
         PlayIn::UseItemOn { hand, pos, face, cursor, sequence, .. } => {
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
-            let may_interact = env.border.contains(pos[0] as f64, pos[2] as f64);
+            // `handleUseItemOn`: near the world spawn only operators use items on blocks.
+            let protected = env.under_spawn_protection(p, pos);
+            if protected {
+                spawn_protection_message(p, pos);
+            }
+            let may_interact = env.border.contains(pos[0] as f64, pos[2] as f64) && !protected;
             use_item_on(p, &mut level, hand, pos, face, cursor, may_interact, fx.spawns);
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
@@ -1900,6 +1933,8 @@ fn handle_move(
     if was_on_ground && !on_ground && d[1] > 0.0 {
         p.server_jump(from, world, env.game_time, env.min_y);
     }
+    // (`verticalCollisionBelow` of the previous move: the floating check asks for it after the move.)
+    let was_resting = p.phantom.as_ref().is_some_and(|e| e.vertical_collision_below);
     let moves_before = p.movements.len();
     let end = p.server_packet_move(from, d, was_on_ground, world, env.game_time, env.min_y, crate::dim_type(env.dim).fast_lava);
     // The claim against where the body got (the vertical part never counts: vanilla zeroes it), outside creative and
@@ -1927,12 +1962,58 @@ fn handle_move(
     p.pos = to;
     p.rot = rot;
     p.on_ground = on_ground;
+    // `handleMovePlayer`: a client that moves up or sideways with nothing near below it, in survival and adventure, without
+    // being allowed to fly, may be floating.
+    p.client_is_floating = d[1] >= -0.03125
+        && !was_resting
+        && !matches!(p.game_mode, 1 | 3)
+        && !env.allow_flight
+        && !p.has_effect("minecraft:levitation")
+        && !p.fall_flying
+        && p.spin_ticks <= 0
+        && no_blocks_around(p, world);
     Move::Taken
+}
+
+/// `noBlocksAround`: only air under and around the player's box (inflated a sixteenth, and 0.55 further down).
+fn no_blocks_around(p: &Player, world: &CellSet<Cell>) -> bool {
+    let (width, height, _) = p.dimensions();
+    let (half, h) = (f64::from(width) / 2.0 + 0.0625, f64::from(height) + 0.0625);
+    let (min, max) = ([p.pos[0] - half, p.pos[1] - 0.0625 - 0.55, p.pos[2] - half], [p.pos[0] + half, p.pos[1] + h, p.pos[2] + half]);
+    let f = |v: f64| v.floor() as i32;
+    for x in f(min[0])..=f(max[0]) {
+        for y in f(min[1])..=f(max[1]) {
+            for z in f(min[2])..=f(max[2]) {
+                if !world.get_block(x, y, z).is_none_or(kiln_data::blocks_types::is_air) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// `getMaximumFlyingTicks`: 80 ticks of floating at normal gravity, more as it weakens, for ever without gravity.
+fn max_flying_ticks(p: &Player) -> i32 {
+    let gravity: f64 = if p.has_effect("minecraft:slow_falling") { 0.01 } else { 0.08 };
+    if gravity < 9.999999747378752E-6 { i32::MAX } else { (80.0_f64 * (0.08 / gravity).max(1.0)).ceil() as i32 }
 }
 
 /// Start of a connection's tick: block change acks (after the block updates they
 /// acknowledge, like vanilla's connection tick), movement bookkeeping and keep-alives.
 fn tick_connection(p: &mut Player, env: &Env) {
+    // `tickPlayer`: a client that floats for longer than gravity allows is kicked.
+    if p.client_is_floating && !p.disconnected && p.sleep.pos.is_none() && p.vehicle.is_none() && !p.dead {
+        p.above_ground_ticks += 1;
+        if p.above_ground_ticks > max_flying_ticks(p) {
+            warn!("{} was kicked for floating too long!", p.name);
+            p.disconnect_text(kiln_command::text::Text::translate("multiplayer.disconnect.flying", vec![]).to_nbt());
+            return;
+        }
+    } else {
+        p.client_is_floating = false;
+        p.above_ground_ticks = 0;
+    }
     if p.ack_block_changes >= 0 {
         p.send(packets::block_changed_ack(p.ack_block_changes));
         p.ack_block_changes = -1;

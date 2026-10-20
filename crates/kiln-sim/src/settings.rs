@@ -27,6 +27,13 @@ impl Sim {
             self.commands.difficulty = kiln_command::Difficulty::Hard;
         }
         self.commands.idle_timeout = s.player_idle_timeout.max(0);
+        // `DedicatedServer.initServer`: the legacy `announce-player-achievements` sets the rule.
+        if let Some(announce) = s.announce_advancements {
+            self.commands.game_rules.insert("minecraft:show_advancement_messages".to_owned(), kiln_command::GameRuleValue::Bool(announce));
+        }
+        crate::world_state::set_absolute_max_size(s.max_world_size);
+        crate::blocks::set_max_chained_neighbor_updates(s.max_chained_neighbor_updates);
+        crate::entities::set_broadcast_range_percentage(s.entity_broadcast_range_percentage);
     }
 
     /// `MinecraftServer.tickServer`'s pause: after `pause-when-empty-seconds` without players the world

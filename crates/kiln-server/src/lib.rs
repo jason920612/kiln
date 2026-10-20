@@ -8,3 +8,4 @@ pub mod launch;
 pub mod properties;
 pub mod query;
 pub mod rcon;
+pub mod watchdog;

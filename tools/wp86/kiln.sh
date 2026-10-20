@@ -20,6 +20,7 @@ case "$1" in
     stop
     if [ -z "$KEEP" ]; then rm -rf world logs server.properties eula.txt banned-*.json ops.json whitelist.json usercache.json server-icon.png; fi
     [ -z "$NOEULA" ] && echo "eula=true" > eula.txt
+    [ -n "$ICON" ] && cp "$ICON" server-icon.png
     [ -n "$2" ] && cp "$2" server.properties
     rm -f console; mkfifo console
     setsid sleep 100000000 > console 2>/dev/null < /dev/null &

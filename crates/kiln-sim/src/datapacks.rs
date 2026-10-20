@@ -604,7 +604,7 @@ impl Sim {
         let dispatcher = self.commands.dispatcher.clone();
         let saved = self.commands.stack.clone();
         let mut check = SourceStack::new(Text::literal("Server"), crate::commands::OVERWORLD, [0.0; 3]);
-        check.max_permission = 2;
+        check.max_permission = self.config.server.function_permission_level;
         check.silent = true;
         self.commands.stack = check;
         let mut library = FunctionLibrary::default();
@@ -685,7 +685,9 @@ impl Sim {
     pub(crate) fn run_server_function(&mut self, f: &CommandFunction) {
         let dispatcher = self.commands.dispatcher.clone();
         let previous = std::mem::replace(&mut self.commands.source, crate::commands::CommandSource::Console);
-        let stack = SourceStack::new(Text::literal("Server"), crate::commands::OVERWORLD, self.spawn.map(|v| v as f64));
+        let mut stack = SourceStack::new(Text::literal("Server"), crate::commands::OVERWORLD, self.spawn.map(|v| v as f64));
+        // `function-permission-level`.
+        stack.max_permission = self.config.server.function_permission_level;
         let saved = std::mem::replace(&mut self.commands.stack, stack.clone());
         if let Err(e) = self.editing(|s| kiln_command::vanilla::run_as_server(&dispatcher, s, f, stack)) {
             warn!("Failed to execute function {}: {}", f.id, e.to_plain());

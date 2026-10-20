@@ -979,6 +979,27 @@ impl std::fmt::Display for DecodeFailure {
 
 impl std::error::Error for DecodeFailure {}
 
+/// A connection that sent more packets than `rate-limit` allows.
+#[derive(Debug)]
+struct RateExceeded;
+
+impl std::fmt::Display for RateExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "exceeded the packet rate limit")
+    }
+}
+
+impl std::error::Error for RateExceeded {}
+
+impl RateExceeded {
+    fn disconnect_packet(&self) -> Bytes {
+        packets::play_disconnect_text(kiln_proto::nbt::Tag::Compound(vec![(
+            "translate".to_owned(),
+            kiln_proto::nbt::Tag::String("disconnect.exceeded_packet_rate".to_owned()),
+        )]))
+    }
+}
+
 impl DecodeFailure {
     fn disconnect_packet(&self) -> Bytes {
         let reason = format!("Internal Exception: io.netty.handler.codec.DecoderException: {self}");
@@ -1015,7 +1036,7 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
     let mut writer_task = tokio::spawn(write_loop(writer, tx, wbuf, encrypt, out_rx, queued));
     let result = if joined {
         // The writer ends after a kick (disconnect packet sent) or when the client falls behind.
-        let read = read_loop(reader, &mut rbuf, &mut rx, decrypt.as_mut(), conn_id, &shared.to_sim);
+        let read = read_loop(reader, &mut rbuf, &mut rx, decrypt.as_mut(), conn_id, &shared.to_sim, shared.config.rate_limit);
         tokio::pin!(read);
         tokio::select! {
             r = &mut read => r,
@@ -1035,8 +1056,11 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
     };
 
     // A packet that would not decode: the client is told why before the connection closes.
-    if let Some(failure) = result.as_ref().err().and_then(|e| e.downcast_ref::<DecodeFailure>()) {
-        let _ = decode_failure_tx.send(Outbound::Disconnect(failure.disconnect_packet()));
+    let kick = result.as_ref().err().and_then(|e| {
+        e.downcast_ref::<DecodeFailure>().map(DecodeFailure::disconnect_packet).or_else(|| e.downcast_ref::<RateExceeded>().map(RateExceeded::disconnect_packet))
+    });
+    if let Some(packet) = kick {
+        let _ = decode_failure_tx.send(Outbound::Disconnect(packet));
         let _ = tokio::time::timeout(Duration::from_secs(2), &mut writer_task).await;
     }
     let _ = shared.to_sim.send(ToSim::Leave(conn_id));
@@ -1053,9 +1077,22 @@ async fn read_loop(
     mut decrypt: Option<&mut Decryptor>,
     conn: ConnId,
     to_sim: &crossbeam_channel::Sender<ToSim>,
+    rate_limit: u32,
 ) -> Result<()> {
+    // `RateKickingConnection`: the packets received a second, averaged (a quarter of this second's count, three
+    // quarters of the average before).
+    let (mut second_start, mut received, mut average) = (std::time::Instant::now(), 0u32, 0f32);
     loop {
         while let Some(pkt) = rx.decode(rbuf)? {
+            received += 1;
+            if rate_limit > 0 && second_start.elapsed() >= Duration::from_secs(1) {
+                average = 0.25 * received as f32 + 0.75 * average;
+                (second_start, received) = (std::time::Instant::now(), 0);
+                if average > rate_limit as f32 {
+                    warn!("Player exceeded rate-limit (sent {average} packets per second)");
+                    return Err(RateExceeded.into());
+                }
+            }
             let (id, mut r) = split_id(&pkt)?;
             match packets::decode_play(id, &mut r) {
                 Ok(Some(p)) => {

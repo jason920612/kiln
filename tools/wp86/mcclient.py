@@ -283,3 +283,66 @@ def describe_chat(pid, body):
     if pid == CB_SYSTEM_CHAT:
         return f"SYSTEM_CHAT {body.hex()}"
     return f"packet {pid} {body[:40].hex()}"
+
+
+# ---- movement (a client that stands still or hovers) ----
+CB_PLAYER_POSITION = 73
+SB_ACCEPT_TELEPORT = 0
+SB_CLIENT_TICK_END = 13
+SB_MOVE_POS = 30
+SB_PLAYER_LOADED = 44
+
+
+def _position(self, body):
+    tid, i = read_varint(body, 0)
+    x, y, z = struct.unpack(">ddd", body[i:i + 24])
+    return tid, x, y, z
+
+
+def hover(self, seconds, y_offset=0.0, on_ground=False, tick=0.05):
+    """Joins the world like a client (confirms the teleport, reports loaded), then sends `seconds` of position reports
+    at the spawn height + y_offset; returns [(t, packet id)] of what arrived (disconnect included)."""
+    import time as _t
+    pkts = self.until_play() if not getattr(self, "_in_play", False) else []
+    self._in_play = True
+    spawn = None
+    end = _t.time() + 5
+    while spawn is None and _t.time() < end:
+        for pid, body in pkts + self.drain(0.2):
+            if pid == CB_PLAYER_POSITION:
+                spawn = _position(self, body)
+        pkts = []
+    if spawn is None:
+        raise TimeoutError("no position")
+    tid, x, y, z = spawn
+    self.send_raw(SB_ACCEPT_TELEPORT, varint(tid) + struct.pack(">dddff", x, y, z, 0.0, 0.0))
+    self.send_raw(SB_PLAYER_LOADED)
+    self.send_raw(SB_CLIENT_TICK_END)
+    out = []
+    t0 = _t.time()
+    n = 0
+    while _t.time() - t0 < seconds:
+        n += 1
+        try:
+            self.send_raw(SB_MOVE_POS, struct.pack(">dddB", x, y + y_offset, z, 1 if on_ground else 0))
+            self.send_raw(SB_CLIENT_TICK_END)
+        except OSError:
+            out.append((round(_t.time() - t0, 1), -1, b"connection closed"))
+            return out
+        _t.sleep(tick)
+        try:
+            got = self.drain(0.0)
+        except OSError:
+            got = [(-1, b"reset")]
+        for pid, body in got:
+            if pid == CB_DISCONNECT:
+                out.append((round(_t.time() - t0, 1), pid, body))
+                return out
+            if pid == -1:
+                out.append((round(_t.time() - t0, 1), -1, b"closed"))
+                return out
+    return out
+
+
+Client.hover = hover
+Client.position = _position

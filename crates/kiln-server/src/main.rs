@@ -165,6 +165,8 @@ fn main() -> Result<()> {
         command_spam_threshold_seconds: props.command_spam_threshold_seconds,
         chat_spam_threshold_seconds: props.chat_spam_threshold_seconds,
         log_ips: props.log_ips,
+        generate_structures: props.generate_structures,
+        announce_advancements: props.announce_player_achievements,
     };
     sim_config.data_sync = shared.data_sync.clone();
     sim_config.online_mode = shared.authenticates();
@@ -291,6 +293,9 @@ fn main() -> Result<()> {
             }
         }
     })?;
+
+    // `DedicatedServer.initServer`: the watchdog of `max-tick-time`.
+    let _watchdog = kiln_server::watchdog::start(shared.info.clone(), props.max_tick_time, 50);
 
     // `DedicatedServer.initServer`: Query, then RCON, once the server is up.
     let host_ip = match props.server_ip.trim() {

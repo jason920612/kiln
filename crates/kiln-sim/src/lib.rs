@@ -263,6 +263,10 @@ pub struct ServerSettings {
     pub chat_spam_threshold_seconds: i32,
     /// `log-ips`: logins and logouts print the address.
     pub log_ips: bool,
+    /// `generate-structures` (a world keeps the value it was made with).
+    pub generate_structures: bool,
+    /// `announce-player-achievements`, the legacy key: sets the `show_advancement_messages` game rule when present.
+    pub announce_advancements: Option<bool>,
 }
 
 impl Default for ServerSettings {
@@ -285,6 +289,8 @@ impl Default for ServerSettings {
             command_spam_threshold_seconds: 10,
             chat_spam_threshold_seconds: 10,
             log_ips: true,
+            generate_structures: true,
+            announce_advancements: None,
         }
     }
 }
@@ -634,6 +640,11 @@ struct Player {
     brush_ticks: Option<i32>,
     /// The operator permission level (`/op`), kept by the server for the regions' sake (game master blocks).
     permission: u8,
+    /// `clientIsFloating` and `aboveGroundTickCount`: the client's last move left it with nothing under it, and for how long.
+    client_is_floating: bool,
+    above_ground_ticks: i32,
+    /// Whether the player is in the operators list (`PlayerList.isOp`, which spawn protection asks).
+    is_op: bool,
     /// The level the client was last told (`EntityEvent.PERMISSION_LEVEL_*`); `None` until the first notice.
     permission_sent: Option<u8>,
     /// The plugin instances of the region the player is in, when some plugin hears of player
@@ -1728,12 +1739,22 @@ fn ops_from_env() -> HashSet<String> {
         .unwrap_or_default()
 }
 
+/// Tells the watchdog when the next tick is due, as a wall-clock time.
+fn publish_next_tick(info: &kiln_link::ServerInfo, next_tick: Instant) {
+    let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+    let now = Instant::now();
+    let offset = if next_tick >= now { (next_tick - now).as_millis() as i64 } else { -((now - next_tick).as_millis() as i64) };
+    info.next_tick_due_ms.store((unix_now + offset).max(1) as u64, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
     let mut sim = Sim::new(config);
     sim.sync_ops();
     let mut next_tick = Instant::now();
     let mut inbox = Vec::new();
+    let info = sim.config.info.clone();
     loop {
+        publish_next_tick(&info, next_tick);
         loop {
             match rx.try_recv() {
                 Ok(msg) => inbox.push(msg),
@@ -1793,6 +1814,9 @@ impl Sim {
                 .map_err(|e| warn!("cannot load the datapack at {}: {e}", vanilla_pack.display()))
                 .ok()
         });
+        // `generate-structures`: a world keeps the value it was created with.
+        let generate_structures =
+            storage.as_ref().and_then(|s| s.level.generate_structures()).unwrap_or(config.server.generate_structures);
         // What generates each level's chunks, from its stem.
         let mut made = |id: DimId| -> Made {
             let key = dim_key(id);
@@ -1816,7 +1840,7 @@ impl Sim {
                 }
                 kiln_worldgen::stem::StemGenerator::Noise { .. } => {
                     let (Some(pack), Some(n)) = (pack.as_ref(), config.noise.as_ref()) else { return Made::Nothing };
-                    let world = match kiln_worldgen::Worldgen::from_stem(pack, &stem, n.seed, true) {
+                    let world = match kiln_worldgen::Worldgen::from_stem(pack, &stem, n.seed, generate_structures) {
                         Ok(Some(world)) => world,
                         Ok(None) => return Made::Nothing,
                         Err(e) => {
@@ -1913,6 +1937,7 @@ impl Sim {
         let seed = match (&config.noise, storage.as_mut()) {
             (Some(n), Some(s)) => {
                 s.level.set_seed_if_missing(n.seed);
+                s.level.set_generate_structures_if_missing(config.server.generate_structures);
                 n.seed
             }
             (Some(n), None) => n.seed,
@@ -2928,6 +2953,10 @@ impl Sim {
             frozen: !self.world.tick_rate.runs_normally(),
             border: self.world.borders[dim].bounds(),
             tickets: std::sync::Arc::new(self.level_tickets(dim)),
+            // `DedicatedServer.isUnderSpawnProtection`: in the spawn's level, once somebody is an operator.
+            allow_flight: self.config.server.allow_flight,
+            spawn_protection: (dim == OVERWORLD_ID && self.config.server.spawn_protection > 0 && !self.commands.ops.is_empty())
+                .then_some((self.config.server.spawn_protection, self.spawn)),
         }
     }
 
@@ -4286,6 +4315,9 @@ impl Sim {
             kinetic_ticks: None,
             brush_ticks: None,
             permission: 0,
+            is_op: false,
+            client_is_floating: false,
+            above_ground_ticks: 0,
             permission_sent: None,
             plugin_gate: None,
             recent_stabs: Vec::new(),
