@@ -176,6 +176,7 @@ public class MaceFall {
                 break;
             }
             p.connection.tick();
+            p.connection.handleClientTickEnd(new net.minecraft.network.protocol.game.ServerboundClientTickEndPacket());
             if (Math.abs(p.getY() - y) > 0.01) throw new IllegalStateException("the server moved the player back at tick " + tick + ": at " + p.getY() + " wanted " + y);
         }
         if (attackAt < 0) throw new IllegalStateException("never in reach");
