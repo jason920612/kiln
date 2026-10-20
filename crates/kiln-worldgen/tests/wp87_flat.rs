@@ -202,6 +202,18 @@ fn check(case: &str, dimension: &str, expect_blocks: &[(&str, usize)], expect_st
     }
     let structures: usize = dump.targets.iter().map(|t| t.starts.len()).sum();
     eprintln!("{case} ({dimension}): {} chunks, {structures} structure starts in them; {bad_chunks} chunks differ: {block_diffs} blocks, {start_diffs} structure start lists", dump.targets.len());
+    if std::env::var_os("KILN_FLAT_TOTALS").is_some() {
+        let mut totals = std::collections::BTreeMap::<String, (usize, usize)>::new();
+        for (t, p) in dump.targets.iter().zip(&chunks) {
+            for (&o, &v) in p.blocks.iter().zip(&t.blocks) {
+                totals.entry(state_name(o)).or_default().0 += 1;
+                totals.entry(state_name(v)).or_default().1 += 1;
+            }
+        }
+        for (name, (k, v)) in &totals {
+            eprintln!("  total {name}: kiln {k} vanilla {v}");
+        }
+    }
     let mut by_count: Vec<_> = pairs.into_iter().collect();
     by_count.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
     for ((ours, theirs), n) in by_count.iter().take(8) {
