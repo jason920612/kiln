@@ -137,9 +137,7 @@ pub fn tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
                 }
                 for (i, ce) in en.effects.tick.iter().enumerate() {
                     let ctx = FxContext::entity(lvl, &view, at, Some(facts));
-                    let okk = ce.matches(loot, &ctx, &mut rng);
-                eprintln!("DBG match {okk} at {at:?}");
-                if okk {
+                    if ce.matches(loot, &ctx, &mut rng) {
                         due.push(Due { key: Active { slot: index, enchantment: id, index: i }, level: lvl, effect: ce.effect.clone(), fresh: false });
                     }
                 }
@@ -160,6 +158,7 @@ pub fn block_changed(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
         return;
     }
     fx.last_pos = Some(here);
+    eprintln!("DBG block_changed {here:?} wearing {}", wearing_enchanted(m));
     changed_location(e, m, level);
 }
 
@@ -206,7 +205,9 @@ fn location_slot(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, i
                 let key = Active { slot: index, enchantment: id, index: i };
                 let was_active = fx.active.contains(&key);
                 let ctx = FxContext { active: Some(was_active), ..FxContext::entity(lvl, &view, at, Some(facts)) };
-                if ce.matches(loot, &ctx, &mut rng) {
+                let okk = ce.matches(loot, &ctx, &mut rng);
+                eprintln!("DBG location match {okk} at {at:?}");
+                if okk {
                     if !was_active {
                         fx.active.push(key);
                     }
