@@ -145,9 +145,14 @@ impl MgmtHost for Fake {
         self.players.clone()
     }
 
-    fn kick(&mut self, user: Uuid, reason: &MgmtText) {
-        if self.players.iter().any(|p| p.user.uuid == user) {
+    fn kick(&mut self, user: Uuid, reason: &MgmtText, remove: bool) {
+        if let Some(i) = self.players.iter().position(|p| p.user.uuid == user) {
             self.kicked.push((user, reason.clone()));
+            if remove {
+                let gone = self.players.remove(i);
+                self.info.roster.write().unwrap().retain(|e| e.uuid != user);
+                self.info.notifier.notify(Notification::PlayerLeft(gone.user));
+            }
         }
     }
 
@@ -722,8 +727,15 @@ fn players_kick_and_system_messages() {
     assert_eq!(c.call(&req(1, "players", "")), format!(r#"{{"jsonrpc":"2.0","id":1,"result":[{{"id":"{alice}","name":"Alice"}}]}}"#));
     assert_eq!(c.call(&req(2, "players/kick", r#"[[{"player":{"name":"alice"},"message":{"literal":"bye"}},{"player":{"name":"nobody"}}]]"#)), r#"{"jsonrpc":"2.0","id":2,"result":[{"name":"alice"}]}"#);
     assert_eq!(env.with_fake(|f| f.kicked.clone()), vec![(alice, MgmtText::Literal("bye".into()))]);
+    // A kicked player has left the player list when the reply comes, and the notification follows it.
+    assert_eq!(c.text(), format!(r#"{{"jsonrpc":"2.0","method":"minecraft:notification/players/left","params":[{{"id":"{alice}","name":"Alice"}}]}}"#));
+    assert_eq!(c.call(&req(20, "players", "")), r#"{"jsonrpc":"2.0","id":20,"result":[]}"#);
+    env.with_fake(|f| f.players.push(OnlinePlayer { user: NameAndId { uuid: alice, name: "Alice".into() }, address: None }));
+    env.info.roster.write().unwrap().push(kiln_link::RosterEntry { conn: 1, uuid: alice, name: "Alice".into(), allows_listing: true });
     c.call(&req(3, "players/kick", &format!(r#"[[{{"player":{{"id":"{alice}"}}}}]]"#)));
     assert_eq!(env.with_fake(|f| f.kicked.last().cloned()).unwrap().1, MgmtText::Translatable { key: "multiplayer.disconnect.kicked".into(), args: vec![] });
+    assert!(c.text().contains("players/left"));
+    env.with_fake(|f| f.players.push(OnlinePlayer { user: NameAndId { uuid: alice, name: "Alice".into() }, address: None }));
     // System messages: broadcast, or to named players; nothing to say or nobody to tell is false.
     assert_eq!(c.call(&req(4, "server/system_message", r#"[{"message":{"literal":"hi"},"overlay":true}]"#)), r#"{"jsonrpc":"2.0","id":4,"result":true}"#);
     assert_eq!(env.with_fake(|f| f.messages.last().cloned()).unwrap(), (MgmtText::Literal("hi".into()), true, None));

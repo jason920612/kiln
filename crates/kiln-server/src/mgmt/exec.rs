@@ -466,7 +466,7 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
             for dto in &dtos {
                 let kicked = ban_ip(ctx, client, dto)?;
                 for u in kicked {
-                    ctx.on_sim(move |h| h.kick(u, &translatable("multiplayer.disconnect.ip_banned")))?;
+                    ctx.on_sim(move |h| h.kick(u, &translatable("multiplayer.disconnect.ip_banned"), false))?;
                 }
             }
             Ok(ip_bans_json(&lists(ctx)))
@@ -509,7 +509,7 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
             }
             for ip in added {
                 for u in ctx.players_at(&ip)? {
-                    ctx.on_sim(move |h| h.kick(u, &translatable("multiplayer.disconnect.ip_banned")))?;
+                    ctx.on_sim(move |h| h.kick(u, &translatable("multiplayer.disconnect.ip_banned"), false))?;
                 }
             }
             Ok(ip_bans_json(&lists(ctx)))
@@ -530,7 +530,7 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
                     .unwrap_or_else(|| translatable("multiplayer.disconnect.kicked"));
                 let name = ctx.info.players().iter().find(|p| p.uuid == uuid).map(|p| p.name.clone()).unwrap_or_default();
                 ctx.log(client, &format!("Remove player '{name}'"));
-                ctx.on_sim(move |h| h.kick(uuid, &reason))?;
+                ctx.on_sim(move |h| h.kick(uuid, &reason, true))?;
                 kicked.push(dto_json(&dto.player));
             }
             Ok(J::Arr(kicked))
@@ -679,7 +679,7 @@ fn add_ban(ctx: &Ctx, client: u32, user: &NameAndId, dto: &UserBanDto) -> Result
     ctx.log(client, &format!("Add player '{}' to banlist. Reason: '{shown}'", user.name));
     lists_mut(ctx).ban_add(UserBan { user: user.clone(), ban });
     let uuid = user.uuid;
-    ctx.on_sim(move |h| h.kick(uuid, &translatable("multiplayer.disconnect.banned")))
+    ctx.on_sim(move |h| h.kick(uuid, &translatable("multiplayer.disconnect.banned"), false))
 }
 
 /// `IpBanlistService.banIp`: the address of the request, or of the player it names; the players who

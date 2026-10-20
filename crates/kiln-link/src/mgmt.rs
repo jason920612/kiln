@@ -99,8 +99,10 @@ pub trait MgmtHost {
     fn access(&self) -> SharedAccess;
     /// The players online, in join order.
     fn online_players(&self) -> Vec<OnlinePlayer>;
-    /// `ServerGamePacketListenerImpl.disconnect(reason)`; the player leaves the player list.
-    fn kick(&mut self, user: Uuid, reason: &MgmtText);
+    /// `ServerGamePacketListenerImpl.disconnect(reason)`: the player is told and the connection closes; the player
+    /// leaves the game when the server notices (a tick later). With `remove` the player leaves the player list at
+    /// once (`PlayerList.remove`, as `players/kick` does).
+    fn kick(&mut self, user: Uuid, reason: &MgmtText, remove: bool);
     /// `ServerPlayer.sendSystemMessage` / `sendOverlayMessage` to the players (all of them if `None`).
     fn system_message(&mut self, text: &MgmtText, overlay: bool, to: Option<&[Uuid]>);
     /// `PlayerList.op`: the level defaults to `op-permission-level`.
