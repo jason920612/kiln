@@ -74,6 +74,11 @@ impl Sim {
                 ToSim::Join(_) | ToSim::Leave(_) | ToSim::Packet(..) => {}
             }
         }
+        // (`/stop` from the console or RCON ends a paused server too.)
+        if self.commands.stop_requested && !self.stopped {
+            self.shut_down();
+            self.stopped = true;
+        }
         self.continue_save();
         true
     }

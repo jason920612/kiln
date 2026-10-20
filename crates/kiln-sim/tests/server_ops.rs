@@ -114,6 +114,19 @@ fn an_empty_world_stops_ticking_after_pause_when_empty_seconds() {
     });
     assert!(sim.step([ToSim::Admin(work)]));
     assert!(!rx.try_recv().expect("RCON was answered during the pause").is_empty());
+    // `stop` still stops it.
+    assert!(!sim.step([ToSim::Console("stop".into())]), "a paused server stops on /stop");
+}
+
+#[test]
+fn a_player_logging_in_wakes_a_paused_world() {
+    let mut config = SimConfig::new(4, 2, None);
+    config.server.pause_when_empty_seconds = 1;
+    let mut sim = Sim::new(config);
+    for _ in 0..60 {
+        assert!(sim.step([]));
+    }
+    let frozen = sim.game_time();
     // A player logging in wakes the world up.
     let mut p = join(&mut sim, 1, "Waker");
     run(&mut sim, &mut [&mut p], 10, None);
