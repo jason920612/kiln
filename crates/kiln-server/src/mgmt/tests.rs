@@ -29,7 +29,7 @@ fn json_does_not_escape_html_characters_but_escapes_line_separators() {
 fn json_parse_errors_read_like_gson() {
     assert_eq!(
         json::parse("not json").unwrap_err().0,
-        "com.google.gson.JsonSyntaxException: com.google.gson.stream.MalformedJsonException: Use JsonReader.setStrictness(Strictness.LENIENT) to accept malformed JSON at line 1 column 1 path $\nSee https://github.com/google/gson/blob/main/Troubleshooting.md#malformed-json"
+        "com.google.gson.JsonSyntaxException: com.google.gson.stream.MalformedJsonException: Use JsonReader.setStrictness(Strictness.LENIENT) to accept malformed JSON at line 1 column 6 path $\nSee https://github.com/google/gson/blob/main/Troubleshooting.md#malformed-json"
     );
     assert_eq!(
         json::parse(r#"{"jsonrpc":"2.0","id":1,"method":"#).unwrap_err().0,
@@ -114,7 +114,7 @@ fn discover_lists_every_method_and_notification() {
         _ => panic!("methods"),
     };
     assert_eq!(methods.len(), spec::INCOMING.len() + spec::OUTGOING.len());
-    assert_eq!(spec::INCOMING.len(), 62);
+    assert_eq!(spec::INCOMING.len(), 68);
     assert_eq!(spec::OUTGOING.len(), 21);
     let text = doc.to_string();
     assert!(text.starts_with("{\"openrpc\":\"1.3.2\",\"info\":{\"title\":\"Minecraft Server JSON-RPC\",\"version\":\"3.1.0\"},\"methods\":[{\"name\":\"minecraft:allowlist\",\"description\":\"Get the allowlist\",\"params\":[],\"result\":{\"name\":\"allowlist\",\"schema\":{\"type\":\"array\",\"items\":{\"$ref\":\"#/components/schemas/player\"}}}},"));
@@ -970,4 +970,52 @@ fn tls_serves_from_a_pkcs12_keystore() {
     let mut buf = [0u8; 64];
     assert!(!matches!(plain.read(&mut buf), Ok(n) if n > 0 && buf.starts_with(b"HTTP")));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn lenient_json_reads_as_gson_reads_it() {
+    // (Each case is a text sent to vanilla's server, with the data of its answer.)
+    let t = "\nSee https://github.com/google/gson/blob/main/Troubleshooting.md#malformed-json";
+    let mal = |why: &str, at: &str| format!("com.google.gson.JsonSyntaxException: com.google.gson.stream.MalformedJsonException: {why} at {at}{t}");
+    for (text, want) in [
+        ("]", mal("Unexpected value", "line 1 column 2 path $")),
+        ("}", mal("Expected value", "line 1 column 1 path $")),
+        (",", mal("Unexpected value", "line 1 column 2 path $")),
+        ("[1 2]", mal("Unterminated array", "line 1 column 5 path $[1]")),
+        (r#"{"a" 1}"#, mal("Expected ':'", "line 1 column 7 path $.a")),
+        (r#"{"a":1,}"#, mal("Expected name", "line 1 column 9 path $.a")),
+        (r#"{"a":}"#, mal("Expected value", "line 1 column 6 path $.a")),
+        (r#"{"a":1 "b":2}"#, mal("Unterminated object", "line 1 column 9 path $.a")),
+        ("foo bar", mal("Use JsonReader.setStrictness(Strictness.LENIENT) to accept malformed JSON", "line 1 column 6 path $")),
+        ("\"abc", mal("Unterminated string", "line 1 column 5 path $")),
+        (r#""ab\qc""#, mal("Invalid escape sequence", "line 1 column 6 path $")),
+        (r#""ab\u12""#, mal("Unterminated escape sequence", "line 1 column 6 path $")),
+        (r#"{"id":1} // c"#, mal("Use JsonReader.setStrictness(Strictness.LENIENT) to accept malformed JSON", "line 1 column 11 path $")),
+    ] {
+        assert_eq!(json::parse(text).unwrap_err().0, want, "{text}");
+    }
+    for (text, want) in [
+        ("{", "com.google.gson.JsonSyntaxException: java.io.EOFException: End of input at line 1 column 2 path $."),
+        ("[", "com.google.gson.JsonSyntaxException: java.io.EOFException: End of input at line 1 column 2 path $[0]"),
+        ("[1,", "com.google.gson.JsonSyntaxException: java.io.EOFException: End of input at line 1 column 4 path $[1]"),
+        ("[1,2,3", "com.google.gson.JsonSyntaxException: java.io.EOFException: End of input at line 1 column 7 path $[3]"),
+        (r#"{"id":1"#, "com.google.gson.JsonSyntaxException: java.io.EOFException: End of input at line 1 column 8 path $.id"),
+    ] {
+        assert_eq!(json::parse(text).unwrap_err().0, want, "{text}");
+    }
+    // What is read although it is no strict JSON: unquoted names, single quotes, `;` and `=` for `,` and `:`, comments.
+    for (text, want) in [
+        ("{a:1}", r#"{"a":1}"#),
+        ("{'a':'b'}", r#"{"a":"b"}"#),
+        (r#"{"a"="b";"c"=>[1,]}"#, r#"{"a":"b","c":[1,null]}"#),
+        ("/* c */ {\"a\":1} ", r#"{"a":1}"#),
+        ("# c\n[1]", "[1]"),
+        ("tru", "\"tru\""),
+        ("TRUE", "true"),
+        ("01", "\"01\""),
+        ("-1.5e3", "-1.5e3"),
+        (" // nothing", "null"),
+    ] {
+        assert_eq!(json::parse(text).unwrap().to_string(), want, "{text}");
+    }
 }

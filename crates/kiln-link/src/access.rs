@@ -547,6 +547,7 @@ impl AccessLists {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mgmt::Notification;
 
     #[test]
     fn java_hash_matches_string_hash_code() {
@@ -616,5 +617,65 @@ mod tests {
         assert_eq!(a.can_login(&user, Some("1.2.3.4")), Err(Refusal::Banned(ban)));
         let json = Refusal::NotWhitelisted.to_json().to_string();
         assert_eq!(json, r#"{"translate":"multiplayer.disconnect.not_whitelisted"}"#);
+    }
+
+    struct Collect(std::sync::Mutex<Vec<Notification>>);
+
+    impl crate::mgmt::Notifier for Collect {
+        fn notify(&self, n: Notification) {
+            self.0.lock().unwrap().push(n);
+        }
+    }
+
+    /// The lists tell the management server what changes, as vanilla's do: an add every time, a removal
+    /// only of what was there, one removal per entry when a list is cleared.
+    #[test]
+    fn changes_are_announced() {
+        let seen = Arc::new(Collect(Default::default()));
+        let mut a = AccessLists::new(None);
+        a.notifier.set(Some(seen.clone()));
+        let (alex, bob) = (NameAndId { uuid: Uuid::from_u128(1), name: "Alex".into() }, NameAndId { uuid: Uuid::from_u128(2), name: "Bob".into() });
+        a.whitelist_add(alex.clone());
+        a.whitelist_add(alex.clone());
+        assert!(a.whitelist_remove(&alex));
+        assert!(!a.whitelist_remove(&alex));
+        a.whitelist_add(alex.clone());
+        a.whitelist_add(bob.clone());
+        a.whitelist_clear();
+        let ban = UserBan { user: alex.clone(), ban: BanInfo::now(Some("s"), None) };
+        a.ban_add(ban.clone());
+        assert!(a.ban_remove(&alex) && !a.ban_remove(&alex));
+        let ip = IpBan { ip: "1.2.3.4".into(), ban: BanInfo::now(Some("s"), None) };
+        a.ip_ban_add(ip.clone());
+        assert!(a.ip_ban_remove("1.2.3.4") && !a.ip_ban_remove("1.2.3.4"));
+        let op = OpEntry { user: bob.clone(), level: 2, bypasses_player_limit: true };
+        a.op_add(op.clone());
+        assert_eq!(a.op_remove(&bob), Some(op.clone()));
+        assert_eq!(a.op_remove(&bob), None);
+        a.op_add(op.clone());
+        a.op_clear();
+        use Notification::*;
+        let mut got = seen.0.lock().unwrap().clone();
+        // (A cleared list announces its entries in the order of the map; either way, both.)
+        let cleared: Vec<Notification> = got.drain(5..7).collect();
+        assert!(cleared.contains(&PlayerRemovedFromAllowlist(alex.clone())) && cleared.contains(&PlayerRemovedFromAllowlist(bob.clone())));
+        assert_eq!(
+            got,
+            vec![
+                PlayerAddedToAllowlist(alex.clone()),
+                PlayerAddedToAllowlist(alex.clone()),
+                PlayerRemovedFromAllowlist(alex.clone()),
+                PlayerAddedToAllowlist(alex.clone()),
+                PlayerAddedToAllowlist(bob.clone()),
+                PlayerBanned(ban),
+                PlayerUnbanned(alex),
+                IpBanned(ip),
+                IpUnbanned("1.2.3.4".into()),
+                PlayerOped(op.clone()),
+                PlayerDeoped(op.clone()),
+                PlayerOped(op.clone()),
+                PlayerDeoped(op),
+            ]
+        );
     }
 }

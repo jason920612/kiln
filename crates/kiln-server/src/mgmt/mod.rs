@@ -316,11 +316,13 @@ fn bind(host: &str, port: u16) -> Result<TcpListener, String> {
     } else if let Ok(ip) = host.parse() {
         ip
     } else {
-        (host, port)
-            .to_socket_addrs()
-            .ok()
-            .and_then(|mut a| a.next())
-            .map(|a| a.ip())
+        // (`InetAddress.getByName`: the first address, IPv4 before IPv6.)
+        let found: Vec<IpAddr> = (host, port).to_socket_addrs().map(|a| a.map(|a| a.ip()).collect()).unwrap_or_default();
+        found
+            .iter()
+            .find(|a| a.is_ipv4())
+            .or(found.first())
+            .copied()
             .ok_or_else(|| "java.nio.channels.UnresolvedAddressException".to_owned())?
     };
     TcpListener::bind((ip, port)).map_err(|e| match e.kind() {

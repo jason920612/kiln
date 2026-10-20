@@ -1,0 +1,66 @@
+# players joining and leaving
+!join Alice
+{"jsonrpc":"2.0","id":1,"method":"minecraft:players"}
+{"jsonrpc":"2.0","id":2,"method":"minecraft:server/status"}
+!join Bob
+{"jsonrpc":"2.0","id":3,"method":"minecraft:players"}
+{"jsonrpc":"2.0","id":4,"method":"minecraft:server/status"}
+!leave Bob
+{"jsonrpc":"2.0","id":5,"method":"minecraft:players"}
+# system messages to players
+{"jsonrpc":"2.0","id":6,"method":"minecraft:server/system_message","params":[{"message":{"literal":"hello all"},"overlay":false}]}
+!pkts Alice
+{"jsonrpc":"2.0","id":7,"method":"minecraft:server/system_message","params":[{"message":{"translatable":"commands.op.success","translatableParams":["x"]},"overlay":true,"receivingPlayers":[{"name":"Alice"}]}]}
+!pkts Alice
+{"jsonrpc":"2.0","id":8,"method":"minecraft:server/system_message","params":[{"message":{"literal":"hi"},"overlay":false,"receivingPlayers":[{"name":"alice"}]}]}
+!pkts Alice
+# operators for an online player
+{"jsonrpc":"2.0","id":9,"method":"minecraft:operators/add","params":[[{"player":{"name":"Alice"},"permissionLevel":2}]]}
+!pkts Alice
+{"jsonrpc":"2.0","id":10,"method":"minecraft:operators"}
+{"jsonrpc":"2.0","id":11,"method":"minecraft:operators/remove","params":[[{"name":"Alice"}]]}
+# kicking
+{"jsonrpc":"2.0","id":12,"method":"minecraft:players/kick","params":[[{"player":{"name":"Alice"},"message":{"literal":"Out you go"}}]]}
+!pkts Alice
+{"jsonrpc":"2.0","id":13,"method":"minecraft:players"}
+!leave Alice
+!join Alice
+{"jsonrpc":"2.0","id":14,"method":"minecraft:players/kick","params":[[{"player":{"name":"Alice"}}]]}
+!pkts Alice
+!leave Alice
+!join Alice
+{"jsonrpc":"2.0","id":15,"method":"minecraft:players/kick","params":[[{"player":{"name":"Alice"},"message":{"translatable":"multiplayer.disconnect.flying"}}]]}
+!pkts Alice
+!leave Alice
+# banning an online player
+!join Alice
+{"jsonrpc":"2.0","id":16,"method":"minecraft:bans/add","params":[[{"player":{"name":"Alice"},"reason":"nope"}]]}
+!pkts Alice
+!leave Alice
+{"jsonrpc":"2.0","id":17,"method":"minecraft:bans/clear"}
+# ip ban of an online player (by player)
+!join Alice
+{"jsonrpc":"2.0","id":18,"method":"minecraft:ip_bans/add","params":[[{"player":{"name":"Alice"},"reason":"ipban"}]]}
+!pkts Alice
+!leave Alice
+{"jsonrpc":"2.0","id":19,"method":"minecraft:ip_bans"}
+{"jsonrpc":"2.0","id":20,"method":"minecraft:ip_bans/clear"}
+# the allowlist with enforcement kicks players who are not listed
+!join Alice
+{"jsonrpc":"2.0","id":21,"method":"minecraft:serversettings/use_allowlist/set","params":[true]}
+{"jsonrpc":"2.0","id":22,"method":"minecraft:serversettings/enforce_allowlist/set","params":[true]}
+!pkts Alice
+!leave Alice
+{"jsonrpc":"2.0","id":23,"method":"minecraft:serversettings/enforce_allowlist/set","params":[false]}
+{"jsonrpc":"2.0","id":24,"method":"minecraft:serversettings/use_allowlist/set","params":[false]}
+# game rules seen by a player, game mode forcing
+!join Alice
+{"jsonrpc":"2.0","id":25,"method":"minecraft:serversettings/game_mode/set","params":["creative"]}
+{"jsonrpc":"2.0","id":26,"method":"minecraft:serversettings/force_game_mode/set","params":[true]}
+{"jsonrpc":"2.0","id":27,"method":"minecraft:serversettings/difficulty/set","params":["hard"]}
+{"jsonrpc":"2.0","id":28,"method":"minecraft:serversettings/difficulty"}
+!leave Alice
+# save and stop
+{"jsonrpc":"2.0","id":30,"method":"minecraft:server/save","params":[true]}
+!sleep 1
+{"jsonrpc":"2.0","id":31,"method":"minecraft:server/stop"}
