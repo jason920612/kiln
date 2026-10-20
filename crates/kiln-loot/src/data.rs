@@ -325,7 +325,10 @@ impl LootData {
                         let slot = e.id as usize;
                         enchantments[slot] = Some(e);
                     }
-                    Err(e) => errors.push(FileError { element: format!("enchantment/{id}"), error: e.to_string() }),
+                    Err(e) => {
+                        eprintln!("DBG enchantment error {id}: {e}");
+                        errors.push(FileError { element: format!("enchantment/{id}"), error: e.to_string() })
+                    }
                 }
             }
         }
