@@ -16,9 +16,15 @@ fn env(name: &str) -> Option<String> {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .init();
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // The harnesses (KILN_* variables and no server.properties) keep Kiln's own log format; a server with a properties
+    // file logs like vanilla's, to the console and to logs/latest.log.
+    if kiln_server::launch::harness_env(env) && !Path::new("server.properties").exists() {
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    } else if let Err(e) = kiln_server::logging::init_server_log(filter) {
+        eprintln!("cannot write logs/latest.log: {e}");
+        tracing_subscriber::fmt().with_env_filter(EnvFilter::new("info")).init();
+    }
 
     // `kiln world ...`: world tools, without starting the server.
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -40,6 +46,10 @@ fn main() -> Result<()> {
         std::fs::write(pid_file, std::process::id().to_string())?;
     }
 
+    if !(kiln_server::launch::harness_env(env) && !Path::new("server.properties").exists()) {
+        info!("Starting minecraft server version {}", kiln_data::version::NAME);
+        info!("Loading properties");
+    }
     // `Main.main`: server.properties is read and written back (normalized) before anything else.
     let props_path = Path::new("server.properties");
     let legacy = launch::harness_env(env) && !props_path.exists();
@@ -100,6 +110,9 @@ fn main() -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("server-ip {host:?} is not an address"))?,
         },
     };
+    if !legacy {
+        info!("Starting Minecraft server on {}:{port}", if props.server_ip.trim().is_empty() { "*" } else { props.server_ip.trim() });
+    }
     let max_players = number("KILN_MAX_PLAYERS").unwrap_or(20).max(0) as usize;
     let view_distance = number("KILN_VIEW_DISTANCE").unwrap_or(10).clamp(2, 32) as u8;
     let simulation_distance = number("KILN_SIMULATION_DISTANCE").unwrap_or(10).clamp(2, 32) as u8;

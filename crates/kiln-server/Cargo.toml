@@ -17,6 +17,7 @@ kiln-net.workspace = true
 kiln-sim.workspace = true
 kiln-sched.workspace = true
 kiln-link.workspace = true
+kiln-data.workspace = true
 kiln-storage.workspace = true
 anyhow.workspace = true
 crossbeam-channel.workspace = true
@@ -28,3 +29,6 @@ thiserror.workspace = true
 rand_core.workspace = true
 uuid.workspace = true
 flate2.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -1748,7 +1748,10 @@ fn publish_next_tick(info: &kiln_link::ServerInfo, next_tick: Instant) {
 }
 
 pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
+    let started = Instant::now();
     let mut sim = Sim::new(config);
+    // (The line that panels wait for: the server is ready for players.)
+    info!("Done ({:.3}s)! For help, type \"help\"", started.elapsed().as_secs_f64());
     sim.sync_ops();
     let mut next_tick = Instant::now();
     let mut inbox = Vec::new();
