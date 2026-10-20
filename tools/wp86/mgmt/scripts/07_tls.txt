@@ -1,0 +1,6 @@
+# the same requests over TLS
+{"jsonrpc":"2.0","id":1,"method":"minecraft:server/status"}
+{"jsonrpc":"2.0","id":2,"method":"minecraft:allowlist/add","params":[[{"name":"kt-tls"}]]}
+{"jsonrpc":"2.0","id":3,"method":"minecraft:serversettings/status_heartbeat_interval"}
+!sleep 2.5
+!obs

@@ -12,8 +12,8 @@ scp -q -o BatchMode=yes -r "$here/scripts" test@192.168.1.169:/home/test/wp86m/
 case $which in van) port=25666; game=25667; ready="Done (";; kil) port=25669; game=25668; ready="Done";; esac
 if [ -n "$FRESH" ]; then
   case $which in
-    van) start="./vanilla.sh start /home/test/wp86m/van_m.properties";;
-    kil) start="KILN_DATAPACK=/home/test/kiln/work/generated KILN_WORK=/home/test/kiln/work ./kiln.sh start /home/test/wp86m/kil_m.properties";;
+    van) start="./vanilla.sh start /home/test/wp86m/${PROPS:-van_m}.properties";;
+    kil) start="KILN_DATAPACK=/home/test/kiln/work/generated KILN_WORK=/home/test/kiln/work ./kiln.sh start /home/test/wp86m/${PROPS:-kil_m}.properties";;
   esac
   ssh -o BatchMode=yes test@192.168.1.169 "cd ~/wp86m && $start >/dev/null && for i in \$(seq 1 120); do grep -q '$ready' $which/server.log 2>/dev/null && break; sleep 1; done; sleep 1"
 fi

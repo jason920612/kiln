@@ -198,7 +198,17 @@ fn upgrade(wire: &mut dyn Wire, peer: SocketAddr, shared: &Shared) -> Option<(bo
                 return send(wire, &ws::switching_protocols(&key, protocol)).then_some((token_in_protocol, leftover));
             }
             ws::Handshake::Draft(answer) => {
+                // (The draft's own framing is not served: the connection stays open and says nothing.)
                 send(wire, &answer);
+                let mut chunk = [0u8; 1024];
+                while !shared.stopping.load(Ordering::SeqCst) {
+                    match wire.read(&mut chunk) {
+                        Ok(0) => break,
+                        Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                        Err(_) => break,
+                        Ok(_) => {}
+                    }
+                }
                 return None;
             }
             ws::Handshake::Refuse(answer, close) => {
