@@ -736,6 +736,7 @@ fn players_kick_and_system_messages() {
     assert_eq!(env.with_fake(|f| f.kicked.last().cloned()).unwrap().1, MgmtText::Translatable { key: "multiplayer.disconnect.kicked".into(), args: vec![] });
     assert!(c.text().contains("players/left"));
     env.with_fake(|f| f.players.push(OnlinePlayer { user: NameAndId { uuid: alice, name: "Alice".into() }, address: None }));
+    env.info.roster.write().unwrap().push(kiln_link::RosterEntry { conn: 1, uuid: alice, name: "Alice".into(), allows_listing: true });
     // System messages: broadcast, or to named players; nothing to say or nobody to tell is false.
     assert_eq!(c.call(&req(4, "server/system_message", r#"[{"message":{"literal":"hi"},"overlay":true}]"#)), r#"{"jsonrpc":"2.0","id":4,"result":true}"#);
     assert_eq!(env.with_fake(|f| f.messages.last().cloned()).unwrap(), (MgmtText::Literal("hi".into()), true, None));

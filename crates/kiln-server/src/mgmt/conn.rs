@@ -12,7 +12,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::debug;
 
 /// A connection's byte stream: a socket, or a socket under TLS.
