@@ -672,6 +672,7 @@ fn bans_carry_reason_source_and_expiry() {
         format!(r#"{{"jsonrpc":"2.0","id":1,"result":[{{"player":{{"id":"{id}","name":"grief"}},"reason":"x","source":"Management server","expires":"2999-01-01T00:00:00Z"}}]}}"#)
     );
     assert!(c.text().contains(r#"notification/bans/added"#));
+    assert!(c.text().contains("notification/players/left"));
     // The banned player is kicked.
     assert_eq!(env.with_fake(|f| f.kicked.clone()), vec![(offline_uuid("grief"), MgmtText::Translatable { key: "multiplayer.disconnect.banned".into(), args: vec![] })]);
     // A bad instant is an invalid parameter.
@@ -689,6 +690,7 @@ fn bans_carry_reason_source_and_expiry() {
     assert_eq!(reply, r#"{"jsonrpc":"2.0","id":6,"result":[{"ip":"10.0.0.5","reason":"spam","source":"Management server"}]}"#);
     assert_eq!(c.text(), r#"{"jsonrpc":"2.0","method":"minecraft:notification/ip_bans/added","params":[{"ip":"10.0.0.5","reason":"spam","source":"Management server"}]}"#);
     assert_eq!(env.with_fake(|f| f.kicked.last().cloned()).unwrap().1, MgmtText::Translatable { key: "multiplayer.disconnect.ip_banned".into(), args: vec![] });
+    assert!(c.text().contains("notification/players/left"));
     c.call(&req(7, "ip_bans/remove", r#"[["10.0.0.5"]]"#));
     assert_eq!(c.text(), r#"{"jsonrpc":"2.0","method":"minecraft:notification/ip_bans/removed","params":["10.0.0.5"]}"#);
 }
