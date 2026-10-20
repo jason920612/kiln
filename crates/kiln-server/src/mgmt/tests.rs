@@ -5,6 +5,7 @@ use super::*;
 use kiln_link::access::{AccessLists, NameAndId};
 use kiln_link::mgmt::{MgmtText, Notification, OnlinePlayer, RuleValue, Setting, SettingValue};
 use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::sync::atomic::AtomicUsize;
 
 const SECRET: &str = "abcdefghijABCDEFGHIJ0123456789klmnopqrst";

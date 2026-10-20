@@ -3,7 +3,7 @@
 
 use super::exec;
 use super::json::J;
-use kiln_link::mgmt::{Notification, Notifier, RuleValue};
+use kiln_link::mgmt::{Notification, Notifier};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;

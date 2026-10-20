@@ -39,10 +39,6 @@ impl J {
         matches!(self, J::Obj(_))
     }
 
-    pub fn is_array(&self) -> bool {
-        matches!(self, J::Arr(_))
-    }
-
     /// `JsonPrimitive.getAsString` for what is a primitive.
     pub fn primitive_string(&self) -> Option<String> {
         match self {
@@ -53,13 +49,9 @@ impl J {
         }
     }
 
-    /// `GsonHelper.isNumberValue` / `isStringValue`.
+    /// `GsonHelper.isNumberValue`.
     pub fn is_number(&self) -> bool {
         matches!(self, J::Num(_))
-    }
-
-    pub fn is_string(&self) -> bool {
-        matches!(self, J::Str(_))
     }
 }
 
