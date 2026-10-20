@@ -4,7 +4,7 @@
 
 use super::codec::{self, Errs, PlayerDto, R};
 use super::json::J;
-use super::{Ctx, Fail};
+use super::{Ctx, Fail, jhash};
 use kiln_link::access::{AccessLists, BanInfo, IpBan, NameAndId, OpEntry, UserBan};
 use kiln_link::mgmt::{MgmtText, RuleValue, Setting, SettingValue};
 use std::collections::HashSet;
@@ -44,7 +44,7 @@ fn dto_json(p: &PlayerDto) -> J {
 
 fn expires_json(b: &BanInfo) -> Option<J> {
     let secs = b.expires.as_deref().and_then(kiln_link::access::parse_date)?;
-    Some(J::str(codec::instant_string(secs, 0)))
+    Some(J::str(codec::instant_string(secs, u32::from(b.expires_ms) * 1_000_000)))
 }
 
 pub fn user_ban_json(b: &UserBan) -> J {
@@ -245,10 +245,10 @@ fn identifier(s: &str) -> R<String> {
         None => ("minecraft", s),
     };
     if !valid_ns(ns) {
-        return Err(format!("Not a valid resource location: {s} Non [a-z0-9_.-] character in namespace of location: {s}"));
+        return Err(format!("Not a valid resource location: {s} Non [a-z0-9_.-] character in namespace of identifier: {s}"));
     }
     if !valid_path(path) {
-        return Err(format!("Not a valid resource location: {s} Non [a-z0-9/._-] character in path of location: {s}"));
+        return Err(format!("Not a valid resource location: {s} Non [a-z0-9/._-] character in path of location: {ns}:{path}"));
     }
     Ok(format!("{ns}:{path}"))
 }
@@ -402,13 +402,14 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
             let dtos = list(codec::player_dto)?;
             let wanted: Vec<NameAndId> = ctx.resolve_all(&dtos).into_iter().flatten().collect();
             let current: Vec<NameAndId> = lists(ctx).whitelist.values().into_iter().cloned().collect();
-            let want: HashSet<NameAndId_> = wanted.iter().map(NameAndId_::from).collect();
-            let have: HashSet<NameAndId_> = current.iter().map(NameAndId_::from).collect();
-            for u in current.iter().filter(|u| !want.contains(&NameAndId_::from(*u))) {
+            // (`Collectors.toSet()` on both sides; removals and additions follow the order of those sets.)
+            let wanted = user_set(wanted);
+            let current = user_set(current);
+            for u in current.iter().filter(|u| !wanted.contains(u)) {
                 ctx.log(client, &format!("Remove player '{}' from allowlist", u.name));
                 lists_mut(ctx).whitelist_remove(u);
             }
-            for u in dedup(&wanted).into_iter().filter(|u| !have.contains(&NameAndId_::from(*u))) {
+            for u in wanted.iter().filter(|u| !current.contains(u)) {
                 ctx.log(client, &format!("Add player '{}' to allowlist", u.name));
                 lists_mut(ctx).whitelist_add(u.clone());
             }
@@ -442,27 +443,19 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
         "bans/set" => {
             let dtos = codec::list(p(), user_ban_dto).map_err(invalid)?;
             let users = ctx.resolve_all(&dtos.iter().map(|d| d.player.clone()).collect::<Vec<_>>());
-            let wanted: Vec<(NameAndId, &UserBanDto)> = users.into_iter().zip(&dtos).filter_map(|(u, d)| u.map(|u| (u, d))).collect();
-            let current: Vec<UserBan> = lists(ctx).bans.values().into_iter().cloned().collect();
-            let key_of = |u: &NameAndId, reason: &Option<String>, source: &str, expires: Option<i64>| (u.uuid, u.name.clone(), reason.clone(), source.to_owned(), expires);
-            let want_keys: HashSet<_> = wanted
-                .iter()
-                .map(|(u, d)| key_of(u, &d.reason, d.source.as_deref().unwrap_or(SOURCE), d.expires.map(|e| e.0)))
+            let wanted: Vec<(BanKey, (NameAndId, &UserBanDto))> = users
+                .into_iter()
+                .zip(&dtos)
+                .filter_map(|(u, d)| u.map(|u| (BanKey::user(&u, d.reason.clone(), d.source.as_deref().unwrap_or(SOURCE), d.expires), (u, d))))
                 .collect();
-            let have_keys: HashSet<_> = current
-                .iter()
-                .map(|b| key_of(&b.user, &b.ban.reason, &b.ban.source, b.ban.expires.as_deref().and_then(kiln_link::access::parse_date)))
-                .collect();
-            for b in current.iter().filter(|b| {
-                !want_keys.contains(&key_of(&b.user, &b.ban.reason, &b.ban.source, b.ban.expires.as_deref().and_then(kiln_link::access::parse_date)))
-            }) {
+            let current: Vec<(BanKey, UserBan)> = lists(ctx).bans.values().into_iter().map(|b| (BanKey::of_user_ban(b), b.clone())).collect();
+            let (wanted, current) = (ban_set(wanted), ban_set(current));
+            for (_, b) in current.iter().filter(|(k, _)| !wanted.iter().any(|(w, _)| w == k)) {
                 ctx.log(client, &format!("Remove player '{}' from banlist", b.user.name));
                 lists_mut(ctx).ban_remove(&b.user);
             }
-            for (u, d) in &wanted {
-                if !have_keys.contains(&key_of(u, &d.reason, d.source.as_deref().unwrap_or(SOURCE), d.expires.map(|e| e.0))) {
-                    add_ban(ctx, client, u, d)?;
-                }
+            for (_, (u, d)) in wanted.iter().filter(|(k, _)| !current.iter().any(|(c, _)| c == k)) {
+                add_ban(ctx, client, u, d)?;
             }
             Ok(bans_json(&lists(ctx)))
         }
@@ -493,21 +486,23 @@ pub fn call(ctx: &Ctx, client: u32, name: &str, param: Option<&J>) -> Result<J, 
         }
         "ip_bans/set" => {
             let dtos = codec::list(p(), ip_ban_dto).map_err(invalid)?;
-            let wanted: Vec<IpBan> = dtos
+            let wanted: Vec<(BanKey, IpBan)> = dtos
                 .iter()
                 .filter(|d| d.ip.as_deref().is_some_and(is_inet_address))
-                .map(|d| IpBan { ip: d.ip.clone().unwrap_or_default(), ban: ban_info(d.source.as_deref(), d.reason.clone(), d.expires) })
+                .map(|d| {
+                    let ban = ban_info(d.source.as_deref(), d.reason.clone(), d.expires);
+                    let ip = d.ip.clone().unwrap_or_default();
+                    (BanKey::ip(&ip, d.reason.clone(), d.source.as_deref().unwrap_or(SOURCE), d.expires), IpBan { ip, ban })
+                })
                 .collect();
-            let current: Vec<IpBan> = lists(ctx).ip_bans.values().into_iter().cloned().collect();
-            let key = |b: &IpBan| (b.ip.clone(), b.ban.reason.clone(), b.ban.source.clone(), b.ban.expires.as_deref().and_then(kiln_link::access::parse_date));
-            let want: HashSet<_> = wanted.iter().map(key).collect();
-            let have: HashSet<_> = current.iter().map(key).collect();
-            for b in current.iter().filter(|b| !want.contains(&key(b))) {
+            let current: Vec<(BanKey, IpBan)> = lists(ctx).ip_bans.values().into_iter().map(|b| (BanKey::of_ip_ban(b), b.clone())).collect();
+            let (wanted, current) = (ban_set(wanted), ban_set(current));
+            for (_, b) in current.iter().filter(|(k, _)| !wanted.iter().any(|(w, _)| w == k)) {
                 ctx.log(client, &format!("Remove ip '{}' from ban list", b.ip));
                 lists_mut(ctx).ip_ban_remove(&b.ip);
             }
             let mut added = Vec::new();
-            for b in wanted.iter().filter(|b| !have.contains(&key(b))) {
+            for (_, b) in wanted.iter().filter(|(k, _)| !current.iter().any(|(c, _)| c == k)) {
                 ctx.log(client, &format!("Add ip '{}' to ban list", b.ip));
                 lists_mut(ctx).ip_ban_add(b.clone());
                 added.push(b.ip.clone());
@@ -674,6 +669,7 @@ fn op(ctx: &Ctx, client: u32, user: &NameAndId, level: Option<u8>, bypass: Optio
 fn ban_info(source: Option<&str>, reason: Option<String>, expires: Option<Instant>) -> BanInfo {
     let mut b = BanInfo::now(Some(source.unwrap_or(SOURCE)), reason);
     b.expires = expires.map(|(secs, _)| kiln_link::access::format_date(secs));
+    b.expires_ms = expires.map_or(0, |(_, nanos)| (nanos / 1_000_000) as u16);
     b
 }
 
@@ -713,19 +709,71 @@ impl Ctx {
     }
 }
 
-/// `NameAndId` has no `Hash`; this one does.
-#[derive(PartialEq, Eq, Hash)]
-struct NameAndId_(Uuid, String);
+/// An entry of a ban list as the `set` methods compare them: a record of the player or address, reason,
+/// source and expiry, with the hash Java gives it.
+#[derive(PartialEq, Eq, Clone)]
+struct BanKey {
+    who: (Uuid, String),
+    reason: Option<String>,
+    source: String,
+    expires: Option<Instant>,
+    hash: i32,
+}
 
-impl From<&NameAndId> for NameAndId_ {
-    fn from(u: &NameAndId) -> Self {
-        NameAndId_(u.uuid, u.name.clone())
+impl BanKey {
+    fn user(u: &NameAndId, reason: Option<String>, source: &str, expires: Option<Instant>) -> BanKey {
+        let hash = jhash::record_hash(&[
+            jhash::name_and_id_hash(&u.uuid, &u.name),
+            jhash::string_hash(reason.as_deref()),
+            jhash::string_hash(Some(source)),
+            jhash::instant_hash(expires),
+        ]);
+        BanKey { who: (u.uuid, u.name.clone()), reason, source: source.to_owned(), expires, hash }
+    }
+
+    fn ip(ip: &str, reason: Option<String>, source: &str, expires: Option<Instant>) -> BanKey {
+        let hash = jhash::record_hash(&[
+            jhash::string_hash(Some(ip)),
+            jhash::string_hash(reason.as_deref()),
+            jhash::string_hash(Some(source)),
+            jhash::instant_hash(expires),
+        ]);
+        BanKey { who: (Uuid::nil(), ip.to_owned()), reason, source: source.to_owned(), expires, hash }
+    }
+
+    fn expiry(b: &BanInfo) -> Option<Instant> {
+        b.expires.as_deref().and_then(kiln_link::access::parse_date).map(|s| (s, u32::from(b.expires_ms) * 1_000_000))
+    }
+
+    fn of_user_ban(b: &UserBan) -> BanKey {
+        BanKey::user(&b.user, b.ban.reason.clone(), &b.ban.source, BanKey::expiry(&b.ban))
+    }
+
+    fn of_ip_ban(b: &IpBan) -> BanKey {
+        BanKey::ip(&b.ip, b.ban.reason.clone(), &b.ban.source, BanKey::expiry(&b.ban))
     }
 }
 
-fn dedup(users: &[NameAndId]) -> Vec<&NameAndId> {
-    let mut seen = HashSet::new();
-    users.iter().filter(|u| seen.insert(NameAndId_::from(*u))).collect()
+/// `Collectors.toSet()` of ban records: the distinct ones, in the order a `HashSet` iterates them.
+fn ban_set<T>(items: Vec<(BanKey, T)>) -> Vec<(BanKey, T)> {
+    let mut distinct: Vec<(BanKey, T)> = Vec::new();
+    for item in items {
+        if !distinct.iter().any(|(k, _)| *k == item.0) {
+            distinct.push(item);
+        }
+    }
+    jhash::set_order(distinct.into_iter().map(|(k, t)| (k.hash, (k, t))).collect())
+}
+
+/// `Collectors.toSet()` of `NameAndId`s.
+fn user_set(users: Vec<NameAndId>) -> Vec<NameAndId> {
+    let mut distinct: Vec<NameAndId> = Vec::new();
+    for u in users {
+        if !distinct.contains(&u) {
+            distinct.push(u);
+        }
+    }
+    jhash::set_order(distinct.into_iter().map(|u| (jhash::name_and_id_hash(&u.uuid, &u.name), u)).collect())
 }
 
 // ---- server settings ----
@@ -973,7 +1021,9 @@ fn heartbeat_setting(ctx: &Ctx, client: u32, set: bool, param: Option<&J>) -> Re
                 props.set_raw("status-heartbeat-interval", seconds.to_string());
                 ctx.settings.save(&props);
             }
-            ctx.log(client, &format!("Updated status heartbeat interval from {old} to {seconds}"));
+            // (Vanilla logs the old value after the new one was stored.)
+            let _ = old;
+            ctx.log(client, &format!("Updated status heartbeat interval from {seconds} to {seconds}"));
         } else {
             ctx.log(
                 client,

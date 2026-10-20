@@ -231,8 +231,11 @@ impl MgmtHost for Sim {
         Host::set_game_rule(self, key, game_rule_value(value));
     }
 
-    fn save_everything(&mut self, flush: bool) -> bool {
-        Host::save_all(self, flush)
+    fn save_everything(&mut self, _flush: bool) -> bool {
+        // At once, not at the next tick: the notifications follow the reply as vanilla's do.
+        self.start_save();
+        self.continue_save();
+        true
     }
 
     fn plain(&self, text: &MgmtText) -> String {

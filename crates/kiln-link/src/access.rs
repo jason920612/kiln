@@ -119,6 +119,8 @@ pub struct BanInfo {
     pub created: String,
     pub source: String,
     pub expires: Option<String>,
+    /// The milliseconds of the expiry (the file keeps whole seconds; the management server shows them).
+    pub expires_ms: u16,
     /// `None`: "Banned by an operator." (`multiplayer.disconnect.banned.reason.default`).
     pub reason: Option<String>,
 }
@@ -126,7 +128,7 @@ pub struct BanInfo {
 impl BanInfo {
     /// A ban made now (`new BanListEntry(user, null, source, null, reason)`).
     pub fn now(source: Option<&str>, reason: Option<String>) -> Self {
-        Self { created: now_date(), source: source.unwrap_or("(Unknown)").to_owned(), expires: None, reason }
+        Self { created: now_date(), source: source.unwrap_or("(Unknown)").to_owned(), expires: None, expires_ms: 0, reason }
     }
 
     fn write(&self, o: &mut Map<String, Value>) {
@@ -144,6 +146,7 @@ impl BanInfo {
             created: s("created").unwrap_or_else(now_date),
             source: s("source").unwrap_or_else(|| "(Unknown)".into()),
             expires: s("expires").filter(|e| e != "forever"),
+            expires_ms: 0,
             reason: s("reason"),
         }
     }

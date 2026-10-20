@@ -1753,6 +1753,9 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
     sim.sync_ops();
     // `DedicatedServer.initServer` ends: the server is ready, and the management clients hear of it.
     sim.config.info.ready.store(true, std::sync::atomic::Ordering::Relaxed);
+    // (`initServer` ends with `saveEverything(true, true, true)` and then `serverStarted`.)
+    sim.notify(kiln_link::mgmt::Notification::ServerSaveStarted);
+    sim.notify(kiln_link::mgmt::Notification::ServerSaveCompleted);
     sim.notify(kiln_link::mgmt::Notification::ServerStarted);
     let mut next_tick = Instant::now();
     let mut inbox = Vec::new();

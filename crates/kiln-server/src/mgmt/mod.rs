@@ -7,6 +7,7 @@ mod codec;
 mod conn;
 mod exec;
 mod hub;
+mod jhash;
 mod json;
 mod rpc;
 mod spec;

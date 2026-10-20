@@ -129,7 +129,11 @@ def main():
                 main_ws.sock.close()
             except OSError:
                 pass
-            main_ws = Ws(host, port, secret, tls=tls)
+            try:
+                main_ws = Ws(host, port, secret, tls=tls)
+            except OSError:
+                print("-- the server is gone")
+                return
         show_obs(0.3)
     show_obs(0.5)
 

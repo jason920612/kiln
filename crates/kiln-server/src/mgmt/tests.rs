@@ -771,7 +771,7 @@ fn game_rules_are_typed_and_range_checked() {
         (r#"[{"key":"max_command_forks","value":-5}]"#, "Value -5 outside of range [0:2147483647]"),
         (r#"[{"key":"max_command_forks","value":2147483648}]"#, "Value -2147483648 outside of range [0:2147483647]"),
         (r#"[{"key":"nope","value":5}]"#, "Unknown registry key in ResourceKey[minecraft:root / minecraft:game_rule]: minecraft:nope"),
-        (r#"[{"key":"Minecraft:keep_inventory","value":true}]"#, "Not a valid resource location: Minecraft:keep_inventory Non [a-z0-9_.-] character in namespace of location: Minecraft:keep_inventory"),
+        (r#"[{"key":"Minecraft:keep_inventory","value":true}]"#, "Not a valid resource location: Minecraft:keep_inventory Non [a-z0-9_.-] character in namespace of identifier: Minecraft:keep_inventory"),
         (r#"[{"value":false}]"#, "No key key in MapLike[{\\\"value\\\":false}]"),
         (r#"[{"key":"keep_inventory"}]"#, "No key value in MapLike[{\\\"key\\\":\\\"keep_inventory\\\"}]"),
         (r#"[5]"#, "Not a JSON object: 5"),
@@ -1018,4 +1018,28 @@ fn lenient_json_reads_as_gson_reads_it() {
     ] {
         assert_eq!(json::parse(text).unwrap().to_string(), want, "{text}");
     }
+}
+
+/// The order the `set` methods remove in is that of Java's `HashSet`, which vanilla showed for these bans.
+#[test]
+fn set_removes_in_the_order_of_a_java_hash_set() {
+    let env = Env::start();
+    env.ready();
+    let mut c = env.connect();
+    c.call(&req(1, "bans/add", r#"[[{"player":{"name":"kt-grief"},"reason":"x","source":"me"}]]"#));
+    c.text();
+    for (n, (name, expires)) in [("kt-grief2", "2030-01-01T00:00:00Z"), ("kt-grief3", "2030-01-01T00:00:00.123Z"), ("kt-grief5", "2000-01-01T00:00:00Z")].into_iter().enumerate() {
+        let reply = c.call(&req(2 + n as u32, "bans/add", &format!(r#"[[{{"player":{{"name":"{name}"}},"expires":"{expires}"}}]]"#)));
+        // The milliseconds are kept.
+        assert!(reply.contains(&format!(r#""expires":"{expires}""#)), "{reply}");
+        c.text();
+    }
+    c.call(&req(9, "bans/remove", r#"[[{"name":"kt-grief"}]]"#));
+    c.text();
+    c.call(&req(10, "bans/set", r#"[[{"player":{"name":"kt-solo"}}]]"#));
+    let removed: Vec<String> = (0..3).map(|_| c.text()).collect();
+    for (got, name) in removed.iter().zip(["kt-grief2", "kt-grief3", "kt-grief5"]) {
+        assert!(got.contains("notification/bans/removed") && got.contains(&format!(r#""name":"{name}""#)), "{got}");
+    }
+    assert!(c.text().contains("notification/bans/added"));
 }
