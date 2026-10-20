@@ -50,8 +50,8 @@
 | 世界生成 | 30 | 20 | – | 2 | 3 | 5 | 地形與特徵是專案最紮實的部分 |
 | 天氣、襲擊、維度、規則 | 32 | 8 | – | 4 | 18 | 2 | 遊戲規則 59 條中 54 條有人讀；終界入口（眼、框架）為 A；規則與難度的持久化為 B |
 | 指令（92 條） | 92 | 72 | – | 0 | 20 | 0 | 缺口在子功能 |
-| 協定（封包） | 213 play + 47 其他 | 121 + 25 | – | 57（B／C 混合）+ 15 | 4 | 29 + 3 | `open_sign_editor`、`sign_update`、`edit_book`、中鍵挑選已接上 |
-| 持久化 | 37 | 11 | – | 6 | 15 | 5 | seed、難度、規則、ops、command storage 與原版互載（`admin_check.py` 27 項） |
+| 協定（封包） | 213 play + 47 其他 | 121 + 25 | – | 57（B／C 混合）+ 15 | 4 | 29 + 3 | `open_sign_editor`、`sign_update`、`edit_book`、中鍵挑選已接上；wp86:`player_chat`（簽章與未簽章）、`chat`/`chat_command_signed`/`chat_session_update`/`chat_ack`、`disguised_chat`、狀態回覆與舊版 ping、RCON 與 Query 的線上格式與 vanilla 逐位元組比過（§6.29） |
+| 持久化 | 37 | 11 | – | 6 | 15 | 5 | seed、難度、規則、ops、command storage 與原版互載（`admin_check.py` 27 項）；wp86:`server.properties`（63 個鍵，Java `Properties` 格式，不認得的鍵保留）、`eula.txt`、`logs/latest.log` 與 `.log.gz` 輪替、`crash-reports/`、世界的 `hardcore`／`generate_structures` 旗標（§6.29） |
 
 讀法：A 欄多的區域（世界生成、方塊自驅行為、容器點擊、loot、指令、生物 AI、戰鬥）可以信賴；C、D 欄多的區域（只存 NBT 的方塊實體、地圖、部分選單、村莊與發射器）就是缺口。
 
@@ -987,6 +987,22 @@ wp61 的「還沒做」三項（細節與證據見 `docs/wp63.md`）：
 | wp83 尾巴 | **補**:鋤/斧/鏟讀 vanilla 的 `block_transformer/*.json`(`transformer_parity.rs`:47,480 個有變化的組合與內建規則逐項相同)、沙漠水井(查證是舊註記有誤,26.3 的地物都已實作)、刷子的 `tool`(`brush/armadillo`)、附魔 `equipment_drops`(`equipment_drops.rs`:+1.0 的資料包附魔,12/12 掉,普通劍 8.5%) |
 | 沒做 | loot `random_sequence`(vanilla 是伺服器全域序列,Kiln 區域平行 tick 共用會破壞決定性);生物端附魔的 `tick`/`location_changed`、`explode`(`post_attack` 以外)、`hit_block` 其他效果;`brush/armadillo` 的 `interacting_entity`;`piglin_bartering` 多給的 `origin`;自訂維度的自訂時鐘(只有 overworld/the_end 的時鐘);平坦維度沒有結構與地物;wp82 的 MONSTER 生怪比例(項目 7) |
 | 驗證與效能 | workspace 測試 1570 通過／0 失敗（有無 vanilla 資料各一次）；`parity_suites.py` 113/113；`command_diff.py` 4 次中 3 次 1957/1957、1 次 `waypoint list` 順序差 2 行（實體 id 雜湊的既有偶發）；`neg85.py` 15/15；`check_registries85.sh` 0 問題；`sim_load` 8 對交替看不出退步（VM 共用、±2 ms 雜訊）；細節見 `docs/wp85.md` §7 |
+
+### 6.29 wp86(`wp86-server-ops`):伺服器營運面(`server.properties`、伺服器列表、RCON、Query、聊天、閒置暫停、看門狗、日誌、管理伺服器)
+
+細節見 `docs/wp86.md`(把 Kiln 當伺服器跑、讀寫哪些檔)與 `docs/wp86-mgmt.md`(管理伺服器)。工具(`tools/wp86/`):`vanilla.sh`/`kiln.sh`(在 VM 啟停兩個伺服器)、`slp.py`、`mcclient.py`、`chat_probe.py`、`chat_errors.py`、`rcon_probe.py`、`float_probe.py`/`float_cmp.sh`、`spawn_probe.py`/`spawn_cmp.sh`、`final_cmp.sh`、`neg86.sh`、`verify86.sh`、`jtools/`(讀 vanilla 位元碼)、`mgmt/`(管理伺服器的腳本與並排比對)。
+
+| 區域 | 結果 |
+|---|---|
+| `server.properties` 與 `eula.txt` | **補**:`kiln-server` 的 `javaprops.rs`(Java `Properties` 的讀寫:排序、跳脫、日期行、不認得的鍵保留)與 `properties.rs`(vanilla 26.3 的 63 個鍵,預設值與解析取自 `DedicatedServerProperties`/`Settings` 位元碼:壞值換預設、夾範圍);每次啟動寫回;`--initSettings`、`--port`、`--world`、`--universe`、`--pidFile`、`--help`;缺 `eula.txt` 或不是 `eula=true` 就和 vanilla 一樣結束。每個鍵都有人讀:難度/預設模式/`force-gamemode`/`hardcore`/`generate-structures`、出生點保護、`allow-flight` 浮空踢、`op-permission-level`、`function-permission-level`、`max-world-size`、`max-chained-neighbor-updates`、`entity-broadcast-range-percentage`、`rate-limit`、`log-ips`、`player-idle-timeout`、`pause-when-empty-seconds`、`max-tick-time`、垃圾訊息門檻、`enforce-secure-profile`…;`KILN_*` 環境變數仍壓過檔案,harness(設了 `KILN_WORLD`/`KILN_PORT`/`KILN_GENERATOR` 且沒有檔案)維持舊行為 |
+| 伺服器列表 | **補**:`kiln-net/src/status.rs`(`ServerStatus.CODEC` 欄位順序、預設欄位省略、Gson 跳脫、sample 隨機取、`hide-online-players`、`enable-status`、`server-icon.png`、`enforcesSecureChat`)、舊版 ping(`FE 01 FA`)、速率限制與解碼失敗的斷線文字、登入拒絕的翻譯文字。與 vanilla 並排:JSON 欄位、64×64 圖示、motd 跳脫字元、舊版 ping 回覆**位元組相同** |
+| RCON 與 Query | **補**:`rcon.rs`、`query.rs`;與 vanilla 並排,登入前指令、錯誤/空/正確密碼、`list`、不認得的指令、`gamerule`、`time query` 錯誤、長度不符等 RCON 回覆與握手/基本 stat/完整 stat 的位元組相同(只差埠與隨機挑戰碼);`help` 的指令清單順序是既有差異(Kiln 註冊順序 vs vanilla 字母序) |
+| 聊天 | **補**:`PLAYER_CHAT`(未簽章與簽章,SHA256withRSA 的訊息鏈、聊天 session 以 Mojang 服務金鑰驗證、`LastSeenMessages` 視窗 20、簽章快取 128)、`chat_command_signed`(`/msg /say /me /teammsg`)、`DISGUISED_CHAT`、聊天可見度(隱藏/只有指令)、垃圾訊息節流、`[Not Secure]` 日誌行、進出訊息改為可翻譯元件(帶 click/hover/insertion 的顯示名稱)。與 vanilla 並排:一般聊天、`/say`、`/me`、`/msg`、`tellraw` 的封包逐位元組相同;**13 個壞聊天案例**(300 字元、`§`、控制字元、隱藏、14 則快速訊息、確認 offset/校驗碼錯、沒 session 的簽章、壞金鑰、不存在的 `/msg` 對象…)客戶端收到的封包與斷線文字相同。**修**(找到的):`formatList` 一個元素時多包一層、`system_chat` 的 NBT 欄位順序(Java HashMap 順序) |
+| 閒置暫停、閒置踢人、看門狗 | **補**:`pause-when-empty-seconds`(整個世界停 tick、連線層照轉、登入即醒、`/stop` 仍可停)、`player-idle-timeout`、`max-tick-time`(`ServerWatchdog` 的日誌行與 `crash-reports/` 檔,沒有 Java 執行緒傾印);看門狗兩邊都在大範圍 `forceload` 時寫出相同的 `A single server tick took …`;浮空踢兩邊 4~5 秒踢 `multiplayer.disconnect.flying`、出生點保護同一個紅字動作列與方塊還原 |
+| 日誌 | **補**:`logging.rs`——`[HH:MM:SS] [Server thread/INFO]: …`、`logs/latest.log`、啟動時壓成 `logs/<日期>-<n>.log.gz`;主控台的系統訊息和 vanilla 一樣有 `System chat: ` 前綴(`list`、`seed`、`whitelist list`、`say` 對 vanilla 量到)、未簽章聊天 `[Not Secure] `;harness 模式維持舊的純文字行 |
+| 管理伺服器 | **補**(`wp86-mgmt`):JSON-RPC 2.0 over WebSocket(TLS/PKCS12、Bearer 或子協定密鑰、Origin)、68 個方法與 21 個通知、`rpc.discover`;與 vanilla 並排約 330 個請求、57 種握手、44 種壞 JSON、TLS、啟動中的請求,原始文字相同;模擬迴圈在等 tick 的空檔處理管理/RCON 工作(以前一個請求等 50 ms,現在約 40 µs) |
+| 沒做 | 簽章聊天沒有用真的 Mojang 帳號試過(用自己產生的 RSA 金鑰對照位元組格式);`generator-settings`、`region-file-compression`、`sync-chunk-writes`、`text-filtering-*` 讀了不用;`level-type` 只認 `normal`/`flat`;看門狗報告沒有 Java 執行緒傾印;聊天過濾沒有;`multiplayer.player.joined.renamed` 沒有;登入/斷線的日誌行用 Kiln 自己的格式;管理伺服器:Hixie 草案握手只回 101、`world/upgrade_*` 不送、離線模式不向 Mojang 查名字、`view_distance` 不重送給在線客戶端;沒有用真實客戶端看聊天(以協定客戶端對 vanilla 比封包) |
+| 驗證 | workspace 測試 1693 通過／0 失敗／23 ignored（有 vanilla 資料、沒有資料、預設執行緒數各一次）；`parity_suites.py --skip-workspace` 113/113（含 `determinism`、`mob_parity` 全部情境、`plugin_compat`）；`command_diff.py` 3 次都 1957/1957；外掛 API 測試全過；`neg86.sh` 47/47；`cargo check --workspace --all-targets` 沒有警告；`crowd_golden` 的四個封包摘要重錄（狀態雜湊不變，只有系統聊天 id 124 的位元組變大，原因是進出訊息改成帶顯示名稱的可翻譯元件）；細節見 `docs/wp86.md` §12 |
 
 ## 7. 重跑
 
