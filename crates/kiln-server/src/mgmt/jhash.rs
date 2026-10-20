@@ -72,7 +72,7 @@ mod tests {
         assert_eq!(uuid_hash(&Uuid::from_u128(0x0000_0001_0000_0000_0000_0000_0000_0003)), 1 ^ 3);
         assert_eq!(record_hash(&[1, 2, 3]), (31 + 2) * 31 + 3);
         assert_eq!(instant_hash(None), 0);
-        assert_eq!(instant_hash(Some((1_893_456_000, 123_000_000))), 1_893_456_000i32.wrapping_add(51 * 123_000_000));
+        assert_eq!(instant_hash(Some((1_893_456_000, 123_000_000))), 1_893_456_000i32.wrapping_add(51i32.wrapping_mul(123_000_000)));
     }
 
     #[test]
